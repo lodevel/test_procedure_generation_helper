@@ -1,0 +1,95 @@
+{
+  "text_json": {
+    "tasks": [
+      {
+        "id": "derive_json_from_text",
+        "name": "Derive JSON from Text",
+        "button_label": "Text → JSON",
+        "prompt_template": null,
+        "enabled": true
+      },
+      {
+        "id": "render_text_from_json",
+        "name": "Render Text from JSON",
+        "button_label": "JSON → Text",
+        "prompt_template": null,
+        "enabled": true
+      },
+      {
+        "id": "review_text_procedure",
+        "name": "Review Text Procedure",
+        "button_label": "Review Text",
+        "prompt_template": null,
+        "enabled": true
+      },
+      {
+        "id": "review_json",
+        "name": "Review JSON",
+        "button_label": "Review JSON",
+        "prompt_template": null,
+        "enabled": true
+      },
+      {
+        "id": "review_text_vs_json",
+        "name": "Review Text vs JSON",
+        "button_label": "Check Text↔JSON",
+        "prompt_template": null,
+        "enabled": true
+      }
+    ],
+    "chat_config": {
+      "enabled": true,
+      "system_prompt": "Task: Respond to user question or request.\n\nThe user is asking a question or making a request related to test procedure authoring.\nRespond helpfully based on the context provided.\nIf the user asks for changes to an artifact, include a proposal in your response.\nIf the user asks a question, answer it without modifying artifacts."
+    }
+  },
+  "json_code": {
+    "tasks": [
+      {
+        "id": "generate_code_from_json",
+        "name": "Generate Code from JSON",
+        "button_label": "JSON → Code",
+        "prompt_template": null,
+        "enabled": true
+      },
+      {
+        "id": "derive_json_from_code",
+        "name": "Derive JSON from Code",
+        "button_label": "Code → JSON",
+        "prompt_template": null,
+        "enabled": true
+      },
+      {
+        "id": "review_json",
+        "name": "Review JSON",
+        "button_label": "Review JSON",
+        "prompt_template": null,
+        "enabled": true
+      },
+      {
+        "id": "review_code",
+        "name": "Review Code",
+        "button_label": "Review Code",
+        "prompt_template": null,
+        "enabled": true
+      },
+      {
+        "id": "review_code_vs_json",
+        "name": "Review Code vs JSON",
+        "button_label": "Check JSON↔Code",
+        "prompt_template": null,
+        "enabled": true
+      },
+      {
+        "id": "ad_hoc_chat",
+        "name": "Ad-hoc Chat",
+        "button_label": "Ask LLM",
+        "prompt_template": null,
+        "enabled": true
+      }
+    ],
+    "chat_config": {
+      "enabled": true,
+      "system_prompt": "Task: Respond to user question or request.\n\nThe user is asking a question or making a request related to test procedure authoring.\nRespond helpfully based on the context provided.\nIf the user asks for changes to an artifact, include a proposal in your response.\nIf the user asks a question, answer it without modifying artifacts."
+    }
+  }
+}

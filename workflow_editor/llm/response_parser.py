@@ -90,7 +90,12 @@ class ResponseParser:
                         # Check for text content with JSON
                         elif part.get("type") == "text":
                             text = part.get("text", "")
-                            if text.strip().startswith("{"):
+                            # Handle case where text is already a dict (pre-parsed)
+                            if isinstance(text, dict):
+                                # Convert back to JSON string for consistent processing
+                                return json.dumps(text)
+                            # Handle case where text is a JSON string
+                            elif isinstance(text, str) and text.strip().startswith("{"):
                                 try:
                                     json.loads(text)
                                     return text
@@ -145,7 +150,12 @@ class ResponseParser:
                 for part in opencode_data.get("parts", []):
                     if isinstance(part, dict) and part.get("type") == "text":
                         text_content = part.get("text", "")
-                        if text_content:
+                        # Handle case where text is already a dict
+                        if isinstance(text_content, dict):
+                            # Extract assistant_message if available
+                            if "assistant_message" in text_content:
+                                text_parts.append(str(text_content["assistant_message"]))
+                        elif text_content:
                             text_parts.append(text_content)
                 
                 if text_parts:

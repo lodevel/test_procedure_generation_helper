@@ -753,10 +753,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'dock') and hasattr(tab, 'tab_context'):
             self.dock.chat_panel.switch_context(tab.tab_context)
             self.dock.session_viewer.switch_context(tab.tab_context)
-            log.debug(f"Switching findings context to {tab.__class__.__name__} with {len(tab.tab_context.validation_issues)} issues")
-            self.dock.findings_panel.set_context(tab.tab_context)
             self.dock.raw_viewer.switch_context(tab.tab_context)
-            log.debug(f"Findings panel now showing {self.dock._findings_count} issues")
+            # Findings are per-test (session_state), no context switch needed
         
         # Update save action label to be context-aware
         tab_name = self.tab_widget.tabText(index)
@@ -773,16 +771,10 @@ class MainWindow(QMainWindow):
         if self.artifact_manager and self._check_unsaved_changes():
             return  # User cancelled
         
-        # Save current tab validation issues to old session state before switching
+        # Save current session state (includes validation_issues) before switching
         if hasattr(self, 'session_state') and self.session_state and self.session_state._file_path:
-            if hasattr(self.text_json_tab, 'tab_context'):
-                self.session_state.tab_validation_issues['text_json'] = self.text_json_tab.tab_context.validation_issues
-            if hasattr(self.json_code_tab, 'tab_context'):
-                self.session_state.tab_validation_issues['json_code'] = self.json_code_tab.tab_context.validation_issues
-            # Save session state to disk
             try:
                 self.session_state.save()
-                log.debug(f"Saved validation issues to old test: {self.session_state.tab_validation_issues}")
             except Exception as e:
                 log.warning(f"Failed to save session state before switching tests: {e}")
         
@@ -801,16 +793,11 @@ class MainWindow(QMainWindow):
         # Update tab contexts with real managers (fixes None reference issue)
         if hasattr(self.text_json_tab, 'tab_context'):
             self.text_json_tab.tab_context.update_managers(self.artifact_manager, self.session_state)
-            # Restore validation issues from session state
-            restored_issues = self.session_state.tab_validation_issues.get('text_json', [])
-            self.text_json_tab.tab_context.validation_issues = restored_issues
-            log.debug(f"Restored {len(restored_issues)} validation issues to text_json tab")
         if hasattr(self.json_code_tab, 'tab_context'):
             self.json_code_tab.tab_context.update_managers(self.artifact_manager, self.session_state)
-            # Restore validation issues from session state
-            restored_issues = self.session_state.tab_validation_issues.get('json_code', [])
-            self.json_code_tab.tab_context.validation_issues = restored_issues
-            log.debug(f"Restored {len(restored_issues)} validation issues to json_code tab")
+        
+        # Point findings panel at the new session state (per-test findings)
+        self.dock.findings_panel.set_session(self.session_state)
         
         log.debug(f"Artifacts exist - JSON: {self.artifact_manager.procedure_json.exists_on_disk}, "
                   f"Code: {self.artifact_manager.test_code.exists_on_disk}, "
@@ -1852,12 +1839,8 @@ class MainWindow(QMainWindow):
     
     def closeEvent(self, event):
         """Handle window close."""
-        # Save current tab validation issues to session state before closing
+        # Save session state (validation_issues are already in session_state)
         if hasattr(self, 'session_state') and self.session_state:
-            if hasattr(self.text_json_tab, 'tab_context'):
-                self.session_state.tab_validation_issues['text_json'] = self.text_json_tab.tab_context.validation_issues
-            if hasattr(self.json_code_tab, 'tab_context'):
-                self.session_state.tab_validation_issues['json_code'] = self.json_code_tab.tab_context.validation_issues
             try:
                 self.session_state.save()
             except Exception as e:

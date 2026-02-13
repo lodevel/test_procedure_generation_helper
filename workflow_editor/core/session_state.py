@@ -65,8 +65,8 @@ class SessionState:
     last_check_results: list[Issue] = field(default_factory=list)
     last_check_timestamp: Optional[str] = None
     
-    # Per-tab validation issues (keyed by tab_id: "text_json", "json_code")
-    tab_validation_issues: dict[str, list[dict]] = field(default_factory=dict)
+    # Validation issues for the current test (flat list, not per-tab)
+    validation_issues: list[dict] = field(default_factory=list)
     
     # Artifact hashes for staleness detection
     artifact_hashes: dict[str, str] = field(default_factory=dict)
@@ -112,7 +112,7 @@ class SessionState:
             "resolved_questions": [asdict(q) for q in self.resolved_questions],
             "last_check_results": [asdict(i) for i in self.last_check_results],
             "last_check_timestamp": self.last_check_timestamp,
-            "tab_validation_issues": self.tab_validation_issues,
+            "validation_issues": self.validation_issues,
             "artifact_hashes": self.artifact_hashes,
             "artifact_timestamps": self.artifact_timestamps,
         }
@@ -134,7 +134,13 @@ class SessionState:
             Issue(**i) for i in data.get("last_check_results", [])
         ]
         self.last_check_timestamp = data.get("last_check_timestamp")
-        self.tab_validation_issues = data.get("tab_validation_issues", {})
+        # Support both old per-tab format and new flat format
+        vi = data.get("validation_issues", None)
+        if vi is None:
+            # Migrate: flatten old per-tab dict into a single list
+            old = data.get("tab_validation_issues", {})
+            vi = [issue for issues in old.values() for issue in issues] if old else []
+        self.validation_issues = vi
         self.artifact_hashes = data.get("artifact_hashes", {})
         self.artifact_timestamps = data.get("artifact_timestamps", {})
     

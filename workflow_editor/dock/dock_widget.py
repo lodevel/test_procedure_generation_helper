@@ -141,9 +141,9 @@ class DockWidget(QDockWidget):
     
     def show_validation_result(self, result: "ValidationResult"):
         """Show a validation result in findings panel."""
-        ctx = self.findings_panel._current_tab_context
-        if ctx is not None:
-            ctx.validation_issues = [
+        ss = getattr(self.main_window, 'session_state', None)
+        if ss is not None:
+            ss.validation_issues = [
                 {
                     "message": i.message,
                     "severity": i.severity.value if hasattr(i.severity, 'value') else str(i.severity),
@@ -158,9 +158,9 @@ class DockWidget(QDockWidget):
     
     def show_validation_result_from_list(self, issues: list):
         """Show validation issues from a list of dicts."""
-        ctx = self.findings_panel._current_tab_context
-        if ctx is not None:
-            ctx.validation_issues = list(issues)
+        ss = getattr(self.main_window, 'session_state', None)
+        if ss is not None:
+            ss.validation_issues = list(issues)
         self.findings_panel.display()
         if issues:
             self.tab_widget.setCurrentWidget(self.findings_panel)
@@ -190,9 +190,9 @@ class DockWidget(QDockWidget):
         
         # Show any issues in findings
         if "validation_issues" in parsed_data:
-            ctx = self.findings_panel._current_tab_context
-            if ctx is not None:
-                ctx.validation_issues = list(parsed_data["validation_issues"])
+            ss = getattr(self.main_window, 'session_state', None)
+            if ss is not None:
+                ss.validation_issues = list(parsed_data["validation_issues"])
             self.findings_panel.display()
         
         # Show session updates

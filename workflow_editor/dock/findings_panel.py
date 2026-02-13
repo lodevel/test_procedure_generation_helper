@@ -3,10 +3,10 @@ Findings Panel - Display validation issues and warnings.
 
 Implements Section 10.3 of the spec.
 
-Design: tab_context.validation_issues (list[dict]) is the SINGLE SOURCE OF TRUTH.
-This panel is a pure display widget that reads from tab_context.
-It never writes back to tab_context except on explicit clear.
-Callers write issues to tab_context.validation_issues, then call display().
+Design: session_state.validation_issues (list[dict]) is the SINGLE SOURCE OF TRUTH.
+Findings are tied to the current test, not to individual tabs.
+This panel is a pure display widget that reads from session_state.
+Callers write issues to session_state.validation_issues, then call display().
 """
 
 from PySide6.QtWidgets import (
@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from ..main_window import MainWindow
-    from ..llm.tab_context import TabContext
+    from ..core.session_state import SessionState
 
 
 class FindingsPanel(QWidget):
@@ -27,7 +27,8 @@ class FindingsPanel(QWidget):
     Findings panel for displaying validation issues.
 
     Pure display widget. The single source of truth is
-    tab_context.validation_issues (list of dicts).
+    session_state.validation_issues (list of dicts).
+    Findings are per-test, not per-tab.
     """
 
     # Signals
@@ -37,7 +38,7 @@ class FindingsPanel(QWidget):
     def __init__(self, main_window: "MainWindow", parent=None):
         super().__init__(parent)
         self.main_window = main_window
-        self._current_tab_context: Optional["TabContext"] = None
+        self._session_state: Optional["SessionState"] = None
 
         self._setup_ui()
 
@@ -69,24 +70,24 @@ class FindingsPanel(QWidget):
 
     # ── Public API ──────────────────────────────────────────
 
-    def set_context(self, tab_context: Optional["TabContext"]):
-        """Switch to a different tab context and refresh display."""
-        self._current_tab_context = tab_context
+    def set_session(self, session_state: Optional["SessionState"]):
+        """Switch to a different session state (new test opened) and refresh."""
+        self._session_state = session_state
         self._refresh_display()
 
     def display(self):
-        """Refresh display from current tab_context.validation_issues."""
+        """Refresh display from current session_state.validation_issues."""
         self._refresh_display()
 
     # ── Private ─────────────────────────────────────────────
 
     def _refresh_display(self):
-        """Rebuild the list widget from tab_context.validation_issues."""
+        """Rebuild the list widget from session_state.validation_issues."""
         self.issue_list.clear()
 
         issues = []
-        if self._current_tab_context is not None:
-            issues = self._current_tab_context.validation_issues or []
+        if self._session_state is not None:
+            issues = self._session_state.validation_issues or []
 
         for issue_dict in issues:
             self._add_issue_item(issue_dict)
@@ -129,8 +130,8 @@ class FindingsPanel(QWidget):
             return
 
         issues = (
-            self._current_tab_context.validation_issues or []
-            if self._current_tab_context is not None
+            self._session_state.validation_issues or []
+            if self._session_state is not None
             else []
         )
         errors = sum(1 for i in issues if i.get("severity") == "error")
@@ -153,7 +154,7 @@ class FindingsPanel(QWidget):
             self.issue_selected.emit(issue)
 
     def _on_clear(self):
-        """Clear issues from tab_context and refresh display."""
-        if self._current_tab_context is not None:
-            self._current_tab_context.validation_issues = []
+        """Clear issues from session_state and refresh display."""
+        if self._session_state is not None:
+            self._session_state.validation_issues = []
         self._refresh_display()

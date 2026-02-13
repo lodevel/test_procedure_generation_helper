@@ -212,7 +212,7 @@ class TextJsonTab(BaseTab):
             content = self.text_editor.toPlainText()
             self.artifact_manager.set_content(ArtifactType.PROCEDURE_TEXT, content)
             self.artifact_manager.save_artifact(ArtifactType.PROCEDURE_TEXT)
-            self.tab_context.mark_artifact_modified("procedure_text")
+            self.artifact_manager.procedure_text.mark_clean()
             self._text_dirty = False
             self._update_text_status()
             self.status_message.emit("Text saved successfully")
@@ -225,7 +225,7 @@ class TextJsonTab(BaseTab):
             content = self.json_editor.toPlainText()
             self.artifact_manager.set_content(ArtifactType.PROCEDURE_JSON, content)
             self.artifact_manager.save_artifact(ArtifactType.PROCEDURE_JSON)
-            self.tab_context.mark_artifact_modified("procedure_json")
+            self.artifact_manager.procedure_json.mark_clean()
             self._json_dirty = False
             self._update_json_status()
             self.status_message.emit("JSON saved successfully")

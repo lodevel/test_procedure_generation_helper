@@ -37,11 +37,6 @@ class TraceabilityTab(BaseTab):
         header.addWidget(self.status_label)
         header.addStretch()
         
-        self.rebuild_btn = self.create_button("Rebuild Mapping", self._on_rebuild)
-        self.explain_btn = self.create_button("Ask LLM to Explain", self._on_explain_mismatches)
-        header.addWidget(self.rebuild_btn)
-        header.addWidget(self.explain_btn)
-        
         layout.addLayout(header)
         
         # Splitter: step list | code viewer
@@ -104,14 +99,6 @@ class TraceabilityTab(BaseTab):
         self._step_blocks = []
         self._json_steps = []
         self._code_modified = False
-    
-    def _on_rebuild(self):
-        """Rebuild the mapping."""
-        self._load_mapping()
-    
-    def _on_explain_mismatches(self):
-        """Ask LLM to explain mismatches."""
-        self.main_window.run_llm_task("review_code_vs_json")
     
     def _load_mapping(self):
         """Load step mapping from JSON and code."""

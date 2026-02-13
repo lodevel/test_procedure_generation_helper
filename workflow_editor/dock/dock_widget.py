@@ -142,17 +142,19 @@ class DockWidget(QDockWidget):
     def show_validation_result(self, result: "ValidationResult"):
         """Show a validation result in findings panel."""
         self.findings_panel.show_validation_result(result)
+        # Update count based on actual items in the list
+        self._findings_count = self.findings_panel.issue_list.count()
+        self._update_findings_tab_text()
         if result.issues:
-            self._findings_count = len(result.issues)
-            self._update_findings_tab_text()
             self.tab_widget.setCurrentWidget(self.findings_panel)
     
     def show_validation_result_from_list(self, issues: list):
         """Show validation issues from a list of dicts."""
         self.findings_panel.show_issues(issues)
+        # Update count based on actual items in the list
+        self._findings_count = self.findings_panel.issue_list.count()
+        self._update_findings_tab_text()
         if issues:
-            self._findings_count = len(issues)
-            self._update_findings_tab_text()
             self.tab_widget.setCurrentWidget(self.findings_panel)
     
     def _update_findings_tab_text(self):
@@ -182,6 +184,9 @@ class DockWidget(QDockWidget):
         # Show any issues in findings
         if "validation_issues" in parsed_data:
             self.findings_panel.show_issues(parsed_data["validation_issues"])
+            # Update count based on actual items in the list
+            self._findings_count = self.findings_panel.issue_list.count()
+            self._update_findings_tab_text()
         
         # Show session updates
         if "session_delta" in parsed_data:

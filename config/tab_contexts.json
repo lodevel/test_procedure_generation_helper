@@ -19,7 +19,7 @@
         "id": "review_text_procedure",
         "name": "Review Text Procedure",
         "button_label": "Review Text",
-        "prompt_template": null,
+        "prompt_template": "Task: Review procedure text for correctness and completeness.\n\nAnalyze the provided procedure text and identify:\n- Ambiguous or unclear steps\n- Missing equipment specifications\n- Missing measurement parameters\n- Rule violations (if rules provided)\n\nPut the text procedure in form.\n\nReport issues in validation.issues[] with severity, code, message, location, and suggested_fix.\n\nIMPORTANT: In your response, ONLY include a 'procedure_text' proposal if needed.\nDo NOT generate 'procedure_json' or 'test_code' proposals for this task.",
         "enabled": true
       },
       {

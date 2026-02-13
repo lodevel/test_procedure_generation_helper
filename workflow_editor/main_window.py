@@ -796,6 +796,9 @@ class MainWindow(QMainWindow):
         # Update status
         self.test_label.setText(f"Test: {path.name}")
         
+        # Highlight the opened test in workspace
+        self.workspace_widget.set_opened_test(path)
+        
         # Detect rules (result stored in project_manager.rules_root)
         self.project_manager.detect_rules_root()
         

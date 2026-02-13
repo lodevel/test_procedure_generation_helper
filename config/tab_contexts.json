@@ -33,7 +33,7 @@
         "id": "review_text_vs_json",
         "name": "Review Text vs JSON",
         "button_label": "Check Text↔JSON",
-        "prompt_template": null,
+        "prompt_template": "Task: Check coherence between procedure text and procedure.json.\n\nCompare the procedure text with the procedure JSON and identify:\n- Step count mismatches\n- Step content/intent mismatches\n- Equipment list differences\n- Expected result differences\n\nDon't touch fields like media if they are correct.\nReport issues in validation.issues[] with severity, code, message, location, and suggested_fix.\nIf you find issues, include proposals (procedure_text and/or procedure_json) with the corrected versions.\nYou may ask clarifying questions if needed.",
         "enabled": true
       }
     ],

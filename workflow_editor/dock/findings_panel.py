@@ -2,6 +2,11 @@
 Findings Panel - Display validation issues and warnings.
 
 Implements Section 10.3 of the spec.
+
+Design: tab_context.validation_issues (list[dict]) is the SINGLE SOURCE OF TRUTH.
+This panel is a pure display widget that reads from tab_context.
+It never writes back to tab_context except on explicit clear.
+Callers write issues to tab_context.validation_issues, then call display().
 """
 
 from PySide6.QtWidgets import (
@@ -10,206 +15,145 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from ..main_window import MainWindow
-    from ..core import ValidationResult, ValidationIssue
     from ..llm.tab_context import TabContext
 
 
 class FindingsPanel(QWidget):
     """
     Findings panel for displaying validation issues.
-    
-    Features:
-    - Issue list with severity indicators
-    - Filter by severity
-    - Click to navigate to issue
+
+    Pure display widget. The single source of truth is
+    tab_context.validation_issues (list of dicts).
     """
-    
+
     # Signals
     issue_selected = Signal(object)  # Emitted when an issue is selected
-    
+    issues_changed = Signal(int)     # Emitted with new count when display changes
+
     def __init__(self, main_window: "MainWindow", parent=None):
         super().__init__(parent)
         self.main_window = main_window
-        self._issues: List = []
         self._current_tab_context: Optional["TabContext"] = None
-        
+
         self._setup_ui()
-    
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
-        
+
         # Header
         header = QHBoxLayout()
         self.count_label = QLabel("<b>Issues</b>")
         header.addWidget(self.count_label)
         header.addStretch()
-        
+
         self.clear_btn = QPushButton("Clear")
-        self.clear_btn.clicked.connect(self.clear)
+        self.clear_btn.clicked.connect(self._on_clear)
         header.addWidget(self.clear_btn)
-        
+
         layout.addLayout(header)
-        
+
         # Issue list
         self.issue_list = QListWidget()
         self.issue_list.itemClicked.connect(self._on_issue_clicked)
         layout.addWidget(self.issue_list, stretch=1)
-        
+
         # Summary
         self.summary_label = QLabel("No issues")
         self.summary_label.setStyleSheet("color: green;")
         layout.addWidget(self.summary_label)
-    
-    def show_validation_result(self, result: "ValidationResult"):
-        """Show issues from a validation result."""
-        self.clear()
-        
-        for issue in result.issues:
-            self._add_issue(issue)
-        
-        self._update_summary()
-        self._save_to_tab_context()
-    
-    def show_issues(self, issues: List[dict]):
-        """Show issues from LLM response."""
-        self.clear()
-        
-        for issue in issues:
-            self._add_issue_dict(issue)
-        
-        self._update_summary()
-        self._save_to_tab_context()
-    
-    def _add_issue(self, issue: "ValidationIssue"):
-        """Add a ValidationIssue."""
-        self._issues.append(issue)
-        
+
+    # ── Public API ──────────────────────────────────────────
+
+    def set_context(self, tab_context: Optional["TabContext"]):
+        """Switch to a different tab context and refresh display."""
+        self._current_tab_context = tab_context
+        self._refresh_display()
+
+    def display(self):
+        """Refresh display from current tab_context.validation_issues."""
+        self._refresh_display()
+
+    # ── Private ─────────────────────────────────────────────
+
+    def _refresh_display(self):
+        """Rebuild the list widget from tab_context.validation_issues."""
+        self.issue_list.clear()
+
+        issues = []
+        if self._current_tab_context is not None:
+            issues = self._current_tab_context.validation_issues or []
+
+        for issue_dict in issues:
+            self._add_issue_item(issue_dict)
+
+        self._update_summary(len(issues))
+        self.issues_changed.emit(len(issues))
+
+    def _add_issue_item(self, issue: dict):
+        """Add a single issue dict to the list widget."""
         item = QListWidgetItem()
         item.setData(Qt.UserRole, issue)
-        
-        # Format text with location if available
-        location = ""
-        if issue.location:
-            location = f" ({issue.location})"
-        
-        item.setText(f"{issue.message}{location}")
-        
-        # Color by severity (check both enum and string for compatibility)
-        severity_str = issue.severity.value if hasattr(issue.severity, 'value') else str(issue.severity)
-        if severity_str == "error":
+
+        msg = issue.get("message", str(issue))
+        location = issue.get("location", "")
+        if location:
+            msg = f"{msg} ({location})"
+
+        severity = issue.get("severity", "info")
+        if severity == "error":
             item.setForeground(QColor("#c62828"))
-            item.setText(f"✗ {item.text()}")
-        elif severity_str == "warning":
+            item.setText(f"\u2717 {msg}")
+        elif severity == "warning":
             item.setForeground(QColor("#ef6c00"))
-            item.setText(f"⚠ {item.text()}")
+            item.setText(f"\u26a0 {msg}")
         else:
             item.setForeground(QColor("#1565c0"))
-            item.setText(f"ℹ {item.text()}")
-        
+            item.setText(f"\u2139 {msg}")
+
         self.issue_list.addItem(item)
-    
-    def _add_issue_dict(self, issue: dict):
-        """Add an issue from dict."""
-        from ..core.validators import ValidationIssue, ValidationSeverity
-        
-        # Convert severity string to enum
-        severity_str = issue.get("severity", "info")
-        try:
-            severity = ValidationSeverity(severity_str)
-        except ValueError:
-            severity = ValidationSeverity.INFO
-        
-        vi = ValidationIssue(
-            message=issue.get("message", str(issue)),
-            severity=severity,
-            location=issue.get("location", ""),
-            code=issue.get("code", ""),
+
+    def _update_summary(self, total: int):
+        """Update header and summary labels."""
+        self.count_label.setText(
+            f"<b>Issues ({total})</b>" if total else "<b>Issues</b>"
         )
-        self._add_issue(vi)
-    
-    def _update_summary(self):
-        """Update the summary label."""
-        errors = sum(1 for i in self._issues if getattr(i, 'severity', 'info') == 'error')
-        warnings = sum(1 for i in self._issues if getattr(i, 'severity', 'info') == 'warning')
-        infos = len(self._issues) - errors - warnings
-        
+
+        if total == 0:
+            self.summary_label.setText("No issues")
+            self.summary_label.setStyleSheet("color: green;")
+            return
+
+        issues = (
+            self._current_tab_context.validation_issues or []
+            if self._current_tab_context is not None
+            else []
+        )
+        errors = sum(1 for i in issues if i.get("severity") == "error")
+        warnings = sum(1 for i in issues if i.get("severity") == "warning")
+
         if errors > 0:
             self.summary_label.setText(f"{errors} errors, {warnings} warnings")
             self.summary_label.setStyleSheet("color: red;")
         elif warnings > 0:
             self.summary_label.setText(f"{warnings} warnings")
             self.summary_label.setStyleSheet("color: orange;")
-        elif infos > 0:
-            self.summary_label.setText(f"{infos} info items")
-            self.summary_label.setStyleSheet("color: blue;")
         else:
-            self.summary_label.setText("No issues")
-            self.summary_label.setStyleSheet("color: green;")
-        
-        self.count_label.setText(f"<b>Issues ({len(self._issues)})</b>")
-    
+            self.summary_label.setText(f"{total} info items")
+            self.summary_label.setStyleSheet("color: blue;")
+
     def _on_issue_clicked(self, item: QListWidgetItem):
         """Handle issue click."""
         issue = item.data(Qt.UserRole)
         if issue:
             self.issue_selected.emit(issue)
-    
-    def clear(self):
-        """Clear all issues."""
-        self._issues.clear()
-        self.issue_list.clear()
-        self._update_summary()
-    
-    def switch_context(self, tab_context: Optional["TabContext"]):
-        """
-        Switch to a different tab's findings.
-        
-        Saves current issues to old context, then loads issues from new context.
-        
-        Args:
-            tab_context: The TabContext to switch to, or None to clear.
-        """
-        # Save current issues to old context
+
+    def _on_clear(self):
+        """Clear issues from tab_context and refresh display."""
         if self._current_tab_context is not None:
-            self._current_tab_context.validation_issues = self._get_issues_as_dicts()
-        
-        # Switch context
-        self._current_tab_context = tab_context
-        
-        # Load issues from new context
-        self._issues.clear()
-        self.issue_list.clear()
-        
-        if tab_context is not None and tab_context.validation_issues:
-            for issue in tab_context.validation_issues:
-                self._add_issue_dict(issue)
-        
-        self._update_summary()
-    
-    def _get_issues_as_dicts(self) -> List[dict]:
-        """
-        Convert current issues to list of dicts for storage.
-        
-        Returns:
-            List of issue dicts with message, severity, location, code.
-        """
-        result = []
-        for issue in self._issues:
-            severity_str = issue.severity.value if hasattr(issue.severity, 'value') else str(issue.severity)
-            result.append({
-                "message": issue.message,
-                "severity": severity_str,
-                "location": getattr(issue, 'location', ""),
-                "code": getattr(issue, 'code', ""),
-            })
-        return result
-    
-    def _save_to_tab_context(self):
-        """Save current issues to the current tab context."""
-        if self._current_tab_context is not None:
-            self._current_tab_context.validation_issues = self._get_issues_as_dicts()
+            self._current_tab_context.validation_issues = []
+        self._refresh_display()

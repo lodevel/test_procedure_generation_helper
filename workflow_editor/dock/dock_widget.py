@@ -69,8 +69,8 @@ class DockWidget(QDockWidget):
         self.findings_panel = FindingsPanel(self.main_window, self)
         self.raw_viewer = RawResponseViewer(self.main_window, self)
         
-        # Connect findings panel clear to badge update
-        self.findings_panel.issue_list.model().rowsRemoved.connect(self._on_findings_cleared)
+        # Connect findings panel count-change signal to badge update
+        self.findings_panel.issues_changed.connect(self._on_findings_count_changed)
         
         self.tab_widget.addTab(self.chat_panel, "Chat")
         self.tab_widget.addTab(self.session_viewer, "Session")
@@ -141,19 +141,27 @@ class DockWidget(QDockWidget):
     
     def show_validation_result(self, result: "ValidationResult"):
         """Show a validation result in findings panel."""
-        self.findings_panel.show_validation_result(result)
-        # Update count based on actual items in the list
-        self._findings_count = self.findings_panel.issue_list.count()
-        self._update_findings_tab_text()
+        ctx = self.findings_panel._current_tab_context
+        if ctx is not None:
+            ctx.validation_issues = [
+                {
+                    "message": i.message,
+                    "severity": i.severity.value if hasattr(i.severity, 'value') else str(i.severity),
+                    "location": getattr(i, 'location', ""),
+                    "code": getattr(i, 'code', ""),
+                }
+                for i in result.issues
+            ]
+        self.findings_panel.display()
         if result.issues:
             self.tab_widget.setCurrentWidget(self.findings_panel)
     
     def show_validation_result_from_list(self, issues: list):
         """Show validation issues from a list of dicts."""
-        self.findings_panel.show_issues(issues)
-        # Update count based on actual items in the list
-        self._findings_count = self.findings_panel.issue_list.count()
-        self._update_findings_tab_text()
+        ctx = self.findings_panel._current_tab_context
+        if ctx is not None:
+            ctx.validation_issues = list(issues)
+        self.findings_panel.display()
         if issues:
             self.tab_widget.setCurrentWidget(self.findings_panel)
     
@@ -166,10 +174,9 @@ class DockWidget(QDockWidget):
             else:
                 self.tab_widget.setTabText(findings_index, "Findings")
     
-    def _on_findings_cleared(self):
-        """Handle when findings list is cleared."""
-        # Update count based on current number of items in list
-        self._findings_count = self.findings_panel.issue_list.count()
+    def _on_findings_count_changed(self, count: int):
+        """Handle when findings count changes."""
+        self._findings_count = count
         self._update_findings_tab_text()
     
     def add_chat_message(self, role: str, content: str):
@@ -183,10 +190,10 @@ class DockWidget(QDockWidget):
         
         # Show any issues in findings
         if "validation_issues" in parsed_data:
-            self.findings_panel.show_issues(parsed_data["validation_issues"])
-            # Update count based on actual items in the list
-            self._findings_count = self.findings_panel.issue_list.count()
-            self._update_findings_tab_text()
+            ctx = self.findings_panel._current_tab_context
+            if ctx is not None:
+                ctx.validation_issues = list(parsed_data["validation_issues"])
+            self.findings_panel.display()
         
         # Show session updates
         if "session_delta" in parsed_data:

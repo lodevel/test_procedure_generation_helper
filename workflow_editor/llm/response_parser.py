@@ -77,30 +77,23 @@ class ResponseParser:
             if isinstance(opencode_data, dict) and "parts" in opencode_data:
                 # Extract from OpenCode parts array
                 for part in opencode_data.get("parts", []):
-                    if isinstance(part, dict):
-                        # Check for thinking content with JSON
-                        if part.get("type") == "thinking":
-                            content = part.get("content", "")
-                            if content.startswith("{"):
-                                try:
-                                    json.loads(content)
-                                    return content
-                                except json.JSONDecodeError:
-                                    pass
-                        # Check for text content with JSON
-                        elif part.get("type") == "text":
-                            text = part.get("text", "")
-                            # Handle case where text is already a dict (pre-parsed)
-                            if isinstance(text, dict):
-                                # Convert back to JSON string for consistent processing
-                                return json.dumps(text)
-                            # Handle case where text is a JSON string
-                            elif isinstance(text, str) and text.strip().startswith("{"):
-                                try:
-                                    json.loads(text)
-                                    return text
-                                except json.JSONDecodeError:
-                                    pass
+                    if not isinstance(part, dict):
+                        continue
+
+                    part_type = part.get("type")
+                    candidates: list[Any] = []
+
+                    # Legacy and current naming variants across backends
+                    if part_type in ("thinking", "reasoning"):
+                        candidates.extend([part.get("content"), part.get("text")])
+                    elif part_type == "text":
+                        candidates.extend([part.get("text"), part.get("content")])
+
+                    for candidate in candidates:
+                        extracted = self._extract_json_from_candidate(candidate)
+                        if extracted is not None:
+                            return extracted
+
                 # If we detected OpenCode format but found no JSON inside, return None
                 # (don't fall through to parsing the wrapper itself)
                 return None
@@ -137,6 +130,49 @@ class ResponseParser:
                 except json.JSONDecodeError:
                     continue
         
+        return None
+
+    def _extract_json_from_candidate(self, candidate: Any) -> Optional[str]:
+        """Extract a valid JSON object string from a part candidate value."""
+        if candidate is None:
+            return None
+
+        if isinstance(candidate, dict):
+            return json.dumps(candidate)
+
+        if not isinstance(candidate, str):
+            return None
+
+        text = candidate.strip()
+        if not text:
+            return None
+
+        # Direct JSON object
+        if text.startswith("{"):
+            try:
+                json.loads(text)
+                return text
+            except json.JSONDecodeError:
+                pass
+
+        # Markdown fenced JSON / code block
+        fenced_patterns = [
+            r"```json\s*\n([\s\S]*?)\n```",
+            r"```\s*\n([\s\S]*?)\n```",
+        ]
+        for pattern in fenced_patterns:
+            match = re.search(pattern, text, re.DOTALL)
+            if not match:
+                continue
+            candidate_json = match.group(1).strip()
+            if not candidate_json.startswith("{"):
+                continue
+            try:
+                json.loads(candidate_json)
+                return candidate_json
+            except json.JSONDecodeError:
+                continue
+
         return None
     
     def _extract_text_message(self, raw: str) -> str:

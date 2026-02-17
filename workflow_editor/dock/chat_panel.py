@@ -5,6 +5,7 @@ Implements Section 10.1 of the spec.
 """
 
 import json
+import logging
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
     QLineEdit, QPushButton, QLabel, QFrame, QDialog, QPlainTextEdit,
@@ -17,6 +18,9 @@ from typing import TYPE_CHECKING, List, Tuple, Optional
 if TYPE_CHECKING:
     from ..main_window import MainWindow
     from ..llm import TabContext
+
+
+log = logging.getLogger(__name__)
 
 
 class MessageDetailDialog(QDialog):
@@ -276,18 +280,18 @@ class MessageWidget(QFrame):
     
     def mouseDoubleClickEvent(self, event: QMouseEvent):
         """Handle double-click to show message details."""
-        print(f"[DEBUG] MessageWidget.mouseDoubleClickEvent: msg_id={self._msg_id}")
+        log.debug("MessageWidget.mouseDoubleClickEvent: msg_id=%s", self._msg_id)
         if self._msg_id:
-            print(f"[DEBUG] Emitting double_clicked signal for msg_id={self._msg_id}")
+            log.debug("Emitting double_clicked signal for msg_id=%s", self._msg_id)
             self.double_clicked.emit(self._msg_id)
         super().mouseDoubleClickEvent(event)
     
     def eventFilter(self, obj, event):
         """Catch double-clicks on child widgets (especially the content label)."""
         if event.type() == QEvent.Type.MouseButtonDblClick:
-            print(f"[DEBUG] eventFilter caught double-click on {obj.__class__.__name__}, msg_id={self._msg_id}")
+            log.debug("eventFilter caught double-click on %s, msg_id=%s", obj.__class__.__name__, self._msg_id)
             if self._msg_id:
-                print(f"[DEBUG] eventFilter emitting double_clicked signal for msg_id={self._msg_id}")
+                log.debug("eventFilter emitting double_clicked signal for msg_id=%s", self._msg_id)
                 self.double_clicked.emit(self._msg_id)
             return True
         return super().eventFilter(obj, event)
@@ -369,7 +373,7 @@ class ChatPanel(QWidget):
         Args:
             tab_context: The TabContext to switch to, or None to clear
         """
-        print(f"[DEBUG] switch_context called with tab_context={'None' if tab_context is None else tab_context.tab_id}")
+        log.debug("switch_context called with tab_context=%s", 'None' if tab_context is None else tab_context.tab_id)
         self._current_tab_context = tab_context
         
         # Clear current display
@@ -389,7 +393,7 @@ class ChatPanel(QWidget):
             )
         
         # Update token counter
-        print(f"[DEBUG] switch_context: Loading cumulative_tokens={tab_context.cumulative_tokens} from TabContext")
+        log.debug("switch_context loading cumulative_tokens=%s from TabContext", tab_context.cumulative_tokens)
         self._cumulative_tokens = tab_context.cumulative_tokens
         self._update_context_label()
     
@@ -527,7 +531,7 @@ class ChatPanel(QWidget):
             # This ensures token count persists across tab switches
             if self._current_tab_context is not None:
                 self._current_tab_context.cumulative_tokens = self._cumulative_tokens
-                print(f"[DEBUG] Synchronized TabContext.cumulative_tokens = {self._current_tab_context.cumulative_tokens}")
+                log.debug("Synchronized TabContext.cumulative_tokens=%s", self._current_tab_context.cumulative_tokens)
             
             self._update_context_label()
         
@@ -563,14 +567,14 @@ class ChatPanel(QWidget):
     
     def _on_message_double_clicked(self, msg_id: str):
         """Handle double-click on a message to show details."""
-        print(f"[DEBUG] _on_message_double_clicked called with msg_id={msg_id}")
+        log.debug("_on_message_double_clicked called with msg_id=%s", msg_id)
         if self._current_tab_context is None:
-            print("[DEBUG] No TabContext available")
+            log.debug("No TabContext available")
             return
         msg = next((m for m in self._current_tab_context.messages if getattr(m, 'msg_id', None) == msg_id), None)
-        print(f"[DEBUG] Retrieved message: {msg is not None}")
+        log.debug("Retrieved message exists=%s", msg is not None)
         if msg:
-            print(f"[DEBUG] Creating MessageDetailDialog")
+            log.debug("Creating MessageDetailDialog")
             dialog = MessageDetailDialog(getattr(msg, 'full_prompt', None), getattr(msg, 'full_response', None), self)
             dialog.exec()
     
@@ -621,7 +625,7 @@ class ChatPanel(QWidget):
     
     def _update_context_label(self):
         """Update context label with cumulative token count."""
-        print(f"[DEBUG] _update_context_label called: tokens={self._cumulative_tokens}, limit={self._context_limit}")
+        log.debug("_update_context_label called: tokens=%s, limit=%s", self._cumulative_tokens, self._context_limit)
         if self._cumulative_tokens > 0:
             context_limit = self._context_limit
             percentage = (self._cumulative_tokens / context_limit) * 100
@@ -642,10 +646,10 @@ class ChatPanel(QWidget):
             
             label_text = f"{icon} <span style='color: {color};'>Tokens: {self._cumulative_tokens}/{context_limit} ({percentage:.1f}%)</span>"
             self.context_label.setText(label_text)
-            print(f"[DEBUG] Context label set to: {label_text}")
+            log.debug("Context label set: tokens=%s/%s (%.1f%%)", self._cumulative_tokens, context_limit, percentage)
         else:
             self.context_label.setText("")
-            print(f"[DEBUG] Context label cleared (no tokens)")
+            log.debug("Context label cleared (no tokens)")
     
     def clear_messages(self):
         """Clear all messages."""

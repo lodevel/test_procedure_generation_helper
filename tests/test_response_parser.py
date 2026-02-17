@@ -35,6 +35,43 @@ class TestResponseParserJsonExtraction:
         result = parser._extract_json(raw)
         assert result is None
 
+    def test_extract_opencode_wrapped_fenced_json_from_text_part(self):
+        parser = ResponseParser()
+        inner = {
+            "type": "llm_turn",
+            "assistant_message": "ok",
+            "proposals": {
+                "procedure_text": {
+                    "mode": "replace",
+                    "content": "new text"
+                }
+            }
+        }
+        wrapped = {
+            "parts": [
+                {"type": "step-start"},
+                {"type": "text", "text": "```json\n" + json.dumps(inner) + "\n```"}
+            ]
+        }
+        result = parser._extract_json(json.dumps(wrapped))
+        assert result is not None
+        assert json.loads(result)["type"] == "llm_turn"
+
+    def test_extract_opencode_wrapped_json_from_reasoning_text(self):
+        parser = ResponseParser()
+        inner = {
+            "type": "llm_turn",
+            "assistant_message": "ok"
+        }
+        wrapped = {
+            "parts": [
+                {"type": "reasoning", "text": json.dumps(inner)}
+            ]
+        }
+        result = parser._extract_json(json.dumps(wrapped))
+        assert result is not None
+        assert json.loads(result)["assistant_message"] == "ok"
+
 class TestResponseParserParsing:
     def test_parse_valid_response(self, sample_llm_response_json):
         parser = ResponseParser()

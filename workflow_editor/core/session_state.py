@@ -72,6 +72,11 @@ class SessionState:
     artifact_hashes: dict[str, str] = field(default_factory=dict)
     artifact_timestamps: dict[str, str] = field(default_factory=dict)
     
+    # JSON ↔ Code coherence tracking
+    # False when one of procedure.json / test.py was saved without the other.
+    # User must explicitly acknowledge to set back to True.
+    artifacts_in_sync: bool = True
+    
     # File path
     _file_path: Optional[Path] = field(default=None, repr=False)
     
@@ -115,6 +120,7 @@ class SessionState:
             "validation_issues": self.validation_issues,
             "artifact_hashes": self.artifact_hashes,
             "artifact_timestamps": self.artifact_timestamps,
+            "artifacts_in_sync": self.artifacts_in_sync,
         }
     
     def _from_dict(self, data: dict[str, Any]) -> None:
@@ -143,6 +149,7 @@ class SessionState:
         self.validation_issues = vi
         self.artifact_hashes = data.get("artifact_hashes", {})
         self.artifact_timestamps = data.get("artifact_timestamps", {})
+        self.artifacts_in_sync = data.get("artifacts_in_sync", True)
     
     def apply_delta(self, delta: dict[str, Any]) -> None:
         """Apply a session_delta from an LLM response."""
@@ -244,3 +251,4 @@ class SessionState:
         self.last_check_timestamp = None
         self.artifact_hashes = {}
         self.artifact_timestamps = {}
+        self.artifacts_in_sync = True

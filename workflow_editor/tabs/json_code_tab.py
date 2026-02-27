@@ -230,7 +230,7 @@ class JsonCodeTab(BaseTab):
             content = self.json_editor.toPlainText()
             self.artifact_manager.set_content(ArtifactType.PROCEDURE_JSON, content)
             self.artifact_manager.save_artifact(ArtifactType.PROCEDURE_JSON)
-            self.tab_context.mark_artifact_modified("procedure_json")
+            self.artifact_manager.procedure_json.mark_clean()
             self._json_dirty = False
             self._update_json_status()
             self.status_message.emit("JSON saved successfully")
@@ -243,7 +243,7 @@ class JsonCodeTab(BaseTab):
             content = self.code_editor.toPlainText()
             self.artifact_manager.set_content(ArtifactType.TEST_CODE, content)
             self.artifact_manager.save_artifact(ArtifactType.TEST_CODE)
-            self.tab_context.mark_artifact_modified("test_code")
+            self.artifact_manager.test_code.mark_clean()
             self._code_dirty = False
             self._update_code_status()
             self.status_message.emit("Code saved successfully")

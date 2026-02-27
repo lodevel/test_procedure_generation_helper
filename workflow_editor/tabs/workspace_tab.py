@@ -5,9 +5,12 @@ Implements Section 9.1 of the spec.
 """
 
 from pathlib import Path
+import json
+import logging
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QSplitter, QListWidget, QListWidgetItem,
-    QPushButton, QLabel, QFileDialog, QGroupBox, QFrame, QInputDialog
+    QPushButton, QLabel, QFileDialog, QGroupBox, QFrame, QInputDialog,
+    QMenu, QMessageBox
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QBrush
@@ -29,6 +32,7 @@ class WorkspaceTab(BaseTab):
     # Signals
     test_selected = Signal(Path)  # Emitted when a test is selected
     test_opened = Signal(Path)    # Emitted when a test should be opened
+    test_deleted = Signal(Path)   # Emitted when a test folder was deleted
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -41,6 +45,8 @@ class WorkspaceTab(BaseTab):
         self.test_list = QListWidget()
         self.test_list.itemSelectionChanged.connect(self._on_test_selection_changed)
         self.test_list.itemDoubleClicked.connect(self._on_test_double_clicked)
+        self.test_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.test_list.customContextMenuRequested.connect(self._on_context_menu)
         list_layout.addWidget(self.test_list)
         
         # New test button
@@ -65,6 +71,9 @@ class WorkspaceTab(BaseTab):
             item.setData(Qt.UserRole, info.path)
             item.setData(Qt.UserRole + 1, info)  # Store info for later
             
+            # Check sync status from session file
+            out_of_sync = self._is_test_out_of_sync(info.path)
+            
             # Build display text with indicators
             indicators = []
             if info.has_text:
@@ -75,10 +84,13 @@ class WorkspaceTab(BaseTab):
                 indicators.append("C")
             
             indicator_str = f"[{'/'.join(indicators)}]" if indicators else "[empty]"
-            item.setText(f"{info.name}  {indicator_str}")
+            sync_flag = "\u26a0\ufe0f " if out_of_sync else ""
+            item.setText(f"{sync_flag}{info.name}  {indicator_str}")
             
             # Color based on state
-            if not indicators:
+            if out_of_sync:
+                item.setForeground(QColor(255, 165, 0))  # Orange for out-of-sync
+            elif not indicators:
                 item.setForeground(QColor(150, 150, 150))
             elif info.has_json and info.has_code:
                 item.setForeground(QColor(0, 150, 0))
@@ -92,6 +104,22 @@ class WorkspaceTab(BaseTab):
             if item.data(Qt.UserRole) == path:
                 self.test_list.setCurrentItem(item)
                 break
+    
+    @staticmethod
+    def _is_test_out_of_sync(test_path: Path) -> bool:
+        """Check if a test's artifacts are out of sync by reading its session file.
+        
+        Reads .llm_session.json and checks the artifacts_in_sync flag.
+        Returns False (in sync) if the file doesn't exist or can't be read.
+        """
+        session_file = test_path / ".llm_session.json"
+        if not session_file.exists():
+            return False
+        try:
+            data = json.loads(session_file.read_text(encoding="utf-8"))
+            return not data.get("artifacts_in_sync", True)
+        except Exception:
+            return False
     
     def set_opened_test(self, path: Path):
         """Set the currently opened test and highlight it."""
@@ -113,7 +141,10 @@ class WorkspaceTab(BaseTab):
                 # Restore original colors for non-opened tests
                 item.setBackground(QBrush())
                 info = item.data(Qt.UserRole + 1)
-                if info:
+                out_of_sync = self._is_test_out_of_sync(item_path)
+                if out_of_sync:
+                    item.setForeground(QColor(255, 165, 0))  # Orange
+                elif info:
                     if not info.has_text and not info.has_json and not info.has_code:
                         item.setForeground(QColor(150, 150, 150))
                     elif info.has_json and info.has_code:
@@ -132,6 +163,67 @@ class WorkspaceTab(BaseTab):
         """Handle test double-click to open."""
         path = item.data(Qt.UserRole)
         self.test_opened.emit(path)
+    
+    def _on_context_menu(self, position):
+        """Show context menu for test list."""
+        item = self.test_list.itemAt(position)
+        if not item:
+            return
+        
+        path = item.data(Qt.UserRole)
+        if not path:
+            return
+        
+        menu = QMenu(self)
+        
+        open_action = menu.addAction("Open")
+        menu.addSeparator()
+        delete_action = menu.addAction("Delete Test...")
+        delete_action.setToolTip("Permanently delete this test folder and all its contents")
+        
+        action = menu.exec(self.test_list.mapToGlobal(position))
+        
+        if action == open_action:
+            self.test_opened.emit(path)
+        elif action == delete_action:
+            self._delete_test(path)
+    
+    def _delete_test(self, path: Path):
+        """Delete a test folder after confirmation."""
+        import shutil
+        
+        # Count files for the confirmation message
+        files = list(path.iterdir()) if path.is_dir() else []
+        file_count = len([f for f in files if f.is_file()])
+        
+        result = QMessageBox.warning(
+            self,
+            "Delete Test",
+            f"Permanently delete test '{path.name}'?\n\n"
+            f"This will remove the folder and all {file_count} file(s) inside it.\n\n"
+            "This cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if result != QMessageBox.Yes:
+            return
+        
+        try:
+            shutil.rmtree(path)
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Delete Failed",
+                f"Could not delete '{path.name}':\n{e}"
+            )
+            return
+        
+        # Emit signal so main window can clear editors if needed
+        self.test_deleted.emit(path)
+        
+        # Refresh the list
+        self.refresh()
     
     def _on_create_new_test(self):
         """Create a new test folder."""

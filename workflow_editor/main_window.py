@@ -473,6 +473,13 @@ class MainWindow(QMainWindow):
         clean_action.triggered.connect(self._on_clean)
         edit_menu.addAction(clean_action)
         
+        edit_menu.addSeparator()
+        
+        self.mark_sync_action = QAction("Mark Artifacts In &Sync", self)
+        self.mark_sync_action.setToolTip("Acknowledge that procedure.json and test.py are coherent")
+        self.mark_sync_action.triggered.connect(self._on_sync_indicator_clicked)
+        edit_menu.addAction(self.mark_sync_action)
+        
         # View menu
         view_menu = menubar.addMenu("&View")
         
@@ -501,6 +508,7 @@ class MainWindow(QMainWindow):
         """Setup central widget with tabs."""
         # Tab widget (no container needed)
         self.tab_widget = QTabWidget()
+        self._previous_tab_index = 0
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
         
         # Create tabs (workspace moved to dock)
@@ -521,6 +529,7 @@ class MainWindow(QMainWindow):
         # Create workspace widget
         self.workspace_widget = WorkspaceTab(self)
         self.workspace_widget.test_opened.connect(self._on_test_opened)
+        self.workspace_widget.test_deleted.connect(self._on_test_deleted)
         
         # Create dock widget
         self.workspace_dock = QDockWidget("Workspace", self)
@@ -613,6 +622,13 @@ class MainWindow(QMainWindow):
         
         self.code_indicator = QLabel("Code ⚪")
         row1_layout.addWidget(self.code_indicator)
+        
+        row1_layout.addWidget(QLabel(" | "))
+        
+        self.sync_indicator = ClickableLabel("Sync ✅")
+        self.sync_indicator.setToolTip("JSON ↔ Code coherence status. Click to acknowledge sync.")
+        self.sync_indicator.clicked.connect(self._on_sync_indicator_clicked)
+        row1_layout.addWidget(self.sync_indicator)
         
         layout.addWidget(row1)
         
@@ -708,6 +724,8 @@ class MainWindow(QMainWindow):
             self.text_indicator.setText(f"Text {circle}")
             self.json_indicator.setText(f"JSON {circle}")
             self.code_indicator.setText(f"Code {circle}")
+            self.sync_indicator.setText("Sync \u26aa")
+            self.sync_indicator.setToolTip("No test loaded")
             self._update_project_rules_indicators()
             return
         
@@ -723,6 +741,9 @@ class MainWindow(QMainWindow):
         self.json_indicator.setText(f"JSON {check if json_ok else circle}")
         self.code_indicator.setText(f"Code {check if code_ok else circle}")
         
+        # Update sync indicator
+        self._update_sync_indicator()
+        
         # Also update project/rules indicators
         self._update_project_rules_indicators()
     
@@ -730,20 +751,113 @@ class MainWindow(QMainWindow):
         """Update menu items based on artifact availability."""
         pass
     
+    def _update_sync_indicator(self):
+        """Update the JSON\u2194Code sync indicator in the status bar."""
+        if not self.session_state:
+            self.sync_indicator.setText("Sync \u26aa")
+            self.sync_indicator.setToolTip("No test loaded")
+            return
+        
+        if self.session_state.artifacts_in_sync:
+            self.sync_indicator.setText("Sync \u2705")
+            self.sync_indicator.setToolTip(
+                "procedure.json and test.py are in sync.\n"
+                "Click to view status."
+            )
+        else:
+            self.sync_indicator.setText("Sync \u26a0\ufe0f")
+            self.sync_indicator.setToolTip(
+                "procedure.json and test.py may be out of sync!\n"
+                "One was modified without the other.\n"
+                "Click to acknowledge sync."
+            )
+    
+    def _on_sync_indicator_clicked(self):
+        """Handle click on the sync indicator."""
+        if not self.session_state:
+            return
+        
+        if self.session_state.artifacts_in_sync:
+            QMessageBox.information(
+                self,
+                "Artifacts In Sync",
+                "procedure.json and test.py are currently marked as in sync."
+            )
+            return
+        
+        result = QMessageBox.question(
+            self,
+            "Acknowledge Sync",
+            "procedure.json and test.py are currently marked as OUT OF SYNC.\n\n"
+            "One was modified without the other during this session.\n\n"
+            "Are you sure both artifacts are now coherent?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if result == QMessageBox.Yes:
+            self.session_state.artifacts_in_sync = True
+            self.artifact_manager.reset_saved_tracking()
+            self.session_state.save()
+            self._update_sync_indicator()
+            self.workspace_widget.refresh()
+            self.status_bar.showMessage("Artifacts marked as in sync", 2000)
+    
+    def _check_artifact_coherence(self) -> bool:
+        """Check if JSON and Code artifacts are in sync and warn if not.
+        
+        Returns:
+            True if the user cancelled (caller should abort), False otherwise.
+        """
+        if not self.session_state or self.session_state.artifacts_in_sync:
+            return False
+        
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("\u26a0\ufe0f Artifacts Out of Sync")
+        msg.setText(
+            "procedure.json and test.py may be out of sync!\n\n"
+            "One was modified without the other. The test code may not\n"
+            "match the procedure definition."
+        )
+        
+        mark_sync_btn = msg.addButton("They are in sync \u2714", QMessageBox.AcceptRole)
+        continue_btn = msg.addButton("Continue anyway", QMessageBox.DestructiveRole)
+        go_back_btn = msg.addButton("Go back and review", QMessageBox.RejectRole)
+        msg.setDefaultButton(go_back_btn)
+        
+        msg.exec()
+        clicked = msg.clickedButton()
+        
+        if clicked == mark_sync_btn:
+            self.session_state.artifacts_in_sync = True
+            self.artifact_manager.reset_saved_tracking()
+            self.session_state.save()
+            self._update_sync_indicator()
+            self.workspace_widget.refresh()
+            return False
+        elif clicked == go_back_btn:
+            return True  # User wants to go back and review
+        else:
+            # Continue anyway \u2014 leave out-of-sync flag
+            return False
+    
     # ==================== Event Handlers ====================
     
     def _on_tab_changed(self, index: int):
         """Handle tab change."""
-        # Sync and notify deactivating tabs
-        for i in range(self.tab_widget.count()):
-            tab = self.tab_widget.widget(i)
-            if i != index:
-                # Sync editor content to artifact_manager before deactivating
-                # so the arriving tab sees up-to-date shared artifacts (e.g. JSON)
-                if hasattr(tab, 'sync_editors_to_artifacts'):
-                    tab.sync_editors_to_artifacts()
-                if hasattr(tab, 'on_deactivated'):
-                    tab.on_deactivated()
+        # Only sync the PREVIOUSLY active tab (the one being deactivated).
+        # We must not sync all non-current tabs, as they may hold stale
+        # content for shared artifacts (e.g. procedure.json).
+        if hasattr(self, '_previous_tab_index'):
+            prev_tab = self.tab_widget.widget(self._previous_tab_index)
+            if prev_tab is not None and prev_tab != self.tab_widget.widget(index):
+                if hasattr(prev_tab, 'sync_editors_to_artifacts'):
+                    prev_tab.sync_editors_to_artifacts()
+                if hasattr(prev_tab, 'on_deactivated'):
+                    prev_tab.on_deactivated()
+        
+        self._previous_tab_index = index
         
         tab = self.tab_widget.widget(index)
         if hasattr(tab, 'on_activated') and self.artifact_manager is not None:
@@ -771,6 +885,10 @@ class MainWindow(QMainWindow):
         if self.artifact_manager and self._check_unsaved_changes():
             return  # User cancelled
         
+        # Check artifact coherence before switching away
+        if self.artifact_manager and self._check_artifact_coherence():
+            return  # User wants to review
+        
         # Save current session state (includes validation_issues) before switching
         if hasattr(self, 'session_state') and self.session_state and self.session_state._file_path:
             try:
@@ -782,6 +900,9 @@ class MainWindow(QMainWindow):
         self.artifact_manager = ArtifactManager()
         self.artifact_manager.set_test_dir(path)
         self.artifact_manager.load_all()  # Load existing files from disk
+        
+        # Reset saved-type tracking for coherence detection
+        self.artifact_manager.reset_saved_tracking()
         
         # Initialize session state (empty, not with path)
         self.session_state = SessionState()
@@ -830,16 +951,47 @@ class MainWindow(QMainWindow):
         # Refresh session viewer
         self.dock.refresh_session()
         
-        # Switch to appropriate tab based on what exists
-        if self.artifact_manager.procedure_json.exists_on_disk:
-            self.tab_widget.setCurrentWidget(self.json_code_tab)
-        elif self.artifact_manager.procedure_text.exists_on_disk:
-            self.tab_widget.setCurrentWidget(self.text_json_tab)
-        else:
-            self.tab_widget.setCurrentWidget(self.text_json_tab)
+        # Switch to appropriate tab only on first test load.
+        # When switching between tests, preserve the user's current tab.
+        if not hasattr(self, '_has_opened_test'):
+            self._has_opened_test = True
+            if self.artifact_manager.procedure_json.exists_on_disk:
+                self.tab_widget.setCurrentWidget(self.json_code_tab)
+            elif self.artifact_manager.procedure_text.exists_on_disk:
+                self.tab_widget.setCurrentWidget(self.text_json_tab)
+            else:
+                self.tab_widget.setCurrentWidget(self.text_json_tab)
         
         # The _on_tab_changed handler will call switch_context automatically
         # So we don't need to explicitly call it here - it's handled by the tab change event
+    
+    def _on_test_deleted(self, path: Path):
+        """Handle a test folder being deleted."""
+        log.info(f"Test deleted: {path}")
+        
+        # If the deleted test was the currently opened one, clear everything
+        if self.artifact_manager and self.artifact_manager.test_dir == path:
+            self.artifact_manager = None
+            self.session_state = None
+            
+            # Clear editors
+            self.text_json_tab.text_editor.clear()
+            self.text_json_tab.json_editor.clear()
+            self.json_code_tab.json_editor.clear()
+            self.json_code_tab.code_editor.clear()
+            
+            # Disable tabs and dock
+            self.tab_widget.setEnabled(False)
+            self.dock.setEnabled(False)
+            
+            # Reset status
+            self.test_label.setText("No test loaded")
+            self._update_status_indicators()
+            
+            # Clear opened test highlight
+            self.workspace_widget.set_opened_test(None)
+        
+        self.status_bar.showMessage(f"Deleted test: {path.name}", 3000)
     
     def _update_llm_status(self):
         """Update status bar with LLM backend information."""
@@ -1075,27 +1227,68 @@ class MainWindow(QMainWindow):
             # Fallback for tabs without editors
             self.artifact_manager.save_all()
         
+        # Check if JSON/Code pair coherence is broken
+        self._check_and_update_sync_state()
+        
         self._update_status_indicators()
         # Refresh workspace test list to update artifact indicators
         self.workspace_widget.refresh()
         self.status_bar.showMessage("Saved", 2000)
     
+    def _check_and_update_sync_state(self):
+        """Check if only one of JSON/Code was saved and update sync state.
+        
+        Called after any save operation. If one of the JSON/Code pair was
+        saved without the other during this session, marks the session as
+        out-of-sync.
+        """
+        if not self.artifact_manager or not self.session_state:
+            return
+        
+        if self.artifact_manager.json_or_code_saved_alone():
+            if self.session_state.artifacts_in_sync:
+                self.session_state.artifacts_in_sync = False
+                self.session_state.save()
+                log.info("Artifacts marked out of sync: only one of JSON/Code was saved")
+        else:
+            # Both were saved (or neither) — if both saved, mark back in sync
+            json_saved = ArtifactType.PROCEDURE_JSON in self.artifact_manager._saved_types
+            code_saved = ArtifactType.TEST_CODE in self.artifact_manager._saved_types
+            if json_saved and code_saved and not self.session_state.artifacts_in_sync:
+                self.session_state.artifacts_in_sync = True
+                self.session_state.save()
+                log.info("Artifacts marked back in sync: both JSON and Code were saved")
+    
     def _on_save_all(self):
         """Save all dirty artifacts across all tabs.
         
-        Syncs all tab editors first, then saves via each tab's
-        save_all_artifacts() to properly reset dirty flags.
+        Syncs only the current tab's editors (to avoid stale content from
+        inactive tabs overwriting shared artifacts), then saves all dirty
+        artifacts via the ArtifactManager, and reloads all tabs so their
+        editors and dirty flags reflect the saved state.
         """
         if not self.artifact_manager:
             return
         
-        # Save via each tab (sync + save + reset dirty + update status)
+        # Sync only the current tab — inactive tabs may hold stale content
+        # for shared artifacts like procedure.json
+        current_tab = self.tab_widget.currentWidget()
+        if hasattr(current_tab, 'sync_editors_to_artifacts'):
+            current_tab.sync_editors_to_artifacts()
+        
+        # Save all dirty artifacts via artifact manager (single source of truth)
+        self.artifact_manager.save_all()
+        
+        # Reload all tabs so editors + dirty flags reflect saved state
         for tab in self._get_llm_tabs():
-            if hasattr(tab, 'save_all_artifacts'):
-                tab.save_all_artifacts()
+            if hasattr(tab, 'load_content'):
+                tab.load_content()
         
         if self.session_state:
             self.session_state.save()
+        
+        # Check if JSON/Code pair coherence is broken
+        self._check_and_update_sync_state()
         
         # Update indicators after save
         self._update_status_indicators()
@@ -1106,7 +1299,10 @@ class MainWindow(QMainWindow):
     def _check_unsaved_changes(self) -> bool:
         """Check for unsaved changes and prompt user.
         
-        Syncs editors first, then checks artifact dirty state.
+        Syncs only the current tab's editors, then checks artifact dirty state.
+        We must NOT sync inactive tabs because their editors may hold stale
+        content for shared artifacts (e.g. procedure.json) and would overwrite
+        the artifact manager's correct state.
         
         Returns:
             True if the user cancelled (caller should abort), False otherwise
@@ -1114,10 +1310,11 @@ class MainWindow(QMainWindow):
         if not self.artifact_manager:
             return False
         
-        # Sync editors to catch un-saved editor changes
-        for tab in self._get_llm_tabs():
-            if hasattr(tab, 'sync_editors_to_artifacts'):
-                tab.sync_editors_to_artifacts()
+        # Sync only the CURRENT tab to catch un-saved editor changes.
+        # Inactive tabs may have stale content for shared artifacts.
+        current_tab = self.tab_widget.currentWidget()
+        if hasattr(current_tab, 'sync_editors_to_artifacts'):
+            current_tab.sync_editors_to_artifacts()
         
         dirty = []
         if self.artifact_manager.is_dirty(ArtifactType.PROCEDURE_JSON):
@@ -1164,7 +1361,7 @@ class MainWindow(QMainWindow):
             return
         
         deleted = CleanDialog.clean_test_folder(
-            self.artifact_manager.test_folder,
+            self.artifact_manager.test_dir,
             self
         )
         
@@ -1848,6 +2045,11 @@ class MainWindow(QMainWindow):
         
         # Check for unsaved changes (syncs editors + prompts)
         if self._check_unsaved_changes():
+            event.ignore()
+            return
+        
+        # Check artifact coherence before closing
+        if self._check_artifact_coherence():
             event.ignore()
             return
         

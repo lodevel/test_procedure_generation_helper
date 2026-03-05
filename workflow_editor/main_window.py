@@ -940,6 +940,7 @@ class MainWindow(QMainWindow):
         # Refresh tabs
         self.text_json_tab.load_content()
         self.json_code_tab.load_content()
+        self.traceability_tab.refresh()
         
         # Refresh dock panels with session data
         self.dock.refresh_session()

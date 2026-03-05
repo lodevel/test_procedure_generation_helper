@@ -75,7 +75,7 @@ class DiffViewer(QDialog):
         layout.addLayout(header)
         
         # Splitter for side-by-side view
-        splitter = QSplitter(Qt.Horizontal)
+        h_splitter = QSplitter(Qt.Horizontal)
         
         # Original
         from PySide6.QtWidgets import QGroupBox
@@ -86,7 +86,7 @@ class DiffViewer(QDialog):
         self.original_view.setReadOnly(True)
         self.original_view.setPlainText(self._original)
         original_layout.addWidget(self.original_view)
-        splitter.addWidget(original_group)
+        h_splitter.addWidget(original_group)
         
         # Proposed
         proposed_group = QGroupBox("Proposed")
@@ -96,9 +96,7 @@ class DiffViewer(QDialog):
         self.proposed_view.setReadOnly(True)
         self.proposed_view.setPlainText(self._proposed)
         proposed_layout.addWidget(self.proposed_view)
-        splitter.addWidget(proposed_group)
-        
-        layout.addWidget(splitter, stretch=1)
+        h_splitter.addWidget(proposed_group)
         
         # Unified diff view
         diff_group = QGroupBox("Unified Diff")
@@ -116,8 +114,15 @@ class DiffViewer(QDialog):
         self.diff_view.setPlainText(diff_text)
         
         diff_layout.addWidget(self.diff_view)
-        diff_group.setMaximumHeight(200)
-        layout.addWidget(diff_group)
+        
+        # Vertical splitter: side-by-side on top, unified diff on bottom
+        v_splitter = QSplitter(Qt.Vertical)
+        v_splitter.addWidget(h_splitter)
+        v_splitter.addWidget(diff_group)
+        v_splitter.setStretchFactor(0, 2)
+        v_splitter.setStretchFactor(1, 1)
+        
+        layout.addWidget(v_splitter, stretch=1)
         
         # Stats
         stats = self._calculate_stats()

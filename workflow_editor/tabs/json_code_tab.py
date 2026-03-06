@@ -234,6 +234,7 @@ class JsonCodeTab(BaseTab):
             self._json_dirty = False
             self._update_json_status()
             self.status_message.emit("JSON saved successfully")
+            self.artifact_saved.emit()
         except Exception as e:
             self.show_error("Save Failed", str(e))
     
@@ -247,6 +248,7 @@ class JsonCodeTab(BaseTab):
             self._code_dirty = False
             self._update_code_status()
             self.status_message.emit("Code saved successfully")
+            self.artifact_saved.emit()
         except Exception as e:
             self.show_error("Save Failed", str(e))
     

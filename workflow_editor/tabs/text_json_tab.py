@@ -216,6 +216,7 @@ class TextJsonTab(BaseTab):
             self._text_dirty = False
             self._update_text_status()
             self.status_message.emit("Text saved successfully")
+            self.artifact_saved.emit()
         except Exception as e:
             self.show_error("Save Failed", str(e))
     
@@ -229,6 +230,7 @@ class TextJsonTab(BaseTab):
             self._json_dirty = False
             self._update_json_status()
             self.status_message.emit("JSON saved successfully")
+            self.artifact_saved.emit()
         except Exception as e:
             self.show_error("Save Failed", str(e))
     

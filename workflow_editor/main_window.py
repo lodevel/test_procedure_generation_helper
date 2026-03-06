@@ -517,6 +517,11 @@ class MainWindow(QMainWindow):
         self.json_code_tab = JsonCodeTab(self)
         self.traceability_tab = TraceabilityTab(self)
         
+        # Connect artifact_saved signals so per-tab save buttons
+        # trigger the sync check and status indicator update
+        for tab in (self.text_json_tab, self.json_code_tab, self.traceability_tab):
+            tab.artifact_saved.connect(self._on_tab_artifact_saved)
+        
         # Add tabs in workflow order: Text-JSON → JSON-Code → Traceability
         self.tab_widget.addTab(self.text_json_tab, "Text-JSON")
         self.tab_widget.addTab(self.json_code_tab, "JSON-Code")
@@ -908,6 +913,9 @@ class MainWindow(QMainWindow):
         self.session_state = SessionState()
         self.session_state.set_file_path(path)
         self.session_state.load()  # Load existing session data from disk if it exists
+
+        # Check for external edits since last session
+        self._check_for_external_changes()
         
         # ChatHistoryManager removed: chat history is now per-tab only
         
@@ -1230,11 +1238,54 @@ class MainWindow(QMainWindow):
         
         # Check if JSON/Code pair coherence is broken
         self._check_and_update_sync_state()
+        self._update_artifact_hashes()
         
         self._update_status_indicators()
         # Refresh workspace test list to update artifact indicators
         self.workspace_widget.refresh()
         self.status_bar.showMessage("Saved", 2000)
+    
+    def _update_artifact_hashes(self):
+        """Recompute and persist artifact content hashes in the session file."""
+        if not self.artifact_manager or not self.session_state:
+            return
+        self.session_state.artifact_hashes = self.artifact_manager.compute_hashes()
+        self.session_state.save()
+
+    def _check_for_external_changes(self):
+        """Detect files edited outside the workflow editor since the last save.
+
+        Compares stored hashes (from .llm_session.json) against current disk
+        content.  If any canonical artifact changed, marks artifacts out of
+        sync, notifies the user, and refreshes the stored hashes.
+        """
+        if not self.artifact_manager or not self.session_state:
+            return
+        stored = self.session_state.artifact_hashes
+        if not stored:
+            # First open or legacy session — seed hashes without warning
+            self.session_state.artifact_hashes = self.artifact_manager.compute_hashes()
+            self.session_state.save()
+            return
+        changed = self.artifact_manager.check_external_changes(stored)
+        if changed:
+            names = ", ".join(changed)
+            log.info(f"External changes detected in: {names}")
+            self.session_state.artifacts_in_sync = False
+            # Update hashes to the new disk content so we don't warn again
+            self.session_state.artifact_hashes = self.artifact_manager.compute_hashes()
+            self.session_state.save()
+    
+    def _on_tab_artifact_saved(self):
+        """Handle artifact_saved signal from any tab's per-button save.
+        
+        Ensures the sync state and UI indicators are updated regardless of
+        whether the user used Ctrl+S or a per-tab save button.
+        """
+        self._check_and_update_sync_state()
+        self._update_artifact_hashes()
+        self._update_status_indicators()
+        self.workspace_widget.refresh()
     
     def _check_and_update_sync_state(self):
         """Check if only one of JSON/Code was saved and update sync state.
@@ -1290,6 +1341,7 @@ class MainWindow(QMainWindow):
         
         # Check if JSON/Code pair coherence is broken
         self._check_and_update_sync_state()
+        self._update_artifact_hashes()
         
         # Update indicators after save
         self._update_status_indicators()

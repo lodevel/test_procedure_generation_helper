@@ -10,6 +10,7 @@ Tool-generated:
 - .llm_session.json (session state)
 """
 
+import hashlib
 import json
 import os
 import tempfile
@@ -285,3 +286,50 @@ class ArtifactManager:
         json_saved = ArtifactType.PROCEDURE_JSON in self._saved_types
         code_saved = ArtifactType.TEST_CODE in self._saved_types
         return json_saved != code_saved
+
+    # ---- Content hashing for external-change detection ----
+
+    @staticmethod
+    def _hash_content(content: str) -> str:
+        """Compute a SHA-256 hex digest of content."""
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    def compute_hashes(self) -> dict[str, str]:
+        """Compute hashes for all loaded canonical artifacts.
+
+        Returns a dict keyed by artifact file name (e.g. 'procedure.json').
+        Only includes artifacts that have non-empty content.
+        """
+        hashes: dict[str, str] = {}
+        mapping = {
+            self.PROCEDURE_JSON_NAME: self.procedure_json,
+            self.TEST_CODE_NAME: self.test_code,
+        }
+        for name, artifact in mapping.items():
+            if artifact.content:
+                hashes[name] = self._hash_content(artifact.content)
+        return hashes
+
+    def check_external_changes(self, stored_hashes: dict[str, str]) -> list[str]:
+        """Compare current on-disk content against stored hashes.
+
+        Returns a list of file names whose disk content differs from the
+        stored hash (i.e. were edited externally since last save/load).
+        """
+        changed: list[str] = []
+        mapping = {
+            self.PROCEDURE_JSON_NAME: self.procedure_json,
+            self.TEST_CODE_NAME: self.test_code,
+        }
+        for name, artifact in mapping.items():
+            if not artifact.exists_on_disk:
+                continue
+            try:
+                disk_content = artifact.file_path.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            disk_hash = self._hash_content(disk_content)
+            stored = stored_hashes.get(name)
+            if stored and disk_hash != stored:
+                changed.append(name)
+        return changed

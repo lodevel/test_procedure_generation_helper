@@ -33,6 +33,7 @@ class BaseTab(QWidget):
     # Signals
     status_message = Signal(str)  # Emit status bar messages
     content_changed = Signal()     # Emit when content is modified
+    artifact_saved = Signal()      # Emit after any artifact is written to disk
     
     def __init__(self, main_window: "MainWindow", parent=None):
         super().__init__(parent)

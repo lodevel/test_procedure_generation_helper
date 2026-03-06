@@ -275,9 +275,11 @@ class TraceabilityTab(BaseTab):
         self.save_code_btn.setEnabled(True)
     
     def _on_save_code(self):
-        """Save the edited code back to the artifact."""
+        """Save the edited code back to the artifact (disk + memory)."""
         code = self.code_editor.toPlainText()
         self.artifact_manager.set_content(ArtifactType.TEST_CODE, code)
+        self.artifact_manager.save_artifact(ArtifactType.TEST_CODE)
+        self.artifact_manager.test_code.mark_clean()
         self._code_modified = False
         self.save_code_btn.setEnabled(False)
         
@@ -290,6 +292,7 @@ class TraceabilityTab(BaseTab):
         self._check_mismatches()
         
         self.line_info.setText("Code saved!")
+        self.artifact_saved.emit()
     
     def on_activated(self):
         """Called when tab becomes active."""

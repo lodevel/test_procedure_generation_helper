@@ -48,7 +48,7 @@
         "id": "generate_code_from_json",
         "name": "Generate Code from JSON",
         "button_label": "JSON → Code",
-        "prompt_template": null,
+        "prompt_template": "Task: Generate test code from procedure.json.\n\nGenerate Python test code that implements the procedure described in the JSON.\nRequirements:\n- Include # Step N markers for each step\n- Follow the equipment and measurement specifications\n- Handle errors appropriately\n- Do not touch the JSON procedure",
         "enabled": true
       },
       {

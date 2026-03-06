@@ -802,7 +802,7 @@ class MainWindow(QMainWindow):
         
         if result == QMessageBox.Yes:
             self.session_state.artifacts_in_sync = True
-            self.artifact_manager.reset_saved_tracking()
+            self.session_state.artifact_hashes = self.artifact_manager.compute_hashes()
             self.session_state.save()
             self._update_sync_indicator()
             self.workspace_widget.refresh()
@@ -836,7 +836,7 @@ class MainWindow(QMainWindow):
         
         if clicked == mark_sync_btn:
             self.session_state.artifacts_in_sync = True
-            self.artifact_manager.reset_saved_tracking()
+            self.session_state.artifact_hashes = self.artifact_manager.compute_hashes()
             self.session_state.save()
             self._update_sync_indicator()
             self.workspace_widget.refresh()
@@ -905,9 +905,6 @@ class MainWindow(QMainWindow):
         self.artifact_manager = ArtifactManager()
         self.artifact_manager.set_test_dir(path)
         self.artifact_manager.load_all()  # Load existing files from disk
-        
-        # Reset saved-type tracking for coherence detection
-        self.artifact_manager.reset_saved_tracking()
         
         # Initialize session state (empty, not with path)
         self.session_state = SessionState()
@@ -1237,27 +1234,40 @@ class MainWindow(QMainWindow):
             self.artifact_manager.save_all()
         
         # Check if JSON/Code pair coherence is broken
-        self._check_and_update_sync_state()
-        self._update_artifact_hashes()
+        self._check_sync_hashes()
         
         self._update_status_indicators()
         # Refresh workspace test list to update artifact indicators
         self.workspace_widget.refresh()
         self.status_bar.showMessage("Saved", 2000)
     
-    def _update_artifact_hashes(self):
-        """Recompute and persist artifact content hashes in the session file."""
+    def _check_sync_hashes(self):
+        """Compare current artifact content hashes against the last-acknowledged baseline.
+
+        If any canonical artifact (procedure.json, test.py) changed since the
+        user last acknowledged sync, mark artifacts as out-of-sync.  Never
+        auto-restores in-sync — only user acknowledgment does that.
+        """
         if not self.artifact_manager or not self.session_state:
             return
-        self.session_state.artifact_hashes = self.artifact_manager.compute_hashes()
-        self.session_state.save()
+        stored = self.session_state.artifact_hashes
+        if not stored:
+            # First save or legacy session — seed baseline, assume in-sync
+            self.session_state.artifact_hashes = self.artifact_manager.compute_hashes()
+            self.session_state.save()
+            return
+        current = self.artifact_manager.compute_hashes()
+        if current != stored:
+            if self.session_state.artifacts_in_sync:
+                self.session_state.artifacts_in_sync = False
+                self.session_state.save()
+                log.info("Artifacts marked out of sync: content hashes differ from acknowledged baseline")
 
     def _check_for_external_changes(self):
-        """Detect files edited outside the workflow editor since the last save.
+        """Detect files edited outside the workflow editor since the last acknowledgment.
 
         Compares stored hashes (from .llm_session.json) against current disk
-        content.  If any canonical artifact changed, marks artifacts out of
-        sync, notifies the user, and refreshes the stored hashes.
+        content.  If any canonical artifact changed, marks artifacts out of sync.
         """
         if not self.artifact_manager or not self.session_state:
             return
@@ -1272,8 +1282,6 @@ class MainWindow(QMainWindow):
             names = ", ".join(changed)
             log.info(f"External changes detected in: {names}")
             self.session_state.artifacts_in_sync = False
-            # Update hashes to the new disk content so we don't warn again
-            self.session_state.artifact_hashes = self.artifact_manager.compute_hashes()
             self.session_state.save()
     
     def _on_tab_artifact_saved(self):
@@ -1282,34 +1290,9 @@ class MainWindow(QMainWindow):
         Ensures the sync state and UI indicators are updated regardless of
         whether the user used Ctrl+S or a per-tab save button.
         """
-        self._check_and_update_sync_state()
-        self._update_artifact_hashes()
+        self._check_sync_hashes()
         self._update_status_indicators()
         self.workspace_widget.refresh()
-    
-    def _check_and_update_sync_state(self):
-        """Check if only one of JSON/Code was saved and update sync state.
-        
-        Called after any save operation. If one of the JSON/Code pair was
-        saved without the other during this session, marks the session as
-        out-of-sync.
-        """
-        if not self.artifact_manager or not self.session_state:
-            return
-        
-        if self.artifact_manager.json_or_code_saved_alone():
-            if self.session_state.artifacts_in_sync:
-                self.session_state.artifacts_in_sync = False
-                self.session_state.save()
-                log.info("Artifacts marked out of sync: only one of JSON/Code was saved")
-        else:
-            # Both were saved (or neither) — if both saved, mark back in sync
-            json_saved = ArtifactType.PROCEDURE_JSON in self.artifact_manager._saved_types
-            code_saved = ArtifactType.TEST_CODE in self.artifact_manager._saved_types
-            if json_saved and code_saved and not self.session_state.artifacts_in_sync:
-                self.session_state.artifacts_in_sync = True
-                self.session_state.save()
-                log.info("Artifacts marked back in sync: both JSON and Code were saved")
     
     def _on_save_all(self):
         """Save all dirty artifacts across all tabs.
@@ -1339,9 +1322,8 @@ class MainWindow(QMainWindow):
         if self.session_state:
             self.session_state.save()
         
-        # Check if JSON/Code pair coherence is broken
-        self._check_and_update_sync_state()
-        self._update_artifact_hashes()
+        # Check if artifacts changed from the acknowledged baseline
+        self._check_sync_hashes()
         
         # Update indicators after save
         self._update_status_indicators()

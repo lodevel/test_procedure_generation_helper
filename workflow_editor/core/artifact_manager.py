@@ -82,9 +82,6 @@ class ArtifactManager:
     PROCEDURE_TEXT_NAME = "procedure_text.md"
     SESSION_FILE_NAME = ".llm_session.json"
     
-    # Track which artifact types were saved this session (for coherence check)
-    _saved_types: set = field(default_factory=set)
-    
     def set_test_dir(self, test_dir: Path) -> None:
         """Set the test directory and update file paths."""
         self.test_dir = test_dir
@@ -142,7 +139,6 @@ class ArtifactManager:
         artifact.mark_clean()
         artifact.mark_needs_resync()  # Mark for resync so LLM sees manual changes
         artifact.last_modified = datetime.now()
-        self._saved_types.add(artifact_type)
     
     def save_all(self) -> list[ArtifactType]:
         """Save all dirty artifacts. Returns list of saved artifact types."""
@@ -272,22 +268,8 @@ class ArtifactManager:
                 non_canonical.append(item)
         
         return non_canonical
-    
-    def reset_saved_tracking(self) -> None:
-        """Reset the set of saved artifact types (call when loading a new test)."""
-        self._saved_types.clear()
-    
-    def json_or_code_saved_alone(self) -> bool:
-        """Check if only one of JSON/Code was saved since last reset.
-        
-        Returns True if exactly one of PROCEDURE_JSON or TEST_CODE was saved,
-        meaning the pair may be out of sync.
-        """
-        json_saved = ArtifactType.PROCEDURE_JSON in self._saved_types
-        code_saved = ArtifactType.TEST_CODE in self._saved_types
-        return json_saved != code_saved
 
-    # ---- Content hashing for external-change detection ----
+    # ---- Content hashing for sync detection ----
 
     @staticmethod
     def _hash_content(content: str) -> str:

@@ -5,6 +5,7 @@ Implements Section 9.1 of the spec.
 """
 
 from pathlib import Path
+import hashlib
 import json
 import logging
 from PySide6.QtWidgets import (
@@ -107,19 +108,52 @@ class WorkspaceTab(BaseTab):
     
     @staticmethod
     def _is_test_out_of_sync(test_path: Path) -> bool:
-        """Check if a test's artifacts are out of sync by reading its session file.
-        
-        Reads .llm_session.json and checks the artifacts_in_sync flag.
-        Returns False (in sync) if the file doesn't exist or can't be read.
+        """Check if a test's artifacts are out of sync.
+
+        First checks the ``artifacts_in_sync`` flag in ``.llm_session.json``.
+        If the flag reports in-sync, performs a live SHA-256 hash comparison
+        of the canonical artifacts (procedure.json, test.py) against the
+        stored baselines so that external edits made while the editor was
+        closed are detected immediately when the Tests list is loaded.
+
+        Returns False (in sync) if the session file doesn't exist or the
+        stored hashes are absent (first-open / legacy session).
         """
         session_file = test_path / ".llm_session.json"
         if not session_file.exists():
             return False
         try:
             data = json.loads(session_file.read_text(encoding="utf-8"))
-            return not data.get("artifacts_in_sync", True)
         except Exception:
             return False
+
+        # If the flag already says out-of-sync, trust it
+        if not data.get("artifacts_in_sync", True):
+            return True
+
+        # Perform a live hash check to catch edits made while the editor was closed
+        stored_hashes: dict = data.get("artifact_hashes", {})
+        if not stored_hashes:
+            # No baseline yet (first open or legacy session) — assume in sync
+            return False
+
+        canonical_files = ("procedure.json", "test.py")
+        for filename in canonical_files:
+            stored = stored_hashes.get(filename)
+            if not stored:
+                continue
+            file_path = test_path / filename
+            if not file_path.exists():
+                continue
+            try:
+                disk_content = file_path.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            disk_hash = hashlib.sha256(disk_content.encode("utf-8")).hexdigest()
+            if disk_hash != stored:
+                return True
+
+        return False
     
     def set_opened_test(self, path: Path):
         """Set the currently opened test and highlight it."""

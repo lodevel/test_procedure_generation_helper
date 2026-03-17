@@ -519,7 +519,7 @@ class OpenCodeBackend(LLMBackend):
             )
         
         # 4. Fetch the final complete response via GET /session/{id}/message
-        return self._fetch_final_response(session_id, request)
+        return self._fetch_final_response(session_id, request, accumulated_thinking)
     
     def _process_sse_event(
         self,
@@ -607,11 +607,17 @@ class OpenCodeBackend(LLMBackend):
                     accumulated_text.append(new_text)
                     part_snapshots[part_id] = len(part_text)
     
-    def _fetch_final_response(self, session_id: str, request: LLMRequest) -> LLMResponse:
+    def _fetch_final_response(self, session_id: str, request: LLMRequest,
+                               accumulated_thinking: Optional[list] = None) -> LLMResponse:
         """Fetch the final complete response after streaming is done.
         
         Uses GET /session/{id}/message to get all messages, then takes
         the last assistant message and formats it like the sync API response.
+        
+        Args:
+            accumulated_thinking: Thinking text chunks collected during SSE
+                streaming. Used as fallback if the parser can't extract
+                thinking from the final response JSON.
         """
         try:
             response = requests.get(
@@ -676,6 +682,11 @@ class OpenCodeBackend(LLMBackend):
             
             # Parse through the standard response parser
             llm_response = self._response_parser.parse(raw_response, request.task)
+            
+            # If the parser didn't find thinking content, use the
+            # accumulated thinking from SSE streaming
+            if not llm_response.thinking_content and accumulated_thinking:
+                llm_response.thinking_content = "".join(accumulated_thinking)
             
             # Extract token usage
             try:

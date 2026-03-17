@@ -621,9 +621,54 @@ class ChatPanel(QWidget):
         self.add_message("system", content, full_prompt=full_prompt)
     
     def add_thinking_message(self):
-        """Add a temporary 'thinking' message that can be updated."""
-        # Create a special message widget for thinking animation
-        self._thinking_widget = MessageWidget("assistant", "Thinking...")
+        """Add a temporary 'thinking' message that shows streaming content.
+        
+        Initially displays "Thinking..." which gets replaced by actual
+        reasoning content as SSE events stream in via append_thinking_text().
+        """
+        # Create a special frame for the thinking display
+        self._thinking_widget = QFrame()
+        self._thinking_widget.setFrameShape(QFrame.StyledPanel)
+        self._thinking_widget.setStyleSheet("""
+            QFrame {
+                background-color: #f5f5f5;
+                border: 1px solid #e0e0e0;
+                border-radius: 5px;
+            }
+        """)
+        
+        thinking_layout = QVBoxLayout(self._thinking_widget)
+        thinking_layout.setContentsMargins(8, 5, 8, 5)
+        thinking_layout.setSpacing(3)
+        
+        # Role header
+        role_label = QLabel("ASSISTANT")
+        role_label.setStyleSheet("font-weight: bold; font-size: 10px;")
+        thinking_layout.addWidget(role_label)
+        
+        # Thinking header with icon
+        self._thinking_header = QLabel("💭 Thinking...")
+        self._thinking_header.setStyleSheet(
+            "color: #888; font-style: italic; font-size: 10px; padding: 2px 0;"
+        )
+        thinking_layout.addWidget(self._thinking_header)
+        
+        # Streaming thinking content area (hidden until content arrives)
+        self._thinking_stream_label = QLabel("")
+        self._thinking_stream_label.setWordWrap(True)
+        self._thinking_stream_label.setTextFormat(Qt.PlainText)
+        self._thinking_stream_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._thinking_stream_label.setStyleSheet(
+            "color: #777; font-style: italic; font-size: 11px; "
+            "padding: 4px 8px; background-color: rgba(0,0,0,0.03); "
+            "border-left: 2px solid #ccc;"
+        )
+        self._thinking_stream_label.setVisible(False)
+        thinking_layout.addWidget(self._thinking_stream_label)
+        
+        # Track accumulated thinking text
+        self._thinking_stream_text = ""
+        self._thinking_has_content = False
         
         # Insert before the stretch
         self.messages_layout.insertWidget(
@@ -636,10 +681,48 @@ class ChatPanel(QWidget):
             self.scroll_area.verticalScrollBar().maximum()
         )
     
+    def append_thinking_text(self, text: str):
+        """Append streaming thinking/reasoning text to the thinking widget.
+        
+        Called from the main thread when SSE events deliver reasoning chunks.
+        """
+        if not hasattr(self, '_thinking_widget') or not self._thinking_widget:
+            return
+        
+        try:
+            # On first content, update header and show content area
+            if not self._thinking_has_content:
+                self._thinking_has_content = True
+                self._thinking_header.setText("💭 Thinking...")
+                self._thinking_stream_label.setVisible(True)
+            
+            self._thinking_stream_text += text
+            
+            # Truncate display if very long (keep last N chars for performance)
+            display_text = self._thinking_stream_text
+            max_display = 3000
+            if len(display_text) > max_display:
+                display_text = "..." + display_text[-max_display:]
+            
+            self._thinking_stream_label.setText(display_text)
+            
+            # Auto-scroll to bottom to follow the stream
+            self.scroll_area.verticalScrollBar().setValue(
+                self.scroll_area.verticalScrollBar().maximum()
+            )
+        except RuntimeError:
+            # Widget deleted during tab switch
+            pass
+    
     def update_thinking_message(self, dots: str):
         """Update the thinking message with animated dots."""
         if hasattr(self, '_thinking_widget') and self._thinking_widget:
-            self._thinking_widget.content_label.setText(f"Thinking{dots}")
+            try:
+                # Only update the dots if we haven't received streaming content yet
+                if not getattr(self, '_thinking_has_content', False):
+                    self._thinking_header.setText(f"💭 Thinking{dots}")
+            except RuntimeError:
+                pass
     
     def remove_thinking_message(self):
         """Remove the temporary thinking message."""
@@ -652,8 +735,12 @@ class ChatPanel(QWidget):
                 # C++ object already deleted during tab switch, just log
                 pass
             finally:
-                # Always clear reference
+                # Always clear references
                 self._thinking_widget = None
+                self._thinking_stream_label = None
+                self._thinking_header = None
+                self._thinking_stream_text = ""
+                self._thinking_has_content = False
     
     def set_llm_active(self, active: bool):
         """Enable/disable controls based on LLM request state."""

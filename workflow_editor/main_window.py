@@ -57,10 +57,17 @@ class ClickableLabel(QLabel):
 
 
 class LLMWorker(QThread):
-    """Worker thread for LLM requests."""
+    """Worker thread for LLM requests.
+    
+    Supports streaming mode: when the backend supports it, emits
+    thinking_chunk and text_chunk signals progressively as SSE events
+    arrive from the LLM, before the final finished signal.
+    """
     
     finished = Signal(object)  # LLMResponse
     error = Signal(str)
+    thinking_chunk = Signal(str)  # Progressive thinking/reasoning text delta
+    text_chunk = Signal(str)  # Progressive response text delta
     
     def __init__(self, backend: LLMBackend, request: LLMRequest, parent=None):
         super().__init__(parent)
@@ -72,11 +79,33 @@ class LLMWorker(QThread):
         """Request cancellation."""
         self._cancelled = True
         log.info("LLMWorker: Cancellation requested")
+        # Also cancel on the backend (supports mid-flight abort for streaming)
+        self._backend.cancel()
+    
+    def _on_thinking_chunk(self, text: str):
+        """Callback from streaming backend for thinking/reasoning chunks."""
+        if not self._cancelled:
+            self.thinking_chunk.emit(text)
+    
+    def _on_text_chunk(self, text: str):
+        """Callback from streaming backend for text response chunks."""
+        if not self._cancelled:
+            self.text_chunk.emit(text)
     
     def run(self):
         try:
             log.debug(f"LLMWorker.run() starting - backend={self._backend.__class__.__name__}, task={self._request.task}")
-            response = self._backend.send_request(self._request)
+            
+            # Use streaming if backend supports it
+            if hasattr(self._backend, 'send_request_streaming'):
+                log.debug("LLMWorker: Using streaming send_request")
+                response = self._backend.send_request_streaming(
+                    self._request,
+                    thinking_callback=self._on_thinking_chunk,
+                    text_callback=self._on_text_chunk,
+                )
+            else:
+                response = self._backend.send_request(self._request)
             
             # Check if cancelled before emitting
             if self._cancelled:

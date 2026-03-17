@@ -450,6 +450,10 @@ class JsonCodeTab(BaseTab):
         self._worker = LLMWorker(self.tab_context.backend, request, parent=self)
         self._worker.finished.connect(self._handle_llm_response)
         self._worker.error.connect(self._handle_llm_error)
+        # Connect streaming signals for progressive thinking display
+        self._worker.thinking_chunk.connect(
+            self.main_window.dock.chat_panel.append_thinking_text
+        )
         self._worker.start()
         
         self.status_message.emit(f"Running {task.name}...")

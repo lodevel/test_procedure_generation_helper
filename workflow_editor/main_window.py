@@ -903,6 +903,19 @@ class MainWindow(QMainWindow):
             self.dock.session_viewer.switch_context(tab.tab_context)
             self.dock.raw_viewer.switch_context(tab.tab_context)
             # Findings are per-test (session_state), no context switch needed
+            
+            # If this tab has a running LLM worker, restore in-flight UI
+            worker = getattr(tab, '_worker', None)
+            if worker and worker.isRunning():
+                self.dock.chat_panel.add_thinking_message()
+                self.dock.chat_panel.set_llm_active(True)
+                # Reconnect streaming signals to the restored thinking widget
+                worker.thinking_chunk.connect(
+                    self.dock.chat_panel.append_thinking_text
+                )
+                worker.text_chunk.connect(
+                    self.dock.chat_panel.append_response_text
+                )
         
         # Update save action label to be context-aware
         tab_name = self.tab_widget.tabText(index)

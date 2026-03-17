@@ -497,16 +497,22 @@ class TextJsonTab(BaseTab):
         
         return parsed
     
+    def _is_active_tab(self) -> bool:
+        """Check if this tab is the currently visible tab."""
+        return self.main_window.tab_widget.currentWidget() is self
+    
     def _handle_llm_response(self, response):
         """Handle LLM response from TabContext."""
-        # Re-enable send button, disable cancel
-        self.main_window.dock.chat_panel.set_llm_active(False)
-
-        # Remove thinking message first
-        self.main_window.dock.chat_panel.remove_thinking_message()
+        is_active = self._is_active_tab()
+        
+        # Only touch chat panel UI if this tab is currently displayed
+        if is_active:
+            self.main_window.dock.chat_panel.set_llm_active(False)
+            self.main_window.dock.chat_panel.remove_thinking_message()
         
         # ALWAYS show raw response (even on validation failure, for debugging)
-        self.main_window.dock.raw_viewer.show_response(response.raw_response)
+        if is_active:
+            self.main_window.dock.raw_viewer.show_response(response.raw_response)
         
         # Parse response into dict for validation
         try:
@@ -522,7 +528,7 @@ class TextJsonTab(BaseTab):
         # Create assistant message with validation metadata
         assistant_msg = self._create_assistant_message(parsed, response, validation_issues)
         
-        # Add to conversation history
+        # Add to conversation history (ALWAYS, regardless of active tab)
         from ..llm.tab_context import ChatMessage
         chat_message = ChatMessage(
             role="assistant",
@@ -536,8 +542,9 @@ class TextJsonTab(BaseTab):
         self.tab_context.messages.append(chat_message)
         self.tab_context.cumulative_tokens += response.total_tokens
         
-        # Update chat panel with latest messages
-        self.main_window.dock.chat_panel.switch_context(self.tab_context)
+        # Update chat panel with latest messages only if this tab is active
+        if is_active:
+            self.main_window.dock.chat_panel.switch_context(self.tab_context)
         
         # Handle validation issues
         contract_issues = validation_issues
@@ -560,7 +567,7 @@ class TextJsonTab(BaseTab):
             response.issues.extend(contract_validation_issues)
         
         # Show validation issues BEFORE success check (so users see findings even when validation fails)
-        if response.has_issues:
+        if response.has_issues and is_active:
             issues_as_dicts = [
                 {
                     "message": issue.message,
@@ -575,11 +582,10 @@ class TextJsonTab(BaseTab):
         
         # Now check success (may be False due to validation failure)
         if not response.success:
-            # Add system message to chat for visibility
-            self.main_window.dock.chat_panel.add_message("system", f"❌ {response.error_message}")
-            
-            # Also show error dialog
-            self.show_error("LLM Error", response.error_message)
+            # Add system message to chat for visibility (only if active)
+            if is_active:
+                self.main_window.dock.chat_panel.add_message("system", f"❌ {response.error_message}")
+                self.show_error("LLM Error", response.error_message)
             return
         
         # Handle proposals (only if validation passed)
@@ -633,21 +639,25 @@ class TextJsonTab(BaseTab):
         self.tab_context.messages.append(chat_message)
         self.tab_context.cumulative_tokens += response.total_tokens
         
-        # Update chat panel to show the failure
-        self.main_window.dock.chat_panel.switch_context(self.tab_context)
+        # Update chat panel to show the failure (only if active)
+        if self._is_active_tab():
+            self.main_window.dock.chat_panel.switch_context(self.tab_context)
     
     def _handle_llm_error(self, error_message: str):
         """Handle LLM error from worker thread."""
-        # Re-enable send button, disable cancel
-        self.main_window.dock.chat_panel.set_llm_active(False)
-
-        self.main_window.dock.chat_panel.remove_thinking_message()
+        is_active = self._is_active_tab()
+        
+        # Only touch chat panel UI if this tab is currently displayed
+        if is_active:
+            self.main_window.dock.chat_panel.set_llm_active(False)
+            self.main_window.dock.chat_panel.remove_thinking_message()
 
         # Don't show error dialog for user-initiated cancellation
         if error_message == "Request cancelled by user":
             return
 
-        self.show_error("LLM Error", error_message)
+        if is_active:
+            self.show_error("LLM Error", error_message)
     
     def _handle_text_proposal(self, proposal):
         """Handle procedure_text proposal."""

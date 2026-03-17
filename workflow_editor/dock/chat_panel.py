@@ -226,7 +226,7 @@ class MessageWidget(QFrame):
     # Signal emitted when message is double-clicked
     double_clicked = Signal(str)  # msg_id (UUID string)
     
-    def __init__(self, role: str, content: str, msg_id: str = "", parent=None):
+    def __init__(self, role: str, content: str, msg_id: str = "", thinking_content: str = "", parent=None):
         super().__init__(parent)
         self.setFrameShape(QFrame.StyledPanel)
         self._msg_id = msg_id
@@ -239,6 +239,32 @@ class MessageWidget(QFrame):
         role_label = QLabel(role.upper())
         role_label.setStyleSheet("font-weight: bold; font-size: 10px;")
         layout.addWidget(role_label)
+        
+        # Thinking/reasoning section (collapsible, for assistant messages)
+        if thinking_content and role.lower() == "assistant":
+            self._thinking_visible = False
+            self._toggle_btn = QPushButton("▶ Show thinking")
+            self._toggle_btn.setStyleSheet(
+                "QPushButton { background: transparent; border: none; color: #888; "
+                "font-size: 10px; font-style: italic; text-align: left; padding: 2px 0; }"
+                "QPushButton:hover { color: #555; }"
+            )
+            self._toggle_btn.setCursor(Qt.PointingHandCursor)
+            self._toggle_btn.clicked.connect(self._toggle_thinking)
+            layout.addWidget(self._toggle_btn)
+            
+            formatted_thinking = self._format_json_in_content(thinking_content)
+            self._thinking_label = QLabel(formatted_thinking)
+            self._thinking_label.setWordWrap(True)
+            self._thinking_label.setTextFormat(Qt.RichText)
+            self._thinking_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            self._thinking_label.setStyleSheet(
+                "color: #777; font-style: italic; font-size: 11px; "
+                "padding: 4px 8px; background-color: rgba(0,0,0,0.03); "
+                "border-left: 2px solid #ccc;"
+            )
+            self._thinking_label.setVisible(False)
+            layout.addWidget(self._thinking_label)
         
         # Content - format JSON if found
         formatted_content = self._format_json_in_content(content)
@@ -277,6 +303,17 @@ class MessageWidget(QFrame):
                     border-radius: 5px;
                 }
             """)
+    
+    def _toggle_thinking(self):
+        """Toggle visibility of thinking/reasoning content."""
+        if not hasattr(self, '_thinking_label'):
+            return
+        self._thinking_visible = not self._thinking_visible
+        self._thinking_label.setVisible(self._thinking_visible)
+        if self._thinking_visible:
+            self._toggle_btn.setText("▼ Hide thinking")
+        else:
+            self._toggle_btn.setText("▶ Show thinking")
     
     def mouseDoubleClickEvent(self, event: QMouseEvent):
         """Handle double-click to show message details."""
@@ -389,7 +426,8 @@ class ChatPanel(QWidget):
             # Add message without storing in history (already stored in TabContext)
             self._add_message_widget(
                 msg.role, msg.content, msg.msg_id, msg.full_prompt, msg.full_response,
-                msg.prompt_tokens, msg.completion_tokens, msg.total_tokens
+                msg.prompt_tokens, msg.completion_tokens, msg.total_tokens,
+                thinking_content=getattr(msg, 'thinking_content', '')
             )
         
         # Update token counter
@@ -397,7 +435,7 @@ class ChatPanel(QWidget):
         self._cumulative_tokens = tab_context.cumulative_tokens
         self._update_context_label()
     
-    def _add_message_widget(self, role: str, content: str, msg_id: str = "", full_prompt: Optional[str] = None, full_response: Optional[str] = None, prompt_tokens: int = 0, completion_tokens: int = 0, total_tokens: int = 0):
+    def _add_message_widget(self, role: str, content: str, msg_id: str = "", full_prompt: Optional[str] = None, full_response: Optional[str] = None, prompt_tokens: int = 0, completion_tokens: int = 0, total_tokens: int = 0, thinking_content: str = ""):
         """Add a message widget without modifying TabContext (used when loading history)."""
         # Add token usage to content for assistant messages (but don't update cumulative - caller handles that)
         if role.lower() == "assistant" and total_tokens > 0:
@@ -405,7 +443,7 @@ class ChatPanel(QWidget):
             content = content + token_info
         
         # Create message widget with msg_id from TabContext
-        msg_widget = MessageWidget(role, content, msg_id=msg_id)
+        msg_widget = MessageWidget(role, content, msg_id=msg_id, thinking_content=thinking_content)
         msg_widget.double_clicked.connect(self._on_message_double_clicked)
         
         # Insert before the stretch

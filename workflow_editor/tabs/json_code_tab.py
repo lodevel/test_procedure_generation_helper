@@ -558,6 +558,7 @@ class JsonCodeTab(BaseTab):
             role="assistant",
             content=assistant_msg["content"],
             full_response=response.raw_response,
+            thinking_content=getattr(response, 'thinking_content', ''),
             prompt_tokens=response.prompt_tokens,
             completion_tokens=response.completion_tokens,
             total_tokens=response.total_tokens
@@ -654,6 +655,7 @@ class JsonCodeTab(BaseTab):
             role="assistant",
             content=error_content,
             full_response=response.raw_response,
+            thinking_content=getattr(response, 'thinking_content', ''),
             prompt_tokens=response.prompt_tokens,
             completion_tokens=response.completion_tokens,
             total_tokens=response.total_tokens

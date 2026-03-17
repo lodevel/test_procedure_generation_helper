@@ -41,6 +41,9 @@ class ResponseParser:
         """
         response = LLMResponse(raw_response=raw_response)
         
+        # Extract thinking/reasoning content (if present in OpenCode parts)
+        response.thinking_content = self._extract_thinking(raw_response)
+        
         # Try to extract JSON from response
         json_content = self._extract_json(raw_response)
         
@@ -61,6 +64,39 @@ class ResponseParser:
         
         # Parse the response data
         return self._parse_response_data(data, response, expected_task)
+    
+    def _extract_thinking(self, raw: str) -> str:
+        """Extract thinking/reasoning content from OpenCode's parts array.
+        
+        Looks for parts with type "thinking" or "reasoning" and concatenates
+        their text content.
+        
+        Args:
+            raw: Raw response string
+            
+        Returns:
+            Concatenated thinking content, or empty string if none found
+        """
+        try:
+            data = json.loads(raw.strip())
+            if not isinstance(data, dict) or "parts" not in data:
+                return ""
+            
+            thinking_parts = []
+            for part in data.get("parts", []):
+                if not isinstance(part, dict):
+                    continue
+                part_type = part.get("type")
+                if part_type not in ("thinking", "reasoning"):
+                    continue
+                # Try both "content" and "text" field names
+                text = part.get("content") or part.get("text") or ""
+                if isinstance(text, str) and text.strip():
+                    thinking_parts.append(text.strip())
+            
+            return "\n\n".join(thinking_parts)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            return ""
     
     def _extract_json(self, raw: str) -> Optional[str]:
         """

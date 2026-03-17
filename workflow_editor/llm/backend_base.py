@@ -96,6 +96,9 @@ class LLMResponse:
     # Chat message (always display in chat panel)
     assistant_message: str = ""
     
+    # LLM thinking/reasoning content (from OpenCode parts with type "thinking"/"reasoning")
+    thinking_content: str = ""
+    
     # Validation results
     validation_status: str = ""  # "pass", "warn", "fail"
     issues: list[ValidationIssue] = field(default_factory=list)

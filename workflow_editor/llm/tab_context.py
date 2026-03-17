@@ -57,6 +57,7 @@ class ChatMessage:
     content: str  # Display text
     full_prompt: Optional[str] = None  # Full prompt (for user messages)
     full_response: Optional[str] = None  # Full response (for assistant messages)
+    thinking_content: str = ""  # LLM thinking/reasoning content
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0

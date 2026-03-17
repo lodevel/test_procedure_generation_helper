@@ -670,6 +670,29 @@ class ChatPanel(QWidget):
         self._thinking_stream_text = ""
         self._thinking_has_content = False
         
+        # --- Response streaming area (hidden until text chunks arrive) ---
+        self._response_header = QLabel("✍️ Responding...")
+        self._response_header.setStyleSheet(
+            "color: #555; font-style: italic; font-size: 10px; padding: 2px 0;"
+        )
+        self._response_header.setVisible(False)
+        thinking_layout.addWidget(self._response_header)
+        
+        self._response_stream_label = QLabel("")
+        self._response_stream_label.setWordWrap(True)
+        self._response_stream_label.setTextFormat(Qt.PlainText)
+        self._response_stream_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._response_stream_label.setStyleSheet(
+            "color: #333; font-size: 11px; "
+            "padding: 4px 8px; background-color: rgba(0,0,0,0.02); "
+            "border-left: 2px solid #90caf9;"
+        )
+        self._response_stream_label.setVisible(False)
+        thinking_layout.addWidget(self._response_stream_label)
+        
+        self._response_stream_text = ""
+        self._response_has_content = False
+        
         # Insert before the stretch
         self.messages_layout.insertWidget(
             self.messages_layout.count() - 1,
@@ -724,8 +747,50 @@ class ChatPanel(QWidget):
             except RuntimeError:
                 pass
     
+    def append_response_text(self, text: str):
+        """Append streaming response text to the thinking widget.
+        
+        Called from the main thread when SSE events deliver response text chunks.
+        Shows progressive response content so the user isn't staring at silence
+        after thinking completes.
+        """
+        if not hasattr(self, '_thinking_widget') or not self._thinking_widget:
+            return
+        
+        try:
+            # On first response chunk, transition the UI from thinking → responding
+            if not self._response_has_content:
+                self._response_has_content = True
+                # Collapse thinking content (it's done)
+                if self._thinking_has_content:
+                    self._thinking_header.setText("💭 Thinking (done)")
+                    self._thinking_stream_label.setVisible(False)
+                else:
+                    self._thinking_header.setVisible(False)
+                # Show response streaming area
+                self._response_header.setVisible(True)
+                self._response_stream_label.setVisible(True)
+            
+            self._response_stream_text += text
+            
+            # Truncate display if very long (keep last N chars for performance)
+            display_text = self._response_stream_text
+            max_display = 5000
+            if len(display_text) > max_display:
+                display_text = "..." + display_text[-max_display:]
+            
+            self._response_stream_label.setText(display_text)
+            
+            # Auto-scroll to bottom to follow the stream
+            self.scroll_area.verticalScrollBar().setValue(
+                self.scroll_area.verticalScrollBar().maximum()
+            )
+        except RuntimeError:
+            # Widget deleted during tab switch
+            pass
+    
     def remove_thinking_message(self):
-        """Remove the temporary thinking message."""
+        """Remove the temporary thinking/streaming message."""
         if hasattr(self, '_thinking_widget') and self._thinking_widget:
             try:
                 # Try to remove widget (may fail if C++ object deleted)
@@ -741,6 +806,10 @@ class ChatPanel(QWidget):
                 self._thinking_header = None
                 self._thinking_stream_text = ""
                 self._thinking_has_content = False
+                self._response_stream_label = None
+                self._response_header = None
+                self._response_stream_text = ""
+                self._response_has_content = False
     
     def set_llm_active(self, active: bool):
         """Enable/disable controls based on LLM request state."""

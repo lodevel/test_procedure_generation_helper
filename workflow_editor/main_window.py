@@ -74,6 +74,10 @@ class LLMWorker(QThread):
         self._backend = backend
         self._request = request
         self._cancelled = False
+        # Accumulate all emitted streaming text so it can be restored
+        # when the user switches away from this tab and comes back.
+        self.accumulated_thinking = ""
+        self.accumulated_response = ""
     
     def cancel(self):
         """Request cancellation."""
@@ -85,11 +89,13 @@ class LLMWorker(QThread):
     def _on_thinking_chunk(self, text: str):
         """Callback from streaming backend for thinking/reasoning chunks."""
         if not self._cancelled:
+            self.accumulated_thinking += text
             self.thinking_chunk.emit(text)
     
     def _on_text_chunk(self, text: str):
         """Callback from streaming backend for text response chunks."""
         if not self._cancelled:
+            self.accumulated_response += text
             self.text_chunk.emit(text)
     
     def run(self):
@@ -909,6 +915,29 @@ class MainWindow(QMainWindow):
             if worker and worker.isRunning():
                 self.dock.chat_panel.add_thinking_message()
                 self.dock.chat_panel.set_llm_active(True)
+                # Restore all accumulated streaming text so far
+                if worker.accumulated_thinking:
+                    self.dock.chat_panel.append_thinking_text(
+                        worker.accumulated_thinking
+                    )
+                if worker.accumulated_response:
+                    self.dock.chat_panel.append_response_text(
+                        worker.accumulated_response
+                    )
+                # Disconnect any stale connections before reconnecting
+                # to avoid duplicate text from multiple connections
+                try:
+                    worker.thinking_chunk.disconnect(
+                        self.dock.chat_panel.append_thinking_text
+                    )
+                except (RuntimeError, TypeError):
+                    pass
+                try:
+                    worker.text_chunk.disconnect(
+                        self.dock.chat_panel.append_response_text
+                    )
+                except (RuntimeError, TypeError):
+                    pass
                 # Reconnect streaming signals to the restored thinking widget
                 worker.thinking_chunk.connect(
                     self.dock.chat_panel.append_thinking_text

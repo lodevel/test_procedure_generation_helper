@@ -438,6 +438,8 @@ class OpenCodeBackend(LLMBackend):
         accumulated_text = []
         # Track part IDs we've seen to compute deltas from full text
         part_snapshots = {}  # part_id -> last known text length
+        # Track whether we've seen an assistant part (reasoning proves it)
+        seen_assistant_part = [False]
         
         try:
             event_data_buffer = ""
@@ -467,7 +469,7 @@ class OpenCodeBackend(LLMBackend):
                                 event_json, session_id,
                                 thinking_callback, text_callback,
                                 accumulated_thinking, accumulated_text,
-                                part_snapshots,
+                                part_snapshots, seen_assistant_part,
                             )
                         except json.JSONDecodeError:
                             log.debug(f"Streaming: failed to parse SSE data: {event_data_buffer[:100]}")
@@ -528,8 +530,13 @@ class OpenCodeBackend(LLMBackend):
         accumulated_thinking: list,
         accumulated_text: list,
         part_snapshots: dict,
+        seen_assistant_part: list,
     ):
-        """Process a single SSE event and invoke callbacks for streaming content."""
+        """Process a single SSE event and invoke callbacks for streaming content.
+        
+        Args:
+            seen_assistant_part: Single-element list [bool] used as mutable flag
+                to track whether an assistant part has been seen."""
         # Events can be wrapped in GlobalEvent format: { directory, payload }
         payload = event_json.get("payload", event_json)
         evt_type = payload.get("type", "")
@@ -546,11 +553,30 @@ class OpenCodeBackend(LLMBackend):
         if part_session and part_session != session_id:
             return
         
+        # Skip user message parts — only stream assistant content
+        # OpenCode sends message.part.updated for ALL messages including the
+        # user's prompt.  The "role" field distinguishes them.
+        part_role = part.get("role", "")
+        if part_role == "user":
+            return
+        if part_role == "assistant":
+            seen_assistant_part[0] = True
+        
         part_type = part.get("type", "")
         part_id = part.get("id", "")
         part_text = part.get("text", "")
         
+        log.debug(
+            "SSE part: type=%s, role=%s, id=%s, delta_len=%s, text_len=%s, keys=%s",
+            part_type, part_role, part_id,
+            len(delta) if delta else 0,
+            len(part_text),
+            list(part.keys()),
+        )
+        
         if part_type == "reasoning":
+            # Reasoning parts are always from the assistant
+            seen_assistant_part[0] = True
             # Use delta if available, otherwise compute from snapshot
             if delta and thinking_callback:
                 thinking_callback(delta)
@@ -564,6 +590,12 @@ class OpenCodeBackend(LLMBackend):
                     part_snapshots[part_id] = len(part_text)
         
         elif part_type == "text":
+            # If role field is available, trust it (already filtered above).
+            # If role is absent, only stream text after we've confirmed the
+            # assistant is active (by seeing a reasoning or assistant-role part).
+            if not part_role and not seen_assistant_part[0]:
+                log.debug("SSE: skipping text part (no role, no assistant part seen yet)")
+                return
             if delta and text_callback:
                 text_callback(delta)
                 accumulated_text.append(delta)

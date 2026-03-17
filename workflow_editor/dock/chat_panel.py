@@ -422,7 +422,10 @@ class ChatPanel(QWidget):
             return
         
         # Load messages from tab context
-        for msg in tab_context.messages:
+        log.info("switch_context: loading %d messages from TabContext '%s'", len(tab_context.messages), tab_context.tab_id)
+        for i, msg in enumerate(tab_context.messages):
+            thinking = getattr(msg, 'thinking_content', '')
+            log.debug("  msg[%d]: role=%s, content_len=%d, thinking_len=%d", i, msg.role, len(msg.content), len(thinking))
             # Add message without storing in history (already stored in TabContext)
             self._add_message_widget(
                 msg.role, msg.content, msg.msg_id, msg.full_prompt, msg.full_response,

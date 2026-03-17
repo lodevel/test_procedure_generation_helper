@@ -455,6 +455,9 @@ class JsonCodeTab(BaseTab):
             self.main_window.dock.chat_panel.append_thinking_text
         )
         self._worker.start()
+
+        # Enable cancel button in chat panel
+        self.main_window.dock.chat_panel.set_llm_active(True)
         
         self.status_message.emit(f"Running {task.name}...")
     
@@ -536,6 +539,9 @@ class JsonCodeTab(BaseTab):
     
     def _handle_llm_response(self, response):
         """Handle LLM response from TabContext."""
+        # Re-enable send button, disable cancel
+        self.main_window.dock.chat_panel.set_llm_active(False)
+
         # Remove thinking message first
         self.main_window.dock.chat_panel.remove_thinking_message()
         
@@ -672,7 +678,15 @@ class JsonCodeTab(BaseTab):
     
     def _handle_llm_error(self, error_message: str):
         """Handle LLM error from worker thread."""
+        # Re-enable send button, disable cancel
+        self.main_window.dock.chat_panel.set_llm_active(False)
+
         self.main_window.dock.chat_panel.remove_thinking_message()
+
+        # Don't show error dialog for user-initiated cancellation
+        if error_message == "Request cancelled by user":
+            return
+
         self.show_error("LLM Error", error_message)
     
     def _handle_json_proposal(self, proposal):

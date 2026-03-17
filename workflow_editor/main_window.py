@@ -1084,11 +1084,24 @@ class MainWindow(QMainWindow):
     
     def _on_cancel_llm(self):
         """Handle LLM cancellation request."""
-        if self._llm_worker and self._llm_worker.isRunning():
-            log.info("User requested LLM cancellation")
+        # Check current tab for a running per-tab worker
+        current_tab = self.tab_widget.currentWidget()
+        worker = getattr(current_tab, '_worker', None)
+        if worker and worker.isRunning():
+            log.info("User requested LLM cancellation (per-tab worker)")
+            worker.cancel()
+
+            # Immediate UI feedback
+            self.dock.chat_panel.set_llm_active(False)
+            self.dock.chat_panel.remove_thinking_message()
+            self.dock.chat_panel.add_system_message("Request cancelled by user")
+            self.status_bar.showMessage("LLM request cancelled", 3000)
+        elif self._llm_worker and self._llm_worker.isRunning():
+            # Legacy fallback
+            log.info("User requested LLM cancellation (legacy path)")
             self._llm_worker.cancel()
-            self._llm_worker.wait(1000)  # Wait up to 1 second
-            
+            self._llm_worker.wait(1000)
+
             # Update UI
             self.dock.chat_panel.set_llm_active(False)
             self.dock.chat_panel.remove_thinking_message()

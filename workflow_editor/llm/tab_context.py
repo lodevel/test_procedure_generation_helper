@@ -157,26 +157,47 @@ class TabContext:
     def backend(self) -> LLMBackend:
         """
         Get backend instance, creating lazily on first access.
-        
-        The backend is created on first use and cached for the lifetime
-        of this TabContext. Use reset_backend() to recreate it.
-        
+
+        If the factory returns a :class:`NoneBackend` as a *fallback*
+        (e.g. because the OpenCode server was not running), the result is
+        **not** cached so that the next access retries the factory and can
+        pick up a newly available server.  A ``NoneBackend`` is only
+        cached when the configured backend type is explicitly ``"none"``.
+
         Returns:
             LLMBackend instance for this tab
         """
-        if self._backend is None:
-            if self._backend_factory is None:
-                log.warning(f"TabContext {self.tab_id}: No backend factory available")
-                from .backend_base import NoneBackend
-                self._backend = NoneBackend()
-            else:
-                log.info(f"TabContext {self.tab_id}: Creating backend lazily via factory")
-                self._backend = self._backend_factory.create_backend(self.tab_id)
-                # Start the backend if needed
-                if hasattr(self._backend, 'start'):
-                    log.debug(f"TabContext {self.tab_id}: Starting backend")
-                    self._backend.start()
-        return self._backend
+        if self._backend is not None:
+            return self._backend
+
+        from .backend_base import NoneBackend
+
+        if self._backend_factory is None:
+            log.warning(f"TabContext {self.tab_id}: No backend factory available")
+            self._backend = NoneBackend()
+            return self._backend
+
+        log.info(f"TabContext {self.tab_id}: Creating backend lazily via factory")
+        backend = self._backend_factory.create_backend(self.tab_id)
+
+        # Start the backend if needed
+        if hasattr(backend, 'start'):
+            log.debug(f"TabContext {self.tab_id}: Starting backend")
+            backend.start()
+
+        # Only cache the backend if it is a real backend or the user
+        # explicitly configured "none".  A NoneBackend returned as a
+        # fallback (server unavailable) must NOT be cached so that the
+        # next property access retries.
+        if not isinstance(backend, NoneBackend) or self._backend_factory.backend_type == "none":
+            self._backend = backend
+        else:
+            log.info(
+                f"TabContext {self.tab_id}: Factory returned fallback NoneBackend — "
+                "will retry on next access"
+            )
+
+        return backend
     
     def update_managers(
         self,
@@ -426,11 +447,27 @@ class TabContext:
             self._last_text_content = request.procedure_text
             log.debug(f"TabContext {self.tab_id}: Updated last_text_content")
         
+        # Track artifact checksums and first-interaction flag
+        for name in ("procedure_text", "procedure_json", "test_code"):
+            content = getattr(request, name, None)
+            if content:
+                self.mark_artifact_sent(name, content)
+        
         # Track rules content if included
         if request.rules_content:
             self._rules_sent = True
             self._update_rules_checksum(request.rules_content)
             log.debug(f"TabContext {self.tab_id}: Updated rules checksum, rules_sent=True")
+    
+    def confirm_request_delivered(self, request: LLMRequest) -> None:
+        """Mark artifacts and rules in *request* as successfully delivered.
+
+        Call this **only** after the backend has returned a successful
+        response.  This prevents the optimisation state from advancing
+        when the server is unreachable and a ``NoneBackend`` is used.
+        """
+        self._update_optimization_state(request)
+        log.debug(f"TabContext {self.tab_id}: Optimization state confirmed after successful delivery")
     
     def set_selected_rules(self, rule_filenames: list[str]):
         """
@@ -525,8 +562,9 @@ class TabContext:
         # Send request
         response = self.backend.send_request(request)
         
-        # Validate contract compliance
+        # Only confirm delivery if the backend actually succeeded
         if response.success:
+            self.confirm_request_delivered(request)
             response = self._validate_contract(response)
         
         # Store assistant response in history
@@ -592,10 +630,6 @@ class TabContext:
             rules_content = current_rules_content
             reason = "first" if self._first_interaction else ("force" if force else "changed")
             log.debug(f"TabContext {self.tab_id}: Including rules (reason={reason})")
-            
-            # Update rules checksum to track this version
-            if rules_content:
-                self._update_rules_checksum(rules_content)
         else:
             rules_content = None  # Rules sent once, LLM remembers via conversation history
             log.debug(f"TabContext {self.tab_id}: Skipping rules (already sent, unchanged)")
@@ -628,9 +662,6 @@ class TabContext:
             rules_content=rules_content,  # Filtered rules only, sent once
             output_contract=output_contract,  # Tab-specific contract
         )
-        
-        # Update optimization state AFTER building request
-        self._update_optimization_state(request)
         
         return request
     
@@ -716,7 +747,6 @@ class TabContext:
             if content:
                 if self.should_send_artifact("procedure_text", force=force):
                     context["procedure_text"] = content
-                    self.mark_artifact_sent("procedure_text", content)
                     log.debug(f"TabContext {self.tab_id}: sending procedure_text (modified or first)")
                 else:
                     skipped.append("procedure_text")
@@ -727,7 +757,6 @@ class TabContext:
             if content:
                 if self.should_send_artifact("procedure_json", force=force):
                     context["procedure_json"] = content
-                    self.mark_artifact_sent("procedure_json", content)
                     log.debug(f"TabContext {self.tab_id}: sending procedure_json (modified or first)")
                 else:
                     skipped.append("procedure_json")
@@ -738,7 +767,6 @@ class TabContext:
             if content:
                 if self.should_send_artifact("test_code", force=force):
                     context["test_code"] = content
-                    self.mark_artifact_sent("test_code", content)
                     log.debug(f"TabContext {self.tab_id}: sending test_code (modified or first)")
                 else:
                     skipped.append("test_code")

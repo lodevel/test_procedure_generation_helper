@@ -13,6 +13,7 @@ from PySide6.QtGui import QFont
 
 from .base_tab import BaseTab
 from ..core import ArtifactType
+from ..theme import status_modified, status_saved
 
 
 class TextTab(BaseTab):
@@ -111,10 +112,10 @@ class TextTab(BaseTab):
         """Update the status label."""
         if self._dirty:
             self.status_label.setText("● Modified")
-            self.status_label.setStyleSheet("color: orange;")
+            self.status_label.setStyleSheet(f"color: {status_modified()};")
         else:
             self.status_label.setText("✓ Saved")
-            self.status_label.setStyleSheet("color: green;")
+            self.status_label.setStyleSheet(f"color: {status_saved()};")
     
     def _on_save(self):
         """Save the text file."""

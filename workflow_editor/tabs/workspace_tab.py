@@ -18,6 +18,11 @@ from PySide6.QtGui import QColor, QBrush
 
 from .base_tab import BaseTab
 from ..core import ArtifactType
+from ..core.sync_utils import normalize_for_hash
+from ..theme import (
+    sync_warning_color, empty_test_color, ready_test_color,
+    default_text_color, selected_test_bg, selected_test_fg,
+)
 
 
 class WorkspaceTab(BaseTab):
@@ -90,11 +95,11 @@ class WorkspaceTab(BaseTab):
             
             # Color based on state
             if out_of_sync:
-                item.setForeground(QColor(255, 165, 0))  # Orange for out-of-sync
+                item.setForeground(sync_warning_color())  # Orange for out-of-sync
             elif not indicators:
-                item.setForeground(QColor(150, 150, 150))
+                item.setForeground(empty_test_color())
             elif info.has_json and info.has_code:
-                item.setForeground(QColor(0, 150, 0))
+                item.setForeground(ready_test_color())
             
             self.test_list.addItem(item)
     
@@ -106,8 +111,7 @@ class WorkspaceTab(BaseTab):
                 self.test_list.setCurrentItem(item)
                 break
     
-    @staticmethod
-    def _is_test_out_of_sync(test_path: Path) -> bool:
+    def _is_test_out_of_sync(self, test_path: Path) -> bool:
         """Check if a test's artifacts are out of sync.
 
         First checks the ``artifacts_in_sync`` flag in ``.llm_session.json``.
@@ -137,6 +141,7 @@ class WorkspaceTab(BaseTab):
             # No baseline yet (first open or legacy session) — assume in sync
             return False
 
+        patterns = self.project_manager.get_equipment_patterns()
         canonical_files = ("procedure.json", "test.py")
         for filename in canonical_files:
             stored = stored_hashes.get(filename)
@@ -149,7 +154,8 @@ class WorkspaceTab(BaseTab):
                 disk_content = file_path.read_text(encoding="utf-8")
             except Exception:
                 continue
-            disk_hash = hashlib.sha256(disk_content.encode("utf-8")).hexdigest()
+            normalised = normalize_for_hash(disk_content, filename, patterns)
+            disk_hash = hashlib.sha256(normalised.encode("utf-8")).hexdigest()
             if disk_hash != stored:
                 return True
 
@@ -169,22 +175,22 @@ class WorkspaceTab(BaseTab):
             # Check if this is the opened test
             if item_path == self._current_opened_test:
                 # Highlight opened test
-                item.setBackground(QBrush(QColor(70, 130, 180)))  # Steel blue
-                item.setForeground(QColor(255, 255, 255))  # White text
+                item.setBackground(QBrush(selected_test_bg()))  # Steel blue
+                item.setForeground(selected_test_fg())  # White text
             else:
                 # Restore original colors for non-opened tests
                 item.setBackground(QBrush())
                 info = item.data(Qt.UserRole + 1)
                 out_of_sync = self._is_test_out_of_sync(item_path)
                 if out_of_sync:
-                    item.setForeground(QColor(255, 165, 0))  # Orange
+                    item.setForeground(sync_warning_color())  # Orange
                 elif info:
                     if not info.has_text and not info.has_json and not info.has_code:
-                        item.setForeground(QColor(150, 150, 150))
+                        item.setForeground(empty_test_color())
                     elif info.has_json and info.has_code:
-                        item.setForeground(QColor(0, 150, 0))
+                        item.setForeground(ready_test_color())
                     else:
-                        item.setForeground(QColor(0, 0, 0))
+                        item.setForeground(default_text_color())
     
     def _on_test_selection_changed(self):
         """Handle test selection change."""

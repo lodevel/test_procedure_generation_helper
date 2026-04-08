@@ -18,6 +18,7 @@ from PySide6.QtGui import QFont
 
 from ..core.task_config import TaskConfig, TaskConfigManager, ChatConfig
 from ..llm.backend_base import LLMTask
+from ..theme import muted_text
 
 
 def get_settings_path() -> Path:
@@ -77,7 +78,7 @@ class PromptEditorDialog(QDialog):
             "{procedure_text}, {json_procedure}, {test_code} as needed."
         )
         info_label.setWordWrap(True)
-        info_label.setStyleSheet("color: #666; padding: 5px;")
+        info_label.setStyleSheet(f"color: {muted_text()}; padding: 5px;")
         layout.addWidget(info_label)
         
         # Prompt editor
@@ -108,7 +109,7 @@ class PromptEditorDialog(QDialog):
             "• {rules} - Selected validation rules"
         )
         help_text.setFont(QFont("Segoe UI", 9))
-        help_text.setStyleSheet("color: #555;")
+        help_text.setStyleSheet(f"color: {muted_text()};")
         help_layout.addWidget(help_text)
         
         layout.addWidget(help_group)
@@ -262,7 +263,7 @@ class SettingsDialog(QDialog):
             "Manage LLM tasks for each workflow tab. Customize button labels and prompt templates."
         )
         info_label.setWordWrap(True)
-        info_label.setStyleSheet("color: #666; padding: 5px;")
+        info_label.setStyleSheet(f"color: {muted_text()}; padding: 5px;")
         layout.addWidget(info_label)
         
         # Tab selection
@@ -327,7 +328,7 @@ class SettingsDialog(QDialog):
             "💡 Tip: Double-click cells to edit task names and button labels. "
             "Click 'Edit Prompt...' to customize the prompt template for each task."
         )
-        help_label.setStyleSheet("color: #666; font-style: italic; padding: 5px;")
+        help_label.setStyleSheet(f"color: {muted_text()}; font-style: italic; padding: 5px;")
         help_label.setWordWrap(True)
         layout.addWidget(help_label)
         
@@ -953,7 +954,7 @@ class SettingsDialog(QDialog):
             "The system prompt is prepended to every chat message sent from this tab."
         )
         info_label.setWordWrap(True)
-        info_label.setStyleSheet("color: #666; padding: 5px;")
+        info_label.setStyleSheet(f"color: {muted_text()}; padding: 5px;")
         layout.addWidget(info_label)
         
         # Tab selection
@@ -982,7 +983,7 @@ class SettingsDialog(QDialog):
             "Leave empty to use the default prompt."
         )
         prompt_info.setWordWrap(True)
-        prompt_info.setStyleSheet("color: #666;")
+        prompt_info.setStyleSheet(f"color: {muted_text()};")
         prompt_layout.addWidget(prompt_info)
         
         self.chat_system_prompt = QPlainTextEdit()

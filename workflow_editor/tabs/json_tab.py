@@ -9,12 +9,13 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QPlainTextEdit
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QSyntaxHighlighter, QTextCharFormat, QColor
+from PySide6.QtGui import QFont, QSyntaxHighlighter, QTextCharFormat
 
 import json
 
 from .base_tab import BaseTab
 from ..core import ArtifactType, JsonValidator
+from ..theme import json_key, json_string, json_number, json_keyword, status_modified, status_saved
 
 
 class JsonSyntaxHighlighter(QSyntaxHighlighter):
@@ -22,20 +23,22 @@ class JsonSyntaxHighlighter(QSyntaxHighlighter):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        
-        # Formats
+        self._setup_formats()
+
+    def _setup_formats(self):
+        """Build text-char formats from current theme colours."""
         self.key_format = QTextCharFormat()
-        self.key_format.setForeground(QColor("#0066cc"))
+        self.key_format.setForeground(json_key())
         self.key_format.setFontWeight(QFont.Bold)
-        
+
         self.string_format = QTextCharFormat()
-        self.string_format.setForeground(QColor("#008800"))
-        
+        self.string_format.setForeground(json_string())
+
         self.number_format = QTextCharFormat()
-        self.number_format.setForeground(QColor("#cc6600"))
-        
+        self.number_format.setForeground(json_number())
+
         self.keyword_format = QTextCharFormat()
-        self.keyword_format.setForeground(QColor("#cc00cc"))
+        self.keyword_format.setForeground(json_keyword())
     
     def highlightBlock(self, text: str):
         import re
@@ -137,10 +140,10 @@ class JsonTab(BaseTab):
         """Update the status label."""
         if self._dirty:
             self.status_label.setText("● Modified")
-            self.status_label.setStyleSheet("color: orange;")
+            self.status_label.setStyleSheet(f"color: {status_modified()};")
         else:
             self.status_label.setText("✓ Saved")
-            self.status_label.setStyleSheet("color: green;")
+            self.status_label.setStyleSheet(f"color: {status_saved()};")
     
     def _on_save(self):
         """Save the JSON file."""

@@ -21,6 +21,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, Any
 
+import re
+from .sync_utils import normalize_for_hash
+
 
 class ArtifactType(Enum):
     """Types of artifacts managed by the editor."""
@@ -81,6 +84,7 @@ class ArtifactManager:
     TEST_CODE_NAME = "test.py"
     PROCEDURE_TEXT_NAME = "procedure_text.md"
     SESSION_FILE_NAME = ".llm_session.json"
+    _exclusion_patterns: list[re.Pattern[str]] = field(default_factory=list, repr=False)
     
     def set_test_dir(self, test_dir: Path) -> None:
         """Set the test directory and update file paths."""
@@ -269,6 +273,10 @@ class ArtifactManager:
         
         return non_canonical
 
+    def set_exclusion_patterns(self, patterns: list[re.Pattern[str]]) -> None:
+        """Set equipment-configuration patterns to exclude from sync hashing."""
+        self._exclusion_patterns = patterns
+
     # ---- Content hashing for sync detection ----
 
     @staticmethod
@@ -289,7 +297,8 @@ class ArtifactManager:
         }
         for name, artifact in mapping.items():
             if artifact.content:
-                hashes[name] = self._hash_content(artifact.content)
+                normalised = normalize_for_hash(artifact.content, name, self._exclusion_patterns)
+                hashes[name] = self._hash_content(normalised)
         return hashes
 
     def check_external_changes(self, stored_hashes: dict[str, str]) -> list[str]:
@@ -310,7 +319,7 @@ class ArtifactManager:
                 disk_content = artifact.file_path.read_text(encoding="utf-8")
             except Exception:
                 continue
-            disk_hash = self._hash_content(disk_content)
+            disk_hash = self._hash_content(normalize_for_hash(disk_content, name, self._exclusion_patterns))
             stored = stored_hashes.get(name)
             if stored and disk_hash != stored:
                 changed.append(name)

@@ -15,6 +15,7 @@ import textwrap
 
 from .base_tab import BaseTab
 from ..core import ArtifactType, StepMarkerParser
+from ..theme import traceability_highlight, status_modified, status_saved
 
 
 class TraceabilityTab(BaseTab):
@@ -200,11 +201,11 @@ class TraceabilityTab(BaseTab):
             self.mismatch_label.setText("\n".join(issues))
             self.mismatch_group.setVisible(True)
             self.status_label.setText("⚠ Mapping has issues")
-            self.status_label.setStyleSheet("color: orange;")
+            self.status_label.setStyleSheet(f"color: {status_modified()};")
         else:
             self.mismatch_group.setVisible(False)
             self.status_label.setText("✓ Mapping OK - All steps have code blocks")
-            self.status_label.setStyleSheet("color: green;")
+            self.status_label.setStyleSheet(f"color: {status_saved()};")
     
     def _on_step_selected(self, item: QListWidgetItem):
         """Handle step selection - jump to step in code with highlighting."""
@@ -253,7 +254,7 @@ class TraceabilityTab(BaseTab):
     def _highlight_step_lines(self, start_line: int, end_line: int):
         """Highlight lines in code editor with light yellow background."""
         selections = []
-        highlight_color = QColor("#fffacd")  # Light yellow
+        highlight_color = traceability_highlight()  # Light yellow
         
         doc = self.code_editor.document()
         

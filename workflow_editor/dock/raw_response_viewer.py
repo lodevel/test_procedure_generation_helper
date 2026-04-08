@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from ..main_window import MainWindow
     from ..llm.tab_context import TabContext
 
+from ..theme import disabled_text
+
 
 class RawResponseViewer(QWidget):
     """
@@ -66,7 +68,7 @@ class RawResponseViewer(QWidget):
         
         # Stats
         self.stats_label = QLabel("")
-        self.stats_label.setStyleSheet("color: gray; font-size: 10px;")
+        self.stats_label.setStyleSheet(f"color: {disabled_text()}; font-size: 10px;")
         layout.addWidget(self.stats_label)
     
     def switch_context(self, tab_context: Optional["TabContext"]):

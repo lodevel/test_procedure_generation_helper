@@ -15,6 +15,8 @@ from PySide6.QtCore import Qt, Signal, QEvent
 from PySide6.QtGui import QFont, QMouseEvent
 from typing import TYPE_CHECKING, List, Tuple, Optional
 
+from .. import theme
+
 if TYPE_CHECKING:
     from ..main_window import MainWindow
     from ..llm import TabContext
@@ -168,10 +170,10 @@ class ProposalWidget(QFrame):
         # Buttons
         btn_layout = QHBoxLayout()
         self.accept_btn = QPushButton("✓ Accept")
-        self.accept_btn.setStyleSheet("background-color: #c8e6c9;")
+        self.accept_btn.setStyleSheet(f"background-color: {theme.accept_btn_bg()};")
         self.accept_btn.clicked.connect(self._on_accept)
         self.reject_btn = QPushButton("✗ Reject")
-        self.reject_btn.setStyleSheet("background-color: #ffcdd2;")
+        self.reject_btn.setStyleSheet(f"background-color: {theme.reject_btn_bg()};")
         self.reject_btn.clicked.connect(self._on_reject)
         self.diff_btn = QPushButton("View Diff")
         self.diff_btn.clicked.connect(self._on_view_diff)
@@ -183,12 +185,12 @@ class ProposalWidget(QFrame):
         layout.addLayout(btn_layout)
         
         # Style
-        self.setStyleSheet("""
-            ProposalWidget {
-                background-color: #e8f5e9;
-                border: 1px solid #c8e6c9;
+        self.setStyleSheet(f"""
+            ProposalWidget {{
+                background-color: {theme.proposal_bg()};
+                border: 1px solid {theme.proposal_border()};
                 border-radius: 5px;
-            }
+            }}
         """)
     
     def _on_accept(self):
@@ -207,12 +209,12 @@ class ProposalWidget(QFrame):
         self.accept_btn.setEnabled(False)
         self.reject_btn.setEnabled(False)
         self.diff_btn.setEnabled(False)
-        self.setStyleSheet("""
-            ProposalWidget {
-                background-color: #f5f5f5;
-                border: 1px solid #e0e0e0;
+        self.setStyleSheet(f"""
+            ProposalWidget {{
+                background-color: {theme.proposal_handled_bg()};
+                border: 1px solid {theme.proposal_handled_border()};
                 border-radius: 5px;
-            }
+            }}
         """)
         # Update header with status
         header = self.layout().itemAt(0).widget()
@@ -245,9 +247,9 @@ class MessageWidget(QFrame):
             self._thinking_visible = False
             self._toggle_btn = QPushButton("▶ Show thinking")
             self._toggle_btn.setStyleSheet(
-                "QPushButton { background: transparent; border: none; color: #888; "
+                f"QPushButton {{ background: transparent; border: none; color: {theme.toggle_color()}; "
                 "font-size: 10px; font-style: italic; text-align: left; padding: 2px 0; }"
-                "QPushButton:hover { color: #555; }"
+                f"QPushButton:hover {{ color: {theme.toggle_hover_color()}; }}"
             )
             self._toggle_btn.setCursor(Qt.PointingHandCursor)
             self._toggle_btn.clicked.connect(self._toggle_thinking)
@@ -259,9 +261,9 @@ class MessageWidget(QFrame):
             self._thinking_label.setTextFormat(Qt.RichText)
             self._thinking_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
             self._thinking_label.setStyleSheet(
-                "color: #777; font-style: italic; font-size: 11px; "
-                "padding: 4px 8px; background-color: rgba(0,0,0,0.03); "
-                "border-left: 2px solid #ccc;"
+                f"color: {theme.thinking_fg()}; font-style: italic; font-size: 11px; "
+                f"padding: 4px 8px; background-color: {theme.thinking_bg()}; "
+                f"border-left: 2px solid {theme.thinking_border()};"
             )
             self._thinking_label.setVisible(False)
             layout.addWidget(self._thinking_label)
@@ -280,28 +282,28 @@ class MessageWidget(QFrame):
         
         # Style based on role
         if role.lower() == "user":
-            self.setStyleSheet("""
-                MessageWidget {
-                    background-color: #e3f2fd;
-                    border: 1px solid #bbdefb;
+            self.setStyleSheet(f"""
+                MessageWidget {{
+                    background-color: {theme.message_bg('user')};
+                    border: 1px solid {theme.message_border('user')};
                     border-radius: 5px;
-                }
+                }}
             """)
         elif role.lower() == "assistant":
-            self.setStyleSheet("""
-                MessageWidget {
-                    background-color: #f5f5f5;
-                    border: 1px solid #e0e0e0;
+            self.setStyleSheet(f"""
+                MessageWidget {{
+                    background-color: {theme.message_bg('assistant')};
+                    border: 1px solid {theme.message_border('assistant')};
                     border-radius: 5px;
-                }
+                }}
             """)
         elif role.lower() == "system":
-            self.setStyleSheet("""
-                MessageWidget {
-                    background-color: #fff3e0;
-                    border: 1px solid #ffe0b2;
+            self.setStyleSheet(f"""
+                MessageWidget {{
+                    background-color: {theme.message_bg('system')};
+                    border: 1px solid {theme.message_border('system')};
                     border-radius: 5px;
-                }
+                }}
             """)
     
     def _toggle_thinking(self):
@@ -442,7 +444,7 @@ class ChatPanel(QWidget):
         """Add a message widget without modifying TabContext (used when loading history)."""
         # Add token usage to content for assistant messages (but don't update cumulative - caller handles that)
         if role.lower() == "assistant" and total_tokens > 0:
-            token_info = f"\n\n<span style='color: gray; font-size: 9px;'>📊 Tokens: {total_tokens} ({prompt_tokens} prompt + {completion_tokens} completion)</span>"
+            token_info = f"\n\n<span style='color: {theme.muted_color()}; font-size: 9px;'>📊 Tokens: {total_tokens} ({prompt_tokens} prompt + {completion_tokens} completion)</span>"
             content = content + token_info
         
         # Create message widget with msg_id from TabContext
@@ -487,41 +489,53 @@ class ChatPanel(QWidget):
         )
         layout.addWidget(self.force_mode_checkbox)
         
-        # Input area
-        input_layout = QHBoxLayout()
-        
-        self.input_field = QLineEdit()
+        # Input area - multi-line (Enter to send, Shift+Enter for newline)
+        self.input_field = QPlainTextEdit()
         self.input_field.setPlaceholderText("Ask a question or give instructions...")
-        self.input_field.returnPressed.connect(self._on_send)
-        input_layout.addWidget(self.input_field, stretch=1)
+        self.input_field.setFixedHeight(72)  # ~3 lines
+        self.input_field.installEventFilter(self)
+        layout.addWidget(self.input_field)
+        
+        # Buttons row below input
+        btn_layout = QHBoxLayout()
         
         self.send_btn = QPushButton("Send")
         self.send_btn.clicked.connect(self._on_send)
-        input_layout.addWidget(self.send_btn)
+        btn_layout.addWidget(self.send_btn)
+        
+        btn_layout.addStretch()
         
         self.cancel_btn = QPushButton("⏹️")
         self.cancel_btn.setToolTip("Cancel Current LLM Request")
         self.cancel_btn.setMaximumWidth(35)
         self.cancel_btn.setEnabled(False)  # Disabled until request starts
         self.cancel_btn.clicked.connect(self._on_cancel)
-        input_layout.addWidget(self.cancel_btn)
+        btn_layout.addWidget(self.cancel_btn)
         
         self.reset_btn = QPushButton("🗑️")
         self.reset_btn.setToolTip("Reset LLM Session")
         self.reset_btn.setMaximumWidth(35)
         self.reset_btn.clicked.connect(self._on_reset)
-        input_layout.addWidget(self.reset_btn)
+        btn_layout.addWidget(self.reset_btn)
         
-        layout.addLayout(input_layout)
+        layout.addLayout(btn_layout)
         
         # Context indicator
         self.context_label = QLabel("")
-        self.context_label.setStyleSheet("color: gray; font-size: 10px;")
+        self.context_label.setStyleSheet(f"color: {theme.muted_color()}; font-size: 10px;")
         layout.addWidget(self.context_label)
+    
+    def eventFilter(self, obj, event):
+        """Handle Enter in input field to send (Shift+Enter inserts newline)."""
+        if obj is self.input_field and event.type() == QEvent.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Return and not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+                self._on_send()
+                return True
+        return super().eventFilter(obj, event)
     
     def _on_send(self):
         """Handle send button click."""
-        text = self.input_field.text().strip()
+        text = self.input_field.toPlainText().strip()
         if not text:
             return
         
@@ -565,7 +579,7 @@ class ChatPanel(QWidget):
         # Add token usage to content for assistant messages
         if role.lower() == "assistant" and total_tokens > 0:
             self._cumulative_tokens += total_tokens
-            token_info = f"\n\n<span style='color: gray; font-size: 9px;'>📊 Tokens: {total_tokens} ({prompt_tokens} prompt + {completion_tokens} completion)</span>"
+            token_info = f"\n\n<span style='color: {theme.muted_color()}; font-size: 9px;'>📊 Tokens: {total_tokens} ({prompt_tokens} prompt + {completion_tokens} completion)</span>"
             content = content + token_info
             
             # CRITICAL FIX: Also update TabContext.cumulative_tokens to keep them synchronized
@@ -632,12 +646,12 @@ class ChatPanel(QWidget):
         # Create a special frame for the thinking display
         self._thinking_widget = QFrame()
         self._thinking_widget.setFrameShape(QFrame.StyledPanel)
-        self._thinking_widget.setStyleSheet("""
-            QFrame {
-                background-color: #f5f5f5;
-                border: 1px solid #e0e0e0;
+        self._thinking_widget.setStyleSheet(f"""
+            QFrame {{
+                background-color: {theme.message_bg('assistant')};
+                border: 1px solid {theme.message_border('assistant')};
                 border-radius: 5px;
-            }
+            }}
         """)
         
         thinking_layout = QVBoxLayout(self._thinking_widget)
@@ -652,7 +666,7 @@ class ChatPanel(QWidget):
         # Thinking header with icon
         self._thinking_header = QLabel("💭 Thinking...")
         self._thinking_header.setStyleSheet(
-            "color: #888; font-style: italic; font-size: 10px; padding: 2px 0;"
+            f"color: {theme.toggle_color()}; font-style: italic; font-size: 10px; padding: 2px 0;"
         )
         thinking_layout.addWidget(self._thinking_header)
         
@@ -662,9 +676,9 @@ class ChatPanel(QWidget):
         self._thinking_stream_label.setTextFormat(Qt.PlainText)
         self._thinking_stream_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self._thinking_stream_label.setStyleSheet(
-            "color: #777; font-style: italic; font-size: 11px; "
-            "padding: 4px 8px; background-color: rgba(0,0,0,0.03); "
-            "border-left: 2px solid #ccc;"
+            f"color: {theme.thinking_fg()}; font-style: italic; font-size: 11px; "
+            f"padding: 4px 8px; background-color: {theme.thinking_bg()}; "
+            f"border-left: 2px solid {theme.thinking_border()};"
         )
         self._thinking_stream_label.setVisible(False)
         thinking_layout.addWidget(self._thinking_stream_label)
@@ -676,7 +690,7 @@ class ChatPanel(QWidget):
         # --- Response streaming area (hidden until text chunks arrive) ---
         self._response_header = QLabel("✍️ Responding...")
         self._response_header.setStyleSheet(
-            "color: #555; font-style: italic; font-size: 10px; padding: 2px 0;"
+            f"color: {theme.toggle_hover_color()}; font-style: italic; font-size: 10px; padding: 2px 0;"
         )
         self._response_header.setVisible(False)
         thinking_layout.addWidget(self._response_header)
@@ -686,9 +700,9 @@ class ChatPanel(QWidget):
         self._response_stream_label.setTextFormat(Qt.PlainText)
         self._response_stream_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self._response_stream_label.setStyleSheet(
-            "color: #333; font-size: 11px; "
-            "padding: 4px 8px; background-color: rgba(0,0,0,0.02); "
-            "border-left: 2px solid #90caf9;"
+            f"color: {theme.response_fg()}; font-size: 11px; "
+            f"padding: 4px 8px; background-color: {theme.response_bg()}; "
+            f"border-left: 2px solid {theme.response_border()};"
         )
         self._response_stream_label.setVisible(False)
         thinking_layout.addWidget(self._response_stream_label)
@@ -829,16 +843,16 @@ class ChatPanel(QWidget):
             
             # Color based on usage
             if percentage >= 95:
-                color = "red"
+                color = theme.ERROR_COLOR
                 icon = "🔴"
             elif percentage >= 90:
-                color = "orange"
+                color = theme.WARNING_COLOR
                 icon = "🔶"
             elif percentage >= 80:
-                color = "#ff9800"
+                color = theme.WARNING_COLOR
                 icon = "⚠️"
             else:
-                color = "gray"
+                color = theme.muted_color()
                 icon = "📊"
             
             label_text = f"{icon} <span style='color: {color};'>Tokens: {self._cumulative_tokens}/{context_limit} ({percentage:.1f}%)</span>"

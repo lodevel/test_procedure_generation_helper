@@ -24,6 +24,7 @@ from ..llm import TabContext, LLMTask, ChatMessage
 from ..llm.prompt_builder import PromptBuilder
 from ..llm.output_contracts import get_contract_for_tab
 from ..dialogs import DiffViewer
+from ..theme import status_modified, status_saved
 import json
 from datetime import datetime
 
@@ -419,6 +420,7 @@ class JsonCodeTab(BaseTab):
         force_mode = self.main_window.dock.chat_panel.get_force_mode()
         
         request = self.tab_context._build_request(task, force=force_mode, **kwargs)
+        self._pending_request = request
         
         # Build the full prompt for storage
         prompt_builder = PromptBuilder(
@@ -585,6 +587,11 @@ class JsonCodeTab(BaseTab):
         self.tab_context.messages.append(chat_message)
         self.tab_context.cumulative_tokens += response.total_tokens
         
+        # Confirm optimization state only after successful delivery
+        if response.success and hasattr(self, '_pending_request') and self._pending_request:
+            self.tab_context.confirm_request_delivered(self._pending_request)
+            self._pending_request = None
+        
         # Update chat panel with latest messages only if this tab is active
         if is_active:
             self.main_window.dock.chat_panel.switch_context(self.tab_context)
@@ -688,6 +695,7 @@ class JsonCodeTab(BaseTab):
     
     def _handle_llm_error(self, error_message: str):
         """Handle LLM error from worker thread."""
+        self._pending_request = None
         is_active = self._is_active_tab()
         
         # Only touch chat panel UI if this tab is currently displayed
@@ -823,19 +831,19 @@ class JsonCodeTab(BaseTab):
         """Update JSON status label."""
         if self._json_dirty:
             self.json_status.setText("● Modified")
-            self.json_status.setStyleSheet("color: orange;")
+            self.json_status.setStyleSheet(f"color: {status_modified()};")
         else:
             self.json_status.setText("✓ Saved")
-            self.json_status.setStyleSheet("color: green;")
+            self.json_status.setStyleSheet(f"color: {status_saved()};")
     
     def _update_code_status(self):
         """Update code status label."""
         if self._code_dirty:
             self.code_status.setText("● Modified")
-            self.code_status.setStyleSheet("color: orange;")
+            self.code_status.setStyleSheet(f"color: {status_modified()};")
         else:
             self.code_status.setText("✓ Saved")
-            self.code_status.setStyleSheet("color: green;")
+            self.code_status.setStyleSheet(f"color: {status_saved()};")
     
     def _create_assistant_message(
         self, 

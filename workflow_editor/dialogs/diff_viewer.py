@@ -11,6 +11,10 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QTextCharFormat, QColor, QTextCursor, QSyntaxHighlighter
+from ..theme import (
+    diff_added_bg, diff_added_fg, diff_removed_bg, diff_removed_fg,
+    diff_header_color,
+)
 
 
 class DiffHighlighter(QSyntaxHighlighter):
@@ -18,26 +22,23 @@ class DiffHighlighter(QSyntaxHighlighter):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        
-        self.add_format = QTextCharFormat()
-        self.add_format.setBackground(QColor("#d4edda"))
-        self.add_format.setForeground(QColor("#155724"))
-        
-        self.remove_format = QTextCharFormat()
-        self.remove_format.setBackground(QColor("#f8d7da"))
-        self.remove_format.setForeground(QColor("#721c24"))
-        
-        self.header_format = QTextCharFormat()
-        self.header_format.setForeground(QColor("#0066cc"))
-        self.header_format.setFontWeight(QFont.Bold)
     
     def highlightBlock(self, text: str):
         if text.startswith('+') and not text.startswith('+++'):
-            self.setFormat(0, len(text), self.add_format)
+            fmt = QTextCharFormat()
+            fmt.setBackground(diff_added_bg())
+            fmt.setForeground(diff_added_fg())
+            self.setFormat(0, len(text), fmt)
         elif text.startswith('-') and not text.startswith('---'):
-            self.setFormat(0, len(text), self.remove_format)
+            fmt = QTextCharFormat()
+            fmt.setBackground(diff_removed_bg())
+            fmt.setForeground(diff_removed_fg())
+            self.setFormat(0, len(text), fmt)
         elif text.startswith('@@') or text.startswith('---') or text.startswith('+++'):
-            self.setFormat(0, len(text), self.header_format)
+            fmt = QTextCharFormat()
+            fmt.setForeground(diff_header_color())
+            fmt.setFontWeight(QFont.Bold)
+            self.setFormat(0, len(text), fmt)
 
 
 class DiffViewer(QDialog):

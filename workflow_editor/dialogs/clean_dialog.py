@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
+from ..theme import ERROR_COLOR, danger_button_style
+
 
 class CleanDialog(QDialog):
     """
@@ -56,7 +58,7 @@ class CleanDialog(QDialog):
         
         # Warning
         self.warning_label = QLabel("")
-        self.warning_label.setStyleSheet("color: red;")
+        self.warning_label.setStyleSheet(f"color: {ERROR_COLOR};")
         layout.addWidget(self.warning_label)
         
         # Buttons
@@ -69,7 +71,7 @@ class CleanDialog(QDialog):
         
         self.delete_btn = QPushButton("Delete Selected")
         self.delete_btn.clicked.connect(self._on_delete)
-        self.delete_btn.setStyleSheet("background-color: #f44336; color: white;")
+        self.delete_btn.setStyleSheet(f"{danger_button_style()}")
         btn_layout.addWidget(self.delete_btn)
         
         layout.addLayout(btn_layout)

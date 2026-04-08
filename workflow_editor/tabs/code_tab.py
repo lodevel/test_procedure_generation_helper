@@ -9,10 +9,15 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QPlainTextEdit, QListWidget, QListWidgetItem
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QSyntaxHighlighter, QTextCharFormat, QColor
+from PySide6.QtGui import QFont, QSyntaxHighlighter, QTextCharFormat
 
 from .base_tab import BaseTab
 from ..core import ArtifactType, CodeValidator, StepMarkerParser
+from ..theme import (
+    syntax_keyword, syntax_string, syntax_comment,
+    syntax_step_marker, syntax_step_bg, syntax_function,
+    status_modified, status_saved,
+)
 
 
 class PythonSyntaxHighlighter(QSyntaxHighlighter):
@@ -20,30 +25,7 @@ class PythonSyntaxHighlighter(QSyntaxHighlighter):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        
-        # Keywords
-        self.keyword_format = QTextCharFormat()
-        self.keyword_format.setForeground(QColor("#0000cc"))
-        self.keyword_format.setFontWeight(QFont.Bold)
-        
-        # Strings
-        self.string_format = QTextCharFormat()
-        self.string_format.setForeground(QColor("#008800"))
-        
-        # Comments
-        self.comment_format = QTextCharFormat()
-        self.comment_format.setForeground(QColor("#888888"))
-        self.comment_format.setFontItalic(True)
-        
-        # Step markers
-        self.step_format = QTextCharFormat()
-        self.step_format.setForeground(QColor("#cc6600"))
-        self.step_format.setFontWeight(QFont.Bold)
-        self.step_format.setBackground(QColor("#fff8e0"))
-        
-        # Functions
-        self.function_format = QTextCharFormat()
-        self.function_format.setForeground(QColor("#660066"))
+        self._setup_formats()
         
         self.keywords = [
             "def", "class", "if", "elif", "else", "for", "while", "try",
@@ -52,6 +34,32 @@ class PythonSyntaxHighlighter(QSyntaxHighlighter):
             "not", "in", "is", "True", "False", "None", "async", "await"
         ]
     
+    def _setup_formats(self):
+        """Build text-char formats from current theme colours."""
+        # Keywords
+        self.keyword_format = QTextCharFormat()
+        self.keyword_format.setForeground(syntax_keyword())
+        self.keyword_format.setFontWeight(QFont.Bold)
+
+        # Strings
+        self.string_format = QTextCharFormat()
+        self.string_format.setForeground(syntax_string())
+
+        # Comments
+        self.comment_format = QTextCharFormat()
+        self.comment_format.setForeground(syntax_comment())
+        self.comment_format.setFontItalic(True)
+
+        # Step markers
+        self.step_format = QTextCharFormat()
+        self.step_format.setForeground(syntax_step_marker())
+        self.step_format.setFontWeight(QFont.Bold)
+        self.step_format.setBackground(syntax_step_bg())
+
+        # Functions
+        self.function_format = QTextCharFormat()
+        self.function_format.setForeground(syntax_function())
+
     def highlightBlock(self, text: str):
         import re
         
@@ -211,10 +219,10 @@ class CodeTab(BaseTab):
         """Update the status label."""
         if self._dirty:
             self.status_label.setText("● Modified")
-            self.status_label.setStyleSheet("color: orange;")
+            self.status_label.setStyleSheet(f"color: {status_modified()};")
         else:
             self.status_label.setText("✓ Saved")
-            self.status_label.setStyleSheet("color: green;")
+            self.status_label.setStyleSheet(f"color: {status_saved()};")
     
     def _on_save(self):
         """Save the code file."""

@@ -12,6 +12,7 @@ from PySide6.QtCore import Signal, Qt
 from typing import TYPE_CHECKING, Optional, Callable
 
 from ..llm.backend_base import LLMTask
+from ..theme import groupbox_bg, groupbox_border, groupbox_text, muted_text
 
 if TYPE_CHECKING:
     from ..main_window import MainWindow
@@ -227,22 +228,14 @@ class BaseTab(QWidget):
         group = QGroupBox(title)
         
         # Define style colors
-        if style == "file":
-            bg_color = "#e8f4f8"  # Light blue
-            border_color = "#b3d9e8"
-        elif style == "llm":
-            bg_color = "#f0e8f8"  # Light purple
-            border_color = "#d8c8e8"
-        else:
-            # Default/neutral style
-            bg_color = "#f5f5f5"
-            border_color = "#cccccc"
+        bg_color = groupbox_bg(style)
+        border_col = groupbox_border(style)
         
         # Apply stylesheet
         group.setStyleSheet(f"""
             QGroupBox {{
                 background-color: {bg_color};
-                border: 1px solid {border_color};
+                border: 1px solid {border_col};
                 border-radius: 4px;
                 margin-top: 8px;
                 padding: 12px;
@@ -252,7 +245,7 @@ class BaseTab(QWidget):
                 subcontrol-origin: margin;
                 subcontrol-position: top left;
                 padding: 0 5px;
-                color: #333333;
+                color: {groupbox_text()};
             }}
         """)
         
@@ -431,7 +424,7 @@ class BaseTab(QWidget):
         
         if not button_tasks:
             placeholder = QLabel("No LLM tasks configured")
-            placeholder.setStyleSheet("color: gray; font-style: italic;")
+            placeholder.setStyleSheet(f"color: {muted_text()}; font-style: italic;")
             layout.addWidget(placeholder)
             return
         

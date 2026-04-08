@@ -16,6 +16,8 @@ from PySide6.QtCore import Signal, Qt
 if TYPE_CHECKING:
     from ..core import ProjectManager
 
+from ..theme import disabled_text
+
 
 class RuleSelectorWidget(QGroupBox):
     """
@@ -55,7 +57,7 @@ class RuleSelectorWidget(QGroupBox):
         # Instructions
         info_label = QLabel("Select which rules to include in LLM context:")
         info_label.setWordWrap(True)
-        info_label.setStyleSheet("color: gray; font-size: 9pt;")
+        info_label.setStyleSheet(f"color: {disabled_text()}; font-size: 9pt;")
         layout.addWidget(info_label)
         
         # Buttons
@@ -88,7 +90,7 @@ class RuleSelectorWidget(QGroupBox):
         
         # Rule count label
         self.count_label = QLabel("0 rules selected")
-        self.count_label.setStyleSheet("color: gray; font-size: 9pt;")
+        self.count_label.setStyleSheet(f"color: {disabled_text()}; font-size: 9pt;")
         layout.addWidget(self.count_label)
     
     def _load_rules(self):
@@ -103,7 +105,7 @@ class RuleSelectorWidget(QGroupBox):
         
         if not rule_files:
             no_rules_label = QLabel("No rules available")
-            no_rules_label.setStyleSheet("color: gray; font-style: italic;")
+            no_rules_label.setStyleSheet(f"color: {disabled_text()}; font-style: italic;")
             self.checkbox_layout.addWidget(no_rules_label)
             self._update_count()
             return

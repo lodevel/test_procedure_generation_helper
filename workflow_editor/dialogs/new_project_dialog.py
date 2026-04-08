@@ -9,6 +9,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
+from ..theme import muted_text
+
 
 class NewProjectDialog(QDialog):
     """
@@ -88,11 +90,11 @@ class NewProjectDialog(QDialog):
         options_layout.addWidget(self.create_readme_check)
         
         tests_label = QLabel("✓ tests/ folder (always created)")
-        tests_label.setStyleSheet("color: #666;")
+        tests_label.setStyleSheet(f"color: {muted_text()};")
         options_layout.addWidget(tests_label)
         
         rules_label = QLabel("✓ rules/ folder (always created)")
-        rules_label.setStyleSheet("color: #666;")
+        rules_label.setStyleSheet(f"color: {muted_text()};")
         options_layout.addWidget(rules_label)
         
         options_group.setLayout(options_layout)

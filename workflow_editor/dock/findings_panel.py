@@ -17,6 +17,8 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from typing import TYPE_CHECKING, Optional
 
+from ..theme import finding_error, finding_warning, finding_info, finding_success
+
 if TYPE_CHECKING:
     from ..main_window import MainWindow
     from ..core.session_state import SessionState
@@ -65,7 +67,7 @@ class FindingsPanel(QWidget):
 
         # Summary
         self.summary_label = QLabel("No issues")
-        self.summary_label.setStyleSheet("color: green;")
+        self.summary_label.setStyleSheet(f"color: {finding_success()};")
         layout.addWidget(self.summary_label)
 
     # ── Public API ──────────────────────────────────────────
@@ -107,13 +109,13 @@ class FindingsPanel(QWidget):
 
         severity = issue.get("severity", "info")
         if severity == "error":
-            item.setForeground(QColor("#c62828"))
+            item.setForeground(finding_error())
             item.setText(f"\u2717 {msg}")
         elif severity == "warning":
-            item.setForeground(QColor("#ef6c00"))
+            item.setForeground(finding_warning())
             item.setText(f"\u26a0 {msg}")
         else:
-            item.setForeground(QColor("#1565c0"))
+            item.setForeground(finding_info())
             item.setText(f"\u2139 {msg}")
 
         self.issue_list.addItem(item)
@@ -126,7 +128,7 @@ class FindingsPanel(QWidget):
 
         if total == 0:
             self.summary_label.setText("No issues")
-            self.summary_label.setStyleSheet("color: green;")
+            self.summary_label.setStyleSheet(f"color: {finding_success()};")
             return
 
         issues = (
@@ -139,13 +141,13 @@ class FindingsPanel(QWidget):
 
         if errors > 0:
             self.summary_label.setText(f"{errors} errors, {warnings} warnings")
-            self.summary_label.setStyleSheet("color: red;")
+            self.summary_label.setStyleSheet(f"color: {finding_error().name()};")
         elif warnings > 0:
             self.summary_label.setText(f"{warnings} warnings")
-            self.summary_label.setStyleSheet("color: orange;")
+            self.summary_label.setStyleSheet(f"color: {finding_warning().name()};")
         else:
             self.summary_label.setText(f"{total} info items")
-            self.summary_label.setStyleSheet("color: blue;")
+            self.summary_label.setStyleSheet(f"color: {finding_info().name()};")
 
     def _on_issue_clicked(self, item: QListWidgetItem):
         """Handle issue click."""

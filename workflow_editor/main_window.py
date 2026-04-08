@@ -620,17 +620,16 @@ class MainWindow(QMainWindow):
         if not hasattr(self, '_backend_factory') or self._backend_factory is None:
             return
         
-        # Get model name from config
-        model_name = None
+        # Read max_tokens directly from the backend config (the real value sent to the API)
         config = self._backend_factory.config
         if config.backend_type == BACKEND_TYPE_EXTERNAL_API and config.external_api:
-            model_name = config.external_api.model
-        elif config.backend_type == BACKEND_TYPE_OPENCODE and config.opencode:
-            model_name = config.opencode.model
+            context_limit = config.external_api.max_tokens
+        else:
+            # For OpenCode and other backends, read from common_llm settings
+            common_llm = self._settings.get("common_llm", {}) if hasattr(self, '_settings') else {}
+            context_limit = common_llm.get("max_tokens", 16384)
         
-        if model_name:
-            context_limit = self._extract_context_limit(model_name)
-            self.dock.chat_panel.set_context_limit(context_limit)
+        self.dock.chat_panel.set_context_limit(context_limit)
     
     def _setup_status_bar(self):
         """Setup the status bar."""
@@ -976,6 +975,9 @@ class MainWindow(QMainWindow):
         self.artifact_manager = ArtifactManager()
         self.artifact_manager.set_test_dir(path)
         self.artifact_manager.load_all()  # Load existing files from disk
+        self.artifact_manager.set_exclusion_patterns(
+            self.project_manager.get_equipment_patterns()
+        )
         
         # Initialize session state (empty, not with path)
         self.session_state = SessionState()
@@ -1149,27 +1151,6 @@ class MainWindow(QMainWindow):
             self.dock.chat_panel.remove_thinking_message()
             self.dock.chat_panel.add_system_message("Request cancelled by user")
             self.status_bar.showMessage("LLM request cancelled", 3000)
-    
-    def _extract_context_limit(self, model_name: str) -> int:
-        """Extract context limit from model name."""
-        import re
-        
-        # Handle None or empty model name
-        if not model_name:
-            return 16384  # Safe default
-        
-        # Try to extract number + k/K pattern (e.g., "16k", "32K", "128k")
-        match = re.search(r'(\d+)k', model_name.lower())
-        if match:
-            return int(match.group(1)) * 1024
-        
-        # Default fallback based on common models
-        if "gpt-4" in model_name.lower():
-            return 128000  # GPT-4 Turbo
-        elif "gpt-3.5" in model_name.lower():
-            return 16384
-        
-        return 16384  # Safe default
     
     def _on_toggle_workspace(self):
         """Toggle workspace dock visibility."""

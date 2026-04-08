@@ -9,6 +9,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Signal
 
+from ..theme import status_connected, status_warning, status_error
+
 
 class ProjectBar(QWidget):
     """
@@ -90,13 +92,13 @@ class ProjectBar(QWidget):
         """Update rules status indicator."""
         if path is None:
             self.rules_label.setText("⚠ Not found")
-            self.rules_label.setStyleSheet("color: orange;")
+            self.rules_label.setStyleSheet(f"color: {status_warning()};")
         elif loaded:
             self.rules_label.setText(f"✅ {path.name}")
-            self.rules_label.setStyleSheet("color: green;")
+            self.rules_label.setStyleSheet(f"color: {status_connected()};")
         else:
             self.rules_label.setText(f"❌ Invalid: {path.name}")
-            self.rules_label.setStyleSheet("color: red;")
+            self.rules_label.setStyleSheet(f"color: {status_error()};")
     
     def _on_project_changed(self, index: int):
         """Handle project selection change."""

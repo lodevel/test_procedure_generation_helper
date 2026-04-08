@@ -10,6 +10,7 @@ Implements Section 5 of the spec:
 
 import json
 import logging
+import re
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
@@ -64,6 +65,7 @@ class ProjectManager:
     # Cached rules content
     _rules_content: Optional[str] = field(default=None, repr=False)
     _rules_files: list[Path] = field(default_factory=list, repr=False)
+    _equipment_patterns_cache: Optional[list[re.Pattern[str]]] = field(default=None, repr=False)
     
     def set_project_root(self, path: Path) -> bool:
         """
@@ -73,6 +75,7 @@ class ProjectManager:
         """
         if self.is_valid_project_root(path):
             self.project_root = path
+            self._equipment_patterns_cache = None
             return True
         return False
     
@@ -265,7 +268,61 @@ Test procedure project created with Workflow Editor.
             return None
         config_dir = self.project_root / "config"
         return config_dir if config_dir.exists() else None
-    
+
+    def load_equipment_patterns(self) -> list[re.Pattern[str]]:
+        """Load equipment-configuration patterns from the project config.
+
+        Reads ``config/config.json`` → ``patterns`` section (visa, remote,
+        baud regexes) and ``profiles.controllers[].override_suffix``.
+        Returns compiled patterns suitable for ``sync_utils.normalize_for_hash``.
+        """
+        config_dir = self.get_config_dir()
+        if config_dir is None:
+            return []
+        config_file = config_dir / "config.json"
+        if not config_file.exists():
+            return []
+        try:
+            data = json.loads(config_file.read_text(encoding="utf-8"))
+        except Exception:
+            log.warning("Failed to read project config for equipment patterns")
+            return []
+
+        compiled: list[re.Pattern[str]] = []
+
+        # Patterns section (visa, remote, baud, etc.)
+        patterns = data.get("patterns", {})
+        for key, entry in patterns.items():
+            regex = entry.get("regex")
+            if not regex:
+                continue
+            flags = 0
+            for flag_name in entry.get("flags", []):
+                flags |= getattr(re, flag_name, 0)
+            try:
+                compiled.append(re.compile(regex, flags))
+            except re.error:
+                log.warning(f"Invalid regex in patterns.{key}: {regex}")
+
+        # Controller override_suffix → build a regex for VARNAME_MANUAL_OVERRIDE = ...
+        for ctrl in data.get("profiles", {}).get("controllers", []):
+            suffix = ctrl.get("override_suffix")
+            if suffix:
+                # Match lines like: SOMETHING_MANUAL_OVERRIDE = True/False
+                pat = rf"^[_A-Za-z][_A-Za-z0-9]*{re.escape(suffix)}\s*=\s.*"
+                try:
+                    compiled.append(re.compile(pat, re.MULTILINE))
+                except re.error:
+                    log.warning(f"Invalid override_suffix pattern: {suffix}")
+
+        return compiled
+
+    def get_equipment_patterns(self) -> list[re.Pattern[str]]:
+        """Return cached equipment patterns, loading on first access."""
+        if self._equipment_patterns_cache is None:
+            self._equipment_patterns_cache = self.load_equipment_patterns()
+        return self._equipment_patterns_cache
+
     def enumerate_test_folders(self) -> list[TestFolderInfo]:
         """
         Enumerate all test folders in the project.

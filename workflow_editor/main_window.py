@@ -1764,6 +1764,7 @@ class MainWindow(QMainWindow):
         log.info("LLM task completed")
         log.debug(f"Raw response length: {len(response.raw_response)} chars")
         
+        self._play_notification_sound()
         self._stop_progress_animation()
         self.dock.chat_panel.set_enabled(True)
         
@@ -2076,6 +2077,14 @@ class MainWindow(QMainWindow):
         if hasattr(current, 'refresh'):
             current.refresh()
     
+    def _play_notification_sound(self) -> None:
+        """Play a system notification sound when the LLM finishes."""
+        try:
+            import winsound
+            winsound.MessageBeep(winsound.MB_ICONASTERISK)
+        except Exception:
+            pass  # Silently ignore on non-Windows or if sound fails
+
     @Slot(str)
     def _on_llm_error(self, error: str):
         """Handle LLM error."""

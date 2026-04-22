@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QStatusBar, QMenuBar, QMenu, QToolBar, QMessageBox, QLabel, QDockWidget,
     QFileDialog, QDialog
 )
-from PySide6.QtCore import Qt, Signal, Slot, QThread
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QAction, QKeySequence, QShortcut, QCursor
 
 from .core import (
@@ -25,6 +25,7 @@ from .llm import (
     LLMBackend,
     LLMRequest, LLMTask,
     OpenCodeConfig, ExternalAPIConfig,
+    LLMWorker,
 )
 from .llm.server_manager import OpenCodeServerManager
 from .llm.backend_factory import (
@@ -52,79 +53,6 @@ class ClickableLabel(QLabel):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(event)
-
-
-class LLMWorker(QThread):
-    """Worker thread for LLM requests.
-    
-    Supports streaming mode: when the backend supports it, emits
-    thinking_chunk and text_chunk signals progressively as SSE events
-    arrive from the LLM, before the final finished signal.
-    """
-    
-    finished = Signal(object)  # LLMResponse
-    error = Signal(str)
-    thinking_chunk = Signal(str)  # Progressive thinking/reasoning text delta
-    text_chunk = Signal(str)  # Progressive response text delta
-    
-    def __init__(self, backend: LLMBackend, request: LLMRequest, parent=None):
-        super().__init__(parent)
-        self._backend = backend
-        self._request = request
-        self._cancelled = False
-        # Accumulate all emitted streaming text so it can be restored
-        # when the user switches away from this tab and comes back.
-        self.accumulated_thinking = ""
-        self.accumulated_response = ""
-    
-    def cancel(self):
-        """Request cancellation."""
-        self._cancelled = True
-        log.info("LLMWorker: Cancellation requested")
-        # Also cancel on the backend (supports mid-flight abort for streaming)
-        self._backend.cancel()
-    
-    def _on_thinking_chunk(self, text: str):
-        """Callback from streaming backend for thinking/reasoning chunks."""
-        if not self._cancelled:
-            self.accumulated_thinking += text
-            self.thinking_chunk.emit(text)
-    
-    def _on_text_chunk(self, text: str):
-        """Callback from streaming backend for text response chunks."""
-        if not self._cancelled:
-            self.accumulated_response += text
-            self.text_chunk.emit(text)
-    
-    def run(self):
-        try:
-            log.debug(f"LLMWorker.run() starting - backend={self._backend.__class__.__name__}, task={self._request.task}")
-            
-            # Use streaming if backend supports it
-            if hasattr(self._backend, 'send_request_streaming'):
-                log.debug("LLMWorker: Using streaming send_request")
-                response = self._backend.send_request_streaming(
-                    self._request,
-                    thinking_callback=self._on_thinking_chunk,
-                    text_callback=self._on_text_chunk,
-                )
-            else:
-                response = self._backend.send_request(self._request)
-            
-            # Check if cancelled before emitting
-            if self._cancelled:
-                log.debug("LLMWorker: Request was cancelled")
-                self.error.emit("Request cancelled by user")
-                return
-            
-            log.debug(f"LLMWorker.run() got response - raw_response length={len(response.raw_response)}, success={response.success}")
-            if not response.success:
-                log.warning(f"LLMWorker.run() response failed - error: {response.error_message}")
-            self.finished.emit(response)
-        except Exception as e:
-            if not self._cancelled:
-                log.error(f"LLMWorker.run() exception: {e}", exc_info=True)
-                self.error.emit(str(e))
 
 
 
@@ -1466,16 +1394,18 @@ class MainWindow(QMainWindow):
         log.debug("Playing notification sound...")
         try:
             import winsound
+        except ImportError:
+            log.warning("winsound not available (non-Windows platform)")
+            return
+        try:
             winsound.MessageBeep(winsound.MB_ICONASTERISK)
             log.debug("Notification sound played (MessageBeep)")
-        except Exception as e:
-            log.warning(f"Sound playback failed (MessageBeep): {e}")
+        except Exception:
             try:
-                import winsound
                 winsound.Beep(1000, 200)
                 log.debug("Notification sound played (Beep fallback)")
-            except Exception as e2:
-                log.warning(f"Sound playback failed (Beep fallback): {e2}")
+            except Exception as e:
+                log.warning(f"Sound playback failed: {e}")
 
     # ==================== Public Interface ====================
     

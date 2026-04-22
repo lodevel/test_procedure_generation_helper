@@ -8,6 +8,7 @@ Actions support bidirectional transformation.
 """
 
 import logging
+import json
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QSplitter, QGroupBox,
     QPushButton, QLabel, QPlainTextEdit,
@@ -17,20 +18,17 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QTextCursor
 
 from .base_tab import BaseTab
+from .llm_tab_mixin import LLMTabMixin
 from .json_tab import JsonSyntaxHighlighter
 from .code_tab import PythonSyntaxHighlighter
 from ..core import ArtifactType, JsonValidator, CodeValidator, StepMarkerParser
-from ..llm import TabContext, LLMTask, ChatMessage
-from ..llm.prompt_builder import PromptBuilder
-from ..llm.output_contracts import get_contract_for_tab
+from ..llm import TabContext, LLMTask
 from ..dialogs import DiffViewer
 from ..theme import status_modified, status_saved
-import json
-from datetime import datetime
 
 log = logging.getLogger(__name__)
 
-class JsonCodeTab(BaseTab):
+class JsonCodeTab(LLMTabMixin, BaseTab):
     """
     JSON-Code tab showing both artifacts side-by-side.
     
@@ -404,313 +402,38 @@ class JsonCodeTab(BaseTab):
             LLMTask.AD_HOC_CHAT: "General assistance"
         }
         return task_descriptions.get(task, f"Run {task.name}")
-    
-    def _run_task_async(self, task: LLMTask, **kwargs):
-        """Run LLM task asynchronously in worker thread."""
-        from workflow_editor.main_window import LLMWorker
-        
-        # Sync current editor content to artifact manager
-        # This ensures LLM sees current editor state, not just last saved state
-        json_content = self.json_editor.toPlainText()
-        code_content = self.code_editor.toPlainText()
-        self.artifact_manager.set_content(ArtifactType.PROCEDURE_JSON, json_content)
-        self.artifact_manager.set_content(ArtifactType.TEST_CODE, code_content)
-        
-        # Get force mode from chat panel
-        force_mode = self.main_window.dock.chat_panel.get_force_mode()
-        
-        request = self.tab_context._build_request(task, force=force_mode, **kwargs)
-        self._pending_request = request
-        
-        # Build the full prompt for storage
-        prompt_builder = PromptBuilder(
-            task_config_manager=self.task_config_manager,
-            tab_id=self.tab_id
-        )
-        contract = get_contract_for_tab(self.tab_context.tab_id)
-        full_prompt = prompt_builder.build(request, output_contract_override=contract)
-        
-        # Cancel any existing worker
-        if hasattr(self, '_worker') and self._worker and self._worker.isRunning():
-            self._worker.cancel()
-            self._worker.wait()
-        
-        # Add user message to chat before starting worker
-        # Extract user_message from kwargs if present (for AD_HOC_CHAT)
-        user_msg_text = kwargs.get('user_message', None)
-        custom_task_id = kwargs.get('custom_task_id', None)
-        user_message = ChatMessage(
-            role="user",
-            content=self._get_task_description(task, user_msg_text, custom_task_id=custom_task_id),
-            full_prompt=full_prompt
-        )
-        self.tab_context.messages.append(user_message)
-        self.main_window.dock.chat_panel.switch_context(self.tab_context)
-        self.main_window.dock.chat_panel.add_thinking_message()
-        
-        # Create and start new worker
-        self._worker = LLMWorker(self.tab_context.backend, request, parent=self)
-        self._worker.finished.connect(self._handle_llm_response)
-        self._worker.error.connect(self._handle_llm_error)
-        # Connect streaming signals for progressive display
-        self._worker.thinking_chunk.connect(
-            self.main_window.dock.chat_panel.append_thinking_text
-        )
-        self._worker.text_chunk.connect(
-            self.main_window.dock.chat_panel.append_response_text
-        )
-        self._worker.start()
 
-        # Enable cancel button in chat panel
-        self.main_window.dock.chat_panel.set_llm_active(True)
-        
-        self.status_message.emit(f"Running {task.name}...")
-    
-    def _validate_output_contract(self, parsed: dict) -> list[str]:
-        """Validate parsed response against expected output contract.
-        
-        Returns list of validation issues (empty if valid).
-        """
-        issues = []
-        
-        # Check required fields - assistant_message must exist (but can be empty)
-        if "assistant_message" not in parsed:
-            issues.append("Missing required field: assistant_message")
-        
-        # Validate open_questions structure
-        if "open_questions" not in parsed:
-            issues.append("Missing field: open_questions (will default to [])")
-        elif not isinstance(parsed["open_questions"], list):
-            issues.append(f"Field 'open_questions' must be list, got {type(parsed['open_questions'])}")
-        elif not all(isinstance(q, str) for q in parsed["open_questions"]):
-            issues.append("All elements in 'open_questions' must be strings")
-        
-        # Check propose_update type
-        if "propose_update" in parsed and not isinstance(parsed["propose_update"], bool):
-            issues.append(f"Field 'propose_update' must be boolean, got {type(parsed['propose_update'])}")
-        
-        # Logical validation - relaxed for propose_update
-        if parsed.get("propose_update") is True:
-            # Check if at least one artifact field is populated
-            artifact_fields = self._get_expected_artifact_fields()
-            has_artifact = any(
-                parsed.get(field) and str(parsed.get(field)).strip()
-                for field in artifact_fields
-            )
-            if not has_artifact:
-                # Allow if assistant provided explanation (arbitrary 20-char threshold)
-                msg = parsed.get("assistant_message", "")
-                if len(msg) < 20:
-                    issues.append(
-                        f"propose_update=True but no artifact fields populated "
-                        f"and no explanation given (expected one of: {', '.join(artifact_fields)})"
-                    )
-        
-        return issues
-    
+    def _sync_editors_for_llm(self):
+        """Sync editor widgets to artifact manager before LLM task."""
+        self.artifact_manager.set_content(ArtifactType.PROCEDURE_JSON, self.json_editor.toPlainText())
+        self.artifact_manager.set_content(ArtifactType.TEST_CODE, self.code_editor.toPlainText())
+
+    def _apply_proposals(self, response):
+        """Dispatch per-artifact proposals from LLM response."""
+        if response.procedure_json and response.procedure_json.mode:
+            self._handle_json_proposal(response.procedure_json)
+        if response.test_code and response.test_code.mode:
+            self._handle_code_proposal(response.test_code)
+
     def _get_expected_artifact_fields(self) -> list[str]:
         """Get expected artifact fields for this tab."""
-        # For json_code_tab: procedure_json and test_code
         return ["procedure_json", "test_code"]
-    
+
     def _parse_response_to_dict(self, response) -> dict:
-        """Parse LLMResponse object into dict format for validation.
-        
-        Args:
-            response: LLMResponse object from TabContext
-            
-        Returns:
-            Dict with fields expected by _validate_output_contract()
-        """
+        """Parse LLMResponse into the dict format expected by _validate_output_contract."""
         parsed = {
             "assistant_message": response.assistant_message,
             "open_questions": response.session_delta.get("open_questions", []),
         }
-        
-        # Determine if we have a proposal
         parsed["propose_update"] = False
-        
-        # Check for procedure_json proposal
         if response.procedure_json and response.procedure_json.mode:
             parsed["propose_update"] = True
             parsed["procedure_json"] = response.procedure_json.content
-        
-        # Check for test_code proposal
         if response.test_code and response.test_code.mode:
             parsed["propose_update"] = True
             parsed["test_code"] = response.test_code.content
-        
         return parsed
-    
-    def _is_active_tab(self) -> bool:
-        """Check if this tab is the currently visible tab."""
-        return self.main_window.tab_widget.currentWidget() is self
-    
-    def _handle_llm_response(self, response):
-        """Handle LLM response from TabContext."""
-        self.main_window._play_notification_sound()
-        is_active = self._is_active_tab()
-        
-        # Only touch chat panel UI if this tab is currently displayed
-        if is_active:
-            self.main_window.dock.chat_panel.set_llm_active(False)
-            self.main_window.dock.chat_panel.remove_thinking_message()
-        
-        # ALWAYS show raw response (even on validation failure, for debugging)
-        if is_active:
-            self.main_window.dock.raw_viewer.show_response(response.raw_response)
-        
-        # Parse response into dict for validation
-        try:
-            parsed = self._parse_response_to_dict(response)
-        except Exception as e:
-            # CRITICAL FAILURE: Can't parse at all
-            self._handle_parse_failure(response, e)
-            return
-        
-        # Validate output contract (tab-specific validation)
-        validation_issues = self._validate_output_contract(parsed)
-        
-        # Create assistant message with validation metadata
-        assistant_msg = self._create_assistant_message(parsed, response, validation_issues)
-        
-        # Add to conversation history (ALWAYS, regardless of active tab)
-        from ..llm.tab_context import ChatMessage
-        chat_message = ChatMessage(
-            role="assistant",
-            content=assistant_msg["content"],
-            full_response=response.raw_response,
-            thinking_content=getattr(response, 'thinking_content', ''),
-            prompt_tokens=response.prompt_tokens,
-            completion_tokens=response.completion_tokens,
-            total_tokens=response.total_tokens
-        )
-        self.tab_context.messages.append(chat_message)
-        self.tab_context.cumulative_tokens += response.total_tokens
-        
-        # Confirm optimization state only after successful delivery
-        if response.success and hasattr(self, '_pending_request') and self._pending_request:
-            self.tab_context.confirm_request_delivered(self._pending_request)
-            self._pending_request = None
-        
-        # Update chat panel with latest messages only if this tab is active
-        if is_active:
-            self.main_window.dock.chat_panel.switch_context(self.tab_context)
-        
-        # Handle validation issues
-        contract_issues = validation_issues
-        
-        # If contract validation found issues, display them
-        if contract_issues:
-            # Convert string issues to ValidationIssue format for display
-            from ..llm.backend_base import ValidationIssue
-            contract_validation_issues = [
-                ValidationIssue(
-                    message=issue,
-                    severity="warning",  # Use warning severity for contract issues
-                    location="response_structure",
-                    code="OUTPUT_CONTRACT",
-                    suggested_fix=""
-                )
-                for issue in contract_issues
-            ]
-            # Add to response issues
-            response.issues.extend(contract_validation_issues)
-        
-        # Show validation issues BEFORE success check (so users see findings even when validation fails)
-        if response.has_issues and is_active:
-            issues_as_dicts = [
-                {
-                    "message": issue.message,
-                    "severity": issue.severity,
-                    "location": issue.location,
-                    "code": issue.code,
-                    "suggested_fix": issue.suggested_fix
-                }
-                for issue in response.issues
-            ]
-            self.main_window.dock.show_validation_result_from_list(issues_as_dicts)
-        
-        # Now check success (may be False due to validation failure)
-        if not response.success:
-            # Add system message to chat for visibility (only if active)
-            if is_active:
-                self.main_window.dock.chat_panel.add_message("system", f"❌ {response.error_message}")
-                self.show_error("LLM Error", response.error_message)
-            return
-        
-        # Handle proposals (only if validation passed)
-        if response.procedure_json and response.procedure_json.mode:
-            self._handle_json_proposal(response.procedure_json)
-        
-        if response.test_code and response.test_code.mode:
-            self._handle_code_proposal(response.test_code)
-        
-        self.status_message.emit("Task completed successfully")
-        self.status_message.emit(f"LLM task completed ({response.total_tokens} tokens)")
-    
-    def _handle_parse_failure(self, response, error: Exception):
-        """Handle catastrophic parse failures (can't parse response at all)."""
-        from ..llm.backend_base import ValidationIssue
-        from ..llm.tab_context import ChatMessage
-        from datetime import datetime
-        
-        # Create error message for user
-        error_msg = {
-            "severity": "error",
-            "location": "response_parsing",
-            "code": "PARSE_FAILURE",
-            "message": f"Failed to parse LLM response: {str(error)}"
-        }
-        
-        # Add to response issues
-        response.issues.append(ValidationIssue(**error_msg))
-        
-        # Display error (convert ValidationIssue to dict for display)
-        issue_dict = {
-            "message": response.issues[-1].message,
-            "severity": response.issues[-1].severity,
-            "location": response.issues[-1].location,
-            "code": response.issues[-1].code,
-            "suggested_fix": response.issues[-1].suggested_fix
-        }
-        self.main_window.dock.show_validation_result_from_list([issue_dict])
-        
-        # Create assistant message with parse failure metadata
-        error_content = f"⚠️ Parse Error: {str(error)}"
-        chat_message = ChatMessage(
-            role="assistant",
-            content=error_content,
-            full_response=response.raw_response,
-            thinking_content=getattr(response, 'thinking_content', ''),
-            prompt_tokens=response.prompt_tokens,
-            completion_tokens=response.completion_tokens,
-            total_tokens=response.total_tokens
-        )
-        self.tab_context.messages.append(chat_message)
-        self.tab_context.cumulative_tokens += response.total_tokens
-        
-        # Update chat panel to show the failure (only if active)
-        if self._is_active_tab():
-            self.main_window.dock.chat_panel.switch_context(self.tab_context)
-    
-    def _handle_llm_error(self, error_message: str):
-        """Handle LLM error from worker thread."""
-        self._pending_request = None
-        is_active = self._is_active_tab()
-        
-        # Only touch chat panel UI if this tab is currently displayed
-        if is_active:
-            self.main_window.dock.chat_panel.set_llm_active(False)
-            self.main_window.dock.chat_panel.remove_thinking_message()
 
-        # Don't show error dialog for user-initiated cancellation
-        if error_message == "Request cancelled by user":
-            return
-
-        if is_active:
-            self.show_error("LLM Error", error_message)
-    
     def _handle_json_proposal(self, proposal):
         """Handle procedure_json proposal."""
         if proposal.mode == "replace":
@@ -785,7 +508,6 @@ class JsonCodeTab(BaseTab):
         # Get step texts from JSON
         json_steps = []
         try:
-            import json
             json_content = self.json_editor.toPlainText()
             if json_content.strip():
                 json_data = json.loads(json_content)
@@ -845,39 +567,6 @@ class JsonCodeTab(BaseTab):
         else:
             self.code_status.setText("✓ Saved")
             self.code_status.setStyleSheet(f"color: {status_saved()};")
-    
-    def _create_assistant_message(
-        self, 
-        parsed: dict,
-        response,
-        validation_issues: list
-    ) -> dict:
-        """Create assistant message with validation metadata.
-        
-        Args:
-            parsed: Parsed response dictionary
-            response: LLMResponse object
-            validation_issues: List of validation issue strings
-            
-        Returns:
-            Message dict with role, content, and metadata
-        """
-        message = {
-            "role": "assistant",
-            "content": parsed.get("assistant_message", ""),
-            "metadata": {
-                "validation_issues": validation_issues,
-                "contract_violated": len(validation_issues) > 0,
-                "timestamp": datetime.now().isoformat()
-            }
-        }
-        
-        # Include session delta info if present
-        if hasattr(response, 'session_delta') and response.session_delta:
-            if hasattr(response.session_delta, 'open_questions'):
-                message["metadata"]["open_questions"] = response.session_delta.open_questions
-        
-        return message
     
     def load_content(self):
         """Load both artifacts into editors."""

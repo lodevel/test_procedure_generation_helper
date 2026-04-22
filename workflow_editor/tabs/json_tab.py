@@ -2,6 +2,8 @@
 JSON syntax highlighter for procedure.json editors.
 """
 
+import re
+
 from PySide6.QtGui import QFont, QSyntaxHighlighter, QTextCharFormat
 
 from ..theme import json_key, json_string, json_number, json_keyword
@@ -30,8 +32,6 @@ class JsonSyntaxHighlighter(QSyntaxHighlighter):
         self.keyword_format.setForeground(json_keyword())
     
     def highlightBlock(self, text: str):
-        import re
-        
         # Highlight keys (before colon)
         for match in re.finditer(r'"([^"]+)"\s*:', text):
             self.setFormat(match.start(), match.end() - match.start() - 1, self.key_format)

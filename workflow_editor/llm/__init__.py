@@ -7,8 +7,10 @@ from .response_parser import ResponseParser
 from .prompt_builder import PromptBuilder
 from .output_contracts import get_contract_for_tab, get_allowed_artifacts
 from .tab_context import TabContext, ChatMessage
+from .worker import LLMWorker
 
 __all__ = [
+    "LLMWorker",
     "LLMBackend",
     "LLMResponse",
     "LLMRequest",

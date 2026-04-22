@@ -2,6 +2,8 @@
 Python syntax highlighter for test.py editors.
 """
 
+import re
+
 from PySide6.QtGui import QFont, QSyntaxHighlighter, QTextCharFormat
 
 from ..theme import (
@@ -12,17 +14,17 @@ from ..theme import (
 
 class PythonSyntaxHighlighter(QSyntaxHighlighter):
     """Simple Python syntax highlighter."""
-    
+
+    _KEYWORDS = (
+        "def", "class", "if", "elif", "else", "for", "while", "try",
+        "except", "finally", "with", "as", "import", "from", "return",
+        "yield", "raise", "pass", "break", "continue", "and", "or",
+        "not", "in", "is", "True", "False", "None", "async", "await"
+    )
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._setup_formats()
-        
-        self.keywords = [
-            "def", "class", "if", "elif", "else", "for", "while", "try",
-            "except", "finally", "with", "as", "import", "from", "return",
-            "yield", "raise", "pass", "break", "continue", "and", "or",
-            "not", "in", "is", "True", "False", "None", "async", "await"
-        ]
     
     def _setup_formats(self):
         """Build text-char formats from current theme colours."""
@@ -51,8 +53,6 @@ class PythonSyntaxHighlighter(QSyntaxHighlighter):
         self.function_format.setForeground(syntax_function())
 
     def highlightBlock(self, text: str):
-        import re
-        
         # Comments (before other patterns)
         comment_match = re.search(r'#.*$', text)
         if comment_match:
@@ -64,7 +64,7 @@ class PythonSyntaxHighlighter(QSyntaxHighlighter):
                 self.setFormat(comment_match.start(), len(text) - comment_match.start(), self.comment_format)
         
         # Keywords
-        for keyword in self.keywords:
+        for keyword in self._KEYWORDS:
             pattern = rf'\b{keyword}\b'
             for match in re.finditer(pattern, text):
                 self.setFormat(match.start(), match.end() - match.start(), self.keyword_format)

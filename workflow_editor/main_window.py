@@ -7,16 +7,14 @@ Implements the main UI structure from Section 9.
 from pathlib import Path
 from typing import Optional
 import logging
-import json
 import os
-from datetime import datetime
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QStatusBar, QMenuBar, QMenu, QToolBar, QMessageBox, QLabel, QDockWidget,
     QFileDialog, QDialog
 )
-from PySide6.QtCore import Qt, Signal, Slot, QThread, QUrl
-from PySide6.QtGui import QAction, QKeySequence, QShortcut, QCursor, QDesktopServices
+from PySide6.QtCore import Qt, Signal, Slot, QThread
+from PySide6.QtGui import QAction, QKeySequence, QShortcut, QCursor
 
 from .core import (
     ArtifactManager, SessionState, ProjectManager, ArtifactType,
@@ -24,9 +22,9 @@ from .core import (
 )
 from .core.task_config import TaskConfigManager
 from .llm import (
-    LLMBackend, NoneBackend, OpenCodeBackend, ExternalAPIBackend,
-    LLMRequest, LLMResponse, LLMTask, PromptBuilder, ResponseParser,
-    OpenCodeConfig, ExternalAPIConfig, LLMProposal
+    LLMBackend,
+    LLMRequest, LLMTask,
+    OpenCodeConfig, ExternalAPIConfig,
 )
 from .llm.server_manager import OpenCodeServerManager
 from .llm.backend_factory import (
@@ -37,7 +35,7 @@ from .tabs import (
     WorkspaceTab, TextJsonTab, JsonCodeTab, TraceabilityTab
 )
 from .dock import DockWidget
-from .dialogs import SettingsDialog, DiffViewer, CleanDialog, NewProjectDialog, load_settings
+from .dialogs import SettingsDialog, CleanDialog, NewProjectDialog, load_settings
 
 log = logging.getLogger(__name__)
 
@@ -182,19 +180,6 @@ class MainWindow(QMainWindow):
         self._init_llm_backend()
         
         # Prompt builder and response parser
-        self._prompt_builder = PromptBuilder(
-            task_config_manager=self.task_config_manager,
-            tab_id=None  # Main window uses None for legacy tasks
-        )
-        self._response_parser = ResponseParser()
-        
-        # Active LLM worker
-        self._llm_worker: Optional[LLMWorker] = None
-        
-        # Progress animation for LLM status
-        self._progress_timer = None
-        self._progress_dots = 0
-        
         # Setup UI
         self._setup_menu()
         self._setup_central_widget()
@@ -355,32 +340,6 @@ class MainWindow(QMainWindow):
             return BackendConfig.create_disabled()
     
     @property
-    def llm_backend(self) -> LLMBackend:
-        """DEPRECATED: Get a backend instance.
-        
-        This property is deprecated. New code should use tab_context.backend instead.
-        This exists for backward compatibility with legacy run_llm_task() method.
-        
-        Returns:
-            A backend instance (creates one via factory if needed)
-        """
-        import warnings
-        warnings.warn(
-            "MainWindow.llm_backend is deprecated. Use tab_context.backend instead.",
-            DeprecationWarning,
-            stacklevel=2
-        )
-        # Return first available tab's backend for legacy callers
-        for tab in self._get_llm_tabs():
-            if hasattr(tab, 'tab_context') and tab.tab_context:
-                return tab.tab_context.backend
-        # Fallback: create a temporary backend via factory
-        if hasattr(self, '_backend_factory') and self._backend_factory:
-            return self._backend_factory.create_backend("_legacy")
-        # Ultimate fallback
-        return NoneBackend()
-    
-    @property
     def backend_factory(self) -> BackendFactory:
         """Get the backend factory for creating per-tab backends.
         
@@ -419,12 +378,7 @@ class MainWindow(QMainWindow):
             if hasattr(tab, '_worker') and tab._worker:
                 tab._worker.cancel()
                 log.debug(f"Cancelled LLM worker for {tab.__class__.__name__}")
-        
-        # Also cancel the main window's worker if any
-        if self._llm_worker and self._llm_worker.isRunning():
-            self._llm_worker.cancel()
-            log.debug("Cancelled main window LLM worker")
-    
+
     def refresh_all_button_labels(self):
         """
         Refresh button labels in all tabs.
@@ -1140,18 +1094,7 @@ class MainWindow(QMainWindow):
             self.dock.chat_panel.remove_thinking_message()
             self.dock.chat_panel.add_system_message("Request cancelled by user")
             self.status_bar.showMessage("LLM request cancelled", 3000)
-        elif self._llm_worker and self._llm_worker.isRunning():
-            # Legacy fallback
-            log.info("User requested LLM cancellation (legacy path)")
-            self._llm_worker.cancel()
-            self._llm_worker.wait(1000)
 
-            # Update UI
-            self.dock.chat_panel.set_llm_active(False)
-            self.dock.chat_panel.remove_thinking_message()
-            self.dock.chat_panel.add_system_message("Request cancelled by user")
-            self.status_bar.showMessage("LLM request cancelled", 3000)
-    
     def _on_toggle_workspace(self):
         """Toggle workspace dock visibility."""
         if self.workspace_dock.isVisible():
@@ -1485,13 +1428,6 @@ class MainWindow(QMainWindow):
             "Version 0.1.0"
         )
     
-    def _on_cancel_llm_task(self):
-        """Cancel current LLM task."""
-        if self._llm_worker and self._llm_worker.isRunning():
-            self._llm_worker.cancel()
-            self.llm_status.setText("Cancelled")
-            log.info("LLM task cancelled by user")
-    
     def _on_chat_message(self, message: str):
         """Handle chat message from user."""
         # Set intent based on current tab
@@ -1519,563 +1455,11 @@ class MainWindow(QMainWindow):
                 )
                 return
         
-        # Check if tab has modern async task execution
-        if hasattr(current_tab, '_run_task_async'):
-            log.info(f"Chat message using MODERN path via {current_tab.__class__.__name__}._run_task_async()")
-            try:
-                # Use the modern path: delegate to tab's _run_task_async
-                current_tab._run_task_async(LLMTask.AD_HOC_CHAT, user_message=message)
-            except Exception as e:
-                log.error(f"Error in modern async path: {e}", exc_info=True)
-                QMessageBox.critical(
-                    self,
-                    "Task Error",
-                    f"Failed to execute task: {str(e)}"
-                )
-        else:
-            # Fallback to legacy path for tabs without _run_task_async
-            log.info(f"Chat message using LEGACY path via run_llm_task() for {current_tab.__class__.__name__}")
-            self.run_llm_task("ad_hoc_chat", user_message=message)
-    
-    # ==================== LLM Task Execution ====================
-    
-    def run_llm_task(self, task_name: str, strict: bool = True, user_message: str = None):
-        """
-        Run an LLM task.
-        
-        **DEPRECATED**: This method is deprecated in favor of tab-level _run_task_async().
-        It remains for backward compatibility with legacy tabs (json_tab, code_tab, text_tab).
-        New code should use _run_task_async() directly from the tab.
-        
-        TODO: Remove this method after all tabs are migrated to _run_task_async().
-        """
-        log.warning(
-            f"⚠️  DEPRECATED: run_llm_task() called for task '{task_name}'. "
-            "This method should be replaced with tab._run_task_async() for better maintainability."
-        )
-        
-        if not self.artifact_manager:
-            log.warning("run_llm_task called without artifact_manager")
-            QMessageBox.warning(self, "No Test", "Please open a test first.")
-            return
-        
-        if self._llm_worker and self._llm_worker.isRunning():
-            log.warning("LLM request already in progress")
-            QMessageBox.warning(self, "Busy", "An LLM request is already in progress.")
-            return
-        
-        log.info(f"Running LLM task: {task_name} (strict={strict})")
-        
-        # Get the task enum
         try:
-            task = LLMTask[task_name.upper()]
-        except KeyError:
-            # Try case-insensitive match
-            for t in LLMTask:
-                if t.name.lower() == task_name.lower():
-                    task = t
-                    break
-            else:
-                self.status_bar.showMessage(f"Unknown task: {task_name}", 3000)
-                return
-        
-        # Build context
-        context = self._build_context()
-        log.debug(f"Context: {context}")
-        
-        # Only include artifacts that have local changes or need resync with LLM
-        include_json = self.artifact_manager.should_include_in_prompt(ArtifactType.PROCEDURE_JSON)
-        include_code = self.artifact_manager.should_include_in_prompt(ArtifactType.TEST_CODE)
-        include_text = self.artifact_manager.should_include_in_prompt(ArtifactType.PROCEDURE_TEXT)
-        
-        # Create LLM request with all needed fields
-        request = LLMRequest(
-            task=task,
-            strict_mode=strict,
-            procedure_json=self.artifact_manager.get_content(ArtifactType.PROCEDURE_JSON),
-            test_code=self.artifact_manager.get_content(ArtifactType.TEST_CODE),
-            procedure_text=self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT),
-            include_json=include_json,
-            include_code=include_code,
-            include_text=include_text,
-            rules_content=self._get_rules_content(),
-            session_summary=self.session_state.get_summary_for_llm() if self.session_state else "",
-            user_message=user_message,
-        )
-        
-        # Mark included artifacts as synced (they're being sent to LLM now)
-        if include_json:
-            self.artifact_manager.mark_synced(ArtifactType.PROCEDURE_JSON)
-        if include_code:
-            self.artifact_manager.mark_synced(ArtifactType.TEST_CODE)
-        if include_text:
-            self.artifact_manager.mark_synced(ArtifactType.PROCEDURE_TEXT)
-        
-        # Build prompt from request
-        prompt = self._prompt_builder.build(request)
-        log.debug(f"Prompt built: {len(prompt)} chars")
-        
-        # Store prompt for chat history
-        self._current_prompt = prompt
-        
-        # Show in chat - always as user message for conversational flow
-        if user_message:
-            self.dock.chat_panel.add_message("user", user_message, full_prompt=prompt)
-        else:
-            # Extract task description from instruction (first line after "Task:")
-            # Get task instruction from prompt builder
-            instruction = PromptBuilder.get_default_prompts().get(task.value, "")
-            # Get first line that starts with "Task:"
-            for line in instruction.split('\n'):
-                line = line.strip()
-                if line.startswith('Task:'):
-                    task_description = line[5:].strip()  # Remove "Task:" prefix
-                    self.dock.chat_panel.add_message("user", task_description, full_prompt=prompt)
-                    break
-            else:
-                # Fallback if no "Task:" line found
-                self.dock.chat_panel.add_message("user", task.name.replace('_', ' ').title(), full_prompt=prompt)
-        
-        # Update status with progress animation
-        self.llm_status.setText("LLM: Working")
-        self._start_progress_animation()
-        self.dock.chat_panel.set_enabled(False)
-        
-        # Add temporary "thinking" message in chat
-        self._thinking_message_widget = None
-        self.dock.chat_panel.add_thinking_message()
-        
-        # Store task info for response handling
-        self._current_task = task
-        self._strict_mode = strict
-        
-        # Run in worker thread
-        self._llm_worker = LLMWorker(self.llm_backend, request, self)
-        self._llm_worker.finished.connect(self._on_llm_finished)
-        self._llm_worker.error.connect(self._on_llm_error)
-        
-        # Enable cancel button while request is active
-        self.dock.chat_panel.set_llm_active(True)
-        
-        self._llm_worker.start()
-    
-    def _build_context(self) -> dict:
-        """Build context for LLM request."""
-        return {
-            "test_name": self.artifact_manager.test_dir.name if self.artifact_manager and self.artifact_manager.test_dir else "",
-            "has_json": self.artifact_manager.procedure_json.exists_on_disk if self.artifact_manager else False,
-            "has_code": self.artifact_manager.test_code.exists_on_disk if self.artifact_manager else False,
-            "has_text": self.artifact_manager.procedure_text.exists_on_disk if self.artifact_manager else False,
-        }
-    
-    def _get_rules_content(self) -> str:
-        """Get concatenated rules content."""
-        if not self.project_manager.rules_root:
-            return ""
-        
-        rules = []
-        for md_file in self.project_manager.rules_root.glob("*.md"):
-            try:
-                rules.append(md_file.read_text(encoding='utf-8'))
-            except Exception:
-                pass
-        
-        return "\n\n---\n\n".join(rules)
-    
-    def _save_debug_file(self, raw_response: str, error_type: str) -> str:
-        """Save debug file with raw response and truncated prompt for debugging.
-        
-        Args:
-            raw_response: The raw LLM response (or empty string)
-            error_type: Type of error (e.g., 'empty_response', 'parse_error')
-            
-        Returns:
-            Path to the saved debug file
-        """
-        if not self.artifact_manager or not self.artifact_manager.test_dir:
-            return ""
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f".llm_debug_{timestamp}.json"
-        filepath = self.artifact_manager.test_dir / filename
-        
-        # Truncate rules in prompt to reduce file size
-        prompt = getattr(self, '_current_prompt', '')
-        if prompt:
-            # Replace rules content with placeholder showing size
-            import re
-            rules_match = re.search(r'## RULES ##\s*(.*?)\s*(?=## |$)', prompt, re.DOTALL)
-            if rules_match:
-                rules_content = rules_match.group(1)
-                prompt = prompt.replace(rules_content, f"<rules: {len(rules_content)} bytes>")
-        
-        debug_data = {
-            'timestamp': datetime.now().isoformat(),
-            'error_type': error_type,
-            'task': getattr(self, '_current_task', None).name if hasattr(self, '_current_task') and self._current_task else 'unknown',
-            'raw_response': raw_response,
-            'prompt_truncated': prompt,
-        }
-        
-        try:
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(debug_data, f, indent=2, ensure_ascii=False)
-            
-            # Open in default editor
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(filepath)))
-            
-            return str(filepath)
+            current_tab._run_task_async(LLMTask.AD_HOC_CHAT, user_message=message)
         except Exception as e:
-            log.error(f"Failed to save debug file: {e}")
-            return ""
-    
-    def _start_progress_animation(self):
-        """Start animated progress dots for LLM status."""
-        from PySide6.QtCore import QTimer
-        self._progress_dots = 0
-        if self._progress_timer:
-            self._progress_timer.stop()
-        self._progress_timer = QTimer()
-        self._progress_timer.timeout.connect(self._update_progress_animation)
-        self._progress_timer.start(500)  # Update every 500ms
-    
-    def _stop_progress_animation(self):
-        """Stop progress animation."""
-        if self._progress_timer:
-            self._progress_timer.stop()
-            self._progress_timer = None
-        self.llm_status.setText("")
-        
-        # Remove thinking message from chat
-        self.dock.chat_panel.remove_thinking_message()
-    
-    def _update_progress_animation(self):
-        """Update progress dots animation."""
-        self._progress_dots = (self._progress_dots + 1) % 4
-        dots = "." * self._progress_dots
-        self.llm_status.setText(f"LLM: Working{dots}")
-        
-        # Update thinking message in chat
-        self.dock.chat_panel.update_thinking_message(dots)
-    
-    @Slot(object)
-    def _on_llm_finished(self, response: LLMResponse):
-        """Handle LLM response."""
-        log.info("LLM task completed")
-        log.debug(f"Raw response length: {len(response.raw_response)} chars")
-        
-        self._play_notification_sound()
-        self._stop_progress_animation()
-        self.dock.chat_panel.set_enabled(True)
-        
-        # Disable cancel button
-        self.dock.chat_panel.set_llm_active(False)
-        
-        # Show raw response
-        self.dock.raw_viewer.show_response(response.raw_response)
-        if self.dock.raw_viewer.should_auto_show():
-            self.dock.show_raw()
-        
-        # Check for context length exceeded
-        if response.context_exceeded:
-            error_msg = "⚠️ Context length exceeded - session history too long"
-            self.dock.chat_panel.add_system_message(error_msg, full_prompt=self._current_prompt)
-            reply = QMessageBox.question(
-                self,
-                "Context Length Exceeded",
-                "The conversation context is too long for the model.\n\n"
-                "Would you like to reset the session and clear the chat history?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes
-            )
-            if reply == QMessageBox.Yes:
-                self._on_reset_session()
-            return
-        
-        # Check for empty response
-        if not response.raw_response or len(response.raw_response.strip()) == 0:
-            error_msg = "❌ Error: Received empty response from LLM"
-            self.dock.chat_panel.add_system_message(error_msg, full_prompt=self._current_prompt)
-            debug_file = self._save_debug_file(response.raw_response, "empty_response")
-            QMessageBox.critical(
-                self,
-                "LLM Error",
-                f"The LLM returned an empty response.\n\nDebug file saved: {debug_file}"
-            )
-            log.error("Empty LLM response")
-            return
-        
-        # Parse response
-        try:
-            parsed = self._response_parser.parse(response.raw_response, self._current_task)
-            log.debug(f"Parsed response: has_proposals={parsed.has_proposals}, has_issues={parsed.has_issues}")
-        except Exception as e:
-            error_msg = f"❌ Error parsing LLM response: {str(e)}"
-            self.dock.chat_panel.add_system_message(error_msg, full_prompt=self._current_prompt)
-            debug_file = self._save_debug_file(response.raw_response, "parse_error")
-            QMessageBox.critical(
-                self,
-                "Parse Error",
-                f"Failed to parse LLM response:\n{str(e)}\n\nDebug file saved: {debug_file}"
-            )
-            log.error(f"Parse error: {e}", exc_info=True)
-            return
-        
-        # Build comprehensive chat message from all response components
-        chat_message_parts = []
-        
-        # 1. Assistant message
-        if parsed.assistant_message:
-            chat_message_parts.append(parsed.assistant_message)
-        
-        # 2. Validation issues
-        if parsed.has_issues:
-            # Convert ValidationIssue objects to dict format for findings panel
-            issues_as_dicts = [
-                {
-                    "message": issue.message,
-                    "severity": issue.severity,
-                    "location": issue.location,
-                    "code": issue.code,
-                    "suggested_fix": issue.suggested_fix
-                }
-                for issue in parsed.issues
-            ]
-            self.dock.show_validation_result_from_list(issues_as_dicts)
-            
-            # Add formatted issues to chat message
-            issues_text = self._format_issues_for_chat(parsed.issues)
-            chat_message_parts.append(issues_text)
-            
-            if self._strict_mode and parsed.has_errors:
-                self.dock.chat_panel.add_system_message(
-                    "Errors found. Fix issues before proceeding.",
-                    full_prompt=self._current_prompt
-                )
-                return
-        
-        # 3. Proposals summary
-        if parsed.has_proposals:
-            proposals_summary = self._format_proposals_summary(parsed)
-            chat_message_parts.append(proposals_summary)
-        
-        # 4. Open questions from session delta
-        if parsed.session_delta and hasattr(parsed.session_delta, 'open_questions') and parsed.session_delta.open_questions:
-            questions_text = self._format_open_questions_for_chat(parsed.session_delta.open_questions)
-            chat_message_parts.append(questions_text)
-        
-        # Display complete message in chat
-        if chat_message_parts:
-            complete_message = "\n\n".join(chat_message_parts)
-            self.dock.chat_panel.add_message(
-                "assistant", 
-                complete_message, 
-                full_prompt=self._current_prompt, 
-                full_response=response.raw_response,
-                prompt_tokens=response.prompt_tokens,
-                completion_tokens=response.completion_tokens,
-                total_tokens=response.total_tokens
-            )
-        
-        # Handle session delta
-        if parsed.session_delta and self.session_state:
-            self.session_state.apply_delta(parsed.session_delta)
-            self.session_state.save()
-            self.dock.refresh_session()
-        
-        # Handle proposals - show as text messages in chat, then modal DiffViewer
-        if parsed.has_proposals:
-            if parsed.procedure_json and parsed.procedure_json.is_valid:
-                self._handle_llm_proposal(parsed.procedure_json, "procedure.json", ArtifactType.PROCEDURE_JSON)
-            if parsed.test_code and parsed.test_code.is_valid:
-                self._handle_llm_proposal(parsed.test_code, "test.py", ArtifactType.TEST_CODE)
-            if parsed.procedure_text and parsed.procedure_text.is_valid:
-                self._handle_llm_proposal(parsed.procedure_text, "procedure_text.md", ArtifactType.PROCEDURE_TEXT)
-        
-        self.status_bar.showMessage("LLM task completed", 3000)
-    
-    def _handle_llm_proposal(self, proposal: LLMProposal, target: str, artifact_type: ArtifactType):
-        """Show proposal as text message in chat, then handle with modal DiffViewer."""
-        import json
-        log.debug(f"Handling proposal for: {target}, mode={proposal.mode}")
-        
-        # Validate proposal
-        is_valid, error = self._response_parser.validate_proposal(
-            proposal, 
-            target.replace('.json', '_json').replace('.py', '_code').replace('.md', '_text')
-        )
-        if not is_valid:
-            log.warning(f"Invalid proposal for {target}: {error}")
-            self.dock.chat_panel.add_system_message(f"Invalid proposal for {target}: {error}")
-            return
-        
-        # Convert content to string
-        if isinstance(proposal.content, dict):
-            proposed_content = json.dumps(proposal.content, indent=2)
-        else:
-            proposed_content = str(proposal.content)
-        
-        # Show FULL content in chat (not truncated)
-        self.dock.chat_panel.add_message(
-            "assistant",
-            f"📄 Proposal for {target}:\n```\n{proposed_content}\n```",
-            full_prompt=self._current_prompt,
-            full_response=None
-        )
-        
-        # Show modal DiffViewer for accept/reject
-        current = self.artifact_manager.get_content(artifact_type)
-        accepted, final_content = DiffViewer.show_diff(
-            current or "",
-            proposed_content,
-            f"Review Changes: {target}",
-            self
-        )
-        
-        if accepted:
-            self.artifact_manager.set_content(artifact_type, final_content)
-            self._refresh_current_tab()
-            self.dock.chat_panel.add_system_message(f"✓ Applied changes to {target}")
-            
-            # Add system message to tab context for LLM history
-            current_tab = self.tab_widget.currentWidget()
-            if hasattr(current_tab, 'tab_context'):
-                # Map artifact type to readable name
-                artifact_name_map = {
-                    ArtifactType.PROCEDURE_TEXT: "procedure_text",
-                    ArtifactType.PROCEDURE_JSON: "procedure_json",
-                    ArtifactType.TEST_CODE: "test_code"
-                }
-                artifact_name = artifact_name_map.get(artifact_type, str(artifact_type))
-                current_tab.tab_context.add_system_message(
-                    f"User accepted the proposal for {artifact_name}",
-                    metadata={
-                        "action": "accepted",
-                        "artifact_type": artifact_name,
-                        "timestamp": datetime.now().isoformat()
-                    }
-                )
-        else:
-            # Mark artifact as needing resync - LLM's context has the rejected proposal,
-            # we need to re-send the actual current content on next request
-            self.artifact_manager.mark_needs_resync(artifact_type)
-            self.dock.chat_panel.add_system_message(f"✗ Rejected changes to {target}")
-            
-            # Add system message to tab context for LLM history
-            current_tab = self.tab_widget.currentWidget()
-            if hasattr(current_tab, 'tab_context'):
-                # Map artifact type to readable name
-                artifact_name_map = {
-                    ArtifactType.PROCEDURE_TEXT: "procedure_text",
-                    ArtifactType.PROCEDURE_JSON: "procedure_json",
-                    ArtifactType.TEST_CODE: "test_code"
-                }
-                artifact_name = artifact_name_map.get(artifact_type, str(artifact_type))
-                current_tab.tab_context.add_system_message(
-                    f"User rejected the proposal for {artifact_name}",
-                    metadata={
-                        "action": "rejected",
-                        "artifact_type": artifact_name,
-                        "timestamp": datetime.now().isoformat()
-                    }
-                )
-    
-    def _handle_proposal(self, proposal: dict):
-        """Handle a single proposal from LLM."""
-        target = proposal.get("target")
-        content = proposal.get("content")
-        
-        log.debug(f"Handling proposal for: {target}")
-        
-        if not target or not content:
-            log.warning("Proposal missing target or content")
-            return
-        
-        # Validate proposal
-        if not self._response_parser.validate_proposal(proposal, target):
-            log.warning(f"Invalid proposal for {target}")
-            self.dock.chat_panel.add_system_message(
-                f"Invalid proposal for {target} - skipped"
-            )
-            return
-        
-        # Determine artifact type
-        if target == "procedure.json":
-            artifact_type = ArtifactType.PROCEDURE_JSON
-            current = self.artifact_manager.get_content(artifact_type)
-        elif target == "test.py":
-            artifact_type = ArtifactType.TEST_CODE
-            current = self.artifact_manager.get_content(artifact_type)
-        elif target == "procedure_text.md":
-            artifact_type = ArtifactType.PROCEDURE_TEXT
-            current = self.artifact_manager.get_content(artifact_type)
-        else:
-            return
-        
-        # Check if show diff is enabled
-        if self._settings.get("behavior", {}).get("show_diff", True):
-            accepted, final_content = DiffViewer.show_diff(
-                current or "",
-                content,
-                f"Apply changes to {target}?",
-                self
-            )
-            
-            if accepted:
-                self.artifact_manager.set_content(artifact_type, final_content)
-                self._refresh_current_tab()
-                self.dock.chat_panel.add_system_message(f"Applied changes to {target}")
-                
-                # Add system message to tab context for LLM history
-                current_tab = self.tab_widget.currentWidget()
-                if hasattr(current_tab, 'tab_context'):
-                    # Map artifact type to readable name
-                    artifact_name_map = {
-                        ArtifactType.PROCEDURE_TEXT: "procedure_text",
-                        ArtifactType.PROCEDURE_JSON: "procedure_json",
-                        ArtifactType.TEST_CODE: "test_code"
-                    }
-                    artifact_name = artifact_name_map.get(artifact_type, str(artifact_type))
-                    current_tab.tab_context.add_system_message(
-                        f"User accepted the proposal for {artifact_name}",
-                        metadata={
-                            "action": "accepted",
-                            "artifact_type": artifact_name,
-                            "timestamp": datetime.now().isoformat()
-                        }
-                    )
-            else:
-                self.dock.chat_panel.add_system_message(f"Rejected changes to {target}")
-                
-                # Add system message to tab context for LLM history
-                current_tab = self.tab_widget.currentWidget()
-                if hasattr(current_tab, 'tab_context'):
-                    # Map artifact type to readable name
-                    artifact_name_map = {
-                        ArtifactType.PROCEDURE_TEXT: "procedure_text",
-                        ArtifactType.PROCEDURE_JSON: "procedure_json",
-                        ArtifactType.TEST_CODE: "test_code"
-                    }
-                    artifact_name = artifact_name_map.get(artifact_type, str(artifact_type))
-                    current_tab.tab_context.add_system_message(
-                        f"User rejected the proposal for {artifact_name}",
-                        metadata={
-                            "action": "rejected",
-                            "artifact_type": artifact_name,
-                            "timestamp": datetime.now().isoformat()
-                        }
-                    )
-        else:
-            # Apply directly (not recommended but configurable)
-            self.artifact_manager.set_content(artifact_type, content)
-            self._refresh_current_tab()
-            self.dock.chat_panel.add_system_message(f"Applied changes to {target}")
-    
-    def _refresh_current_tab(self):
-        """Refresh the current tab."""
-        current = self.tab_widget.currentWidget()
-        if hasattr(current, 'refresh'):
-            current.refresh()
+            log.error(f"Error executing chat task: {e}", exc_info=True)
+            QMessageBox.critical(self, "Task Error", f"Failed to execute task: {str(e)}")
     
     def _play_notification_sound(self) -> None:
         """Play a system notification sound when the LLM finishes."""
@@ -2093,34 +1477,6 @@ class MainWindow(QMainWindow):
             except Exception as e2:
                 log.warning(f"Sound playback failed (Beep fallback): {e2}")
 
-    @Slot(str)
-    def _on_llm_error(self, error: str):
-        """Handle LLM error."""
-        log.error(f"LLM error: {error}")
-        self._stop_progress_animation()
-        self.dock.chat_panel.set_enabled(True)
-        
-        # Disable cancel button
-        self.dock.chat_panel.set_llm_active(False)
-        
-        # Remove thinking message
-        self.dock.chat_panel.remove_thinking_message()
-        
-        # Show error in chat with better formatting
-        error_message = f"❌ Error: {error}"
-        self.dock.chat_panel.add_system_message(error_message, full_prompt=self._current_prompt)
-        
-        # Show in status bar
-        self.status_bar.showMessage(f"LLM error: {error}", 10000)
-        
-        # Show error dialog for critical errors
-        if "timeout" in error.lower() or "connection" in error.lower() or "no attribute" in error.lower():
-            QMessageBox.critical(
-                self,
-                "LLM Error",
-                f"The LLM request failed:\n\n{error}\n\nPlease check your backend configuration and try again."
-            )
-    
     # ==================== Public Interface ====================
     
     def switch_to_tab(self, tab_name: str):
@@ -2185,57 +1541,3 @@ class MainWindow(QMainWindow):
             self._server_manager.stop()
         
         event.accept()
-    
-    def _format_issues_for_chat(self, issues: list) -> str:
-        """Format validation issues as a readable text message for chat."""
-        if not issues:
-            return "No issues found."
-        
-        error_count = sum(1 for i in issues if i.severity == "error")
-        warning_count = sum(1 for i in issues if i.severity == "warning")
-        
-        lines = ["**Validation Findings:**\n"]
-        
-        if error_count > 0:
-            lines.append(f"🔴 {error_count} error(s)")
-        if warning_count > 0:
-            lines.append(f"🟡 {warning_count} warning(s)")
-        
-        lines.append("\n")
-        
-        for idx, issue in enumerate(issues, 1):
-            emoji = "🔴" if issue.severity == "error" else "🟡"
-            lines.append(f"{emoji} **Issue {idx}**: {issue.message}")
-            if issue.location:
-                lines.append(f"   📍 Location: {issue.location}")
-            if issue.code:
-                lines.append(f"   🏷️ Code: {issue.code}")
-            if issue.suggested_fix:
-                lines.append(f"   💡 Suggested fix: {issue.suggested_fix}")
-            lines.append("")
-        
-        return "\n".join(lines)
-    
-    def _format_proposals_summary(self, parsed) -> str:
-        """Format proposals as a summary for chat display."""
-        lines = ["**Proposals:**"]
-        
-        if parsed.procedure_json and parsed.procedure_json.is_valid:
-            lines.append("📄 procedure.json - Ready to review")
-        if parsed.test_code and parsed.test_code.is_valid:
-            lines.append("📄 test.py - Ready to review")
-        if parsed.procedure_text and parsed.procedure_text.is_valid:
-            lines.append("📄 procedure_text.md - Ready to review")
-        
-        return "\n".join(lines)
-    
-    def _format_open_questions_for_chat(self, questions: list) -> str:
-        """Format open questions for chat display."""
-        if not questions:
-            return ""
-        
-        lines = ["**Open Questions:**"]
-        for q in questions:
-            lines.append(f"❓ {q}")
-        
-        return "\n".join(lines)

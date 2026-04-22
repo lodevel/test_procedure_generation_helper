@@ -157,6 +157,7 @@ DEFAULT_TASK_CONFIGS = {
 DEFAULT_CHAT_CONFIG = {
     "text_json": ChatConfig(enabled=True, system_prompt=None),
     "json_code": ChatConfig(enabled=True, system_prompt=None),
+    "traceability": ChatConfig(enabled=False, system_prompt=None),
 }
 
 

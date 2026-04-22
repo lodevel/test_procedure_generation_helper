@@ -28,6 +28,8 @@ class TraceabilityTab(BaseTab):
     - Mapping rebuild
     - Mismatch detection
     """
+
+    tab_id = "traceability"
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)

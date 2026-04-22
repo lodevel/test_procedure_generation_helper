@@ -61,17 +61,6 @@ class BaseTab(QWidget):
         return self.main_window.project_manager
     
     @property
-    def llm_backend(self):
-        """Get the LLM backend.
-        
-        Returns the backend from tab_context if available (preferred),
-        otherwise falls back to main_window.llm_backend for legacy support.
-        """
-        if hasattr(self, 'tab_context') and self.tab_context:
-            return self.tab_context.backend
-        return self.main_window.llm_backend
-    
-    @property
     def task_config_manager(self):
         """Get the task configuration manager."""
         from ..core.task_config import TaskConfigManager

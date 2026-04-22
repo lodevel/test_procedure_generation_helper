@@ -505,6 +505,7 @@ class TextJsonTab(BaseTab):
     
     def _handle_llm_response(self, response):
         """Handle LLM response from TabContext."""
+        self.main_window._play_notification_sound()
         is_active = self._is_active_tab()
         
         # Only touch chat panel UI if this tab is currently displayed

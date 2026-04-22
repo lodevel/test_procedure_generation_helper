@@ -2079,11 +2079,19 @@ class MainWindow(QMainWindow):
     
     def _play_notification_sound(self) -> None:
         """Play a system notification sound when the LLM finishes."""
+        log.debug("Playing notification sound...")
         try:
             import winsound
             winsound.MessageBeep(winsound.MB_ICONASTERISK)
-        except Exception:
-            pass  # Silently ignore on non-Windows or if sound fails
+            log.debug("Notification sound played (MessageBeep)")
+        except Exception as e:
+            log.warning(f"Sound playback failed (MessageBeep): {e}")
+            try:
+                import winsound
+                winsound.Beep(1000, 200)
+                log.debug("Notification sound played (Beep fallback)")
+            except Exception as e2:
+                log.warning(f"Sound playback failed (Beep fallback): {e2}")
 
     @Slot(str)
     def _on_llm_error(self, error: str):

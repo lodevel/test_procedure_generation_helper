@@ -4,6 +4,7 @@ Chat Panel - LLM conversation interface.
 Implements Section 10.1 of the spec.
 """
 
+import html
 import json
 import logging
 from PySide6.QtWidgets import (
@@ -267,6 +268,10 @@ class MessageWidget(QFrame):
             )
             self._thinking_label.setVisible(False)
             layout.addWidget(self._thinking_label)
+        
+        # Escape HTML in user messages so characters like < > & display literally
+        if role.lower() == "user":
+            content = html.escape(content)
         
         # Content - format JSON if found
         formatted_content = self._format_json_in_content(content)

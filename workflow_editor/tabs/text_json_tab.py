@@ -20,7 +20,7 @@ from PySide6.QtGui import QFont
 from .base_tab import BaseTab
 from .llm_tab_mixin import LLMTabMixin
 from .json_tab import JsonSyntaxHighlighter
-from ..core import ArtifactType, JsonValidator
+from ..core import ArtifactType, JsonValidator, ProcedureTextParser
 from ..llm import TabContext, LLMTask
 from ..dialogs import DiffViewer
 from ..theme import status_modified, status_saved
@@ -182,6 +182,16 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         format_row.addWidget(self.validate_json_btn)
         format_row.addStretch()
         file_layout.addLayout(format_row)
+
+        # Quick Parse row
+        parse_row = QHBoxLayout()
+        self.quick_parse_btn = self.create_button(
+            "⚡ Quick Parse", self._on_quick_parse,
+            tooltip="Parse structured text to JSON without LLM (rule-based, instant)"
+        )
+        parse_row.addWidget(self.quick_parse_btn)
+        parse_row.addStretch()
+        file_layout.addLayout(parse_row)
         
         layout.addWidget(file_group)
         
@@ -285,6 +295,51 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         else:
             self.show_error("Validation", f"JSON has {len(result.issues)} issues.")
     
+    def _on_quick_parse(self):
+        """Deterministic Text → JSON without LLM (rule-based, instant)."""
+        text = self.text_editor.toPlainText().strip()
+        if not text:
+            self.show_warning("No Content", "Procedure text is empty. Add text before parsing.")
+            return
+
+        result, warnings = ProcedureTextParser().parse(text)
+        result_str = json.dumps(result, indent=2)
+
+        current_json = self.json_editor.toPlainText().strip()
+        if current_json:
+            # Non-empty JSON — show diff so user can review
+            accepted, final_content = DiffViewer.show_diff(
+                current_json,
+                result_str,
+                "Review Changes: procedure.json (Quick Parse)",
+                self,
+            )
+            if not accepted:
+                self.main_window.dock.chat_panel.add_system_message(
+                    "✗ Quick Parse — changes rejected."
+                )
+                return
+            result_str = final_content
+        else:
+            # Empty JSON — apply directly
+            pass
+
+        self.json_editor.setPlainText(result_str)
+        self.artifact_manager.set_content(ArtifactType.PROCEDURE_JSON, result_str)
+        self._json_dirty = True
+        self._update_json_status()
+
+        if warnings:
+            warn_lines = "\n".join(f"  • {w}" for w in warnings)
+            self.main_window.dock.chat_panel.add_system_message(
+                f"⚡ Quick Parse complete — {len(warnings)} warning(s):\n{warn_lines}"
+            )
+        else:
+            self.main_window.dock.chat_panel.add_system_message(
+                "⚡ Quick Parse complete — no warnings."
+            )
+        self.status_message.emit("⚡ Quick Parse complete")
+
     def _on_derive_json(self):
         """Text → JSON transformation (strict mode)."""
         if not self.artifact_manager.procedure_text.content:

@@ -109,6 +109,11 @@ class ProcedureTextParser:
         equip_section = self._section(sections, "equipment")
         if equip_section:
             equipment = self._parse_equipment_from_section(equip_section)
+            if not equipment:
+                warnings.append(
+                    "## Equipment section found but format not recognized; scanning steps instead."
+                )
+                equipment = self._scan_equipment_from_steps([s["text"] for s in steps])
         else:
             equipment = self._scan_equipment_from_steps([s["text"] for s in steps])
 
@@ -177,9 +182,10 @@ class ProcedureTextParser:
                 steps.append({"text": stripped, "media": []})
                 has_macros = True
                 continue
-            m = re.match(r'^\d+\.\s+(.+)$', stripped)
+            # Numbered "1. text" or bullet "- text"
+            m = re.match(r'^\d+\.\s+(.+)$', stripped) or re.match(r'^-\s+(.+)$', stripped)
             if m:
-                step_text = m.group(1)
+                step_text = re.sub(r'`', '', m.group(1))   # strip markdown backticks
                 steps.append({"text": step_text, "media": self._extract_media_refs(step_text)})
 
         if has_macros:
@@ -205,9 +211,23 @@ class ProcedureTextParser:
                 expected.append({"text": stripped, "media": []})
                 has_macros = True
                 continue
-            m = re.match(r'^-\s+(.+)$', stripped)
+            # Bullet "- cond" or numbered "1. cond"
+            m = re.match(r'^-\s+(.+)$', stripped) or re.match(r'^\d+\.\s+(.+)$', stripped)
             if m:
-                expected.append({"text": m.group(1), "media": []})
+                expected.append({"text": re.sub(r'`', '', m.group(1)), "media": []})
+
+        # Fallback: plain lines without list prefix (e.g. "{1} = OK")
+        if not expected and text.strip():
+            for line in text.splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith('@'):
+                    continue
+                expected.append({"text": re.sub(r'`', '', stripped), "media": []})
+            if expected:
+                warnings.append(
+                    "Expected conditions have no list prefix ('- ' or '1. '); "
+                    "captured as plain lines — verify format."
+                )
 
         if has_macros:
             warnings.append(
@@ -229,7 +249,7 @@ class ProcedureTextParser:
         - Pass 2: strip all parenthetical content, then scan the clean text.
                   Strips net labels like (+SWITCH_28V), (GND_AUX0_POW), (PPU Connector).
         """
-        refs: list[tuple[str, int | None]] = []
+        refs: list[tuple[str, int | None, bool]] = []
 
         # Pass 1 — components inside parentheses
         for parens_content in re.findall(r'\(([^)]+)\)', step_text):
@@ -241,20 +261,26 @@ class ProcedureTextParser:
 
         # Deduplicate while preserving order
         seen: set[tuple] = set()
-        unique: list[tuple[str, int | None]] = []
+        unique: list[tuple[str, int | None, bool]] = []
         for ref in refs:
             if ref not in seen:
                 seen.add(ref)
                 unique.append(ref)
 
-        return [self._make_media_entry(comp, pin) for comp, pin in unique]
+        return [self._make_media_entry(comp, pin, is_tp) for comp, pin, is_tp in unique]
 
-    def _extract_component_patterns(self, text: str) -> list[tuple[str, int | None]]:
+    def _extract_component_patterns(self, text: str) -> list[tuple[str, int | None, bool]]:
         """
-        Return (component, pin) tuples from text using priority-ordered regex patterns.
+        Return (component, pin, is_tp) tuples from text using priority-ordered regex patterns.
+
+        v1.3.0 TP rule:
+        - Glued TP tokens (TP9, TP_VOUT) keep the prefix as the designator.
+        - Space-separated "TP NAME" stores ref.component=NAME (prefix stripped),
+          caption is rebuilt as "TP NAME" via is_tp=True.
+
         Consumed character spans prevent double-matching.
         """
-        refs: list[tuple[str, int | None]] = []
+        refs: list[tuple[str, int | None, bool]] = []
         consumed: list[tuple[int, int]] = []
 
         def overlaps(start: int, end: int) -> bool:
@@ -264,51 +290,61 @@ class ProcedureTextParser:
         for m in re.finditer(r'\b([A-Z]\d+)\s+pins?\s+(\d+)/(\d+)\b', text):
             if not overlaps(m.start(), m.end()):
                 consumed.append((m.start(), m.end()))
-                refs.append((m.group(1), int(m.group(2))))
-                refs.append((m.group(1), int(m.group(3))))
+                refs.append((m.group(1), int(m.group(2)), False))
+                refs.append((m.group(1), int(m.group(3)), False))
 
         # 2. Component + "pin" keyword                    P9 pin 1,  C114 pin 2
         for m in re.finditer(r'\b([A-Z]\d+)\s+pins?\s+(\d+)\b', text):
             if not overlaps(m.start(), m.end()):
                 consumed.append((m.start(), m.end()))
-                refs.append((m.group(1), int(m.group(2))))
+                refs.append((m.group(1), int(m.group(2)), False))
 
         # 3. Hash pin notation                            P6#2,  P3#6
         for m in re.finditer(r'\b([A-Z]\d+)#(\d+)\b', text):
             if not overlaps(m.start(), m.end()):
                 consumed.append((m.start(), m.end()))
-                refs.append((m.group(1), int(m.group(2))))
+                refs.append((m.group(1), int(m.group(2)), False))
 
         # 4. Bare P-connector                             P4,  P9
         #    (only P-prefix is safe without pin; other single-letter IDs are too broad)
         for m in re.finditer(r'\b(P\d+)\b', text):
             if not overlaps(m.start(), m.end()):
                 consumed.append((m.start(), m.end()))
-                refs.append((m.group(1), None))
+                refs.append((m.group(1), None, False))
 
         # 5. TP numeric                                   TP9,  TP45
         for m in re.finditer(r'\b(TP\d+)\b', text):
             if not overlaps(m.start(), m.end()):
                 consumed.append((m.start(), m.end()))
-                refs.append((m.group(1), None))
+                refs.append((m.group(1), None, True))
 
         # 6. TP underscore                                TP_VOUT,  TP_SIGNAL
         for m in re.finditer(r'\b(TP_\w+)\b', text):
             if not overlaps(m.start(), m.end()):
                 consumed.append((m.start(), m.end()))
-                refs.append((m.group(1), None))
+                refs.append((m.group(1), None, True))
 
-        # 7. TP named (space-separated)                   TP EPO_SR,  TP +HIGH_28V
+        # 7. TP named (space-separated)                   TP EPO_SR,  TP +HIGH_28V,  TP SAFE.DISCONNECT
+        #    Component stored WITHOUT "TP " prefix per v1.3.0 rules.
+        #    Allows '.', '+', '-', '#' inside the name; trailing punctuation stripped.
         #    Runs AFTER parens are stripped so only unparenthesised TPs match.
-        for m in re.finditer(r'\bTP\s+([+\w][^\s,\.;()\[\]]*)', text):
+        for m in re.finditer(r'\bTP\s+([+\w][\w+.\-#]*)', text):
             if not overlaps(m.start(), m.end()):
                 consumed.append((m.start(), m.end()))
-                refs.append((f"TP {m.group(1)}", None))
+                name = m.group(1).rstrip('.')   # strip trailing period from sentence end
+                if name:
+                    refs.append((name, None, True))
 
         return refs
 
-    def _make_media_entry(self, component: str, pin: int | None) -> dict:
-        caption = f"{component} pin {pin}" if pin is not None else component
+    def _make_media_entry(self, component: str, pin: int | None, is_tp: bool = False) -> dict:
+        if pin is not None:
+            caption = f"{component} pin {pin}"
+        elif is_tp and not component.upper().startswith("TP"):
+            # Space-separated "TP NAME" — rebuild caption from stripped component.
+            caption = f"TP {component}"
+        else:
+            caption = component
         return {
             "type": "image",
             "ref": {"component": component, "pin": pin},
@@ -343,8 +379,10 @@ class ProcedureTextParser:
             indent = len(line) - len(line.lstrip())
 
             # Top-level bullet (indent == 0): equipment entry
+            # ID must be at least 2 ALL-CAPS chars to avoid matching "- SuperCapacitor" as 'S'
+            # or "- Thermal interface" as 'T'.
             if stripped.startswith('-') and indent == 0:
-                m = re.match(r'^-\s+([A-Z][A-Z0-9_]*(?:\d+)?)\s*(?:\((\w+)\))?', stripped)
+                m = re.match(r'^-\s+([A-Z][A-Z0-9_]+)\b\s*(?:\((\w+)\))?', stripped)
                 if m:
                     current_id = m.group(1)
                     type_label = (m.group(2) or "").lower()
@@ -355,6 +393,9 @@ class ProcedureTextParser:
                             "type": current_type,
                             "channels": [],
                         }
+                else:
+                    current_id = None
+                    current_type = None
                 continue
 
             # Sub-level bullet (indent > 0): channel entry
@@ -440,11 +481,16 @@ class ProcedureTextParser:
                 entry = get_or_create("ELOAD", "eload")
                 ch_m = re.search(r'\bELOAD\s+CH(\d+)\b', text, re.IGNORECASE)
                 ch = int(ch_m.group(1)) if ch_m else 1
-                # "Configure ELOAD CH1 to 10 A"
-                cfg = re.search(r'Configure\s+ELOAD\s+CH\d+\s+to\s+([\d.]+)\s*A', text, re.IGNORECASE)
-                # "constant-current mode, 2 A"
-                cc = re.search(r'constant.current\s+mode,?\s*([\d.]+)\s*A', text, re.IGNORECASE)
-                current_a = f"{(cfg or cc).group(1)} A" if (cfg or cc) else None
+                # "Configure ELOAD CH1 to 10 A" or "10 mA"
+                cfg = re.search(r'Configure\s+ELOAD\s+CH\d+\s+to\s+([\d.]+)\s*(m?A)\b', text, re.IGNORECASE)
+                # "constant-current mode, 2 A" or "100 mA"
+                cc = re.search(r'constant.current\s+mode,?\s*([\d.]+)\s*(m?A)\b', text, re.IGNORECASE)
+                if cfg:
+                    current_a = f"{cfg.group(1)} {cfg.group(2).upper()}"
+                elif cc:
+                    current_a = f"{cc.group(1)} {cc.group(2).upper()}"
+                else:
+                    current_a = None
                 existing = next((c for c in entry["channels"] if c["channel"] == ch), None)
                 if existing:
                     if current_a:
@@ -458,15 +504,23 @@ class ProcedureTextParser:
                 for ch_m in re.finditer(r'(?:SCOPE|oscilloscope)\s+CH(\d+)', text, re.IGNORECASE):
                     scope_channels.add(int(ch_m.group(1)))
 
-            # DMM / multimeter
+            # DMM / multimeter — explicit mention or unnamed scalar measurement
             if re.search(r'\bDMM\b|\bmultimeter\b', text, re.IGNORECASE):
                 get_or_create("DMM", "dmm")
+            elif re.search(
+                r'\bMeasure\s+(?:DC\s+)?(?:voltage|current|resistance|temperature|frequency)\b',
+                text, re.IGNORECASE,
+            ):
+                # Unnamed scalar measurement → DMM unless scope or controller is the instrument
+                if not re.search(r'\boscilloscope\b|\bSCOPE\b|(?:CH|channel)\s*\d\b', text, re.IGNORECASE):
+                    if not re.search(r'\b(?:IO|DAC|ADC|PWM|QEP)#', text, re.IGNORECASE):
+                        get_or_create("DMM", "dmm")
 
-            # Controllers
+            # Controllers — keep FNCORE name detection; widen DSC/HXT to also match DSC18, HXT7, etc.
             for ctrl_pattern, ctrl_id in [
                 (r'\bFNCORE\d*\b|\bFN-CORE\d*\b|\bFN-core\b', "FNCORE1"),
-                (r'\bDSC\b', "DSC"),
-                (r'\bHXT\b', "HXT"),
+                (r'\bDSC\d*\b', "DSC"),
+                (r'\bHXT\d*\b', "HXT"),
             ]:
                 if re.search(ctrl_pattern, text, re.IGNORECASE):
                     get_or_create(ctrl_id, "controller")

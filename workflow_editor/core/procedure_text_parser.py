@@ -59,6 +59,59 @@ _FNCORE_MOCKUP_BARE_DEFAULT: dict[str, str] = {
     "HXT":    "HXT",
 }
 
+# Verbs accepted at the head of an fncore-mockup command. Per
+# fncore_mockup_client_llm_usage.md, the command grammar is verb-led, so
+# detection is anchored on these words. Adding a new verb is a one-line
+# change here; the regexes below are rebuilt automatically from this list.
+_FNCORE_MOCKUP_VERBS: tuple[str, ...] = (
+    "Set", "Read", "Write", "Configure", "Get", "Trigger",
+    "Pulse", "Toggle", "Assert", "Deassert", "Drive",
+    "Sample", "Sense", "Reset",
+)
+
+# Precomputed regex fragments and compiled patterns for controller detection.
+# Built once at import time so we don't pay the construction cost per call.
+_FNCORE_MOCKUP_VERB_ALT: str = "|".join(_FNCORE_MOCKUP_VERBS)
+_FNCORE_MOCKUP_FAMILY_ALT: str = "|".join(p for p, _ in _FNCORE_MOCKUP_FAMILIES)
+# Token: family name optionally followed by digits. The negative lookbehind
+# `(?<![#\w])` rejects resource references like `IO#DSC18`, `PWM#HXT0`.
+_FNCORE_MOCKUP_TOKEN_RE: str = (
+    rf'(?<![#\w])(?:{_FNCORE_MOCKUP_FAMILY_ALT})\d*\b'
+)
+# Form 1: `<verb> <CONTROLLER> <TARGET> <RESOURCE>` — emit only the controller.
+_FNCORE_MOCKUP_FORM1_RE = re.compile(
+    rf'\b(?:{_FNCORE_MOCKUP_VERB_ALT})\s+'
+    rf'({_FNCORE_MOCKUP_TOKEN_RE})\s+'
+    rf'(?:{_FNCORE_MOCKUP_TOKEN_RE})\b',
+    re.IGNORECASE,
+)
+# Form 2: `<verb> <CONTROLLER>` — short form where TARGET acts as controller.
+_FNCORE_MOCKUP_FORM2_RE = re.compile(
+    rf'\b(?:{_FNCORE_MOCKUP_VERB_ALT})\s+({_FNCORE_MOCKUP_TOKEN_RE})',
+    re.IGNORECASE,
+)
+
+
+def _classify_fncore_token(token: str) -> tuple[str | None, str | None]:
+    """Map a raw token to its `(family, suffix)`.
+
+    Examples
+    --------
+    >>> _classify_fncore_token("FNCORE2")
+    ('FNCORE', '2')
+    >>> _classify_fncore_token("dsc")
+    ('DSC', '')
+    >>> _classify_fncore_token("fn-core")
+    ('FNCORE', '')
+    >>> _classify_fncore_token("PSU1")
+    (None, None)
+    """
+    for fam_pattern, fam_name in _FNCORE_MOCKUP_FAMILIES:
+        m = re.fullmatch(rf'(?:{fam_pattern})(\d*)', token, re.IGNORECASE)
+        if m:
+            return fam_name, m.group(1)
+    return None, None
+
 # Mapping from lowercase heading text to logical section key
 _HEADING_MAP: dict[str, list[str]] = {
     "id":          ["id"],
@@ -596,94 +649,14 @@ class ProcedureTextParser:
                         get_or_create("DMM", "dmm")
 
         # Controllers (fncore-mockup family) — verb-anchored, form-aware.
-        # Per fncore_mockup_client_llm_usage.md, commands take the form
-        #     <verb> <CONTROLLER_ID> <TARGET> <RESOURCE> = ...
-        # where TARGET is a namespace inside the controller (e.g. DSC, HXT,
-        # MCU). In short form (no controller prefix) the TARGET name itself
-        # acts as the controller id (e.g. "Set DSC IO#DSC17 = '1'" → DSC).
-        # We must NOT treat target tokens after FNCORE<n> as separate
-        # equipment, and must NOT mine prose mentions ("Plug a FN-CORE...").
-        joined = "\n".join(step_texts)
-
-        # Per-family numbered-set + bare-flag, populated only from
-        # verb-anchored matches.
-        per_family: dict[str, dict] = {
-            fam_name: {"numbered": set(), "saw_bare": False}
-            for _, fam_name in _FNCORE_MOCKUP_FAMILIES
-        }
-
-        def _classify(token: str) -> tuple[str | None, str | None]:
-            """Map raw token (e.g. 'FNCORE2', 'DSC', 'fn-core') -> (family, suffix)."""
-            for fam_pattern, fam_name in _FNCORE_MOCKUP_FAMILIES:
-                m = re.fullmatch(rf'(?:{fam_pattern})(\d*)', token, re.IGNORECASE)
-                if m:
-                    return fam_name, m.group(1)
-            return None, None
-
-        fam_alt = "|".join(p for p, _ in _FNCORE_MOCKUP_FAMILIES)
-        verb_alt = (
-            r'Set|Read|Write|Configure|Get|Trigger|Pulse|Toggle|'
-            r'Assert|Deassert|Drive|Sample|Sense|Reset'
-        )
-        # Token: family name optionally followed by digits, NOT preceded by
-        # `#` or word chars (skips IO#DSC18 etc.).
-        token_re = rf'(?<![#\w])(?:{fam_alt})\d*\b'
-
-        # Pass 1 — Form 1: <verb> <CONTROLLER> <TARGET> <RESOURCE>
-        form1_re = re.compile(
-            rf'\b(?:{verb_alt})\s+({token_re})\s+(?:{token_re})\b',
-            re.IGNORECASE,
-        )
-        consumed_spans: list[tuple[int, int]] = []
-        for m in form1_re.finditer(joined):
-            fam, suffix = _classify(m.group(1))
-            if fam is None:
-                continue
-            if suffix:
-                per_family[fam]["numbered"].add(int(suffix))
-            else:
-                per_family[fam]["saw_bare"] = True
-            consumed_spans.append((m.start(), m.end()))
-
-        # Mask consumed regions so pass 2 doesn't re-match them.
-        if consumed_spans:
-            chars = list(joined)
-            for s, e in consumed_spans:
-                for i in range(s, e):
-                    if chars[i] != "\n":
-                        chars[i] = " "
-            residual = "".join(chars)
-        else:
-            residual = joined
-
-        # Pass 2 — Form 2: <verb> <CONTROLLER>
-        form2_re = re.compile(rf'\b(?:{verb_alt})\s+({token_re})', re.IGNORECASE)
-        for m in form2_re.finditer(residual):
-            fam, suffix = _classify(m.group(1))
-            if fam is None:
-                continue
-            if suffix:
-                per_family[fam]["numbered"].add(int(suffix))
-            else:
-                per_family[fam]["saw_bare"] = True
-
-        # Resolve bare vs numbered per family and emit entries.
+        # See `_detect_fncore_controllers` for the grammar handled.
+        per_family = self._detect_fncore_controllers("\n".join(step_texts))
         for fam_name, info in per_family.items():
             numbered: set[int] = info["numbered"]
             saw_bare: bool = info["saw_bare"]
-
-            if saw_bare and numbered:
-                # Mixed: promote bare to lowest unused N >= 1.
-                n = 1
-                while n in numbered:
-                    n += 1
-                numbered.add(n)
-                bare_resolved_id = f"{fam_name}{n}"
-            elif saw_bare:
-                bare_resolved_id = _FNCORE_MOCKUP_BARE_DEFAULT[fam_name]
-            else:
-                bare_resolved_id = None
-
+            bare_resolved_id = self._resolve_fncore_bare_name(
+                fam_name, numbered, saw_bare,
+            )
             for n in sorted(numbered):
                 eq_id = f"{fam_name}{n}"
                 if eq_id not in equipment:
@@ -721,11 +694,107 @@ class ProcedureTextParser:
 
     def _is_fncore_mockup_id(self, eq_id: str) -> bool:
         """True if id belongs to a known fncore-mockup family (FNCORE/DSC/HXT)."""
-        u = eq_id.upper()
-        for fam_pattern, _ in _FNCORE_MOCKUP_FAMILIES:
-            if re.fullmatch(rf'(?:{fam_pattern})\d*', u):
-                return True
-        return False
+        fam, _ = _classify_fncore_token(eq_id)
+        return fam is not None
+
+    def _detect_fncore_controllers(self, joined_text: str) -> dict[str, dict]:
+        """Verb-anchored, form-aware scan for fncore-mockup controllers.
+
+        Per ``fncore_mockup_client_llm_usage.md``, controller commands are
+        verb-led with two surface forms::
+
+            Form 1:  <verb> <CONTROLLER_ID> <TARGET> <RESOURCE> = <VALUE>
+            Form 2:  <verb> <CONTROLLER_ID> <RESOURCE> = <VALUE>
+
+        TARGET (DSC/HXT/MCU/...) is a *namespace inside* the controller, not
+        a separate equipment instance. In Form 2 the target name itself
+        plays the role of the controller id (``"Set DSC IO#DSC17 = '1'"``).
+
+        Algorithm:
+        1. Pass 1 finds Form 1 matches and emits ONLY the controller token.
+           Each match span is masked so pass 2 can't re-mine the target.
+        2. Pass 2 runs Form 2 on the masked residual.
+
+        Newlines are preserved when masking so that any future line-anchored
+        regex on the residual still sees the original line structure.
+
+        Prose mentions (``"Plug a FN-CORE..."``) and macro keys
+        (``"@ROW ... dsc=IO#DSC42"``) carry no verb and are ignored. The
+        ``IO#DSC18`` family of resource refs is filtered by the negative
+        lookbehind in ``_FNCORE_MOCKUP_TOKEN_RE``.
+
+        Returns
+        -------
+        dict
+            ``{family_name: {"numbered": set[int], "saw_bare": bool}}``
+            with one entry per family in ``_FNCORE_MOCKUP_FAMILIES``.
+        """
+        per_family: dict[str, dict] = {
+            fam_name: {"numbered": set(), "saw_bare": False}
+            for _, fam_name in _FNCORE_MOCKUP_FAMILIES
+        }
+
+        def _record(token: str) -> None:
+            fam, suffix = _classify_fncore_token(token)
+            if fam is None:
+                return
+            if suffix:
+                per_family[fam]["numbered"].add(int(suffix))
+            else:
+                per_family[fam]["saw_bare"] = True
+
+        # Pass 1 — Form 1
+        consumed_spans: list[tuple[int, int]] = []
+        for m in _FNCORE_MOCKUP_FORM1_RE.finditer(joined_text):
+            _record(m.group(1))
+            consumed_spans.append((m.start(), m.end()))
+
+        # Pass 2 — Form 2 on masked residual
+        residual = self._mask_spans(joined_text, consumed_spans)
+        for m in _FNCORE_MOCKUP_FORM2_RE.finditer(residual):
+            _record(m.group(1))
+
+        return per_family
+
+    @staticmethod
+    def _mask_spans(text: str, spans: list[tuple[int, int]]) -> str:
+        """Return ``text`` with each ``(start, end)`` span replaced by spaces.
+
+        Newlines are preserved so that line-anchored regexes applied to the
+        result still see the original line layout.
+        """
+        if not spans:
+            return text
+        chars = list(text)
+        for start, end in spans:
+            for i in range(start, end):
+                if chars[i] != "\n":
+                    chars[i] = " "
+        return "".join(chars)
+
+    @staticmethod
+    def _resolve_fncore_bare_name(
+        fam_name: str,
+        numbered: set[int],
+        saw_bare: bool,
+    ) -> str | None:
+        """Resolve the id assigned to a bare family mention.
+
+        - Bare alone               → canonical default (``DSC``, ``HXT``,
+          ``FNCORE1``).
+        - Bare mixed with numbered → promote to the lowest unused
+          ``N >= 1`` and add ``N`` to ``numbered`` (mutates the caller's set).
+        - No bare mention          → ``None``.
+        """
+        if saw_bare and numbered:
+            n = 1
+            while n in numbered:
+                n += 1
+            numbered.add(n)
+            return f"{fam_name}{n}"
+        if saw_bare:
+            return _FNCORE_MOCKUP_BARE_DEFAULT[fam_name]
+        return None
 
     def _sort_equipment(self, equipment: list[dict]) -> list[dict]:
         """

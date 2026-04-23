@@ -595,26 +595,85 @@ class ProcedureTextParser:
                     if not re.search(r'\b(?:IO|DAC|ADC|PWM|QEP)#', text, re.IGNORECASE):
                         get_or_create("DMM", "dmm")
 
-        # Controllers (fncore-mockup family) — collect across ALL step texts so
-        # we can resolve bare vs numbered references coherently per family.
-        # Each distinct id (FNCORE1, DSC, DSC2, HXT, HXT7, ...) is one instance.
-        for fam_pattern, fam_name in _FNCORE_MOCKUP_FAMILIES:
-            numbered: set[int] = set()
-            saw_bare = False
-            joined = "\n".join(step_texts)
-            # Numbered: <FAM><digits>, NOT preceded by `#` or other word chars.
-            # Prevents false matches inside IO/ADC tokens like `IO#DSC18`
-            # (which references a pin on the DSC controller, not a separate
-            # DSC18 instance).
-            for m in re.finditer(rf'(?<![#\w])(?:{fam_pattern})(\d+)\b', joined, re.IGNORECASE):
-                numbered.add(int(m.group(1)))
-            # Bare: <FAM> not immediately followed by a digit and not part of
-            # a larger token.
-            if re.search(rf'(?<![#\w])(?:{fam_pattern})\b(?!\d)', joined, re.IGNORECASE):
-                saw_bare = True
+        # Controllers (fncore-mockup family) — verb-anchored, form-aware.
+        # Per fncore_mockup_client_llm_usage.md, commands take the form
+        #     <verb> <CONTROLLER_ID> <TARGET> <RESOURCE> = ...
+        # where TARGET is a namespace inside the controller (e.g. DSC, HXT,
+        # MCU). In short form (no controller prefix) the TARGET name itself
+        # acts as the controller id (e.g. "Set DSC IO#DSC17 = '1'" → DSC).
+        # We must NOT treat target tokens after FNCORE<n> as separate
+        # equipment, and must NOT mine prose mentions ("Plug a FN-CORE...").
+        joined = "\n".join(step_texts)
+
+        # Per-family numbered-set + bare-flag, populated only from
+        # verb-anchored matches.
+        per_family: dict[str, dict] = {
+            fam_name: {"numbered": set(), "saw_bare": False}
+            for _, fam_name in _FNCORE_MOCKUP_FAMILIES
+        }
+
+        def _classify(token: str) -> tuple[str | None, str | None]:
+            """Map raw token (e.g. 'FNCORE2', 'DSC', 'fn-core') -> (family, suffix)."""
+            for fam_pattern, fam_name in _FNCORE_MOCKUP_FAMILIES:
+                m = re.fullmatch(rf'(?:{fam_pattern})(\d*)', token, re.IGNORECASE)
+                if m:
+                    return fam_name, m.group(1)
+            return None, None
+
+        fam_alt = "|".join(p for p, _ in _FNCORE_MOCKUP_FAMILIES)
+        verb_alt = (
+            r'Set|Read|Write|Configure|Get|Trigger|Pulse|Toggle|'
+            r'Assert|Deassert|Drive|Sample|Sense|Reset'
+        )
+        # Token: family name optionally followed by digits, NOT preceded by
+        # `#` or word chars (skips IO#DSC18 etc.).
+        token_re = rf'(?<![#\w])(?:{fam_alt})\d*\b'
+
+        # Pass 1 — Form 1: <verb> <CONTROLLER> <TARGET> <RESOURCE>
+        form1_re = re.compile(
+            rf'\b(?:{verb_alt})\s+({token_re})\s+(?:{token_re})\b',
+            re.IGNORECASE,
+        )
+        consumed_spans: list[tuple[int, int]] = []
+        for m in form1_re.finditer(joined):
+            fam, suffix = _classify(m.group(1))
+            if fam is None:
+                continue
+            if suffix:
+                per_family[fam]["numbered"].add(int(suffix))
+            else:
+                per_family[fam]["saw_bare"] = True
+            consumed_spans.append((m.start(), m.end()))
+
+        # Mask consumed regions so pass 2 doesn't re-match them.
+        if consumed_spans:
+            chars = list(joined)
+            for s, e in consumed_spans:
+                for i in range(s, e):
+                    if chars[i] != "\n":
+                        chars[i] = " "
+            residual = "".join(chars)
+        else:
+            residual = joined
+
+        # Pass 2 — Form 2: <verb> <CONTROLLER>
+        form2_re = re.compile(rf'\b(?:{verb_alt})\s+({token_re})', re.IGNORECASE)
+        for m in form2_re.finditer(residual):
+            fam, suffix = _classify(m.group(1))
+            if fam is None:
+                continue
+            if suffix:
+                per_family[fam]["numbered"].add(int(suffix))
+            else:
+                per_family[fam]["saw_bare"] = True
+
+        # Resolve bare vs numbered per family and emit entries.
+        for fam_name, info in per_family.items():
+            numbered: set[int] = info["numbered"]
+            saw_bare: bool = info["saw_bare"]
 
             if saw_bare and numbered:
-                # Mixed bare + numbered: promote bare to lowest unused N >= 1.
+                # Mixed: promote bare to lowest unused N >= 1.
                 n = 1
                 while n in numbered:
                     n += 1

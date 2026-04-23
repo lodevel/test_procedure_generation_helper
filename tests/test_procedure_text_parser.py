@@ -447,3 +447,96 @@ class TestFncoreMockupFamilies:
         result, _ = parser.parse(text)
         dsc = next(e for e in result["equipment"] if e["id"] == "DSC2")
         assert dsc.get("subtype") == "fncore-mockup"
+
+
+# ----------------------------------------------------------------------
+# Verb-anchored controller/target detection
+# (per fncore_mockup_client_llm_usage.md command syntax:
+#  <verb> <CONTROLLER_ID> <TARGET> <RESOURCE> = <VALUE>)
+# ----------------------------------------------------------------------
+
+class TestControllerTargetDistinction:
+    def test_form1_target_is_not_separate_equipment(self, parser):
+        # FNCORE1 is the controller, DSC is its TARGET namespace, IO#... is the resource.
+        text = "## Test steps\n1. Set FNCORE1 DSC IO#DSC18 = '1'.\n"
+        result, _ = parser.parse(text)
+        ids = [e["id"] for e in result["equipment"]]
+        assert "FNCORE1" in ids
+        assert "DSC" not in ids and not any(i.startswith("DSC") for i in ids)
+
+    def test_form1_two_controllers_two_targets(self, parser):
+        # Both FNCOREs detected; targets DSC/HXT consumed.
+        text = (
+            "## Test steps\n"
+            "1. Set FNCORE1 DSC IO#DSC11 = '0'.\n"
+            "2. Set FNCORE2 HXT IO#HXT7 = '1'.\n"
+        )
+        result, _ = parser.parse(text)
+        ids = [e["id"] for e in result["equipment"]]
+        assert "FNCORE1" in ids and "FNCORE2" in ids
+        assert "DSC" not in ids and "HXT" not in ids
+
+    def test_form2_bare_target_is_controller(self, parser):
+        # No FNCORE prefix → DSC is the controller id (short form).
+        text = "## Test steps\n1. Set DSC IO#DSC17 = '1'.\n"
+        result, _ = parser.parse(text)
+        ids = [e["id"] for e in result["equipment"]]
+        assert "DSC" in ids
+        assert not any(i.startswith("FNCORE") for i in ids)
+
+    def test_prose_fncore_mention_ignored(self, parser):
+        # "Plug a FN-CORE or mockup..." is prose, no verb-controller pattern → ignored.
+        text = (
+            "## Test steps\n"
+            "1. Plug a FN-CORE or mockup at the corresponding slot.\n"
+            "2. Set FNCORE1 DSC IO#DSC11 = '0'.\n"
+        )
+        result, _ = parser.parse(text)
+        ids = [e["id"] for e in result["equipment"]]
+        # Only the verb-anchored FNCORE1 counts.
+        assert "FNCORE1" in ids
+        # No spurious bare FNCORE1 promotion from prose.
+        assert ids.count("FNCORE1") == 1
+        assert "FNCORE2" not in ids and "FNCORE3" not in ids
+
+    def test_macro_row_lowercase_target_ignored(self, parser):
+        # @ROW directives use lowercase keys "dsc=" / "hxt=" — must be ignored.
+        text = (
+            "## Test steps\n"
+            "1. @ROW EN_MAP idx=0 loc=\"P10 pin 20\" dsc=IO#DSC42 hxt=PWM#HXT0\n"
+            "2. Set FNCORE1 DSC IO#DSC11 = '0'.\n"
+        )
+        result, _ = parser.parse(text)
+        ids = [e["id"] for e in result["equipment"]]
+        assert ids == ["FNCORE1"]
+
+    def test_form2_mixed_with_form1_distinct_families(self, parser):
+        # Form 1 FNCORE1+DSC target, plus standalone DSC commands → FNCORE1 + DSC.
+        text = (
+            "## Test steps\n"
+            "1. Set FNCORE1 DSC IO#A = '1'.\n"
+            "2. Set DSC IO#B = '0'.\n"
+        )
+        result, _ = parser.parse(text)
+        ids = [e["id"] for e in result["equipment"]]
+        assert "FNCORE1" in ids and "DSC" in ids
+
+    def test_io_token_remains_immune(self, parser):
+        # IO#DSC18 must still not create a phantom DSC18.
+        text = "## Test steps\n1. Set FNCORE1 DSC IO#DSC18 = '1'.\n"
+        result, _ = parser.parse(text)
+        ids = [e["id"] for e in result["equipment"]]
+        assert "DSC18" not in ids
+
+    def test_full_gpo_excerpt_minimal(self, parser):
+        # Minimised GPO test: prose FN-CORE + FNCORE1 + FNCORE2 + IO# refs.
+        text = (
+            "## Test steps\n"
+            "1. Plug a FN-CORE or mockup at the corresponding slot.\n"
+            "2. Set FNCORE1 DSC IO#DSC41 = '0'.\n"
+            "3. Set FNCORE2 HXT IO#HXT7 = '1'.\n"
+        )
+        result, _ = parser.parse(text)
+        ids = sorted(e["id"] for e in result["equipment"]
+                     if e["type"] == "controller")
+        assert ids == ["FNCORE1", "FNCORE2"]

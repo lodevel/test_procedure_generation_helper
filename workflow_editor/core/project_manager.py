@@ -282,13 +282,24 @@ Test procedure project created with Workflow Editor.
            (kept so projects seeded before the customer-template
            ``parsers/`` layout existed continue to work until re-seeded).
 
-        The loaded module must define a ``ProcedureTextParser`` class
-        with a ``parse(text) -> (dict, list)`` method.
+        The loaded module must define a class named
+        ``ProcedureTextParser`` exposing a
+        ``parse(text: str) -> tuple[dict, list[str]]`` method. The
+        returned ``dict`` is the procedure JSON; the ``list[str]`` is
+        non-fatal warning messages to surface in the UI.
 
-        Returns an instantiated parser if loading succeeds, otherwise
-        ``None`` (the Quick Parse button stays hidden).
+        No caching is performed: each call re-reads the file so that
+        developers editing a parser variant can re-click Quick Parse
+        and see the effect without restarting the editor.
+
+        Returns an instantiated parser on success, or ``None`` when no
+        parser is configured / the file is missing / loading fails (in
+        which case the Quick Parse button stays hidden and a warning
+        is logged).
         """
         import importlib.util
+        import sys
+
         config_dir = self.get_config_dir()
         if config_dir is None:
             return None
@@ -323,17 +334,37 @@ Test procedure project created with Workflow Editor.
         if parser_path is None:
             return None
 
+        # Namespace the dynamic module by absolute path so switching
+        # projects in a single session does not reuse a stale module
+        # cached under a shared name.
+        module_name = f"_project_text_parser_{abs(hash(str(parser_path.resolve())))}"
+        sys.modules.pop(module_name, None)
+
         try:
-            spec = importlib.util.spec_from_file_location("_project_text_parser", parser_path)
+            spec = importlib.util.spec_from_file_location(module_name, parser_path)
+            if spec is None or spec.loader is None:
+                log.warning(f"Could not build import spec for parser at {parser_path}")
+                return None
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
-            cls = getattr(module, "ProcedureTextParser", None)
-            if cls is None:
-                log.warning(f"text parser at {parser_path} has no ProcedureTextParser class")
-                return None
-            return cls()
+        except SyntaxError as e:
+            log.warning(f"Syntax error in text parser {parser_path}: {e}")
+            return None
+        except ImportError as e:
+            log.warning(f"Import error loading text parser {parser_path}: {e}")
+            return None
         except Exception as e:
             log.warning(f"Failed to load text parser from {parser_path}: {e}")
+            return None
+
+        cls = getattr(module, "ProcedureTextParser", None)
+        if cls is None:
+            log.warning(f"Text parser at {parser_path} has no ProcedureTextParser class")
+            return None
+        try:
+            return cls()
+        except Exception as e:
+            log.warning(f"ProcedureTextParser.__init__ failed for {parser_path}: {e}")
             return None
 
     def load_equipment_patterns(self) -> list[re.Pattern[str]]:

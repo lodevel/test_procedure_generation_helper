@@ -901,6 +901,12 @@ class MainWindow(QMainWindow):
         self.text_json_tab.load_content()
         self.json_code_tab.load_content()
         self.traceability_tab.refresh()
+
+        # Parser availability may have changed since last refresh (e.g. the
+        # user edited config.json externally, or a parser variant file was
+        # added/removed). Re-evaluate visibility here so the Quick Parse
+        # button state is consistent per-test.
+        self.text_json_tab.refresh_parser_button()
         
         # Refresh dock panels with session data
         self.dock.refresh_session()

@@ -315,7 +315,43 @@ class TextJsonTab(LLMTabMixin, BaseTab):
             self.show_warning("No Content", "Procedure text is empty. Add text before parsing.")
             return
 
-        result, warnings = parser.parse(text)
+        # The parser module is user-supplied (per-project plugin); any
+        # exception it raises is a parser bug, not a workflow-editor bug.
+        # Surface it cleanly instead of dying silently.
+        try:
+            parse_result = parser.parse(text)
+        except Exception as e:
+            log.exception("Quick Parse: parser raised")
+            self.show_error(
+                "Parser Error",
+                f"The parser raised an exception while processing the text:\n\n{e}\n\n"
+                "See the log for the full traceback."
+            )
+            return
+
+        # Contract: parse() -> tuple[dict, list[str]].
+        if (not isinstance(parse_result, tuple)) or len(parse_result) != 2:
+            self.show_error(
+                "Parser Error",
+                "Parser returned an unexpected value. Expected a "
+                "(procedure_dict, warnings_list) tuple."
+            )
+            return
+        result, warnings = parse_result
+        if not isinstance(result, dict):
+            self.show_error(
+                "Parser Error",
+                f"Parser returned a non-dict procedure "
+                f"({type(result).__name__}); cannot apply."
+            )
+            return
+        if not isinstance(warnings, list):
+            log.warning(
+                "Parser returned non-list warnings (%s); coercing to [].",
+                type(warnings).__name__,
+            )
+            warnings = []
+
         result_str = json.dumps(result, indent=2)
 
         current_json = self.json_editor.toPlainText().strip()

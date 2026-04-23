@@ -136,17 +136,36 @@ class ProcedureTextParser:
     # ------------------------------------------------------------------
 
     def _split_sections(self, text: str) -> dict[str, str]:
-        """Split markdown into sections keyed by normalized heading name."""
-        # Accept both h1 (#) and h2 (##) headings
-        heading_re = re.compile(r'^#{1,2}\s+(.+)$', re.MULTILINE)
+        """
+        Split markdown into sections keyed by normalized heading name.
+        Accepts h1–h3 headings. Lines inside fenced code blocks are ignored
+        for heading detection so a ``# comment`` inside a code fence does
+        not cut the surrounding section.
+        """
+        # Build a censored copy where fence content is blanked (spaces) so
+        # character positions stay aligned with the original text.
+        lines = text.split('\n')
+        in_fence = False
+        censored_lines: list[str] = []
+        for line in lines:
+            stripped = line.lstrip()
+            if stripped.startswith('```') or stripped.startswith('~~~'):
+                in_fence = not in_fence
+                censored_lines.append(' ' * len(line))
+                continue
+            censored_lines.append(' ' * len(line) if in_fence else line)
+        censored = '\n'.join(censored_lines)
+
+        heading_re = re.compile(r'^#{1,3}\s+(.+?)\s*$', re.MULTILINE)
         positions = [
             (m.start(), m.end(), m.group(1).strip())
-            for m in heading_re.finditer(text)
+            for m in heading_re.finditer(censored)
         ]
 
         sections: dict[str, str] = {}
         for i, (start, end, heading) in enumerate(positions):
             next_start = positions[i + 1][0] if i + 1 < len(positions) else len(text)
+            # Slice the ORIGINAL text — fence content inside a section is preserved.
             content = text[end:next_start].strip()
             key = self._normalize_heading(heading)
             if key and key not in sections:  # first occurrence wins
@@ -155,8 +174,14 @@ class ProcedureTextParser:
         return sections
 
     def _normalize_heading(self, heading: str) -> str | None:
-        """Return logical section key, or None if unrecognized."""
+        """Return logical section key, or None if unrecognized.
+
+        Tolerates trailing colons and parenthetical qualifiers, e.g.
+        ``Test steps:``, ``Test steps (mandatory)``.
+        """
         norm = heading.lower().strip()
+        norm = re.sub(r'\s*\(.*?\)\s*$', '', norm)   # strip trailing parenthetical
+        norm = norm.rstrip(':').strip()
         for key, aliases in _HEADING_MAP.items():
             if norm in aliases:
                 return key
@@ -169,25 +194,42 @@ class ProcedureTextParser:
     # Steps
     # ------------------------------------------------------------------
 
+    # Combined regex for step / condition list markers:
+    #   1. text     1) text     (1) text     - text     * text
+    _LIST_LINE_RE = re.compile(r'^(?:\(?\d+[.)]|[-*])\s+(.+)$')
+
     def _parse_steps(self, text: str) -> tuple[list[dict], list[str]]:
         warnings: list[str] = []
         steps: list[dict] = []
         has_macros = False
+        nested_count = 0
 
-        for line in text.splitlines():
-            stripped = line.strip()
+        for raw_line in text.splitlines():
+            stripped = raw_line.strip()
             if not stripped:
                 continue
+            indent = len(raw_line) - len(raw_line.lstrip())
             if stripped.startswith('@'):
                 steps.append({"text": stripped, "media": []})
                 has_macros = True
                 continue
-            # Numbered "1. text" or bullet "- text"
-            m = re.match(r'^\d+\.\s+(.+)$', stripped) or re.match(r'^-\s+(.+)$', stripped)
-            if m:
-                step_text = re.sub(r'`', '', m.group(1))   # strip markdown backticks
+            m = self._LIST_LINE_RE.match(stripped)
+            if not m:
+                continue
+            step_text = re.sub(r'`', '', m.group(1))
+            # Nested bullet (indented) → append to previous step as continuation
+            if indent > 0 and steps and not steps[-1]["text"].startswith('@'):
+                merged = steps[-1]["text"].rstrip() + ' — ' + step_text
+                steps[-1]["text"] = merged
+                steps[-1]["media"] = self._extract_media_refs(merged)
+                nested_count += 1
+            else:
                 steps.append({"text": step_text, "media": self._extract_media_refs(step_text)})
 
+        if nested_count:
+            warnings.append(
+                f"{nested_count} nested bullet line(s) merged into parent step text."
+            )
         if has_macros:
             warnings.append(
                 "Macro directives (@FOR, @LET, etc.) detected — preserved verbatim. Review manually."
@@ -197,6 +239,9 @@ class ProcedureTextParser:
     # ------------------------------------------------------------------
     # Expected / success conditions
     # ------------------------------------------------------------------
+
+    # Placeholder "{N}" used in success-condition lines like "{1} = OK"
+    _PLACEHOLDER_RE = re.compile(r'\{[^{}]+\}')
 
     def _parse_expected(self, text: str) -> tuple[list[dict], list[str]]:
         warnings: list[str] = []
@@ -211,22 +256,25 @@ class ProcedureTextParser:
                 expected.append({"text": stripped, "media": []})
                 has_macros = True
                 continue
-            # Bullet "- cond" or numbered "1. cond"
-            m = re.match(r'^-\s+(.+)$', stripped) or re.match(r'^\d+\.\s+(.+)$', stripped)
+            m = self._LIST_LINE_RE.match(stripped)
             if m:
                 expected.append({"text": re.sub(r'`', '', m.group(1)), "media": []})
 
-        # Fallback: plain lines without list prefix (e.g. "{1} = OK")
+        # Fallback: plain lines without list prefix (e.g. "{1} = OK").
+        # Only triggers on lines containing a {placeholder} — prevents capturing
+        # arbitrary prose as conditions.
         if not expected and text.strip():
             for line in text.splitlines():
                 stripped = line.strip()
                 if not stripped or stripped.startswith('@'):
                     continue
+                if not self._PLACEHOLDER_RE.search(stripped):
+                    continue
                 expected.append({"text": re.sub(r'`', '', stripped), "media": []})
             if expected:
                 warnings.append(
-                    "Expected conditions have no list prefix ('- ' or '1. '); "
-                    "captured as plain lines — verify format."
+                    "Expected conditions have no list prefix; captured plain "
+                    "placeholder lines — verify format."
                 )
 
         if has_macros:
@@ -326,9 +374,11 @@ class ProcedureTextParser:
 
         # 7. TP named (space-separated)                   TP EPO_SR,  TP +HIGH_28V,  TP SAFE.DISCONNECT
         #    Component stored WITHOUT "TP " prefix per v1.3.0 rules.
+        #    Name must start with '+' or an UPPER-CASE letter (real net-name shape) to
+        #    avoid false positives like "TP and", "TP in the schematic".
         #    Allows '.', '+', '-', '#' inside the name; trailing punctuation stripped.
         #    Runs AFTER parens are stripped so only unparenthesised TPs match.
-        for m in re.finditer(r'\bTP\s+([+\w][\w+.\-#]*)', text):
+        for m in re.finditer(r'\bTP\s+([+]?[A-Z][\w+.\-#]*)', text):
             if not overlaps(m.start(), m.end()):
                 consumed.append((m.start(), m.end()))
                 name = m.group(1).rstrip('.')   # strip trailing period from sentence end
@@ -345,9 +395,12 @@ class ProcedureTextParser:
             caption = f"TP {component}"
         else:
             caption = component
+        ref: dict = {"component": component, "pin": pin}
+        if is_tp:
+            ref["is_tp"] = True
         return {
             "type": "image",
-            "ref": {"component": component, "pin": pin},
+            "ref": ref,
             "caption": caption,
         }
 
@@ -451,14 +504,12 @@ class ProcedureTextParser:
             return equipment[eq_id]
 
         for text in step_texts:
-            # PSU1 / PSU2
-            for psu_id in ("PSU1", "PSU2"):
-                if not re.search(rf'\b{psu_id}\b', text):
-                    continue
+            # PSU<n> — detect ALL referenced PSU instances, not just PSU1/PSU2
+            for psu_id in sorted(set(re.findall(r'\b(PSU\d+)\b', text))):
                 entry = get_or_create(psu_id, "psu")
-                # "Configure PSU1 CH1 to 28 V / 15 A"
+                # "Configure PSU1 CH1 to 28 V / 15 A"  or  "... 28 V, 15 A"
                 cfg = re.search(
-                    rf'Configure\s+{psu_id}\s+CH(\d+)\s+to\s+([\d.]+)\s*V\s*/\s*([\d.]+)\s*A',
+                    rf'Configure\s+{psu_id}\s+CH(\d+)\s+to\s+([\d.]+)\s*V\s*[/,]\s*([\d.]+)\s*A',
                     text, re.IGNORECASE,
                 )
                 if cfg:
@@ -485,10 +536,10 @@ class ProcedureTextParser:
                 cfg = re.search(r'Configure\s+ELOAD\s+CH\d+\s+to\s+([\d.]+)\s*(m?A)\b', text, re.IGNORECASE)
                 # "constant-current mode, 2 A" or "100 mA"
                 cc = re.search(r'constant.current\s+mode,?\s*([\d.]+)\s*(m?A)\b', text, re.IGNORECASE)
-                if cfg:
-                    current_a = f"{cfg.group(1)} {cfg.group(2).upper()}"
-                elif cc:
-                    current_a = f"{cc.group(1)} {cc.group(2).upper()}"
+                hit = cfg or cc
+                if hit:
+                    unit = "mA" if hit.group(2).lower() == "ma" else "A"
+                    current_a = f"{hit.group(1)} {unit}"
                 else:
                     current_a = None
                 existing = next((c for c in entry["channels"] if c["channel"] == ch), None)

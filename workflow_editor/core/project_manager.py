@@ -271,33 +271,69 @@ Test procedure project created with Workflow Editor.
 
     def get_text_parser(self):
         """
-        Dynamically load config/text_parser.py from the project root.
+        Dynamically load the project's selected text-parser variant.
 
-        This file is project-owned and optional.  It must define a
-        ``ProcedureTextParser`` class with a ``parse(text) -> (dict, list)``
-        method.
+        Resolution order:
 
-        Returns an instantiated parser if the file exists and loads cleanly,
-        or None otherwise (button should be hidden).
+        1. Read ``config/config.json`` and look up
+           ``parsers.json_parser``. If set, load
+           ``config/parsers/json_parser/<value>.py``.
+        2. Fall back to the legacy ``config/text_parser.py`` if present
+           (kept so projects seeded before the customer-template
+           ``parsers/`` layout existed continue to work until re-seeded).
+
+        The loaded module must define a ``ProcedureTextParser`` class
+        with a ``parse(text) -> (dict, list)`` method.
+
+        Returns an instantiated parser if loading succeeds, otherwise
+        ``None`` (the Quick Parse button stays hidden).
         """
         import importlib.util
         config_dir = self.get_config_dir()
         if config_dir is None:
             return None
-        parser_path = config_dir / "text_parser.py"
-        if not parser_path.exists():
+
+        parser_path: Optional[Path] = None
+
+        # Preferred: customer-template selection in config.json.
+        config_file = config_dir / "config.json"
+        if config_file.exists():
+            try:
+                cfg = json.loads(config_file.read_text(encoding="utf-8"))
+            except Exception as e:
+                log.warning(f"Failed to read project config.json for parser selection: {e}")
+                cfg = {}
+            selected = (cfg.get("parsers") or {}).get("json_parser")
+            if selected:
+                candidate = config_dir / "parsers" / "json_parser" / f"{selected}.py"
+                if candidate.exists():
+                    parser_path = candidate
+                else:
+                    log.warning(
+                        f"parsers.json_parser='{selected}' selected but file "
+                        f"not found at {candidate}; falling back to legacy."
+                    )
+
+        # Legacy fallback for projects pre-dating the parsers/ layout.
+        if parser_path is None:
+            legacy = config_dir / "text_parser.py"
+            if legacy.exists():
+                parser_path = legacy
+
+        if parser_path is None:
             return None
+
         try:
             spec = importlib.util.spec_from_file_location("_project_text_parser", parser_path)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             cls = getattr(module, "ProcedureTextParser", None)
             if cls is None:
-                log.warning(f"text_parser.py has no ProcedureTextParser class: {parser_path}")
+                log.warning(f"text parser at {parser_path} has no ProcedureTextParser class")
                 return None
             return cls()
         except Exception as e:
-            log.warning(f"Failed to load text_parser.py: {e}")
+            log.warning(f"Failed to load text parser from {parser_path}: {e}")
             return None
 
     def load_equipment_patterns(self) -> list[re.Pattern[str]]:

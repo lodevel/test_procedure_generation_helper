@@ -322,3 +322,128 @@ class TestEquipmentSection:
         result, warns = parser.parse(text)
         assert any(e["id"] == "PSU1" for e in result["equipment"])
         assert any("format not recognized" in w for w in warns)
+
+
+# ----------------------------------------------------------------------
+# Per-instance fncore-mockup family detection (FNCORE / DSC / HXT)
+# ----------------------------------------------------------------------
+
+class TestFncoreMockupFamilies:
+    def test_dsc_numbered_instances_separate(self, parser):
+        text = (
+            "## Test steps\n"
+            "1. Set DSC1 IO#GPIO1 = '1'.\n"
+            "2. Set DSC2 IO#GPIO2 = '0'.\n"
+        )
+        result, _ = parser.parse(text)
+        ids = [e["id"] for e in result["equipment"]]
+        assert "DSC1" in ids and "DSC2" in ids
+        assert "DSC" not in ids
+
+    def test_fncore_numbered_instances_separate(self, parser):
+        text = (
+            "## Test steps\n"
+            "1. Set FNCORE1 IO#A = '1'.\n"
+            "2. Set FNCORE2 IO#B = '1'.\n"
+        )
+        result, _ = parser.parse(text)
+        ids = [e["id"] for e in result["equipment"]]
+        assert "FNCORE1" in ids and "FNCORE2" in ids
+
+    def test_hxt_numbered(self, parser):
+        text = "## Test steps\n1. Read HXT7 ADC#X = {1}.\n"
+        result, _ = parser.parse(text)
+        ids = [e["id"] for e in result["equipment"]]
+        assert "HXT7" in ids
+        assert "HXT" not in ids
+
+    def test_bare_dsc_alone_kept_bare(self, parser):
+        text = "## Test steps\n1. Set DSC IO#GPIO1 = '1'.\n"
+        result, _ = parser.parse(text)
+        ids = [e["id"] for e in result["equipment"]]
+        assert "DSC" in ids
+        assert not any(i.startswith("DSC") and i != "DSC" for i in ids)
+
+    def test_bare_fncore_alone_maps_to_fncore1(self, parser):
+        text = "## Test steps\n1. Set FNCORE IO#A = '1'.\n"
+        result, _ = parser.parse(text)
+        ids = [e["id"] for e in result["equipment"]]
+        assert "FNCORE1" in ids
+
+    def test_bare_plus_numbered_promotes_bare(self, parser):
+        # `DSC` (bare) + `DSC2` (numbered) → bare promoted to DSC1
+        text = (
+            "## Test steps\n"
+            "1. Set DSC IO#A = '1'.\n"
+            "2. Set DSC2 IO#B = '1'.\n"
+        )
+        result, _ = parser.parse(text)
+        ids = sorted(e["id"] for e in result["equipment"] if e["id"].startswith("DSC"))
+        assert ids == ["DSC1", "DSC2"]
+
+    def test_bare_plus_numbered_promotes_to_lowest_unused(self, parser):
+        # Bare + DSC1 + DSC3 → bare promoted to DSC2
+        text = (
+            "## Test steps\n"
+            "1. Set DSC IO#A = '1'.\n"
+            "2. Set DSC1 IO#B = '1'.\n"
+            "3. Set DSC3 IO#C = '1'.\n"
+        )
+        result, _ = parser.parse(text)
+        ids = sorted(e["id"] for e in result["equipment"] if e["id"].startswith("DSC"))
+        assert ids == ["DSC1", "DSC2", "DSC3"]
+
+    def test_no_cross_family_inference(self, parser):
+        # HXT alone must NOT add an FNCORE entry
+        text = "## Test steps\n1. Read HXT ADC#X = {1}.\n"
+        result, _ = parser.parse(text)
+        ids = [e["id"] for e in result["equipment"]]
+        assert "HXT" in ids
+        assert not any(i.startswith("FNCORE") for i in ids)
+        assert not any(i.startswith("DSC") for i in ids)
+
+    def test_subtype_emitted_on_controller_entries(self, parser):
+        text = (
+            "## Test steps\n"
+            "1. Set DSC1 IO#A = '1'.\n"
+            "2. Set HXT IO#B = '1'.\n"
+            "3. Set FNCORE2 IO#C = '1'.\n"
+        )
+        result, _ = parser.parse(text)
+        for e in result["equipment"]:
+            if e["id"] in ("DSC1", "HXT", "FNCORE2"):
+                assert e.get("subtype") == "fncore-mockup", f"{e['id']} missing subtype"
+
+    def test_io_token_does_not_create_phantom_instance(self, parser):
+        # `IO#DSC18` is a pin reference on bare DSC, not a separate DSC18.
+        text = "## Test steps\n1. Set DSC IO#DSC18 = '1'.\n"
+        result, _ = parser.parse(text)
+        ids = [e["id"] for e in result["equipment"]]
+        assert ids == ["DSC"]  # exactly one DSC, no DSC18
+
+    def test_sort_order_with_numbered_controllers(self, parser):
+        text = (
+            "## Test steps\n"
+            "1. Configure PSU3 CH1 to 5 V / 1 A.\n"
+            "2. Set DSC2 IO#A = '1'.\n"
+            "3. Set FNCORE1 IO#B = '1'.\n"
+            "4. Configure PSU1 CH1 to 28 V / 5 A.\n"
+        )
+        result, _ = parser.parse(text)
+        ids = [e["id"] for e in result["equipment"]]
+        # PSUs first (by number), then FNCORE, then DSC
+        assert ids.index("PSU1") < ids.index("PSU3")
+        assert ids.index("PSU3") < ids.index("FNCORE1")
+        assert ids.index("FNCORE1") < ids.index("DSC2")
+
+    def test_section_controller_gets_subtype(self, parser):
+        # Equipment section with explicit (controller) type for a fncore-mockup id
+        text = (
+            "## Equipment\n"
+            "- PSU1 (psu)\n"
+            "- DSC2 (controller)\n"
+            "## Test steps\n1. Set DSC2 IO#A = '1'.\n"
+        )
+        result, _ = parser.parse(text)
+        dsc = next(e for e in result["equipment"] if e["id"] == "DSC2")
+        assert dsc.get("subtype") == "fncore-mockup"

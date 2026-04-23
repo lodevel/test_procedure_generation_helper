@@ -35,8 +35,29 @@ log = logging.getLogger(__name__)
 # If the rules document is updated, review this file and bump this constant.
 RULES_VERSION = "v1.3.0"
 
-# Canonical equipment sort order
-_EQUIPMENT_CANONICAL_ORDER = ["PSU1", "PSU2", "ELOAD", "SCOPE", "DMM"]
+# Equipment sort buckets — within each bucket, entries are ordered by
+# numeric suffix (bare = 0) then full id alphabetically.
+_EQUIPMENT_SORT_BUCKETS: dict[str, int] = {
+    "PSU": 0, "ELOAD": 1, "SCOPE": 2, "DMM": 3,
+    "FNCORE": 4, "DSC": 5, "HXT": 6,
+}
+
+# Controller families that are all variants of the fncore-mockup driver.
+# Each distinct id (FNCORE1, DSC, DSC2, HXT, HXT7, ...) is a separate target
+# for the fncore-mockup driver. They never overlap; no cross-family inference.
+_FNCORE_MOCKUP_FAMILIES: list[tuple[str, str]] = [
+    # (regex pattern matching the family prefix, canonical family name for ids)
+    (r'FNCORE|FN[- ]?CORE', "FNCORE"),
+    (r'DSC',                "DSC"),
+    (r'HXT',                "HXT"),
+]
+# Bare-name default when a family appears without any digit and no numbered
+# instance of the same family is present in the procedure.
+_FNCORE_MOCKUP_BARE_DEFAULT: dict[str, str] = {
+    "FNCORE": "FNCORE1",  # historical convention
+    "DSC":    "DSC",
+    "HXT":    "HXT",
+}
 
 # Mapping from lowercase heading text to logical section key
 _HEADING_MAP: dict[str, list[str]] = {
@@ -441,11 +462,15 @@ class ProcedureTextParser:
                     type_label = (m.group(2) or "").lower()
                     current_type = _EQUIP_TYPE_MAP.get(type_label) or self._infer_equip_type(current_id)
                     if current_id not in equipment:
-                        equipment[current_id] = {
+                        entry: dict = {
                             "id": current_id,
                             "type": current_type,
                             "channels": [],
                         }
+                        # Auto-add fncore-mockup subtype for known controller families
+                        if current_type == "controller" and self._is_fncore_mockup_id(current_id):
+                            entry["subtype"] = "fncore-mockup"
+                        equipment[current_id] = entry
                 else:
                     current_id = None
                     current_type = None
@@ -500,7 +525,10 @@ class ProcedureTextParser:
 
         def get_or_create(eq_id: str, eq_type: str) -> dict:
             if eq_id not in equipment:
-                equipment[eq_id] = {"id": eq_id, "type": eq_type, "channels": []}
+                entry: dict = {"id": eq_id, "type": eq_type, "channels": []}
+                if eq_type == "controller" and self._is_fncore_mockup_id(eq_id):
+                    entry["subtype"] = "fncore-mockup"
+                equipment[eq_id] = entry
             return equipment[eq_id]
 
         for text in step_texts:
@@ -567,14 +595,48 @@ class ProcedureTextParser:
                     if not re.search(r'\b(?:IO|DAC|ADC|PWM|QEP)#', text, re.IGNORECASE):
                         get_or_create("DMM", "dmm")
 
-            # Controllers — keep FNCORE name detection; widen DSC/HXT to also match DSC18, HXT7, etc.
-            for ctrl_pattern, ctrl_id in [
-                (r'\bFNCORE\d*\b|\bFN-CORE\d*\b|\bFN-core\b', "FNCORE1"),
-                (r'\bDSC\d*\b', "DSC"),
-                (r'\bHXT\d*\b', "HXT"),
-            ]:
-                if re.search(ctrl_pattern, text, re.IGNORECASE):
-                    get_or_create(ctrl_id, "controller")
+        # Controllers (fncore-mockup family) — collect across ALL step texts so
+        # we can resolve bare vs numbered references coherently per family.
+        # Each distinct id (FNCORE1, DSC, DSC2, HXT, HXT7, ...) is one instance.
+        for fam_pattern, fam_name in _FNCORE_MOCKUP_FAMILIES:
+            numbered: set[int] = set()
+            saw_bare = False
+            joined = "\n".join(step_texts)
+            # Numbered: <FAM><digits>, NOT preceded by `#` or other word chars.
+            # Prevents false matches inside IO/ADC tokens like `IO#DSC18`
+            # (which references a pin on the DSC controller, not a separate
+            # DSC18 instance).
+            for m in re.finditer(rf'(?<![#\w])(?:{fam_pattern})(\d+)\b', joined, re.IGNORECASE):
+                numbered.add(int(m.group(1)))
+            # Bare: <FAM> not immediately followed by a digit and not part of
+            # a larger token.
+            if re.search(rf'(?<![#\w])(?:{fam_pattern})\b(?!\d)', joined, re.IGNORECASE):
+                saw_bare = True
+
+            if saw_bare and numbered:
+                # Mixed bare + numbered: promote bare to lowest unused N >= 1.
+                n = 1
+                while n in numbered:
+                    n += 1
+                numbered.add(n)
+                bare_resolved_id = f"{fam_name}{n}"
+            elif saw_bare:
+                bare_resolved_id = _FNCORE_MOCKUP_BARE_DEFAULT[fam_name]
+            else:
+                bare_resolved_id = None
+
+            for n in sorted(numbered):
+                eq_id = f"{fam_name}{n}"
+                if eq_id not in equipment:
+                    equipment[eq_id] = {
+                        "id": eq_id, "type": "controller",
+                        "subtype": "fncore-mockup", "channels": [],
+                    }
+            if bare_resolved_id and bare_resolved_id not in equipment:
+                equipment[bare_resolved_id] = {
+                    "id": bare_resolved_id, "type": "controller",
+                    "subtype": "fncore-mockup", "channels": [],
+                }
 
         # SCOPE channels are plain integers
         if "SCOPE" in equipment and scope_channels:
@@ -598,12 +660,31 @@ class ProcedureTextParser:
             return "dmm"
         return "controller"
 
+    def _is_fncore_mockup_id(self, eq_id: str) -> bool:
+        """True if id belongs to a known fncore-mockup family (FNCORE/DSC/HXT)."""
+        u = eq_id.upper()
+        for fam_pattern, _ in _FNCORE_MOCKUP_FAMILIES:
+            if re.fullmatch(rf'(?:{fam_pattern})\d*', u):
+                return True
+        return False
+
     def _sort_equipment(self, equipment: list[dict]) -> list[dict]:
-        """Sort in canonical order: PSU1, PSU2, ELOAD, SCOPE, DMM, then controllers."""
-        def sort_key(e: dict) -> tuple[int, str]:
-            try:
-                return (_EQUIPMENT_CANONICAL_ORDER.index(e["id"]), e["id"])
-            except ValueError:
-                return (len(_EQUIPMENT_CANONICAL_ORDER), e["id"])
+        """
+        Sort by family bucket, then numeric suffix, then full id.
+
+        Order: PSU1, PSU2, PSU3, ..., ELOAD, SCOPE, DMM, FNCORE1, FNCORE2, ...,
+        DSC, DSC1, DSC2, ..., HXT, HXT7, ..., then any other id alphabetically.
+        """
+        other_bucket = max(_EQUIPMENT_SORT_BUCKETS.values()) + 1
+
+        def sort_key(e: dict) -> tuple[int, int, str]:
+            eid = e["id"]
+            m = re.match(r'^([A-Z]+)(\d*)$', eid)
+            if m:
+                family, digits = m.group(1), m.group(2)
+                bucket = _EQUIPMENT_SORT_BUCKETS.get(family, other_bucket)
+                num = int(digits) if digits else 0
+                return (bucket, num, eid)
+            return (other_bucket, 0, eid)
 
         return sorted(equipment, key=sort_key)

@@ -3,8 +3,13 @@ ProcedureTextParser
 ===================
 Deterministic parser for structured procedure_text.md files.
 
-Converts the standard markdown template used in KC30 / FN-CORE test procedures
-into a procedure.json-compatible dict without any LLM call.
+This file is a **reference implementation** intended to be copied into a
+project's ``config/text_parser.py``.  The workflow editor loads it from there
+at runtime — if the file is absent the Quick Parse button is hidden.
+
+The conversion rules implemented here are derived from the canonical LLM rules
+document (see RULES_VERSION below).  If that document is updated, review this
+parser for required changes before bumping RULES_VERSION.
 
 Supported section headings (h1 or h2):
     ## Id / ## Title / ## Description
@@ -25,6 +30,10 @@ import re
 import logging
 
 log = logging.getLogger(__name__)
+
+# Version of test_rules_llm_ready.md that this parser was written against.
+# If the rules document is updated, review this file and bump this constant.
+RULES_VERSION = "v1.3.0"
 
 # Canonical equipment sort order
 _EQUIPMENT_CANONICAL_ORDER = ["PSU1", "PSU2", "ELOAD", "SCOPE", "DMM"]

@@ -20,7 +20,7 @@ from PySide6.QtGui import QFont
 from .base_tab import BaseTab
 from .llm_tab_mixin import LLMTabMixin
 from .json_tab import JsonSyntaxHighlighter
-from ..core import ArtifactType, JsonValidator, ProcedureTextParser
+from ..core import ArtifactType, JsonValidator
 from ..llm import TabContext, LLMTask
 from ..dialogs import DiffViewer
 from ..theme import status_modified, status_saved
@@ -183,12 +183,13 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         format_row.addStretch()
         file_layout.addLayout(format_row)
 
-        # Quick Parse row
+        # Quick Parse row — hidden until project provides config/text_parser.py
         parse_row = QHBoxLayout()
         self.quick_parse_btn = self.create_button(
             "⚡ Quick Parse", self._on_quick_parse,
             tooltip="Parse structured text to JSON without LLM (rule-based, instant)"
         )
+        self.quick_parse_btn.setVisible(False)
         parse_row.addWidget(self.quick_parse_btn)
         parse_row.addStretch()
         file_layout.addLayout(parse_row)
@@ -295,14 +296,26 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         else:
             self.show_error("Validation", f"JSON has {len(result.issues)} issues.")
     
+    def refresh_parser_button(self):
+        """Show or hide the Quick Parse button based on project's config/text_parser.py."""
+        has_parser = self.project_manager.get_text_parser() is not None
+        self.quick_parse_btn.setVisible(has_parser)
+
     def _on_quick_parse(self):
         """Deterministic Text → JSON without LLM (rule-based, instant)."""
+        parser = self.project_manager.get_text_parser()
+        if parser is None:
+            self.show_warning(
+                "No Parser",
+                "No text_parser.py found in config/.\nAdd one to enable Quick Parse."
+            )
+            return
         text = self.text_editor.toPlainText().strip()
         if not text:
             self.show_warning("No Content", "Procedure text is empty. Add text before parsing.")
             return
 
-        result, warnings = ProcedureTextParser().parse(text)
+        result, warnings = parser.parse(text)
         result_str = json.dumps(result, indent=2)
 
         current_json = self.json_editor.toPlainText().strip()

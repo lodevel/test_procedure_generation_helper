@@ -269,6 +269,37 @@ Test procedure project created with Workflow Editor.
         config_dir = self.project_root / "config"
         return config_dir if config_dir.exists() else None
 
+    def get_text_parser(self):
+        """
+        Dynamically load config/text_parser.py from the project root.
+
+        This file is project-owned and optional.  It must define a
+        ``ProcedureTextParser`` class with a ``parse(text) -> (dict, list)``
+        method.
+
+        Returns an instantiated parser if the file exists and loads cleanly,
+        or None otherwise (button should be hidden).
+        """
+        import importlib.util
+        config_dir = self.get_config_dir()
+        if config_dir is None:
+            return None
+        parser_path = config_dir / "text_parser.py"
+        if not parser_path.exists():
+            return None
+        try:
+            spec = importlib.util.spec_from_file_location("_project_text_parser", parser_path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            cls = getattr(module, "ProcedureTextParser", None)
+            if cls is None:
+                log.warning(f"text_parser.py has no ProcedureTextParser class: {parser_path}")
+                return None
+            return cls()
+        except Exception as e:
+            log.warning(f"Failed to load text_parser.py: {e}")
+            return None
+
     def load_equipment_patterns(self) -> list[re.Pattern[str]]:
         """Load equipment-configuration patterns from the project config.
 

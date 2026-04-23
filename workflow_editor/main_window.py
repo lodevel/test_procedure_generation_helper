@@ -1124,6 +1124,7 @@ class MainWindow(QMainWindow):
             
             # Update status bar indicators
             self._update_project_rules_indicators()
+            self.text_json_tab.refresh_parser_button()
             
             # Show workspace dock if hidden
             if self.workspace_dock.isHidden():
@@ -1139,6 +1140,7 @@ class MainWindow(QMainWindow):
                 
                 # Update status bar indicators
                 self._update_project_rules_indicators()
+                self.text_json_tab.refresh_parser_button()
                 
                 # Show workspace dock
                 if self.workspace_dock.isHidden():

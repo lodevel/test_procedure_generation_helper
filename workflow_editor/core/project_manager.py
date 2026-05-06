@@ -300,6 +300,29 @@ Test procedure project created with Workflow Editor.
         """
         return self._load_parser("code_parser", "ProcedureCodeParser")
 
+    def get_text_renderer(self):
+        """Load the project's selected text-renderer variant.
+
+        Resolves ``config/config.json -> parsers.text_renderer`` to
+        ``config/parsers/text_renderer/<value>.py``. The loaded module
+        must define ``class ProcedureTextRenderer`` exposing:
+
+          - ``validate(text=None, json_obj=None, mode='all') -> Report``
+            where ``Report`` has ``.ok: bool`` and ``.errors: list``;
+            each error exposes ``.code``, ``.message``, ``.severity``,
+            ``.location``, ``.fix_hint``, ``.fixable_by`` (the same shape
+            ``llm/validator_dispatch.py`` reads from the legacy
+            ``bijective_validator``).
+          - ``render(json_obj) -> str`` (Phase 2 — may raise
+            NotImplementedError until canonical-text emission lands in
+            the wheel).
+
+        Returns ``None`` when no variant is configured. The workflow
+        editor's validator dispatch falls back to the legacy
+        ``bijective_validator`` path in that case.
+        """
+        return self._load_parser("text_renderer", "ProcedureTextRenderer")
+
     def _load_parser(
         self,
         kind: str,

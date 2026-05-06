@@ -336,12 +336,46 @@ def _skipped(reason: str) -> ValidationOutcome:
 # --------------------------------------------------------------------------- #
 
 
-def _import_validator():
-    """Import ``rules_packager_base.bijective_validator`` on demand.
+def _import_validator(project_root: Optional[Path] = None):
+    """Resolve the (validate_fn, deterministic_path_available_fn) pair.
 
-    Returns ``(validate_fn, deterministic_path_available_fn)`` or
-    ``(None, None)`` if the package is unavailable.
+    Resolution order:
+
+    1. Project-selected ``text_renderer`` variant (when ``project_root``
+       is given). The variant must expose a ``ProcedureTextRenderer``
+       class with ``validate(text=, json_obj=, mode=) -> Report`` whose
+       errors mirror the legacy validator's Issue shape (code/message/
+       severity/location/fix_hint/fixable_by). This is the preferred
+       path — it follows the project's parser-pack pinning, so
+       v2.0.1-rules projects validate against v2.0.1 grammar.
+
+    2. Legacy ``rules_packager_base.bijective_validator``. Used when no
+       text_renderer is configured for the project, or the variant
+       failed to load. This path is the v2.0.0 framework — kept as the
+       fallback during the transition while wheel still ships it.
+
+    3. ``(None, None)`` when neither resolves; the caller treats this as
+       "deterministic path unavailable" and the GUI falls back to the
+       LLM-only flow.
     """
+    if project_root is not None:
+        try:
+            # Lazy import to avoid circular: validator_dispatch <- llm/<-
+            # core/project_manager
+            from ..core.project_manager import ProjectManager
+            pm = ProjectManager(project_root=project_root)
+            renderer = pm.get_text_renderer()
+            if renderer is not None:
+                # Wrap validate to match the bijective_validator contract
+                # (which returns a Report with .ok/.errors). The variant
+                # already returns this shape, so we pass it through.
+                return renderer.validate, lambda: True
+        except Exception as exc:  # noqa: BLE001 — never let variant load block fallback
+            log.info(
+                "project text_renderer not loadable (%s); falling back to bijective.",
+                exc,
+            )
+
     try:
         from rules_packager_base.bijective_validator import (  # type: ignore[import-not-found]
             validate as _validate,
@@ -784,9 +818,12 @@ def validate_response(
     """
     if project_root is None:
         return _skipped("no active project")
-    validate_fn, _ = _import_validator()
+    validate_fn, _ = _import_validator(project_root)
     if validate_fn is None:
-        return _skipped("rules_packager_base.bijective_validator not importable")
+        return _skipped(
+            "deterministic validator unavailable: neither project text_renderer "
+            "variant nor legacy bijective_validator could be loaded"
+        )
 
     # Phase 7.1 (2026-04-30): auto-restore operator-only meta fields the
     # LLM tried to populate or modify. Runs BEFORE the artifact handlers
@@ -828,9 +865,9 @@ def is_loop_available(project_root: Optional[Path]) -> tuple[bool, str]:
     """
     if project_root is None:
         return False, "no active project"
-    _, avail_fn = _import_validator()
+    _, avail_fn = _import_validator(project_root)
     if avail_fn is None:
-        return False, "rules_packager_base.bijective_validator not importable"
+        return False, "deterministic validator unavailable (no text_renderer variant; bijective_validator absent)"
     try:
         if not avail_fn():
             return False, "no pack registered bijective handlers in this venv"
@@ -952,11 +989,13 @@ def validate_current_state(
     benefits from seeing soft-warning codes too — operators can read them and
     decide whether to act.
     """
-    validate_fn, _ = _import_validator()
+    validate_fn, _ = _import_validator(project_root)
     if validate_fn is None:
         return _skipped(
-            "Validator unavailable: rules_packager_base.bijective_validator "
-            "could not be imported. Build and install the rules_packager wheel."
+            "Validator unavailable: neither the project text_renderer variant "
+            "nor the legacy bijective_validator could be loaded. Reinstall the "
+            "rules_packager_base wheel and pick a text_renderer variant in "
+            "Project Config -> Parsers."
         )
 
     if not (text or json_str or code):

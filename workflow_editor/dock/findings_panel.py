@@ -11,10 +11,10 @@ Callers write issues to session_state.validation_issues, then call display().
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
-    QPushButton, QLabel
+    QPushButton, QLabel, QApplication, QMenu
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from typing import TYPE_CHECKING, Optional
 
 from ..theme import finding_error, finding_warning, finding_info, finding_success
@@ -54,16 +54,32 @@ class FindingsPanel(QWidget):
         header.addWidget(self.count_label)
         header.addStretch()
 
+        self.copy_btn = QPushButton("Copy")
+        self.copy_btn.setToolTip(
+            "Copy selected issues as text (or all issues if none selected). "
+            "Ctrl+C also works."
+        )
+        self.copy_btn.clicked.connect(self._on_copy)
+        header.addWidget(self.copy_btn)
+
         self.clear_btn = QPushButton("Clear")
         self.clear_btn.clicked.connect(self._on_clear)
         header.addWidget(self.clear_btn)
 
         layout.addLayout(header)
 
-        # Issue list
+        # Issue list (multi-select for copy)
         self.issue_list = QListWidget()
+        self.issue_list.setSelectionMode(QListWidget.ExtendedSelection)
         self.issue_list.itemClicked.connect(self._on_issue_clicked)
+        self.issue_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.issue_list.customContextMenuRequested.connect(self._on_context_menu)
         layout.addWidget(self.issue_list, stretch=1)
+
+        # Ctrl+C copies selected (or all if nothing selected)
+        copy_shortcut = QShortcut(QKeySequence.Copy, self.issue_list)
+        copy_shortcut.setContext(Qt.WidgetShortcut)
+        copy_shortcut.activated.connect(self._on_copy)
 
         # Summary
         self.summary_label = QLabel("No issues")
@@ -160,3 +176,82 @@ class FindingsPanel(QWidget):
         if self._session_state is not None:
             self._session_state.validation_issues = []
         self._refresh_display()
+
+    def _on_copy(self):
+        """Copy selected issues (or all if none selected) to clipboard as text.
+
+        Format is plain markdown — easy to paste into chat. Each issue
+        becomes one bullet with severity, code, message, location, and
+        suggested fix on a continuation line when present.
+        """
+        selected = self.issue_list.selectedItems()
+        if selected:
+            issues = [item.data(Qt.UserRole) for item in selected]
+        else:
+            issues = []
+            for i in range(self.issue_list.count()):
+                issues.append(self.issue_list.item(i).data(Qt.UserRole))
+
+        if not issues:
+            return
+
+        QApplication.clipboard().setText(self._format_issues(issues))
+
+    def _on_context_menu(self, pos):
+        """Right-click context menu with copy actions."""
+        menu = QMenu(self.issue_list)
+        has_selection = bool(self.issue_list.selectedItems())
+        has_any = self.issue_list.count() > 0
+
+        copy_sel = menu.addAction("Copy Selected")
+        copy_sel.setEnabled(has_selection)
+        copy_sel.triggered.connect(self._copy_selected)
+
+        copy_all = menu.addAction("Copy All")
+        copy_all.setEnabled(has_any)
+        copy_all.triggered.connect(self._copy_all)
+
+        menu.exec(self.issue_list.viewport().mapToGlobal(pos))
+
+    def _copy_selected(self):
+        items = self.issue_list.selectedItems()
+        if not items:
+            return
+        QApplication.clipboard().setText(
+            self._format_issues([item.data(Qt.UserRole) for item in items])
+        )
+
+    def _copy_all(self):
+        if self.issue_list.count() == 0:
+            return
+        issues = [
+            self.issue_list.item(i).data(Qt.UserRole)
+            for i in range(self.issue_list.count())
+        ]
+        QApplication.clipboard().setText(self._format_issues(issues))
+
+    @staticmethod
+    def _format_issues(issues: list) -> str:
+        """Render a list of issue dicts as plain-text markdown bullets."""
+        lines = []
+        for issue in issues:
+            if not isinstance(issue, dict):
+                lines.append(f"- {issue}")
+                continue
+            severity = issue.get("severity", "info")
+            code = issue.get("code", "")
+            message = issue.get("message", "")
+            location = issue.get("location", "")
+            fix = issue.get("suggested_fix", "")
+
+            head = f"- [{severity}]"
+            if code:
+                head += f" {code}:"
+            if message:
+                head += f" {message}"
+            if location:
+                head += f" ({location})"
+            lines.append(head)
+            if fix:
+                lines.append(f"  Fix: {fix}")
+        return "\n".join(lines)

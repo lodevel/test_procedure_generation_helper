@@ -29,6 +29,50 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+# YAML frontmatter fields stripped from rule docs before they ship to the LLM.
+# These exist for the build pipeline (rules_index.json, audience routing) and add
+# no semantic value the LLM uses to perform its tasks. Strip them on read so the
+# markdown source on disk stays canonical while the LLM payload is leaner.
+_LLM_USELESS_FRONTMATTER_FIELDS = frozenset({"related", "audience"})
+
+
+def _strip_llm_useless_frontmatter(content: str) -> str:
+    """
+    Remove allowlisted top-level frontmatter fields from a markdown doc.
+
+    Recognizes the standard `---\\n<yaml>\\n---\\n` frontmatter block at the
+    start of the file. Only top-level fields whose name is in
+    `_LLM_USELESS_FRONTMATTER_FIELDS` are stripped, including any continuation
+    lines indented under them (so multi-line list values like
+    `related:\\n  - a\\n  - b` are dropped as a unit). Other frontmatter is
+    preserved as-is. Files without frontmatter are returned unchanged.
+    """
+    if not content.startswith("---\n"):
+        return content
+    end_marker_idx = content.find("\n---\n", 4)
+    if end_marker_idx == -1:
+        return content
+    fm_body = content[4:end_marker_idx]
+    rest = content[end_marker_idx + len("\n---\n"):]
+
+    kept_lines: list[str] = []
+    skipping = False
+    for line in fm_body.split("\n"):
+        # A top-level field starts at column 0 with `<name>:` (no leading space).
+        if line and not line[0].isspace() and ":" in line:
+            field_name = line.split(":", 1)[0].strip()
+            skipping = field_name in _LLM_USELESS_FRONTMATTER_FIELDS
+            if skipping:
+                continue
+        elif skipping:
+            # Continuation line (indented, blank, or comment under a stripped field).
+            continue
+        kept_lines.append(line)
+
+    new_fm = "\n".join(kept_lines)
+    return f"---\n{new_fm}\n---\n{rest}"
+
+
 # Task-to-Artifact Requirements Mapping
 # Defines which artifacts each task needs as input
 TASK_ARTIFACT_REQUIREMENTS = {
@@ -95,7 +139,7 @@ class TabContext:
         Initialize tab context.
         
         Args:
-            tab_id: Tab identifier ("text_json", "json_code")
+            tab_id: Tab identifier ("text_only", "text_json", "json_code")
             backend_factory: Factory for creating backend instances
             project_manager: Project manager for config and rules
             artifact_manager: Artifact manager for current content
@@ -514,6 +558,7 @@ class TabContext:
             if rule_path.exists():
                 header = f"\n{'='*60}\n# Rules from: {filename}\n{'='*60}\n"
                 content = rule_path.read_text(encoding="utf-8")
+                content = _strip_llm_useless_frontmatter(content)
                 contents.append(header + content)
             else:
                 log.warning(f"Selected rule file not found: {filename}")

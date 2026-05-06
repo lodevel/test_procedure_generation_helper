@@ -2,21 +2,55 @@
 Chat Panel - LLM conversation interface.
 
 Implements Section 10.1 of the spec.
+
+Per-message widget classes (``MessageWidget``, ``ProposalWidget``,
+``MessageDetailDialog``) live in the sibling ``chat_messages`` module
+so this file stays focused on the panel-level coordination
+(scrolling, streaming, persistence, validator-status indicator).
 """
 
-import html
 import json
 import logging
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
-    QLineEdit, QPushButton, QLabel, QFrame, QDialog, QPlainTextEdit,
+    QLineEdit, QPushButton, QLabel, QFrame, QPlainTextEdit,
     QCheckBox
 )
 from PySide6.QtCore import Qt, Signal, QEvent
-from PySide6.QtGui import QFont, QMouseEvent
 from typing import TYPE_CHECKING, List, Tuple, Optional
 
 from .. import theme
+from .chat_messages import MessageDetailDialog, MessageWidget, ProposalWidget
+
+
+# Tooltip strings for the validator-status indicator + auto-correct
+# checkbox. Co-located so the wording stays consistent and a future
+# i18n pass can sweep one block. The grey/unavailable variants take an
+# optional ``reason`` interpolation appended at format time.
+_TOOLTIP_STATUS_AVAILABLE = (
+    "Deterministic validator active.\n"
+    "Quick Parse / Quick Code work; LLM responses are checked "
+    "before the DiffViewer."
+)
+_TOOLTIP_STATUS_UNAVAILABLE = (
+    "Deterministic validator unavailable; LLM-only workflow.\n"
+    "Quick Parse / Quick Code buttons are inactive."
+)
+_TOOLTIP_AUTO_CORRECT_AVAILABLE = (
+    "When the deterministic validator rejects an LLM response, "
+    "automatically re-prompt the LLM with the structured errors "
+    "(up to N retries) before falling back to operator review."
+)
+_TOOLTIP_AUTO_CORRECT_UNAVAILABLE = (
+    "Deterministic validator not available — auto-correct loop has "
+    "nothing to validate against. Falls back to operator-only "
+    "DiffViewer review."
+)
+
+
+def _with_reason(base: str, reason: str) -> str:
+    """Append a ``Reason: ...`` line to a tooltip when one was supplied."""
+    return f"{base}\nReason: {reason}" if reason else base
 
 if TYPE_CHECKING:
     from ..main_window import MainWindow
@@ -25,352 +59,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-
-class MessageDetailDialog(QDialog):
-    """Dialog showing full prompt and response for a message."""
-    
-    def __init__(self, prompt: Optional[str], response: Optional[str], parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Message Details")
-        self.resize(800, 600)
-        
-        layout = QVBoxLayout(self)
-        
-        # Single text display
-        text_editor = QPlainTextEdit()
-        text_editor.setFont(QFont("Consolas", 10))
-        text_editor.setReadOnly(True)
-        
-        # Build combined content with section headers
-        content_parts = []
-        
-        if prompt:
-            content_parts.append("=" * 80)
-            content_parts.append("PROMPT")
-            content_parts.append("=" * 80)
-            content_parts.append(self._format_json_if_possible(prompt))
-            content_parts.append("")  # Empty line
-        else:
-            content_parts.append("(No prompt recorded)")
-            content_parts.append("")
-        
-        if response:
-            content_parts.append("=" * 80)
-            content_parts.append("RESPONSE")
-            content_parts.append("=" * 80)
-            content_parts.append(self._format_json_if_possible(response))
-        else:
-            content_parts.append("(No response recorded)")
-        
-        text_editor.setPlainText("\n".join(content_parts))
-        layout.addWidget(text_editor)
-        
-        # Close button
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(self.accept)
-        layout.addWidget(close_btn)
-    
-    @staticmethod
-    def _format_json_if_possible(text: str) -> str:
-        """
-        Recursively format JSON, including nested JSON strings.
-        
-        Detects and pretty-prints JSON strings embedded within JSON objects,
-        supporting multiple levels of nesting.
-        """
-        if not text:
-            return text
-        try:
-            parsed = json.loads(text)
-            # Recursively expand nested JSON strings
-            formatted_obj = MessageDetailDialog._recursively_format_nested_json(parsed, max_depth=10)
-            return json.dumps(formatted_obj, indent=2, ensure_ascii=True)
-        except (json.JSONDecodeError, ValueError, TypeError):
-            return text
-
-    @staticmethod
-    def _recursively_format_nested_json(obj, max_depth: int):
-        """
-        Recursively detect and expand JSON strings within a data structure.
-        
-        Args:
-            obj: The object to process (dict, list, str, or primitive)
-            max_depth: Maximum recursion depth to prevent infinite loops
-            
-        Returns:
-            Object with nested JSON strings expanded to dicts/lists
-        """
-        if max_depth <= 0:
-            return obj
-        
-        if isinstance(obj, dict):
-            return {k: MessageDetailDialog._recursively_format_nested_json(v, max_depth - 1) 
-                    for k, v in obj.items()}
-        
-        elif isinstance(obj, list):
-            return [MessageDetailDialog._recursively_format_nested_json(item, max_depth - 1) 
-                    for item in obj]
-        
-        elif isinstance(obj, str):
-            if len(obj) < 2:
-                return obj
-            
-            stripped = obj.strip()
-            if not (stripped.startswith('{') or stripped.startswith('[')):
-                return obj
-            
-            try:
-                parsed = json.loads(stripped)
-                if isinstance(parsed, (dict, list)):
-                    return MessageDetailDialog._recursively_format_nested_json(parsed, max_depth - 1)
-                else:
-                    return obj
-            except (json.JSONDecodeError, ValueError, TypeError):
-                return obj
-        
-        else:
-            return obj
-
-
-class ProposalWidget(QFrame):
-    """Widget showing a code/JSON proposal with accept/reject actions."""
-    
-    accepted = Signal(str, str)  # (artifact_type, content)
-    rejected = Signal(str)  # artifact_type
-    view_diff_requested = Signal(str)  # artifact_type
-    
-    def __init__(self, artifact_name: str, content: str, artifact_type: str, parent=None):
-        super().__init__(parent)
-        self.setFrameShape(QFrame.StyledPanel)
-        self._artifact_type = artifact_type
-        self._content = content
-        self._artifact_name = artifact_name
-        
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 5, 8, 5)
-        layout.setSpacing(5)
-        
-        # Header
-        header = QLabel(f"📄 Proposal: {artifact_name}")
-        header.setStyleSheet("font-weight: bold;")
-        layout.addWidget(header)
-        
-        # Preview (first 8 lines)
-        preview_lines = content.split('\n')[:8]
-        preview_text = '\n'.join(preview_lines)
-        if len(content.split('\n')) > 8:
-            preview_text += '\n...'
-        
-        self.preview = QPlainTextEdit()
-        self.preview.setPlainText(preview_text)
-        self.preview.setReadOnly(True)
-        self.preview.setMaximumHeight(150)
-        self.preview.setFont(QFont("Consolas", 9))
-        layout.addWidget(self.preview)
-        
-        # Buttons
-        btn_layout = QHBoxLayout()
-        self.accept_btn = QPushButton("✓ Accept")
-        self.accept_btn.setStyleSheet(f"background-color: {theme.accept_btn_bg()};")
-        self.accept_btn.clicked.connect(self._on_accept)
-        self.reject_btn = QPushButton("✗ Reject")
-        self.reject_btn.setStyleSheet(f"background-color: {theme.reject_btn_bg()};")
-        self.reject_btn.clicked.connect(self._on_reject)
-        self.diff_btn = QPushButton("View Diff")
-        self.diff_btn.clicked.connect(self._on_view_diff)
-        
-        btn_layout.addWidget(self.accept_btn)
-        btn_layout.addWidget(self.reject_btn)
-        btn_layout.addWidget(self.diff_btn)
-        btn_layout.addStretch()
-        layout.addLayout(btn_layout)
-        
-        # Style
-        self.setStyleSheet(f"""
-            ProposalWidget {{
-                background-color: {theme.proposal_bg()};
-                border: 1px solid {theme.proposal_border()};
-                border-radius: 5px;
-            }}
-        """)
-    
-    def _on_accept(self):
-        self.accepted.emit(self._artifact_type, self._content)
-        self._set_handled("Accepted ✓")
-    
-    def _on_reject(self):
-        self.rejected.emit(self._artifact_type)
-        self._set_handled("Rejected ✗")
-    
-    def _on_view_diff(self):
-        self.view_diff_requested.emit(self._artifact_type)
-    
-    def _set_handled(self, status: str):
-        """Disable buttons and show status after handling."""
-        self.accept_btn.setEnabled(False)
-        self.reject_btn.setEnabled(False)
-        self.diff_btn.setEnabled(False)
-        self.setStyleSheet(f"""
-            ProposalWidget {{
-                background-color: {theme.proposal_handled_bg()};
-                border: 1px solid {theme.proposal_handled_border()};
-                border-radius: 5px;
-            }}
-        """)
-        # Update header with status
-        header = self.layout().itemAt(0).widget()
-        if header:
-            header.setText(f"📄 {self._artifact_name}: {status}")
-
-
-class MessageWidget(QFrame):
-    """A single chat message display."""
-    
-    # Signal emitted when message is double-clicked
-    double_clicked = Signal(str)  # msg_id (UUID string)
-    
-    def __init__(self, role: str, content: str, msg_id: str = "", thinking_content: str = "", parent=None):
-        super().__init__(parent)
-        self.setFrameShape(QFrame.StyledPanel)
-        self._msg_id = msg_id
-        
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 5, 8, 5)
-        layout.setSpacing(3)
-        
-        # Role header
-        role_label = QLabel(role.upper())
-        role_label.setStyleSheet("font-weight: bold; font-size: 10px;")
-        layout.addWidget(role_label)
-        
-        # Thinking/reasoning section (collapsible, for assistant messages)
-        if thinking_content and role.lower() == "assistant":
-            self._thinking_visible = False
-            self._toggle_btn = QPushButton("▶ Show thinking")
-            self._toggle_btn.setStyleSheet(
-                f"QPushButton {{ background: transparent; border: none; color: {theme.toggle_color()}; "
-                "font-size: 10px; font-style: italic; text-align: left; padding: 2px 0; }"
-                f"QPushButton:hover {{ color: {theme.toggle_hover_color()}; }}"
-            )
-            self._toggle_btn.setCursor(Qt.PointingHandCursor)
-            self._toggle_btn.clicked.connect(self._toggle_thinking)
-            layout.addWidget(self._toggle_btn)
-            
-            formatted_thinking = self._format_json_in_content(thinking_content)
-            self._thinking_label = QLabel(formatted_thinking)
-            self._thinking_label.setWordWrap(True)
-            self._thinking_label.setTextFormat(Qt.RichText)
-            self._thinking_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            self._thinking_label.setStyleSheet(
-                f"color: {theme.thinking_fg()}; font-style: italic; font-size: 11px; "
-                f"padding: 4px 8px; background-color: {theme.thinking_bg()}; "
-                f"border-left: 2px solid {theme.thinking_border()};"
-            )
-            self._thinking_label.setVisible(False)
-            layout.addWidget(self._thinking_label)
-        
-        # Escape HTML in user messages so characters like < > & display literally
-        if role.lower() == "user":
-            content = html.escape(content)
-        
-        # Content - format JSON if found
-        formatted_content = self._format_json_in_content(content)
-        
-        # Content - store as instance variable for updates
-        self.content_label = QLabel(formatted_content)
-        self.content_label.setWordWrap(True)
-        self.content_label.setTextFormat(Qt.RichText)
-        self.content_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        # Install event filter to catch double-clicks on label
-        self.content_label.installEventFilter(self)
-        layout.addWidget(self.content_label)
-        
-        # Style based on role
-        if role.lower() == "user":
-            self.setStyleSheet(f"""
-                MessageWidget {{
-                    background-color: {theme.message_bg('user')};
-                    border: 1px solid {theme.message_border('user')};
-                    border-radius: 5px;
-                }}
-            """)
-        elif role.lower() == "assistant":
-            self.setStyleSheet(f"""
-                MessageWidget {{
-                    background-color: {theme.message_bg('assistant')};
-                    border: 1px solid {theme.message_border('assistant')};
-                    border-radius: 5px;
-                }}
-            """)
-        elif role.lower() == "system":
-            self.setStyleSheet(f"""
-                MessageWidget {{
-                    background-color: {theme.message_bg('system')};
-                    border: 1px solid {theme.message_border('system')};
-                    border-radius: 5px;
-                }}
-            """)
-    
-    def _toggle_thinking(self):
-        """Toggle visibility of thinking/reasoning content."""
-        if not hasattr(self, '_thinking_label'):
-            return
-        self._thinking_visible = not self._thinking_visible
-        self._thinking_label.setVisible(self._thinking_visible)
-        if self._thinking_visible:
-            self._toggle_btn.setText("▼ Hide thinking")
-        else:
-            self._toggle_btn.setText("▶ Show thinking")
-    
-    def mouseDoubleClickEvent(self, event: QMouseEvent):
-        """Handle double-click to show message details."""
-        log.debug("MessageWidget.mouseDoubleClickEvent: msg_id=%s", self._msg_id)
-        if self._msg_id:
-            log.debug("Emitting double_clicked signal for msg_id=%s", self._msg_id)
-            self.double_clicked.emit(self._msg_id)
-        super().mouseDoubleClickEvent(event)
-    
-    def eventFilter(self, obj, event):
-        """Catch double-clicks on child widgets (especially the content label)."""
-        if event.type() == QEvent.Type.MouseButtonDblClick:
-            log.debug("eventFilter caught double-click on %s, msg_id=%s", obj.__class__.__name__, self._msg_id)
-            if self._msg_id:
-                log.debug("eventFilter emitting double_clicked signal for msg_id=%s", self._msg_id)
-                self.double_clicked.emit(self._msg_id)
-            return True
-        return super().eventFilter(obj, event)
-    
-    @staticmethod
-    def _format_json_in_content(content: str) -> str:
-        """Try to find and format JSON blocks in content for better readability.
-        
-        Also converts newlines to <br> tags for proper HTML rendering,
-        since QLabel with RichText format ignores plain newlines.
-        """
-        # Look for JSON blocks in markdown code fences
-        import re
-        
-        def format_json_match(match):
-            json_text = match.group(1)
-            try:
-                parsed = json.loads(json_text)
-                formatted = json.dumps(parsed, indent=2)
-                return f"```\n{formatted}\n```"
-            except (json.JSONDecodeError, ValueError):
-                return match.group(0)  # Return original if not valid JSON
-        
-        # Try to format JSON in code blocks
-        content = re.sub(r'```\n(.*?)\n```', format_json_match, content, flags=re.DOTALL)
-        
-        # Handle literal \n escape sequences that weren't decoded
-        # (occurs when text contains double-escaped \\n from some sources)
-        content = content.replace('\\n', '\n')
-        
-        # Convert newlines to <br> tags for HTML rendering
-        # QLabel with Qt.RichText format ignores plain \n characters
-        content = content.replace('\n', '<br>')
-        
-        return content
 
 
 class ChatPanel(QWidget):
@@ -444,6 +132,10 @@ class ChatPanel(QWidget):
         log.debug("switch_context loading cumulative_tokens=%s from TabContext", tab_context.cumulative_tokens)
         self._cumulative_tokens = tab_context.cumulative_tokens
         self._update_context_label()
+
+        # Refresh the validator UI (status indicator + auto-correct
+        # toggle restoration) for the newly active tab.
+        self._refresh_validator_ui_for_context(tab_context)
     
     def _add_message_widget(self, role: str, content: str, msg_id: str = "", full_prompt: Optional[str] = None, full_response: Optional[str] = None, prompt_tokens: int = 0, completion_tokens: int = 0, total_tokens: int = 0, thinking_content: str = ""):
         """Add a message widget without modifying TabContext (used when loading history)."""
@@ -493,6 +185,24 @@ class ChatPanel(QWidget):
             "Send all artifacts even if not modified (useful for debugging)"
         )
         layout.addWidget(self.force_mode_checkbox)
+
+        # Auto-correct checkbox: drives the validator-in-the-loop FSM.
+        # Defaults to ON when validators are available (set by
+        # set_validator_status); greyed-out + tooltip explained otherwise.
+        # Persisted per-project in <project>/config/config.json under
+        # the ``validator_loop`` section — read by switch_context, written
+        # by the toggled-handler. No cross-package import needed; the
+        # chat panel resolves the project via tab_context.project_manager.
+        self.auto_correct_checkbox = QCheckBox("Auto-correct on validator failure")
+        self.auto_correct_checkbox.setChecked(True)
+        self.auto_correct_checkbox.setToolTip(
+            "When the deterministic validator rejects an LLM response, "
+            "automatically re-prompt the LLM with the structured errors "
+            "(up to N retries) before falling back to operator review. "
+            "Greyed out when validators are not available."
+        )
+        self.auto_correct_checkbox.toggled.connect(self._on_auto_correct_toggled)
+        layout.addWidget(self.auto_correct_checkbox)
         
         # Input area - multi-line (Enter to send, Shift+Enter for newline)
         self.input_field = QPlainTextEdit()
@@ -529,6 +239,18 @@ class ChatPanel(QWidget):
         self.context_label = QLabel("")
         self.context_label.setStyleSheet(f"color: {theme.muted_color()}; font-size: 10px;")
         layout.addWidget(self.context_label)
+
+        # Validator-status indicator: green dot = deterministic path active,
+        # grey = unavailable. Operators read this to know whether the
+        # auto-correct loop / Quick Parse buttons will actually do anything
+        # before they invoke them. Updated via set_validator_status() from
+        # the tabs on project load / activation. Hidden until first set.
+        # The initial tooltip is intentionally absent — set_validator_status
+        # owns all three tooltip variants (available / unavailable / hidden).
+        self.validator_status_label = QLabel("")
+        self.validator_status_label.setStyleSheet("font-size: 10px;")
+        self.validator_status_label.setVisible(False)
+        layout.addWidget(self.validator_status_label)
     
     def eventFilter(self, obj, event):
         """Handle Enter in input field to send (Shift+Enter inserts newline)."""
@@ -564,6 +286,85 @@ class ChatPanel(QWidget):
     def get_force_mode(self) -> bool:
         """Get the current force mode state."""
         return self.force_mode_checkbox.isChecked()
+
+    def get_auto_correct_enabled(self) -> bool:
+        """Whether the validator-in-the-loop auto-retry is active.
+
+        Always returns the checkbox state — when validators are
+        unavailable the checkbox is greyed out (set in
+        :meth:`set_validator_status`) so its checked state effectively
+        no-ops. The mixin further short-circuits via
+        ``deterministic_path_available`` before reaching this method.
+        """
+        return self.auto_correct_checkbox.isChecked()
+
+    def set_auto_correct_enabled(self, enabled: bool) -> None:
+        """Persist the operator's stored preference into the checkbox
+        without firing the toggled signal. Called on project load to
+        restore the per-project setting from ``config.json``."""
+        self.auto_correct_checkbox.blockSignals(True)
+        try:
+            self.auto_correct_checkbox.setChecked(bool(enabled))
+        finally:
+            self.auto_correct_checkbox.blockSignals(False)
+
+    def _refresh_validator_ui_for_context(self, tab_context) -> None:
+        """Probe validator availability for the tab's project and update
+        the chat-panel surfaces in lockstep:
+
+          1. Validator-status indicator dot (green/grey + tooltip).
+          2. Auto-correct checkbox enabled state.
+          3. Restore the persisted per-project auto-correct preference.
+
+        Steps 1–2 happen via :meth:`set_validator_status` (greying the
+        checkbox out when unavailable); step 3 happens after, so a
+        project pinned to a validator-less ruleset never briefly flashes
+        the checkbox enabled. The validator_dispatch import is lazy so
+        chat_panel.py doesn't drag rules_packager_base into every
+        editor startup."""
+        try:
+            from ..llm.validator_dispatch import is_loop_available
+            project_root = self._current_project_root(tab_context)
+            available, reason = is_loop_available(project_root)
+            self.set_validator_status(available, reason)
+        except Exception:
+            log.exception("validator-status probe failed; hiding indicator")
+            self.validator_status_label.setVisible(False)
+        self._load_validator_loop_for_context(tab_context)
+
+    def _on_auto_correct_toggled(self, checked: bool) -> None:
+        """Persist the toggle change to ``<project>/config/config.json``.
+
+        Delegates the actual JSON I/O to ``validator_loop_settings`` so
+        the chat panel stays focused on widget concerns. The settings
+        module's ``save_setting`` preserves every other section.
+        """
+        project_root = self._current_project_root()
+        if project_root is None:
+            return
+        from ..llm.validator_loop_settings import save_setting
+        save_setting(project_root, "enabled", bool(checked))
+
+    def _load_validator_loop_for_context(self, tab_context) -> None:
+        """Read the persisted ``validator_loop`` section from the active
+        project's ``config.json`` and reflect it in the checkbox state."""
+        project_root = self._current_project_root(tab_context)
+        if project_root is None:
+            return
+        from ..llm.validator_loop_settings import load_settings
+        section = load_settings(project_root)
+        if "enabled" in section:
+            self.set_auto_correct_enabled(bool(section["enabled"]))
+
+    def _current_project_root(self, tab_context=None):
+        """Resolve the active project root from the supplied context (or
+        fall back to ``self._current_tab_context``). Returns ``None``
+        when no project is bound — callers must treat that as a no-op,
+        not an error."""
+        ctx = tab_context if tab_context is not None else self._current_tab_context
+        if ctx is None:
+            return None
+        return getattr(getattr(ctx, "project_manager", None), "project_root", None)
     
     def add_message(self, role: str, content: str, full_prompt: Optional[str] = None, full_response: Optional[str] = None, prompt_tokens: int = 0, completion_tokens: int = 0, total_tokens: int = 0):
         """Add a message to the chat.
@@ -838,6 +639,35 @@ class ChatPanel(QWidget):
         self.send_btn.setEnabled(not active)
         self.input_field.setEnabled(not active)
         self.cancel_btn.setEnabled(active)
+
+    def set_validator_status(self, available: bool, reason: str = "") -> None:
+        """Update the validator-status indicator AND the auto-correct
+        checkbox's enabled state.
+
+        The dot is the always-visible signal so operators know what the
+        downstream tooling can do before they invoke it. The auto-correct
+        checkbox is greyed out when ``available`` is False so operators
+        can't toggle on something that has nothing to validate against.
+        """
+        if available:
+            self.validator_status_label.setText("● validator")
+            self.validator_status_label.setStyleSheet("font-size: 10px; color: #4a8;")
+            self.validator_status_label.setToolTip(_TOOLTIP_STATUS_AVAILABLE)
+            self.auto_correct_checkbox.setEnabled(True)
+            self.auto_correct_checkbox.setToolTip(_TOOLTIP_AUTO_CORRECT_AVAILABLE)
+        else:
+            self.validator_status_label.setText("○ validator")
+            self.validator_status_label.setStyleSheet(
+                f"font-size: 10px; color: {theme.muted_color()};"
+            )
+            self.validator_status_label.setToolTip(
+                _with_reason(_TOOLTIP_STATUS_UNAVAILABLE, reason)
+            )
+            self.auto_correct_checkbox.setEnabled(False)
+            self.auto_correct_checkbox.setToolTip(
+                _with_reason(_TOOLTIP_AUTO_CORRECT_UNAVAILABLE, reason)
+            )
+        self.validator_status_label.setVisible(True)
     
     def _update_context_label(self):
         """Update context label with cumulative token count."""

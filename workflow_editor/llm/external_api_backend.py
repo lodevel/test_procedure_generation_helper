@@ -21,11 +21,10 @@ class ExternalAPIConfig:
     # API settings
     base_url: str = "https://api.openai.com/v1"
     model: str = "gpt-4"
-    api_key_env_var: str = "OPENAI_API_KEY"  # Environment variable name
-    
+    api_key: Optional[str] = None  # Bearer token; None/empty disables Authorization header
+
     # Request settings
     temperature: float = 0.2
-    max_tokens: int = 4096
     request_timeout: float = 120.0
     retry_count: int = 2
 
@@ -61,12 +60,9 @@ class ExternalAPIBackend(LLMBackend):
         return True
     
     def start(self) -> bool:
-        """Start the backend (load API key if available)."""
-        import os
-        
+        """Start the backend, reading the API key from config only."""
         with self._lock:
-            # API key is optional (e.g., for Ollama)
-            self._api_key = os.environ.get(self.config.api_key_env_var, "")
+            self._api_key = self.config.api_key or ""
             self._running = True
             return True
     
@@ -113,12 +109,13 @@ class ExternalAPIBackend(LLMBackend):
                 }
             ]
             
-            # Build request body
+            # Build request body. We intentionally omit `max_tokens` so the
+            # server uses its own default; the GUI's "Context Window"
+            # setting is for UI display only, not for capping output.
             body = {
                 "model": self.config.model,
                 "messages": messages,
                 "temperature": self.config.temperature,
-                "max_tokens": self.config.max_tokens,
             }
             
             # Send with retry
@@ -173,7 +170,11 @@ class ExternalAPIBackend(LLMBackend):
                     last_error = f"API error: {response.status_code} - {response.text}"
                     
             except requests.exceptions.Timeout:
+                # Treat timeouts as terminal — retrying just adds another
+                # full timeout window of waiting. Operator can re-Send if
+                # they actually want to try again.
                 last_error = "Request timed out"
+                break
             except requests.exceptions.RequestException as e:
                 last_error = f"Request failed: {str(e)}"
         

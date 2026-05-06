@@ -1,0 +1,302 @@
+"""
+Text-only Tab - Single-editor view for procedure_text.md.
+
+A trimmed-down sibling of :class:`TextJsonTab` that only edits the text
+artifact and only allows the LLM to propose updates to ``procedure_text``.
+Loads its own subset of rules from ``config/tab_contexts.json`` under the
+``text_only`` key, keeping the LLM context (and token cost) smaller than
+the paired Text-JSON tab.
+"""
+
+import logging
+import json
+
+from PySide6.QtWidgets import (
+    QVBoxLayout, QHBoxLayout, QGroupBox,
+    QLabel, QPlainTextEdit
+)
+from PySide6.QtCore import Signal
+from PySide6.QtGui import QFont
+
+from .base_tab import BaseTab
+from .llm_tab_mixin import LLMTabMixin
+from ..core import ArtifactType
+from ..llm import TabContext, LLMTask
+from ..llm.response_parser import preserve_human_only_fields
+from ..dialogs import DiffViewer
+from ..theme import status_modified, status_saved
+
+log = logging.getLogger(__name__)
+
+
+class TextOnlyTab(LLMTabMixin, BaseTab):
+    """
+    Text-only tab — single editor on procedure_text.md.
+
+    The artifact is shared with :class:`TextJsonTab`; both tabs read and
+    write the same ``procedure_text.md`` via the ArtifactManager. The
+    smaller LLM context comes from the rule selection under the
+    ``text_only`` key in ``config/tab_contexts.json`` and from the
+    output contract that forbids JSON / code proposals on this tab.
+    """
+
+    content_changed = Signal()
+
+    tab_id = "text_only"
+
+    def __init__(self, main_window, parent=None):
+        super().__init__(main_window, parent)
+
+        self.tab_context = TabContext(
+            tab_id="text_only",
+            backend_factory=main_window.backend_factory,
+            project_manager=main_window.project_manager,
+            artifact_manager=main_window.artifact_manager,
+            session_state=main_window.session_state
+        )
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        text_group = QGroupBox("Procedure Text")
+        text_layout = QVBoxLayout(text_group)
+
+        self.text_editor = QPlainTextEdit()
+        self.text_editor.setFont(QFont("Consolas", 10))
+        self.text_editor.setPlaceholderText(
+            "Write your test procedure here in natural language...\n\n"
+            "This tab loads a smaller rule context (text DSL + grammars only) "
+            "to keep token usage low."
+        )
+        self.text_editor.textChanged.connect(self._on_text_changed)
+        text_layout.addWidget(self.text_editor)
+
+        self.text_status = QLabel("")
+        text_layout.addWidget(self.text_status)
+
+        layout.addWidget(text_group, stretch=1)
+
+        actions_layout = self._create_actions()
+        layout.addLayout(actions_layout)
+
+        self._text_dirty = False
+
+    def _get_task_callback_map(self) -> dict:
+        return {
+            LLMTask.REVIEW_TEXT_PROCEDURE.value: (
+                self._on_review_text,
+                "Review procedure text for quality and completeness",
+            ),
+        }
+
+    def _get_force_callback_map(self) -> dict:
+        return {}
+
+    def _create_actions(self):
+        layout = QHBoxLayout()
+
+        file_group = self.create_action_group("File Operations", "file")
+        file_layout = QVBoxLayout(file_group)
+
+        save_row = QHBoxLayout()
+        self.save_text_btn = self.create_button(
+            "Save Text", self._on_save_text, tooltip="Save procedure text to disk"
+        )
+        save_row.addWidget(self.save_text_btn)
+        save_row.addStretch()
+        file_layout.addLayout(save_row)
+
+        validate_row = QHBoxLayout()
+        self.validate_procedure_btn = self.create_button(
+            "Validate Procedure", self._on_validate_procedure_button,
+            tooltip=(
+                "Run the deterministic v2 validator against the procedure text. "
+                "JSON/code are not validated here — use the Text-JSON tab for "
+                "coherence checks."
+            ),
+        )
+        validate_row.addWidget(self.validate_procedure_btn)
+        validate_row.addStretch()
+        file_layout.addLayout(validate_row)
+
+        layout.addWidget(file_group)
+
+        layout.addWidget(self._create_llm_action_group())
+
+        return layout
+
+    def _on_text_changed(self):
+        self._text_dirty = True
+        self._update_text_status()
+        self.tab_context.mark_artifact_modified("procedure_text")
+        self.content_changed.emit()
+
+    def _on_save_text(self):
+        try:
+            content = self.text_editor.toPlainText()
+            self.artifact_manager.set_content(ArtifactType.PROCEDURE_TEXT, content)
+            self.artifact_manager.save_artifact(ArtifactType.PROCEDURE_TEXT)
+            self.artifact_manager.procedure_text.mark_clean()
+            self._text_dirty = False
+            self._update_text_status()
+            self.status_message.emit("Text saved successfully")
+            self.artifact_saved.emit()
+        except Exception as e:
+            self.show_error("Save Failed", str(e))
+
+    def sync_editors_to_artifacts(self):
+        if not self.artifact_manager:
+            return
+        self.artifact_manager.set_content(
+            ArtifactType.PROCEDURE_TEXT, self.text_editor.toPlainText()
+        )
+
+    def save_all_artifacts(self):
+        self._on_save_text()
+
+    def has_unsaved_changes(self) -> bool:
+        return self._text_dirty
+
+    def _on_validate_procedure_button(self):
+        """Run the bijective v2 validator against the live procedure text only.
+
+        The Text tab is a text-focused workspace — JSON/code artifacts are
+        not surfaced here, and validating against them would flood the
+        findings panel with errors outside the operator's current focus.
+        For text↔JSON coherence, use the Text-JSON tab.
+        """
+        from ..llm.validator_dispatch import (
+            validate_current_state, render_validation_outcome_summary,
+        )
+
+        text = self.text_editor.toPlainText() or None
+        project_root = self.project_manager.project_root
+
+        outcome = validate_current_state(
+            project_root=project_root,
+            text=text,
+            json_str=None,
+            code=None,
+        )
+
+        summary = render_validation_outcome_summary(outcome)
+        if outcome.skipped:
+            self.main_window.dock.show_validation_result_from_list([])
+            self.show_warning("Validate Procedure", outcome.reason)
+            return
+
+        self.main_window.dock.show_validation_result_from_list(
+            [issue.to_dock_dict() for issue in outcome.issues]
+        )
+        if outcome.ok and not outcome.issues:
+            self.show_info("Validate Procedure", summary)
+        elif outcome.ok:
+            self.show_warning("Validate Procedure", summary)
+        else:
+            self.show_error("Validate Procedure", summary)
+
+    def _on_review_text(self):
+        if not self.artifact_manager.procedure_text.content:
+            self.show_warning("No Text", "Text editor is empty. Write text first.")
+            return
+        self._run_task_async(LLMTask.REVIEW_TEXT_PROCEDURE)
+
+    def _get_task_description(
+        self, task: LLMTask, user_message: str = None, custom_task_id: str = None
+    ) -> str:
+        if custom_task_id:
+            manager = self.task_config_manager
+            if manager:
+                task_config = manager.get_task_config(self.tab_id, custom_task_id)
+                if task_config:
+                    return f"Run: {task_config.name}"
+
+        if task == LLMTask.AD_HOC_CHAT and user_message:
+            return user_message
+
+        task_descriptions = {
+            LLMTask.REVIEW_TEXT_PROCEDURE: "Review procedure text for quality",
+            LLMTask.AD_HOC_CHAT: "General assistance",
+        }
+        return task_descriptions.get(task, f"Run {task.name}")
+
+    def _sync_editors_for_llm(self):
+        self.artifact_manager.set_content(
+            ArtifactType.PROCEDURE_TEXT, self.text_editor.toPlainText()
+        )
+
+    def _apply_proposals(self, response):
+        if response.procedure_text and response.procedure_text.mode:
+            self._handle_text_proposal(response.procedure_text)
+
+    def _get_expected_artifact_fields(self) -> list[str]:
+        return ["text_procedure"]
+
+    def _parse_response_to_dict(self, response) -> dict:
+        parsed = {
+            "assistant_message": response.assistant_message,
+            "open_questions": response.session_delta.get("open_questions", []),
+        }
+        parsed["propose_update"] = False
+        if response.procedure_text and response.procedure_text.mode:
+            parsed["propose_update"] = True
+            parsed["text_procedure"] = response.procedure_text.content
+        return parsed
+
+    def _handle_text_proposal(self, proposal):
+        if proposal.mode != "replace":
+            return
+
+        if isinstance(proposal.content, dict):
+            content_str = json.dumps(proposal.content, indent=2)
+        else:
+            content_str = str(proposal.content)
+
+        current_content = self.text_editor.toPlainText()
+        # Restore human-only fields (test id, requirement:) from the original
+        # before showing the diff — the LLM is forbidden from touching these.
+        content_str = preserve_human_only_fields(current_content, content_str)
+        accepted, final_content = DiffViewer.show_diff(
+            current_content,
+            content_str,
+            "Review Changes: procedure_text.md",
+            self,
+        )
+
+        if accepted:
+            self.text_editor.setPlainText(final_content)
+            self.artifact_manager.procedure_text.content = final_content
+            self._text_dirty = True
+            self._update_text_status()
+            self.main_window.dock.chat_panel.add_system_message(
+                "✓ Applied changes to procedure_text.md"
+            )
+        else:
+            self.main_window.dock.chat_panel.add_system_message(
+                "✗ Rejected changes to procedure_text.md"
+            )
+
+    def _update_text_status(self):
+        if self._text_dirty:
+            self.text_status.setText("● Modified")
+            self.text_status.setStyleSheet(f"color: {status_modified()};")
+        else:
+            self.text_status.setText("✓ Saved")
+            self.text_status.setStyleSheet(f"color: {status_saved()};")
+
+    def load_content(self):
+        if not self.artifact_manager:
+            return
+
+        text_content = self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT)
+        self.text_editor.blockSignals(True)
+        self.text_editor.setPlainText(text_content)
+        self.text_editor.blockSignals(False)
+        self._text_dirty = self.artifact_manager.is_dirty(ArtifactType.PROCEDURE_TEXT)
+        self._update_text_status()
+
+    def on_activated(self):
+        self.load_content()
+
+    def refresh(self):
+        self.load_content()

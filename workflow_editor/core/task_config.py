@@ -14,7 +14,7 @@ Provides a unified system for managing LLM tasks with their button labels and pr
 import json
 import logging
 import shutil
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, fields
 from pathlib import Path
 from typing import Dict, List, Optional
 from threading import Lock
@@ -24,32 +24,50 @@ from ..llm.backend_base import LLMTask
 log = logging.getLogger(__name__)
 
 
+# Default retry budget for the validator-in-the-loop FSM when no per-task
+# ``TaskConfig.max_validator_attempts`` override is set. Co-located with the
+# field it backs so a reader looking for "what's the retry budget?" doesn't
+# have to grep two files. 1 original + 2 retries = 3 total — empirically
+# (per the conformance run) ~95% of fixable validator failures resolve in
+# one retry; 3 total is the sweet spot before token cost dominates.
+DEFAULT_MAX_VALIDATOR_ATTEMPTS: int = 3
+
+
 @dataclass
 class TaskConfig:
     """
     Configuration for a single LLM task.
-    
+
     Attributes:
         id: Unique task identifier (typically LLMTask enum value)
         name: Human-readable task name
         button_label: Label displayed on button in UI
         prompt_template: Optional custom prompt template (None = use default)
         enabled: Whether task is active/visible in UI
+        max_validator_attempts: Per-task override of the validator-in-the-loop
+            retry budget. ``None`` (the default) means "use the global default";
+            integer N caps the total LLM attempts (1 original + N-1 retries) for
+            this task only. Read by ``LLMTabMixin._resolve_max_attempts``. Useful
+            for tasks that are known to require more iterations (composite
+            procedures) or for capping cost on cheap-but-frequent tasks.
     """
     id: str
     name: str
     button_label: str
     prompt_template: Optional[str] = None
     enabled: bool = True
-    
+    max_validator_attempts: Optional[int] = None
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return asdict(self)
-    
+
     @classmethod
     def from_dict(cls, data: dict) -> 'TaskConfig':
-        """Create TaskConfig from dictionary."""
-        return cls(**data)
+        """Create TaskConfig from dictionary. Tolerant of unknown keys so
+        older configs (without ``max_validator_attempts``) keep loading."""
+        valid_keys = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in valid_keys})
 
 
 @dataclass
@@ -77,6 +95,15 @@ class ChatConfig:
 # Default task configurations for each tab
 # Merges button labels from button_labels.py and prompts from prompt_builder.py
 DEFAULT_TASK_CONFIGS = {
+    "text_only": [
+        TaskConfig(
+            id=LLMTask.REVIEW_TEXT_PROCEDURE.value,
+            name="Review Text Procedure",
+            button_label="Review Text",
+            prompt_template=None,
+            enabled=True
+        ),
+    ],
     "text_json": [
         TaskConfig(
             id=LLMTask.DERIVE_JSON_FROM_TEXT.value,
@@ -155,6 +182,7 @@ DEFAULT_TASK_CONFIGS = {
 
 # Default chat configuration per tab
 DEFAULT_CHAT_CONFIG = {
+    "text_only": ChatConfig(enabled=True, system_prompt=None),
     "text_json": ChatConfig(enabled=True, system_prompt=None),
     "json_code": ChatConfig(enabled=True, system_prompt=None),
     "traceability": ChatConfig(enabled=False, system_prompt=None),

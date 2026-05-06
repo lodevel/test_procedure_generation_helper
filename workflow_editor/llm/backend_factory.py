@@ -126,18 +126,18 @@ class BackendConfig:
         cls,
         base_url: str = "https://api.openai.com/v1",
         model: str = "gpt-4",
-        api_key_env_var: str = "OPENAI_API_KEY",
+        api_key: Optional[str] = None,
         **kwargs
     ) -> "BackendConfig":
         """
         Convenience method to create External API configuration.
-        
+
         Args:
             base_url: Base URL for the API
             model: Model name
-            api_key_env_var: Environment variable containing API key
+            api_key: Bearer token (None disables Authorization header)
             **kwargs: Additional arguments for BackendConfig
-            
+
         Returns:
             Configured BackendConfig for External API
         """
@@ -146,7 +146,7 @@ class BackendConfig:
             external_api=ExternalAPIConfig(
                 base_url=base_url,
                 model=model,
-                api_key_env_var=api_key_env_var,
+                api_key=api_key,
             ),
             **kwargs
         )

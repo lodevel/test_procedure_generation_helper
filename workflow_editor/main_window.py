@@ -6,6 +6,7 @@ Implements the main UI structure from Section 9.
 
 from pathlib import Path
 from typing import Optional
+import json
 import logging
 import os
 from PySide6.QtWidgets import (
@@ -13,7 +14,7 @@ from PySide6.QtWidgets import (
     QStatusBar, QMenuBar, QMenu, QToolBar, QMessageBox, QLabel, QDockWidget,
     QFileDialog, QDialog
 )
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import Qt, Signal, Slot, QFileSystemWatcher
 from PySide6.QtGui import QAction, QKeySequence, QShortcut, QCursor
 
 from .core import (
@@ -33,7 +34,7 @@ from .llm.backend_factory import (
     BACKEND_TYPE_OPENCODE, BACKEND_TYPE_EXTERNAL_API, BACKEND_TYPE_NONE
 )
 from .tabs import (
-    WorkspaceTab, TextJsonTab, JsonCodeTab, TraceabilityTab
+    WorkspaceTab, TextOnlyTab, TextJsonTab, JsonCodeTab, TraceabilityTab
 )
 from .dock import DockWidget
 from .dialogs import SettingsDialog, CleanDialog, NewProjectDialog, load_settings
@@ -96,6 +97,13 @@ class MainWindow(QMainWindow):
         self.artifact_manager: Optional[ArtifactManager] = None
         self.session_state: Optional[SessionState] = None
         # self.chat_history: Optional[ChatHistoryManager] = None
+
+        # File watcher for project's config.json — drives live refresh of
+        # parser-button visibility when the parent app's Config dialog (or
+        # any external editor) writes the file.
+        self._config_watcher = QFileSystemWatcher(self)
+        self._config_watcher.fileChanged.connect(self._on_config_file_changed)
+        self._watched_config_path: Optional[Path] = None
         
         # Initialize task config manager
         config_dir = Path(__file__).parent.parent / "config"
@@ -251,11 +259,10 @@ class MainWindow(QMainWindow):
             external_api_config = ExternalAPIConfig(
                 base_url=config_dict.get("url", "https://api.openai.com/v1"),
                 model=model_name,
+                api_key=config_dict.get("key") or None,
                 temperature=common_llm.get("temperature", 0.2),
-                max_tokens=common_llm.get("max_tokens", 16384),
                 request_timeout=common_llm.get("request_timeout", 120.0),
                 retry_count=config_dict.get("retry_count", 2),
-                # api_key loaded from environment, not stored in settings
             )
             return BackendConfig(
                 backend_type=BACKEND_TYPE_EXTERNAL_API,
@@ -294,6 +301,8 @@ class MainWindow(QMainWindow):
             List of tab widgets that support LLM operations
         """
         tabs = []
+        if hasattr(self, 'text_only_tab'):
+            tabs.append(self.text_only_tab)
         if hasattr(self, 'text_json_tab'):
             tabs.append(self.text_json_tab)
         if hasattr(self, 'json_code_tab'):
@@ -396,6 +405,18 @@ class MainWindow(QMainWindow):
         self.mark_sync_action.setToolTip("Acknowledge that procedure.json and test.py are coherent")
         self.mark_sync_action.triggered.connect(self._on_sync_indicator_clicked)
         edit_menu.addAction(self.mark_sync_action)
+
+        edit_menu.addSeparator()
+
+        self.validate_action = QAction("&Validate Procedure", self)
+        self.validate_action.setShortcut("Ctrl+Shift+V")
+        self.validate_action.setToolTip(
+            "Run the deterministic validator (R1 text↔JSON, R3 schema, R4 topology) "
+            "against the current artifacts and show findings in the dock panel."
+        )
+        self.validate_action.triggered.connect(self._on_validate_procedure)
+        edit_menu.addAction(self.validate_action)
+
         
         # View menu
         view_menu = menubar.addMenu("&View")
@@ -429,17 +450,20 @@ class MainWindow(QMainWindow):
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
         
         # Create tabs (workspace moved to dock)
-        # Combined tabs showing paired artifacts
+        # Text-only is a lighter-context sibling of Text-JSON that edits
+        # the same procedure_text artifact.
+        self.text_only_tab = TextOnlyTab(self)
         self.text_json_tab = TextJsonTab(self)
         self.json_code_tab = JsonCodeTab(self)
         self.traceability_tab = TraceabilityTab(self)
-        
+
         # Connect artifact_saved signals so per-tab save buttons
         # trigger the sync check and status indicator update
-        for tab in (self.text_json_tab, self.json_code_tab, self.traceability_tab):
+        for tab in (self.text_only_tab, self.text_json_tab, self.json_code_tab, self.traceability_tab):
             tab.artifact_saved.connect(self._on_tab_artifact_saved)
-        
-        # Add tabs in workflow order: Text-JSON → JSON-Code → Traceability
+
+        # Add tabs in workflow order: Text → Text-JSON → JSON-Code → Traceability
+        self.tab_widget.addTab(self.text_only_tab, "Text")
         self.tab_widget.addTab(self.text_json_tab, "Text-JSON")
         self.tab_widget.addTab(self.json_code_tab, "JSON-Code")
         self.tab_widget.addTab(self.traceability_tab, "Traceability")
@@ -495,22 +519,20 @@ class MainWindow(QMainWindow):
         self.dock.visibilityChanged.connect(self._on_dock_visibility_changed)
     
     def _update_context_limit(self):
-        """Update chat panel context limit based on backend config."""
+        """Update chat panel's 'Tokens: X/Y' indicator from common_llm.context_window.
+
+        This is purely a UI display value (the model's total context window)
+        so the operator can see how much budget has been consumed. It is
+        not sent to the LLM. Falls back to the legacy ``max_tokens`` key
+        for projects/users on older settings files.
+        """
         if not hasattr(self, 'dock') or not hasattr(self.dock, 'chat_panel'):
             return
-        
-        if not hasattr(self, '_backend_factory') or self._backend_factory is None:
-            return
-        
-        # Read max_tokens directly from the backend config (the real value sent to the API)
-        config = self._backend_factory.config
-        if config.backend_type == BACKEND_TYPE_EXTERNAL_API and config.external_api:
-            context_limit = config.external_api.max_tokens
-        else:
-            # For OpenCode and other backends, read from common_llm settings
-            common_llm = self._settings.get("common_llm", {}) if hasattr(self, '_settings') else {}
-            context_limit = common_llm.get("max_tokens", 16384)
-        
+
+        common_llm = self._settings.get("common_llm", {}) if hasattr(self, '_settings') else {}
+        context_limit = common_llm.get(
+            "context_window", common_llm.get("max_tokens", 16384)
+        )
         self.dock.chat_panel.set_context_limit(context_limit)
     
     def _setup_status_bar(self):
@@ -723,7 +745,51 @@ class MainWindow(QMainWindow):
             self._update_sync_indicator()
             self.workspace_widget.refresh()
             self.status_bar.showMessage("Artifacts marked as in sync", 2000)
-    
+
+    def _on_validate_procedure(self):
+        """Run the deterministic validator on the current on-disk artifacts.
+
+        Independent of the LLM-loop FSM: reads procedure_text / procedure.json
+        / test.py from the artifact_manager, runs every applicable round-trip
+        (R1 text↔JSON, R3 schema, R4 topology, R2 JSON↔code when inventory is
+        available), and pushes the structured findings into the dock panel.
+        Both errors and warnings are displayed so the operator sees soft codes
+        like ``META_KEY_ORDER`` or ``EXP_PCT_DEGENERATE`` alongside hard errors.
+        """
+        from .llm.validator_dispatch import validate_current_state
+
+        if not self.artifact_manager:
+            self.status_bar.showMessage(
+                "Validate Procedure: no test loaded.", 4000,
+            )
+            return
+
+        text = self.artifact_manager.procedure_text.content or None
+        json_str = self.artifact_manager.procedure_json.content or None
+        code = self.artifact_manager.test_code.content or None
+        project_root = (
+            self.project_manager.project_root
+            if self.project_manager else None
+        )
+
+        outcome = validate_current_state(
+            project_root=project_root,
+            text=text,
+            json_str=json_str,
+            code=code,
+        )
+
+        from .llm.validator_dispatch import render_validation_outcome_summary
+        if outcome.skipped:
+            self.dock.show_validation_result_from_list([])
+        else:
+            self.dock.show_validation_result_from_list(
+                [issue.to_dock_dict() for issue in outcome.issues]
+            )
+        self.status_bar.showMessage(
+            render_validation_outcome_summary(outcome), 5000,
+        )
+
     def _check_artifact_coherence(self) -> bool:
         """Check if JSON and Code artifacts are in sync and warn if not.
         
@@ -872,6 +938,8 @@ class MainWindow(QMainWindow):
         # ChatHistoryManager removed: chat history is now per-tab only
         
         # Update tab contexts with real managers (fixes None reference issue)
+        if hasattr(self.text_only_tab, 'tab_context'):
+            self.text_only_tab.tab_context.update_managers(self.artifact_manager, self.session_state)
         if hasattr(self.text_json_tab, 'tab_context'):
             self.text_json_tab.tab_context.update_managers(self.artifact_manager, self.session_state)
         if hasattr(self.json_code_tab, 'tab_context'):
@@ -898,6 +966,7 @@ class MainWindow(QMainWindow):
         self.dock.setEnabled(True)
         
         # Refresh tabs
+        self.text_only_tab.load_content()
         self.text_json_tab.load_content()
         self.json_code_tab.load_content()
         self.traceability_tab.refresh()
@@ -907,6 +976,7 @@ class MainWindow(QMainWindow):
         # added/removed). Re-evaluate visibility here so the Quick Parse
         # button state is consistent per-test.
         self.text_json_tab.refresh_parser_button()
+        self.json_code_tab.refresh_code_parser_button()
         
         # Refresh dock panels with session data
         self.dock.refresh_session()
@@ -942,6 +1012,7 @@ class MainWindow(QMainWindow):
             self.session_state = None
             
             # Clear editors
+            self.text_only_tab.text_editor.clear()
             self.text_json_tab.text_editor.clear()
             self.text_json_tab.json_editor.clear()
             self.json_code_tab.json_editor.clear()
@@ -1094,6 +1165,9 @@ class MainWindow(QMainWindow):
         
         # Update status bar indicators
         self._update_project_rules_indicators()
+        self.text_json_tab.refresh_parser_button()
+        self.json_code_tab.refresh_code_parser_button()
+        self._watch_project_config()
         
         # Show workspace dock if hidden
         if self.workspace_dock.isHidden():
@@ -1131,6 +1205,8 @@ class MainWindow(QMainWindow):
             # Update status bar indicators
             self._update_project_rules_indicators()
             self.text_json_tab.refresh_parser_button()
+            self.json_code_tab.refresh_code_parser_button()
+            self._watch_project_config()
             
             # Show workspace dock if hidden
             if self.workspace_dock.isHidden():
@@ -1147,6 +1223,8 @@ class MainWindow(QMainWindow):
                 # Update status bar indicators
                 self._update_project_rules_indicators()
                 self.text_json_tab.refresh_parser_button()
+                self.json_code_tab.refresh_code_parser_button()
+                self._watch_project_config()
                 
                 # Show workspace dock
                 if self.workspace_dock.isHidden():
@@ -1158,6 +1236,36 @@ class MainWindow(QMainWindow):
                     "Selected folder does not appear to be a valid project root.\n\n"
                     "A valid project should contain a 'tests/' or 'config/' folder."
                 )
+
+    def _watch_project_config(self) -> None:
+        """Watch the active project's config.json for live parser refresh.
+
+        Removes any previous watch path before adding the new one. Safe
+        to call repeatedly (e.g. after switching projects).
+        """
+        config_dir = self.project_manager.get_config_dir()
+        new_path = (config_dir / "config.json") if config_dir else None
+
+        if self._watched_config_path is not None:
+            self._config_watcher.removePath(str(self._watched_config_path))
+            self._watched_config_path = None
+
+        if new_path and new_path.exists():
+            self._config_watcher.addPath(str(new_path))
+            self._watched_config_path = new_path
+
+    def _on_config_file_changed(self, path: str) -> None:
+        """Refresh parser-driven UI when the project's config.json changes.
+
+        Some editors atomic-write (delete + recreate), which silently
+        drops the watch — re-add the path defensively after each event.
+        """
+        self.text_json_tab.refresh_parser_button()
+        self.json_code_tab.refresh_code_parser_button()
+
+        p = Path(path)
+        if p.exists() and str(p) not in self._config_watcher.files():
+            self._config_watcher.addPath(str(p))
     
     def _on_save(self):
         """Save artifacts managed by the current tab.
@@ -1176,15 +1284,15 @@ class MainWindow(QMainWindow):
         else:
             # Fallback for tabs without editors
             self.artifact_manager.save_all()
-        
+
         # Check if JSON/Code pair coherence is broken
         self._check_sync_hashes()
-        
+
         self._update_status_indicators()
         # Refresh workspace test list to update artifact indicators
         self.workspace_widget.refresh()
         self.status_bar.showMessage("Saved", 2000)
-    
+
     def _check_sync_hashes(self):
         """Compare current artifact content hashes against the last-acknowledged baseline.
 
@@ -1325,7 +1433,14 @@ class MainWindow(QMainWindow):
     
     def _on_settings(self):
         """Open settings dialog."""
-        dialog = SettingsDialog(self.task_config_manager, self)
+        # Pass project_root so the Validator tab can read/write the
+        # project's ``validator_loop`` config section. ``None`` is fine
+        # when no project is open — the Validator tab self-disables.
+        dialog = SettingsDialog(
+            self.task_config_manager,
+            self,
+            project_root=self.project_manager.project_root,
+        )
         if dialog.exec():
             self._settings = dialog.get_settings()
             self._init_llm_backend()
@@ -1347,6 +1462,7 @@ class MainWindow(QMainWindow):
         if deleted:
             # Reload artifacts
             self.artifact_manager.load_all()
+            self.text_only_tab.load_content()
             self.text_json_tab.load_content()
             self.json_code_tab.load_content()
             self._update_status_indicators()
@@ -1369,7 +1485,9 @@ class MainWindow(QMainWindow):
         # Set intent based on current tab
         if self.session_state:
             current_tab = self.tab_widget.currentWidget()
-            if current_tab == self.text_json_tab:
+            if current_tab == self.text_only_tab:
+                self.session_state.intent = "Help write a clear, complete procedure text"
+            elif current_tab == self.text_json_tab:
                 self.session_state.intent = "Help write correct procedure text to generate valid JSON"
             elif current_tab == self.json_code_tab:
                 self.session_state.intent = "Help generate correct test code from JSON procedure"
@@ -1419,17 +1537,18 @@ class MainWindow(QMainWindow):
     
     def switch_to_tab(self, tab_name: str):
         """Switch to a tab by name.
-        
-        Supported names: text_json, json_code, traceability.
+
+        Supported names: text_only, text_json, json_code, traceability.
         Legacy names (json, code, text) are mapped to the combined tabs.
         """
         name_map = {
+            "text_only": self.text_only_tab,
             "text_json": self.text_json_tab,
             "json_code": self.json_code_tab,
             "traceability": self.traceability_tab,
             # Legacy name mappings
             "json": self.text_json_tab,
-            "text": self.text_json_tab,
+            "text": self.text_only_tab,
             "code": self.json_code_tab,
         }
         

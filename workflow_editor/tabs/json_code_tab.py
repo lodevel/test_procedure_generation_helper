@@ -199,6 +199,17 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         format_row.addWidget(self.check_syntax_btn)
         format_row.addStretch()
         file_layout.addLayout(format_row)
+
+        # Quick Code row — hidden until project provides a code_parser variant
+        code_row = QHBoxLayout()
+        self.quick_code_btn = self.create_button(
+            "⚡ Quick Code", self._on_quick_code,
+            tooltip="Generate test code from JSON without LLM (rule-based, instant)"
+        )
+        self.quick_code_btn.setVisible(False)
+        code_row.addWidget(self.quick_code_btn)
+        code_row.addStretch()
+        file_layout.addLayout(code_row)
         
         layout.addWidget(file_group)
         
@@ -469,16 +480,44 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
                 content_str = json.dumps(proposal.content, indent=2)
             else:
                 content_str = str(proposal.content)
-            
-            # Show diff dialog for user to accept/reject
+
             current_content = self.code_editor.toPlainText()
+
+            # Preserve operator-pinned bench-identification constants
+            # in the proposed code. The LLM doesn't know the bench's
+            # real VISA/COM addresses; if it produces defaults, we
+            # substitute the operator's existing values before showing
+            # the diff so the operator only sees real-content changes.
+            if current_content.strip():
+                try:
+                    json_str = self.artifact_manager.procedure_json.content or ""
+                    procedure = json.loads(json_str) if json_str.strip() else {}
+                    equipment_ids = [
+                        eq.get("id") for eq in (procedure.get("equipment") or [])
+                        if isinstance(eq, dict) and eq.get("id")
+                    ]
+                except (json.JSONDecodeError, AttributeError):
+                    equipment_ids = []
+                if equipment_ids:
+                    from ..llm.code_constants_merge import preserve_bench_constants
+                    content_str, replaced = preserve_bench_constants(
+                        content_str, current_content, equipment_ids,
+                    )
+                    if replaced:
+                        log.info(
+                            "test.py proposal: preserved %d operator-pinned "
+                            "constant(s): %s",
+                            len(replaced), ", ".join(replaced),
+                        )
+
+            # Show diff dialog for user to accept/reject
             accepted, final_content = DiffViewer.show_diff(
                 current_content,
                 content_str,
                 "Review Changes: test.py",
                 self
             )
-            
+
             if accepted:
                 self.code_editor.setPlainText(final_content)
                 self.artifact_manager.test_code.content = final_content
@@ -488,6 +527,127 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
                 self.main_window.dock.chat_panel.add_system_message("✓ Applied changes to test.py")
             else:
                 self.main_window.dock.chat_panel.add_system_message("✗ Rejected changes to test.py")
+
+    def refresh_code_parser_button(self):
+        """Show or hide the Quick Code button based on project's code_parser variant."""
+        has_parser = self.project_manager.get_code_parser() is not None
+        self.quick_code_btn.setVisible(has_parser)
+
+    def _on_quick_code(self):
+        """Deterministic JSON → Code without LLM (rule-based, instant)."""
+        parser = self.project_manager.get_code_parser()
+        if parser is None:
+            self.show_warning(
+                "No Parser",
+                "No code_parser variant selected.\n"
+                "Configure one via Project Config → Parsers to enable Quick Code."
+            )
+            return
+        json_text = self.json_editor.toPlainText().strip()
+        if not json_text:
+            self.show_warning("No Content", "JSON editor is empty. Add JSON before generating code.")
+            return
+        try:
+            procedure = json.loads(json_text)
+        except json.JSONDecodeError as e:
+            self.show_error("Invalid JSON", f"Cannot parse procedure JSON:\n\n{e}")
+            return
+
+        # The parser is a user-supplied plugin; structured ParseError /
+        # codegen failures route through the shared validator-error
+        # dialog so the operator sees the same rendering across surfaces.
+        try:
+            parse_result = parser.parse(procedure)
+        except Exception as e:
+            log.exception("Quick Code: parser raised")
+            from ..dialogs.validator_error_dialog import ValidatorErrorDialog
+            ValidatorErrorDialog.show_from_exception(
+                e,
+                title="Quick Code — validator findings",
+                intro=(
+                    "The deterministic JSON→Code generator rejected the input. "
+                    "Fix the issues below or fall back to the LLM workflow."
+                ),
+                parent=self,
+            )
+            return
+
+        # Contract: parse() -> tuple[str, list[str]].
+        if (not isinstance(parse_result, tuple)) or len(parse_result) != 2:
+            self.show_error(
+                "Parser Error",
+                "Parser returned an unexpected value. Expected a "
+                "(code_str, warnings_list) tuple."
+            )
+            return
+        code_str, warnings = parse_result
+        if not isinstance(code_str, str):
+            self.show_error(
+                "Parser Error",
+                f"Parser returned a non-string code "
+                f"({type(code_str).__name__}); cannot apply."
+            )
+            return
+        if not isinstance(warnings, list):
+            log.warning(
+                "Code parser returned non-list warnings (%s); coercing to [].",
+                type(warnings).__name__,
+            )
+            warnings = []
+
+        current_code = self.code_editor.toPlainText().strip()
+
+        # Preserve operator-pinned bench-identification module constants
+        # from the existing test.py. Per the v2.0.x design (2026-04-28
+        # operator directive), bench fields (visa/port/baud/timeout/etc.)
+        # live ONLY in test.py — and codegen's defaults (`ASRL1::INSTR`,
+        # `COM1`) would otherwise clobber the operator's real bench
+        # values on every regen.
+        if current_code:
+            from ..llm.code_constants_merge import preserve_bench_constants
+            equipment_ids = [
+                eq.get("id") for eq in (procedure.get("equipment") or [])
+                if isinstance(eq, dict) and eq.get("id")
+            ]
+            code_str, replaced = preserve_bench_constants(
+                code_str, current_code, equipment_ids,
+            )
+            if replaced:
+                log.info(
+                    "Quick Code: preserved %d operator-pinned constant(s): %s",
+                    len(replaced), ", ".join(replaced),
+                )
+
+        if current_code:
+            accepted, final_content = DiffViewer.show_diff(
+                current_code,
+                code_str,
+                "Review Changes: test.py (Quick Code)",
+                self,
+            )
+            if not accepted:
+                self.main_window.dock.chat_panel.add_system_message(
+                    "✗ Quick Code — changes rejected."
+                )
+                return
+            code_str = final_content
+
+        self.code_editor.setPlainText(code_str)
+        self.artifact_manager.set_content(ArtifactType.TEST_CODE, code_str)
+        self._code_dirty = True
+        self._update_code_status()
+        self._update_step_markers()
+
+        if warnings:
+            warn_lines = "\n".join(f"  • {w}" for w in warnings)
+            self.main_window.dock.chat_panel.add_system_message(
+                f"⚡ Quick Code complete — {len(warnings)} warning(s):\n{warn_lines}"
+            )
+        else:
+            self.main_window.dock.chat_panel.add_system_message(
+                "⚡ Quick Code complete — no warnings."
+            )
+        self.status_message.emit("⚡ Quick Code complete")
     
     def _on_step_clicked(self, item: QListWidgetItem):
         """Jump to step marker in code editor."""

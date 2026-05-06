@@ -1,40 +1,58 @@
 {
   "text_json": {
+    "selected_rules": [
+      "01_Canonical_Text_DSL_v2.md",
+      "02_Procedure_Json_Schema_v2.md",
+      "03_Macro_DSL_v2.md",
+      "04_Expected_Expression_Grammar_v2.md",
+      "06_Equipment_and_Inventory_v2.md",
+      "10_LLM_Rewrite_Workflow_v2.md",
+      "11_Text_Json_Bijection_v2.md",
+      "SCPI_PSU_Grammar_v2.md",
+      "SCPI_Electronic_Load_Grammar_v2.md",
+      "SCPI_Oscilloscope_Grammar_v2.md",
+      "fncore_mockup_Grammar_v2.md"
+    ],
     "tasks": [
       {
         "id": "derive_json_from_text",
         "name": "Derive JSON from Text",
         "button_label": "Text → JSON",
         "prompt_template": null,
-        "enabled": true
+        "enabled": true,
+        "max_validator_attempts": null
       },
       {
         "id": "render_text_from_json",
         "name": "Render Text from JSON",
         "button_label": "JSON → Text",
         "prompt_template": null,
-        "enabled": true
+        "enabled": true,
+        "max_validator_attempts": null
       },
       {
         "id": "review_text_procedure",
         "name": "Review Text Procedure",
         "button_label": "Review Text",
-        "prompt_template": "Task: Review procedure text for correctness and completeness.\n\nAnalyze the provided procedure text and identify:\n- Ambiguous or unclear steps\n- Missing equipment specifications\n- Missing measurement parameters\n- Rule violations (if rules provided)\n\nPut the text procedure in form.\n\nReport issues in validation.issues[] with severity, code, message, location, and suggested_fix.\n\nIMPORTANT: In your response, ONLY include a 'procedure_text' proposal if needed.\nDo NOT generate 'procedure_json' or 'test_code' proposals for this task.",
-        "enabled": true
+        "prompt_template": "Task: Apply the rules to the procedure text and return the canonical version.\n\nThe input may already be canonical, partly canonical, or loose operator prose. Read every rule provided, apply them to the input, and return the corrected canonical text. Faithfully preserve the operator's intent, equipment, sequence of steps, refs, and pass/fail criteria — translate non-canonical wording to its canonical counterpart, do not drop steps, do not invent steps. If the input is already canonical, return it unchanged.\n\nAlongside the rewrite, identify and report any issues you found:\n- Ambiguous or unclear steps\n- Missing equipment specifications\n- Missing measurement parameters\n- Rule violations\n- Anything that required a judgment call (assumed values, unmappable prose routed to `Operator:` fallback, etc.)\n\nReport issues in validation.issues[] with severity, code, message, location, and suggested_fix.\n\nIMPORTANT: In your response, you MUST always include a 'procedure_text' proposal — the corrected canonical text if changes were made, or the input unchanged if it was already canonical. Downstream tooling expects exactly one canonical procedure_text artifact.\nDo NOT generate 'procedure_json' or 'test_code' proposals for this task.",
+        "enabled": true,
+        "max_validator_attempts": null
       },
       {
         "id": "review_json",
         "name": "Review JSON",
         "button_label": "Review JSON",
         "prompt_template": null,
-        "enabled": true
+        "enabled": true,
+        "max_validator_attempts": null
       },
       {
         "id": "review_text_vs_json",
         "name": "Review Text vs JSON",
         "button_label": "Check Text↔JSON",
         "prompt_template": "Task: Check coherence between procedure text and procedure.json.\n\nCompare the procedure text with the procedure JSON and identify:\n- Step count mismatches\n- Step content/intent mismatches\n- Equipment list differences\n- Expected result differences\n\nDon't touch fields like media if they are correct.\nReport issues in validation.issues[] with severity, code, message, location, and suggested_fix.\nIf you find issues, include proposals (procedure_text and/or procedure_json) with the corrected versions.\nYou may ask clarifying questions if needed.",
-        "enabled": true
+        "enabled": true,
+        "max_validator_attempts": null
       }
     ],
     "chat_config": {
@@ -43,53 +61,91 @@
     }
   },
   "json_code": {
+    "selected_rules": [
+      "02_Procedure_Json_Schema_v2.md",
+      "05_Lifecycle_and_Cleanup_v2.md",
+      "06_Equipment_and_Inventory_v2.md",
+      "07_Helpers_API_Contract_v2.md",
+      "08_Result_API_Contract_v2.md",
+      "10_LLM_Rewrite_Workflow_v2.md",
+      "12_Codegen_Specification_v2.md",
+      "fncore_mockup_API_Contract_v2.md"
+    ],
     "tasks": [
       {
         "id": "generate_code_from_json",
         "name": "Generate Code from JSON",
         "button_label": "JSON → Code",
         "prompt_template": "Task: Generate test code from procedure.json.\n\nGenerate Python test code that implements the procedure described in the JSON.\nRequirements:\n- Include # Step N markers for each step\n- Follow the equipment and measurement specifications\n- Handle errors appropriately\n- Do not touch the JSON procedure",
-        "enabled": true
+        "enabled": true,
+        "max_validator_attempts": null
       },
       {
         "id": "derive_json_from_code",
         "name": "Derive JSON from Code",
         "button_label": "Code → JSON",
         "prompt_template": null,
-        "enabled": true
+        "enabled": true,
+        "max_validator_attempts": null
       },
       {
         "id": "review_json",
         "name": "Review JSON",
         "button_label": "Review JSON",
         "prompt_template": null,
-        "enabled": true
+        "enabled": true,
+        "max_validator_attempts": null
       },
       {
         "id": "review_code",
         "name": "Review Code",
         "button_label": "Review Code",
         "prompt_template": null,
-        "enabled": true
+        "enabled": true,
+        "max_validator_attempts": null
       },
       {
         "id": "review_code_vs_json",
         "name": "Review Code vs JSON",
         "button_label": "Check JSON↔Code",
         "prompt_template": null,
-        "enabled": true
+        "enabled": true,
+        "max_validator_attempts": null
       },
       {
         "id": "ad_hoc_chat",
         "name": "Ad-hoc Chat",
         "button_label": "Ask LLM",
         "prompt_template": null,
-        "enabled": true
+        "enabled": true,
+        "max_validator_attempts": null
       }
     ],
     "chat_config": {
       "enabled": true,
       "system_prompt": "Task: Respond to user question or request.\n\nThe user is asking a question or making a request related to test procedure authoring.\nRespond helpfully based on the context provided.\nIf the user asks for changes to an artifact, include a proposal in your response.\nIf the user asks a question, answer it without modifying artifacts."
+    }
+  },
+  "text_only": {
+    "tasks": [
+      {
+        "id": "review_text_procedure",
+        "name": "Review Text Procedure",
+        "button_label": "Review Text",
+        "prompt_template": null,
+        "enabled": true,
+        "max_validator_attempts": null
+      }
+    ],
+    "chat_config": {
+      "enabled": true,
+      "system_prompt": null
+    }
+  },
+  "traceability": {
+    "chat_config": {
+      "enabled": false,
+      "system_prompt": null
     }
   }
 }

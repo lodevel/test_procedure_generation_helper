@@ -5,6 +5,7 @@ Implements Section 12.2 of the spec with unified task management.
 """
 
 import json
+import logging
 from pathlib import Path
 from typing import Optional
 from PySide6.QtWidgets import (
@@ -16,9 +17,12 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
+from .. import theme
 from ..core.task_config import TaskConfig, TaskConfigManager, ChatConfig
 from ..llm.backend_base import LLMTask
 from ..theme import muted_text
+
+log = logging.getLogger(__name__)
 
 
 def get_settings_path() -> Path:
@@ -192,21 +196,31 @@ class SettingsDialog(QDialog):
     Task configurations are managed through TaskConfigManager.
     """
     
-    def __init__(self, task_config_manager: TaskConfigManager, parent=None):
+    def __init__(
+        self,
+        task_config_manager: TaskConfigManager,
+        parent=None,
+        project_root=None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setMinimumWidth(700)
         self.setMinimumHeight(600)
-        
+
         self._settings = load_settings()
         self._task_config_manager = task_config_manager
-        
+        # Project root is needed by the Validator tab to read/write
+        # ``<project>/config/config.json``'s ``validator_loop`` section.
+        # ``None`` means no project is open — the Validator tab's controls
+        # then disable themselves with an explanatory tooltip.
+        self._project_root = project_root
+
         # Cache for task modifications (indexed by tab_id)
         self._task_cache = {}
-        
+
         # Track which tab's data is currently displayed in the table
         self._current_displayed_tab_id = None
-        
+
         self._setup_ui()
         self._load_values()
     
@@ -227,7 +241,14 @@ class SettingsDialog(QDialog):
         # Chat tab (index 2) - Per-tab chat configuration
         chat_tab = self._create_chat_tab()
         tabs.addTab(chat_tab, "Chat")
-        
+
+        # Validator tab (index 3) - Per-project validator-loop options.
+        # Currently hosts only the global retry cap; reserved for future
+        # validator-related settings (per-artifact toggles, etc.) without
+        # bloating the LLM Backend tab.
+        validator_tab = self._create_validator_tab()
+        tabs.addTab(validator_tab, "Validator")
+
         layout.addWidget(tabs)
         
         # Buttons
@@ -272,6 +293,7 @@ class SettingsDialog(QDialog):
         
         self.task_tab_combo = QComboBox()
         self.task_tab_combo.addItems([
+            "Text",
             "Text-JSON",
             "JSON-Code"
         ])
@@ -343,8 +365,8 @@ class SettingsDialog(QDialog):
     def _get_current_tab_id(self) -> str:
         """Get the current tab ID based on combo box selection."""
         index = self.task_tab_combo.currentIndex()
-        tab_ids = ["text_json", "json_code"]
-        return tab_ids[index] if 0 <= index < len(tab_ids) else "text_json"
+        tab_ids = ["text_only", "text_json", "json_code"]
+        return tab_ids[index] if 0 <= index < len(tab_ids) else "text_only"
     
     def _load_tasks_for_tab(self):
         """Load tasks from TaskConfigManager for the currently selected tab.
@@ -658,11 +680,16 @@ class SettingsDialog(QDialog):
         self.temperature.setToolTip("Controls randomness: 0 = deterministic, 2 = very random")
         common_layout.addRow("Temperature:", self.temperature)
         
-        self.max_tokens = QSpinBox()
-        self.max_tokens.setRange(1000, 128000)
-        self.max_tokens.setValue(16384)
-        self.max_tokens.setToolTip("Maximum tokens in response (includes both input and output). Check your model's documentation for limits. Modern models like GPT-5.2 typically support 16K-128K+")
-        common_layout.addRow("Max Tokens:", self.max_tokens)
+        self.context_window = QSpinBox()
+        self.context_window.setRange(1000, 2_000_000)
+        self.context_window.setValue(16384)
+        self.context_window.setToolTip(
+            "Model's total context window (input + output token budget).\n"
+            "Used only by the chat panel's 'Tokens: X/Y' indicator so you "
+            "know when to reset the session.\n"
+            "Not sent to the LLM. Examples: GPT-4 → 128000, Gemma 4 26B → 131072, Claude 4.7 → 1000000."
+        )
+        common_layout.addRow("Context Window:", self.context_window)
         
         self.request_timeout = QDoubleSpinBox()
         self.request_timeout.setRange(10.0, 10800.0)
@@ -848,10 +875,9 @@ class SettingsDialog(QDialog):
                 # Test External API backend
                 from ..llm.external_api_backend import ExternalAPIBackend, ExternalAPIConfig
                 from ..llm.backend_base import LLMRequest, LLMTask
-                import os
-                
-                api_key = self.api_key.text() or os.getenv("OPENAI_API_KEY", "")
-                
+
+                api_key = self.api_key.text().strip()
+
                 model = self.api_model.text()
                 if not model:
                     QMessageBox.warning(
@@ -866,14 +892,11 @@ class SettingsDialog(QDialog):
                 config = ExternalAPIConfig(
                     base_url=self.api_url.text() or "https://api.openai.com/v1",
                     model=model,
+                    api_key=api_key or None,
                     request_timeout=test_timeout,
                 )
                 backend_obj = ExternalAPIBackend(config=config)
-                
-                # Set API key if provided (optional for services like Ollama)
-                if api_key:
-                    backend_obj._api_key = api_key
-                
+
                 # Start backend
                 if not backend_obj.start():
                     QMessageBox.warning(
@@ -962,7 +985,7 @@ class SettingsDialog(QDialog):
         tab_selection_layout.addWidget(QLabel("Workflow Tab:"))
         
         self.chat_tab_combo = QComboBox()
-        self.chat_tab_combo.addItems(["Text-JSON", "JSON-Code"])
+        self.chat_tab_combo.addItems(["Text", "Text-JSON", "JSON-Code"])
         self.chat_tab_combo.currentIndexChanged.connect(self._on_chat_tab_changed)
         tab_selection_layout.addWidget(self.chat_tab_combo)
         tab_selection_layout.addStretch()
@@ -1022,8 +1045,8 @@ class SettingsDialog(QDialog):
     def _get_current_chat_tab_id(self) -> str:
         """Get the current chat tab ID based on combo box selection."""
         index = self.chat_tab_combo.currentIndex()
-        tab_ids = ["text_json", "json_code"]
-        return tab_ids[index] if 0 <= index < len(tab_ids) else "text_json"
+        tab_ids = ["text_only", "text_json", "json_code"]
+        return tab_ids[index] if 0 <= index < len(tab_ids) else "text_only"
     
     def _load_chat_config(self):
         """Load chat config for the currently selected tab."""
@@ -1078,9 +1101,101 @@ class SettingsDialog(QDialog):
 
 
     
+    # ------------------------------------------------------------------ #
+    # Validator tab (per-project: validator_loop.* settings)              #
+    # ------------------------------------------------------------------ #
+
+    def _create_validator_tab(self) -> QWidget:
+        """Build the Validator tab.
+
+        Single field today: ``Max validator-correction retries`` —
+        persisted per-project under ``validator_loop.max_attempts``.
+        Reserved for future fields (per-artifact toggles, etc.).
+        Falls back to a disabled state with explanatory tooltip when no
+        project is open.
+        """
+        from ..core.task_config import DEFAULT_MAX_VALIDATOR_ATTEMPTS
+
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        retry_group = QGroupBox("Auto-correction loop")
+        retry_form = QFormLayout(retry_group)
+
+        self.validator_max_attempts = QSpinBox()
+        self.validator_max_attempts.setRange(1, 10)
+        self.validator_max_attempts.setValue(DEFAULT_MAX_VALIDATOR_ATTEMPTS)
+        self.validator_max_attempts.setToolTip(
+            "Total LLM attempts (1 original + N-1 retries) before the "
+            "auto-correction loop gives up and falls through to operator "
+            "review. Higher values cost more tokens; default 3 resolves "
+            "~95%% of fixable failures empirically. Per-project."
+        )
+        retry_form.addRow("Max validator-correction attempts:", self.validator_max_attempts)
+
+        layout.addWidget(retry_group)
+
+        # Helper note + project-scope explanation.
+        note = QLabel(
+            "Settings on this tab are stored per-project in "
+            "<code>config/config.json</code> under the "
+            "<code>validator_loop</code> section. They take effect on "
+            "the next LLM task you run."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet(f"color: {theme.muted_color()}; font-size: 11px;")
+        layout.addWidget(note)
+
+        # Disable when no project is bound — there's nowhere to persist.
+        if self._project_root is None:
+            self.validator_max_attempts.setEnabled(False)
+            disabled_note = QLabel(
+                "<i>No project open — open a project to edit these settings.</i>"
+            )
+            disabled_note.setStyleSheet(f"color: {theme.muted_color()};")
+            layout.addWidget(disabled_note)
+
+        layout.addStretch()
+        return tab
+
+    def _load_validator_values(self) -> None:
+        """Populate the Validator tab from the project's
+        ``validator_loop`` config section."""
+        if self._project_root is None:
+            return  # spinbox disabled; default value already set
+        try:
+            from ..llm.validator_loop_settings import load_settings as _load_section
+            section = _load_section(self._project_root)
+        except Exception:
+            log.exception("Failed to load validator_loop settings")
+            return
+        if "max_attempts" in section:
+            try:
+                self.validator_max_attempts.setValue(int(section["max_attempts"]))
+            except (TypeError, ValueError):
+                log.warning(
+                    "validator_loop.max_attempts is not an int (%r); "
+                    "leaving spinbox at default.", section["max_attempts"],
+                )
+
+    def _save_validator_values(self) -> None:
+        """Persist the Validator tab's values into the project's
+        ``validator_loop`` config section. No-op without a project."""
+        if self._project_root is None:
+            return
+        try:
+            from ..llm.validator_loop_settings import save_setting
+            save_setting(
+                self._project_root,
+                "max_attempts",
+                int(self.validator_max_attempts.value()),
+            )
+        except Exception:
+            log.exception("Failed to persist validator_loop.max_attempts")
+
     def _load_values(self):
         """Load values from settings.
-        
+
         Loads LLM backend configuration from settings.json.
         Task configurations are already loaded in _create_tasks_tab().
         """
@@ -1092,7 +1207,10 @@ class SettingsDialog(QDialog):
         # Common LLM parameters
         common_llm = self._settings.get("common_llm", {})
         self.temperature.setValue(common_llm.get("temperature", 0.2))
-        self.max_tokens.setValue(common_llm.get("max_tokens", 16384))
+        # Backwards-compat: old setting name was "max_tokens"; prefer new "context_window"
+        self.context_window.setValue(
+            common_llm.get("context_window", common_llm.get("max_tokens", 16384))
+        )
         self.request_timeout.setValue(common_llm.get("request_timeout", 120.0))
         
         # OpenCode settings
@@ -1112,6 +1230,9 @@ class SettingsDialog(QDialog):
         
         # Update visibility
         self._on_backend_changed(self.backend_combo.currentText())
+
+        # Validator tab — populate from project's validator_loop section.
+        self._load_validator_values()
     
     def _on_save(self):
         """Save settings.
@@ -1135,13 +1256,16 @@ class SettingsDialog(QDialog):
         
         # Save to disk
         self._task_config_manager.save_config()
-        
+
+        # Validator tab — persist into project's validator_loop section.
+        self._save_validator_values()
+
         # Save LLM backend settings to settings.json
         self._settings = {
             "llm_backend": self.backend_combo.currentText(),
             "common_llm": {
                 "temperature": self.temperature.value(),
-                "max_tokens": self.max_tokens.value(),
+                "context_window": self.context_window.value(),
                 "request_timeout": self.request_timeout.value(),
             },
             "opencode": {

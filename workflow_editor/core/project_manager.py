@@ -163,7 +163,7 @@ You can include:
                 tab_contexts_path = config_dir / "tab_contexts.json"
                 if not tab_contexts_path.exists():
                     default_config = {}
-                    for tab_id in ["text_json", "json_code"]:
+                    for tab_id in ["text_only", "text_json", "json_code"]:
                         tasks = DEFAULT_TASK_CONFIGS.get(tab_id, [])
                         chat_config = DEFAULT_CHAT_CONFIG.get(tab_id)
                         
@@ -270,32 +270,63 @@ Test procedure project created with Workflow Editor.
         return config_dir if config_dir.exists() else None
 
     def get_text_parser(self):
+        """Load the project's selected text-parser variant.
+
+        Resolves ``config/config.json -> parsers.json_parser`` to
+        ``config/parsers/json_parser/<value>.py``; falls back to the
+        legacy ``config/text_parser.py`` for projects seeded before the
+        ``parsers/`` layout existed. The loaded module must define
+        ``class ProcedureTextParser`` with a
+        ``parse(text: str) -> tuple[dict, list[str]]`` method.
+
+        See :meth:`_load_parser` for details.
         """
-        Dynamically load the project's selected text-parser variant.
+        return self._load_parser(
+            "json_parser", "ProcedureTextParser",
+            legacy_filename="text_parser.py",
+        )
+
+    def get_code_parser(self):
+        """Load the project's selected code-parser variant.
+
+        Resolves ``config/config.json -> parsers.code_parser`` to
+        ``config/parsers/code_parser/<value>.py``. The loaded module
+        must define ``class ProcedureCodeParser`` with a
+        ``parse(procedure: dict) -> tuple[str, list[str]]`` method that
+        returns Python source for the test file plus non-fatal warning
+        messages to surface in the UI.
+
+        See :meth:`_load_parser` for details.
+        """
+        return self._load_parser("code_parser", "ProcedureCodeParser")
+
+    def _load_parser(
+        self,
+        kind: str,
+        class_name: str,
+        *,
+        legacy_filename: Optional[str] = None,
+    ):
+        """Generic loader for a project-supplied parser plugin.
 
         Resolution order:
 
-        1. Read ``config/config.json`` and look up
-           ``parsers.json_parser``. If set, load
-           ``config/parsers/json_parser/<value>.py``.
-        2. Fall back to the legacy ``config/text_parser.py`` if present
-           (kept so projects seeded before the customer-template
-           ``parsers/`` layout existed continue to work until re-seeded).
+        1. Read ``config/config.json`` and look up ``parsers.<kind>``.
+           If set, load ``config/parsers/<kind>/<value>.py``.
+        2. (Optional) Fall back to ``config/<legacy_filename>`` if
+           provided and the primary path resolved nothing — preserves
+           backward compatibility for kinds that existed before the
+           ``parsers/`` layout.
 
-        The loaded module must define a class named
-        ``ProcedureTextParser`` exposing a
-        ``parse(text: str) -> tuple[dict, list[str]]`` method. The
-        returned ``dict`` is the procedure JSON; the ``list[str]`` is
-        non-fatal warning messages to surface in the UI.
-
-        No caching is performed: each call re-reads the file so that
-        developers editing a parser variant can re-click Quick Parse
-        and see the effect without restarting the editor.
+        The loaded module must define a class named *class_name*
+        exposing a ``parse`` method. No caching: each call re-reads the
+        file so developers editing a parser variant see the effect on
+        the next user action without restarting the editor.
 
         Returns an instantiated parser on success, or ``None`` when no
         parser is configured / the file is missing / loading fails (in
-        which case the Quick Parse button stays hidden and a warning
-        is logged).
+        which case the consuming UI hides its action button and a
+        warning is logged).
         """
         import importlib.util
         import sys
@@ -314,20 +345,20 @@ Test procedure project created with Workflow Editor.
             except Exception as e:
                 log.warning(f"Failed to read project config.json for parser selection: {e}")
                 cfg = {}
-            selected = (cfg.get("parsers") or {}).get("json_parser")
+            selected = (cfg.get("parsers") or {}).get(kind)
             if selected:
-                candidate = config_dir / "parsers" / "json_parser" / f"{selected}.py"
+                candidate = config_dir / "parsers" / kind / f"{selected}.py"
                 if candidate.exists():
                     parser_path = candidate
                 else:
                     log.warning(
-                        f"parsers.json_parser='{selected}' selected but file "
+                        f"parsers.{kind}='{selected}' selected but file "
                         f"not found at {candidate}; falling back to legacy."
                     )
 
-        # Legacy fallback for projects pre-dating the parsers/ layout.
-        if parser_path is None:
-            legacy = config_dir / "text_parser.py"
+        # Legacy fallback for kinds that pre-date the parsers/ layout.
+        if parser_path is None and legacy_filename:
+            legacy = config_dir / legacy_filename
             if legacy.exists():
                 parser_path = legacy
 
@@ -337,7 +368,7 @@ Test procedure project created with Workflow Editor.
         # Namespace the dynamic module by absolute path so switching
         # projects in a single session does not reuse a stale module
         # cached under a shared name.
-        module_name = f"_project_text_parser_{abs(hash(str(parser_path.resolve())))}"
+        module_name = f"_project_parser_{kind}_{abs(hash(str(parser_path.resolve())))}"
         sys.modules.pop(module_name, None)
 
         try:
@@ -348,23 +379,23 @@ Test procedure project created with Workflow Editor.
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
         except SyntaxError as e:
-            log.warning(f"Syntax error in text parser {parser_path}: {e}")
+            log.warning(f"Syntax error in {kind} parser {parser_path}: {e}")
             return None
         except ImportError as e:
-            log.warning(f"Import error loading text parser {parser_path}: {e}")
+            log.warning(f"Import error loading {kind} parser {parser_path}: {e}")
             return None
         except Exception as e:
-            log.warning(f"Failed to load text parser from {parser_path}: {e}")
+            log.warning(f"Failed to load {kind} parser from {parser_path}: {e}")
             return None
 
-        cls = getattr(module, "ProcedureTextParser", None)
+        cls = getattr(module, class_name, None)
         if cls is None:
-            log.warning(f"Text parser at {parser_path} has no ProcedureTextParser class")
+            log.warning(f"{kind} parser at {parser_path} has no {class_name} class")
             return None
         try:
             return cls()
         except Exception as e:
-            log.warning(f"ProcedureTextParser.__init__ failed for {parser_path}: {e}")
+            log.warning(f"{class_name}.__init__ failed for {parser_path}: {e}")
             return None
 
     def load_equipment_patterns(self) -> list[re.Pattern[str]]:
@@ -607,6 +638,9 @@ Test procedure project created with Workflow Editor.
         
         # Default config - all rules selected for all tabs
         default_config = {
+            "text_only": {
+                "selected_rules": "all"
+            },
             "text_json": {
                 "selected_rules": "all"  # Will be expanded to list of rule filenames
             },
@@ -634,7 +668,7 @@ Test procedure project created with Workflow Editor.
             log.info(f"ProjectManager: Parsed config = {config}")
             
             # Validate structure - ensure all tabs exist
-            for tab_id in ["text_json", "json_code"]:
+            for tab_id in ["text_only", "text_json", "json_code"]:
                 if tab_id not in config:
                     log.warning(f"ProjectManager: tab_id '{tab_id}' missing from config, adding default")
                     config[tab_id] = default_config[tab_id].copy()

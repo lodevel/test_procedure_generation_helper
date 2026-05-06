@@ -355,5 +355,114 @@ class ResponseParser:
                 return False, "Text proposal must be a string"
             if len(proposal.content.strip()) == 0:
                 return False, "Text proposal is empty"
-        
+
         return True, ""
+
+
+# Lines the LLM rewriter is forbidden from modifying. If the LLM-proposed
+# procedure_text changes any of these, restore the original value before the
+# diff dialog so the operator never reviews a change to a human-only field.
+_HUMAN_ONLY_META_KEYS = ("requirement",)
+_H1_RE = re.compile(r"^# .+$", re.MULTILINE)
+# Match the body of the `## Meta` section: everything between `## Meta\n` and
+# the next `## ` header (or end-of-file). Capture group 1 is the body.
+_META_BLOCK_RE = re.compile(
+    r"^## Meta\s*\n((?:.|\n)*?)(?=^## |\Z)", re.MULTILINE
+)
+_PACK_ANCHOR_RE = re.compile(
+    r"^(?:fncore_pack|labscpi_pack):.*$", re.MULTILINE
+)
+# First `## ` section heading at line start. The header (test id + optional
+# multi-line description) is everything before this match.
+_FIRST_SECTION_RE = re.compile(r"^## ", re.MULTILINE)
+
+
+def _find_first_section_offset(text: str) -> Optional[int]:
+    """Return the byte offset of the first `## ` section heading, or None."""
+    m = _FIRST_SECTION_RE.search(text)
+    return m.start() if m else None
+
+
+def _extract_header_block(text: str) -> Optional[str]:
+    """Extract the operator-only header from `text`.
+
+    Returns the H1 line plus any description lines that follow, with
+    trailing blank lines stripped. Returns None if the text has no H1.
+    """
+    h1 = _H1_RE.search(text)
+    if not h1:
+        return None
+    sec = _find_first_section_offset(text)
+    if sec is None:
+        block = text[h1.start():]
+    else:
+        block = text[h1.start():sec]
+    # Strip trailing blank lines (they belong to the section separator).
+    return block.rstrip("\n").rstrip()
+
+
+def preserve_human_only_fields(original: str, proposed: str) -> str:
+    """Splice human-only fields from `original` into `proposed`.
+
+    Currently preserves:
+      - Line 1 test id (`# <TEST_ID>`).
+      - The description block (everything between line 1 and the first `## `
+        section heading; trailing blank lines are part of the section
+        separator, not the description).
+      - Optional Meta keys listed in `_HUMAN_ONLY_META_KEYS` (e.g. `requirement:`).
+        Restoration is scoped to the `## Meta` block — a `requirement:` token
+        appearing as part of free text inside `## Steps` is left alone.
+
+    If the LLM dropped a key the original had, it is reinserted. If the LLM
+    added a key the original did not have, it is removed. If the LLM modified
+    the value, the original value is restored. Other content passes through
+    unchanged.
+    """
+    out = proposed
+
+    # 1. Test ID + description — both are operator-only. Restore the entire
+    # header block (line 1 H1 + zero or more description lines) from
+    # `original`, replacing whatever the LLM put before the first `## `.
+    orig_header = _extract_header_block(original)
+    if orig_header is not None:
+        prop_header_end = _find_first_section_offset(out)
+        if prop_header_end is None:
+            # Proposed has no `## ` heading — prepend the original header.
+            out = orig_header + "\n\n" + out
+        else:
+            # Replace everything before the first `## ` with the original
+            # header, plus the canonical single-blank-line separator.
+            out = orig_header + "\n\n" + out[prop_header_end:]
+
+    # 2. Human-only Meta keys — operate only inside the proposed Meta block.
+    prop_meta = _META_BLOCK_RE.search(out)
+    if prop_meta is None:
+        # No Meta block in proposed — leave the rest alone; the validator
+        # will surface the missing block.
+        return out
+    meta_start, meta_end = prop_meta.start(1), prop_meta.end(1)
+    meta_body = out[meta_start:meta_end]
+
+    orig_meta = _META_BLOCK_RE.search(original)
+    orig_meta_body = orig_meta.group(1) if orig_meta else ""
+
+    for key in _HUMAN_ONLY_META_KEYS:
+        key_re = re.compile(rf"^{re.escape(key)}:.*$\n?", re.MULTILINE)
+        # Strip every occurrence the LLM emitted (handles malformed duplicates).
+        meta_body = key_re.sub("", meta_body)
+        # If the original had this key, restore it in canonical position:
+        # after the LAST of fncore_pack / labscpi_pack (so when both packs
+        # are present, requirement: lands after fncore_pack, not between).
+        orig_value_re = re.compile(rf"^{re.escape(key)}:.*$", re.MULTILINE)
+        orig_value = orig_value_re.search(orig_meta_body)
+        if orig_value:
+            anchors = list(_PACK_ANCHOR_RE.finditer(meta_body))
+            if anchors:
+                pos = anchors[-1].end()
+                meta_body = (
+                    meta_body[:pos] + "\n" + orig_value.group(0) + meta_body[pos:]
+                )
+            # else: malformed Meta in proposed; let the validator surface it.
+
+    out = out[:meta_start] + meta_body + out[meta_end:]
+    return out

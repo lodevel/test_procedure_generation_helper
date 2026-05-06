@@ -14,6 +14,28 @@ the task is DERIVE_JSON_FROM_TEXT).
 from typing import Optional
 from .backend_base import LLMTask
 
+# Text-only Tab Contract
+# Allows: procedure_text proposals only (smaller rule context, no JSON/code)
+TEXT_ONLY_CONTRACT = """
+## Output Contract for Text Tab
+
+You are operating in the TEXT-ONLY workflow context. Your responses MUST follow these rules:
+
+**Allowed Proposals:**
+- procedure_text: Textual description of the test procedure
+
+**FORBIDDEN Proposals:**
+- procedure_json: You MUST NOT generate structured JSON in this context
+- test_code: You MUST NOT generate Python test code in this context
+
+**Validation Rules:**
+- You may propose procedure_text or no proposal at all
+- Set proposal.mode to "create", "replace", or null (no proposal)
+- If you propose procedure_json or test_code, the response will be REJECTED as invalid
+
+This contract ensures you stay focused on the text artifact only.
+"""
+
 # Text-JSON Tab Contract
 # Allows: procedure_text and procedure_json proposals only
 TEXT_JSON_CONTRACT = """
@@ -75,6 +97,7 @@ def get_contract_for_tab(tab_id: str) -> str:
         ValueError: If tab_id is not recognized
     """
     contracts = {
+        "text_only": TEXT_ONLY_CONTRACT,
         "text_json": TEXT_JSON_CONTRACT,
         "json_code": JSON_CODE_CONTRACT,
     }
@@ -99,6 +122,7 @@ def get_allowed_artifacts(tab_id: str) -> list[str]:
         ValueError: If tab_id is not recognized
     """
     allowed = {
+        "text_only": ["procedure_text"],
         "text_json": ["procedure_text", "procedure_json"],
         "json_code": ["procedure_json", "test_code"],
     }

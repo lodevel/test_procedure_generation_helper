@@ -22,6 +22,7 @@ from .llm_tab_mixin import LLMTabMixin
 from .json_tab import JsonSyntaxHighlighter
 from ..core import ArtifactType, JsonValidator
 from ..llm import TabContext, LLMTask
+from ..llm.response_parser import preserve_human_only_fields
 from ..dialogs import DiffViewer
 from ..theme import status_modified, status_saved
 
@@ -177,9 +178,17 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         self.format_json_btn = self.create_button("Format JSON", self._on_format_json,
             tooltip="Auto-format JSON with proper indentation")
         self.validate_json_btn = self.create_button("Validate JSON", self._on_validate_json,
-            tooltip="Run local JSON schema validation")
+            tooltip="Run local JSON schema validation (legacy generic validator)")
+        self.validate_procedure_btn = self.create_button(
+            "Validate Procedure", self._on_validate_procedure_button,
+            tooltip=(
+                "Run the deterministic v2 validator: R1 text↔JSON, "
+                "R3 JSON Schema, R4 topology. Findings appear in the dock panel."
+            ),
+        )
         format_row.addWidget(self.format_json_btn)
         format_row.addWidget(self.validate_json_btn)
+        format_row.addWidget(self.validate_procedure_btn)
         format_row.addStretch()
         file_layout.addLayout(format_row)
 
@@ -285,16 +294,56 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         """Run local JSON validation."""
         content = self.json_editor.toPlainText()
         result = self._validator.validate(content)
-        
+
         # Update findings in dock
         self.main_window.dock.show_validation_result(result)
-        
+
         if result.is_valid and not result.has_warnings:
             self.show_info("Validation", "JSON is valid!")
         elif result.is_valid:
             self.show_warning("Validation", f"JSON is valid but has {len(result.issues)} warnings.")
         else:
             self.show_error("Validation", f"JSON has {len(result.issues)} issues.")
+
+    def _on_validate_procedure_button(self):
+        """Run the bijective v2 validator on the current text + JSON.
+
+        Reads the editor's live content (not just what's saved on disk),
+        runs the deterministic validator with mode='all' (R1 text↔JSON,
+        R3 schema, R4 topology), and pushes findings to the dock panel.
+        Both errors and warnings are shown so soft codes like
+        ``META_KEY_ORDER`` or ``EXP_PCT_DEGENERATE`` surface alongside
+        hard errors.
+        """
+        from ..llm.validator_dispatch import validate_current_state
+
+        text = self.text_editor.toPlainText() or None
+        json_str = self.json_editor.toPlainText() or None
+        project_root = self.project_manager.project_root
+
+        outcome = validate_current_state(
+            project_root=project_root,
+            text=text,
+            json_str=json_str,
+            code=None,  # this tab doesn't own test_code; main-window action covers R2
+        )
+
+        from ..llm.validator_dispatch import render_validation_outcome_summary
+        summary = render_validation_outcome_summary(outcome)
+        if outcome.skipped:
+            self.main_window.dock.show_validation_result_from_list([])
+            self.show_warning("Validate Procedure", outcome.reason)
+            return
+
+        self.main_window.dock.show_validation_result_from_list(
+            [issue.to_dock_dict() for issue in outcome.issues]
+        )
+        if outcome.ok and not outcome.issues:
+            self.show_info("Validate Procedure", summary)
+        elif outcome.ok:
+            self.show_warning("Validate Procedure", summary)
+        else:
+            self.show_error("Validate Procedure", summary)
     
     def refresh_parser_button(self):
         """Show or hide the Quick Parse button based on project's config/text_parser.py."""
@@ -316,16 +365,24 @@ class TextJsonTab(LLMTabMixin, BaseTab):
             return
 
         # The parser module is user-supplied (per-project plugin); any
-        # exception it raises is a parser bug, not a workflow-editor bug.
-        # Surface it cleanly instead of dying silently.
+        # exception it raises is a parser bug OR a structured ParseError
+        # carrying a code + fix_hint. Route through the shared
+        # validator-error dialog so the operator sees the same structured
+        # rendering whether the failure came from Quick Parse or from
+        # the LLM-with-feedback loop's residual issues.
         try:
             parse_result = parser.parse(text)
         except Exception as e:
             log.exception("Quick Parse: parser raised")
-            self.show_error(
-                "Parser Error",
-                f"The parser raised an exception while processing the text:\n\n{e}\n\n"
-                "See the log for the full traceback."
+            from ..dialogs.validator_error_dialog import ValidatorErrorDialog
+            ValidatorErrorDialog.show_from_exception(
+                e,
+                title="Quick Parse — validator findings",
+                intro=(
+                    "The deterministic Text→JSON parser rejected the input. "
+                    "Fix the issues below or fall back to the LLM workflow."
+                ),
+                parent=self,
             )
             return
 
@@ -351,6 +408,14 @@ class TextJsonTab(LLMTabMixin, BaseTab):
                 type(warnings).__name__,
             )
             warnings = []
+
+        # Populate media[] on each step from the project's
+        # config/text_parser.py extractor. The v2 deterministic text
+        # parser produces v2 op shapes without media; this post-process
+        # adds them so the procedure GUI can render PCB images.
+        # Always re-extracts (media is derived from current step text).
+        from ..llm.media_extraction import populate_media_on_steps
+        populate_media_on_steps(result, self.project_manager.project_root)
 
         result_str = json.dumps(result, indent=2)
 
@@ -506,9 +571,12 @@ class TextJsonTab(LLMTabMixin, BaseTab):
                 content_str = json.dumps(proposal.content, indent=2)
             else:
                 content_str = str(proposal.content)
-            
+
             # Show diff dialog for user to accept/reject
             current_content = self.text_editor.toPlainText()
+            # Restore human-only fields (test id, requirement:) from the original
+            # before showing the diff — the LLM is forbidden from touching these.
+            content_str = preserve_human_only_fields(current_content, content_str)
             accepted, final_content = DiffViewer.show_diff(
                 current_content,
                 content_str,
@@ -530,10 +598,26 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         if proposal.mode == "replace":
             # Serialize dict to JSON string if needed
             if isinstance(proposal.content, dict):
-                content_str = json.dumps(proposal.content, indent=2)
+                proposed_dict = dict(proposal.content)
+            else:
+                try:
+                    proposed_dict = json.loads(str(proposal.content))
+                except json.JSONDecodeError:
+                    proposed_dict = None
+
+            # Populate `media` arrays on each step from the project's
+            # config/text_parser.py extractor (per the v1 media-restoration
+            # amendment 2026-04-28). The LLM doesn't emit media; the
+            # workflow editor injects it post-application so the procedure
+            # GUI can render PCB images via the ODB CLI.
+            if proposed_dict is not None:
+                from ..llm.media_extraction import populate_media_on_steps
+                project_root = self.project_manager.project_root
+                populate_media_on_steps(proposed_dict, project_root)
+                content_str = json.dumps(proposed_dict, indent=2, ensure_ascii=False)
             else:
                 content_str = str(proposal.content)
-            
+
             # Show diff dialog for user to accept/reject
             current_content = self.json_editor.toPlainText()
             accepted, final_content = DiffViewer.show_diff(

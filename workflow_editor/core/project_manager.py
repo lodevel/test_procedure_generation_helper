@@ -400,6 +400,12 @@ Test procedure project created with Workflow Editor.
                 log.warning(f"Could not build import spec for parser at {parser_path}")
                 return None
             module = importlib.util.module_from_spec(spec)
+            # Register before exec_module so @dataclass / inspect / typing
+            # machinery that does sys.modules.get(cls.__module__) finds the
+            # module. Required since Python 3.13 (dataclass._is_type calls
+            # sys.modules.get(...).__dict__). Cleaned up on next reload via
+            # the sys.modules.pop above.
+            sys.modules[module_name] = module
             spec.loader.exec_module(module)
         except SyntaxError as e:
             log.warning(f"Syntax error in {kind} parser {parser_path}: {e}")

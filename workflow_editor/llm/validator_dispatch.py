@@ -481,14 +481,49 @@ def _validate_proposed_text(
     """The LLM proposed a ``procedure_text`` update. Run R1 against the
     current/proposed json (whichever is in scope); if no json is
     available, fall back to text-alone parse+R3+R4 via the validator's
-    text-only path.
+    text-only path. Also runs name-fidelity (catches LLM stripping
+    leading/trailing/internal punctuation from named tokens like
+    `+HIGH_28V` -> `HIGH_28V`) when the project config allows it.
     """
     proposed_text = _proposal_content(response, "procedure_text")
     if proposed_text is None:
         return None
     json_obj = _resolve_json_for_crosscheck(response, current)
-    report = validate_fn(text=str(proposed_text), json_obj=json_obj, mode="all")
+
+    # Pass the operator's pre-LLM text as `original_text` so the renderer
+    # can run name-fidelity. The disable key (config.json -> validation.
+    # name_fidelity = "disabled") opts the project out for cases where
+    # the heuristic produces too many false positives.
+    original_text = getattr(current, "text", None)
+    check_names = _name_fidelity_enabled(project_root)
+
+    report = validate_fn(
+        text=str(proposed_text),
+        json_obj=json_obj,
+        mode="all",
+        original_text=original_text,
+        check_names=check_names,
+    )
     return _outcome_from_report(report)
+
+
+def _name_fidelity_enabled(project_root: Optional[Path]) -> bool:
+    """Read ``<project>/config/config.json -> validation.name_fidelity``.
+    Default: enabled. Returns False only when explicitly set to "disabled"
+    (string) or False (bool)."""
+    if project_root is None:
+        return True
+    cfg_path = project_root / "config" / "config.json"
+    if not cfg_path.exists():
+        return True
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except Exception:
+        return True
+    val = (cfg.get("validation") or {}).get("name_fidelity", True)
+    if isinstance(val, str):
+        return val.lower() != "disabled"
+    return bool(val)
 
 
 def _validate_proposed_json(

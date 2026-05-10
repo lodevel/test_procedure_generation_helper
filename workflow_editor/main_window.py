@@ -358,6 +358,16 @@ class MainWindow(QMainWindow):
                     log.debug(f"Refreshed button labels for {tab.__class__.__name__}")
                 except Exception as e:
                     log.error(f"Error refreshing labels in {tab.__class__.__name__}: {e}")
+            # Rebuild validator buttons (Phase 2/3 registry-driven). Tabs
+            # build them once at __init__ when the manager is still in
+            # fallback mode — without this rebuild, opening a project
+            # would never surface the project's configured validators.
+            if hasattr(tab, 'rebuild_validator_buttons'):
+                try:
+                    tab.rebuild_validator_buttons()
+                    log.debug(f"Rebuilt validator buttons for {tab.__class__.__name__}")
+                except Exception as e:
+                    log.error(f"Error rebuilding validator buttons in {tab.__class__.__name__}: {e}")
 
     
     def _setup_menu(self):

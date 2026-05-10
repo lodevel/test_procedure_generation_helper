@@ -20,7 +20,7 @@ from PySide6.QtGui import QFont
 from .base_tab import BaseTab
 from .llm_tab_mixin import LLMTabMixin
 from .json_tab import JsonSyntaxHighlighter
-from ..core import ArtifactType, JsonValidator
+from ..core import ArtifactType
 from ..llm import TabContext, LLMTask
 from ..llm.response_parser import preserve_human_only_fields
 from ..dialogs import DiffViewer
@@ -83,7 +83,6 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         # Initialize
         self._text_dirty = False
         self._json_dirty = False
-        self._validator = JsonValidator()
     
     def _create_text_panel(self):
         """Create text editor panel (left side)."""
@@ -174,22 +173,14 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         save_row.addStretch()
         file_layout.addLayout(save_row)
         
-        # Format/Validate buttons
+        # Format + validator buttons. Format is hard-coded (tab-local
+        # behavior, no registry involvement); validator buttons come
+        # from the registry via TaskConfigManager (Phase 2/3).
         format_row = QHBoxLayout()
         self.format_json_btn = self.create_button("Format JSON", self._on_format_json,
             tooltip="Auto-format JSON with proper indentation")
-        self.validate_json_btn = self.create_button("Validate JSON", self._on_validate_json,
-            tooltip="Run local JSON schema validation (legacy generic validator)")
-        self.validate_procedure_btn = self.create_button(
-            "Validate Procedure", self._on_validate_procedure_button,
-            tooltip=(
-                "Run the deterministic v2 validator: R1 text↔JSON, "
-                "R3 JSON Schema, R4 topology. Findings appear in the dock panel."
-            ),
-        )
         format_row.addWidget(self.format_json_btn)
-        format_row.addWidget(self.validate_json_btn)
-        format_row.addWidget(self.validate_procedure_btn)
+        self._build_validator_buttons(format_row)
         format_row.addStretch()
         file_layout.addLayout(format_row)
 
@@ -291,61 +282,16 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         except Exception as e:
             self.show_error("Format Failed", str(e))
     
-    def _on_validate_json(self):
-        """Run local JSON validation."""
-        content = self.json_editor.toPlainText()
-        result = self._validator.validate(content)
+    def _get_artifact_for_validation(self, name: str) -> str | None:
+        """Override the base implementation to read live editor content
+        (the on-disk artifact may lag behind unsaved edits)."""
+        if name == "procedure_text":
+            return self.text_editor.toPlainText() or None
+        if name == "procedure_json":
+            return self.json_editor.toPlainText() or None
+        return super()._get_artifact_for_validation(name)
 
-        # Update findings in dock
-        self.main_window.dock.show_validation_result(result)
 
-        if result.is_valid and not result.has_warnings:
-            self.show_info("Validation", "JSON is valid!")
-        elif result.is_valid:
-            self.show_warning("Validation", f"JSON is valid but has {len(result.issues)} warnings.")
-        else:
-            self.show_error("Validation", f"JSON has {len(result.issues)} issues.")
-
-    def _on_validate_procedure_button(self):
-        """Run the bijective v2 validator on the current text + JSON.
-
-        Reads the editor's live content (not just what's saved on disk),
-        runs the deterministic validator with mode='all' (R1 text↔JSON,
-        R3 schema, R4 topology), and pushes findings to the dock panel.
-        Both errors and warnings are shown so soft codes like
-        ``META_KEY_ORDER`` or ``EXP_PCT_DEGENERATE`` surface alongside
-        hard errors.
-        """
-        from ..llm.validator_dispatch import validate_current_state
-
-        text = self.text_editor.toPlainText() or None
-        json_str = self.json_editor.toPlainText() or None
-        project_root = self.project_manager.project_root
-
-        outcome = validate_current_state(
-            project_root=project_root,
-            text=text,
-            json_str=json_str,
-            code=None,  # this tab doesn't own test_code; main-window action covers R2
-        )
-
-        from ..llm.validator_dispatch import render_validation_outcome_summary
-        summary = render_validation_outcome_summary(outcome)
-        if outcome.skipped:
-            self.main_window.dock.show_validation_result_from_list([])
-            self.show_warning("Validate Procedure", outcome.reason)
-            return
-
-        self.main_window.dock.show_validation_result_from_list(
-            [issue.to_dock_dict() for issue in outcome.issues]
-        )
-        if outcome.ok and not outcome.issues:
-            self.show_info("Validate Procedure", summary)
-        elif outcome.ok:
-            self.show_warning("Validate Procedure", summary)
-        else:
-            self.show_error("Validate Procedure", summary)
-    
     def refresh_parser_button(self):
         """Show or hide the Quick Parse button based on project's config/text_parser.py."""
         has_parser = self.project_manager.get_text_parser() is not None

@@ -108,15 +108,7 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         file_layout.addLayout(save_row)
 
         validate_row = QHBoxLayout()
-        self.validate_procedure_btn = self.create_button(
-            "Validate Procedure", self._on_validate_procedure_button,
-            tooltip=(
-                "Run the deterministic v2 validator against the procedure text. "
-                "JSON/code are not validated here — use the Text-JSON tab for "
-                "coherence checks."
-            ),
-        )
-        validate_row.addWidget(self.validate_procedure_btn)
+        self._build_validator_buttons(validate_row)
         validate_row.addStretch()
         file_layout.addLayout(validate_row)
 
@@ -158,43 +150,16 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
     def has_unsaved_changes(self) -> bool:
         return self._text_dirty
 
-    def _on_validate_procedure_button(self):
-        """Run the bijective v2 validator against the live procedure text only.
+    def _get_artifact_for_validation(self, name: str) -> str | None:
+        """Override the base implementation to read live editor content.
 
-        The Text tab is a text-focused workspace — JSON/code artifacts are
-        not surfaced here, and validating against them would flood the
-        findings panel with errors outside the operator's current focus.
-        For text↔JSON coherence, use the Text-JSON tab.
+        The Text tab intentionally exposes only ``procedure_text`` —
+        validators that need JSON/code receive ``None`` so they can
+        ``skip`` cleanly (see ``ValidatorContext`` contract).
         """
-        from ..llm.validator_dispatch import (
-            validate_current_state, render_validation_outcome_summary,
-        )
-
-        text = self.text_editor.toPlainText() or None
-        project_root = self.project_manager.project_root
-
-        outcome = validate_current_state(
-            project_root=project_root,
-            text=text,
-            json_str=None,
-            code=None,
-        )
-
-        summary = render_validation_outcome_summary(outcome)
-        if outcome.skipped:
-            self.main_window.dock.show_validation_result_from_list([])
-            self.show_warning("Validate Procedure", outcome.reason)
-            return
-
-        self.main_window.dock.show_validation_result_from_list(
-            [issue.to_dock_dict() for issue in outcome.issues]
-        )
-        if outcome.ok and not outcome.issues:
-            self.show_info("Validate Procedure", summary)
-        elif outcome.ok:
-            self.show_warning("Validate Procedure", summary)
-        else:
-            self.show_error("Validate Procedure", summary)
+        if name == "procedure_text":
+            return self.text_editor.toPlainText() or None
+        return None  # never expose JSON/code from this tab
 
     def _on_review_text(self):
         if not self.artifact_manager.procedure_text.content:

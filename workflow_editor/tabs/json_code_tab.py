@@ -21,7 +21,7 @@ from .base_tab import BaseTab
 from .llm_tab_mixin import LLMTabMixin
 from .json_tab import JsonSyntaxHighlighter
 from .code_tab import PythonSyntaxHighlighter
-from ..core import ArtifactType, JsonValidator, CodeValidator, StepMarkerParser
+from ..core import ArtifactType, StepMarkerParser
 from ..llm import TabContext, LLMTask
 from ..dialogs import DiffViewer
 from ..theme import status_modified, status_saved
@@ -83,8 +83,6 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         # Initialize
         self._json_dirty = False
         self._code_dirty = False
-        self._json_validator = JsonValidator()
-        self._code_validator = CodeValidator()
         self._parser = StepMarkerParser()
     
     def _create_json_panel(self):
@@ -187,17 +185,14 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         save_row.addStretch()
         file_layout.addLayout(save_row)
         
-        # Format/Validate buttons
+        # Format + validator buttons. Format is hard-coded (tab-local
+        # behavior, no registry involvement); validator buttons come
+        # from the registry via TaskConfigManager (Phase 2/3).
         format_row = QHBoxLayout()
         self.format_json_btn = self.create_button("Format JSON", self._on_format_json,
             tooltip="Auto-format JSON with proper indentation")
-        self.validate_json_btn = self.create_button("Validate JSON", self._on_validate_json,
-            tooltip="Run local JSON schema validation")
-        self.check_syntax_btn = self.create_button("Check Python Syntax", self._on_check_syntax,
-            tooltip="Check Python code for syntax errors")
         format_row.addWidget(self.format_json_btn)
-        format_row.addWidget(self.validate_json_btn)
-        format_row.addWidget(self.check_syntax_btn)
+        self._build_validator_buttons(format_row)
         format_row.addStretch()
         file_layout.addLayout(format_row)
 
@@ -300,36 +295,15 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         except Exception as e:
             self.show_error("Format Failed", str(e))
     
-    def _on_validate_json(self):
-        """Run local JSON validation."""
-        content = self.json_editor.toPlainText()
-        result = self._json_validator.validate(content)
-        
-        # Update findings in dock
-        self.main_window.dock.show_validation_result(result)
-        
-        if result.is_valid and not result.has_warnings:
-            self.show_info("Validation", "JSON is valid!")
-        elif result.is_valid:
-            self.show_warning("Validation", f"JSON is valid but has {len(result.issues)} warnings.")
-        else:
-            self.show_error("Validation", f"JSON has {len(result.issues)} issues.")
-    
-    def _on_check_syntax(self):
-        """Check Python syntax."""
-        content = self.code_editor.toPlainText()
-        result = self._code_validator.validate(content)
-        
-        # Update findings in dock
-        self.main_window.dock.show_validation_result(result)
-        
-        if result.is_valid and not result.has_warnings:
-            self.show_info("Syntax Check", "Python syntax is valid!")
-        elif result.is_valid:
-            self.show_warning("Syntax Check", f"Syntax is valid but has {len(result.issues)} warnings.")
-        else:
-            self.show_error("Syntax Check", f"Syntax has {len(result.issues)} errors.")
-    
+    def _get_artifact_for_validation(self, name: str) -> str | None:
+        """Override the base implementation to read live editor content."""
+        if name == "procedure_json":
+            return self.json_editor.toPlainText() or None
+        if name == "test_code":
+            return self.code_editor.toPlainText() or None
+        return super()._get_artifact_for_validation(name)
+
+
     def _on_generate_code(self):
         """JSON → Code transformation (strict mode)."""
         if not self.artifact_manager.procedure_json.content:

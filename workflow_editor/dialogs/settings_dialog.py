@@ -487,13 +487,21 @@ class SettingsDialog(QDialog):
             if not existing_task:
                 existing_task = self._task_config_manager.get_task_config(tab_id, task_id)
             
-            # Create updated task config
+            # Create updated task config — preserve fields the table
+            # doesn't edit (selected_rules, max_validator_attempts) so
+            # they don't get clobbered to None on snapshot stamp (Codex Q5).
             task = TaskConfig(
                 id=task_id,
                 name=name,
                 button_label=label,
                 prompt_template=existing_task.prompt_template if existing_task else None,
-                enabled=enabled
+                enabled=enabled,
+                max_validator_attempts=(
+                    existing_task.max_validator_attempts if existing_task else None
+                ),
+                selected_rules=(
+                    existing_task.selected_rules if existing_task else None
+                ),
             )
             tasks.append(task)
         

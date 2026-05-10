@@ -41,6 +41,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+from copy import deepcopy
 from dataclasses import dataclass, asdict, field, fields
 from pathlib import Path
 from threading import RLock
@@ -186,9 +187,38 @@ class TaskConfigManager:
         # here (e.g. ``validators``).
         self._raw_extras: Dict[str, Dict[str, Any]] = {}
 
+        # Project-only write view of ``workflows``. Populated at load from
+        # the project's on-disk ``config.json:workflows`` block — pack
+        # defaults are NEVER merged in here. Mutation APIs stamp the
+        # affected sub-keys back so the snapshot stays current; save
+        # writes ONLY this dict. Keeps pack-inherited values from
+        # leaking into project config (Codex H2). Empty in legacy mode.
+        self._project_workflow_snapshot: Dict[str, Any] = {}
+
+        # Pack defaults indexed for snapshot-stamp filtering: stamping a
+        # task identical to its pack default is a no-op (no leak via
+        # bulk callers like SettingsDialog's set_all_tasks_for_tab,
+        # Codex Q1). Populated at load time from
+        # ``_load_pack_workflow_defaults``.
+        self._pack_task_dicts_by_tab: Dict[str, Dict[str, Dict[str, Any]]] = {}
+
         # Subscribers notified after ``reload()``. Lets the main window
         # refresh button labels without TaskConfigManager importing Qt.
         self._reload_callbacks: List[Callable[[], None]] = []
+
+        # drivers_registry.json discovery cache. None = not searched;
+        # ``False`` sentinel = searched but not found; otherwise the
+        # resolved Path. Cached at process scope is fine — the registry
+        # location is a property of the install layout, not the project.
+        self._drivers_registry_cached: Union[Path, bool, None] = None
+
+        # Single-writer injection point (Codex H1.D / Q7). When
+        # registered, project-mode saves route the workflows payload
+        # through this callback instead of writing directly — lets the
+        # parent app (Phase 4) funnel both ProjectConfigDialog AND
+        # workflow-editor saves through one path. Unregistered today;
+        # direct write is the legacy fallback.
+        self._workflows_writer: Optional[Callable[[Dict[str, Any]], bool]] = None
 
         self._load_config()
         log.info(
@@ -239,24 +269,50 @@ class TaskConfigManager:
         takes it explicitly).
         """
         # Project mode: first migrate any legacy tab_contexts.json, then
-        # try to load the project's workflows section.
+        # load pack defaults + project workflows and merge them.
         if self._project_root is not None:
             self._migrate_project_tab_contexts()
+
+            pack_defaults = self._load_pack_workflow_defaults()
+            # Index pack tasks for the stamp filter (Codex Q1).
+            self._pack_task_dicts_by_tab = {}
+            for tab_id, tab_cfg in pack_defaults.items():
+                if not isinstance(tab_cfg, dict):
+                    continue
+                pack_tasks = tab_cfg.get("tasks", [])
+                if not isinstance(pack_tasks, list):
+                    continue
+                index: Dict[str, Dict[str, Any]] = {}
+                for t in pack_tasks:
+                    if isinstance(t, dict) and isinstance(t.get("id"), str):
+                        index[t["id"]] = deepcopy(t)
+                if index:
+                    self._pack_task_dicts_by_tab[tab_id] = index
+
+            project_workflows: Dict[str, Any] = {}
             project_path = self._project_config_path()
             if project_path and project_path.exists():
                 full = _safe_read_json(project_path)
-                workflows = full.get("workflows") if isinstance(full, dict) else None
-                if isinstance(workflows, dict) and workflows:
-                    # Run button-label migration on the in-memory workflows
-                    # so older per-project configs upgrade cleanly. The
-                    # mutated dict is consumed below; the on-disk version
-                    # gets rewritten on the next save.
-                    self._migrate_button_labels_in_place(workflows)
-                    self._populate_from_workflows(
-                        workflows, drop_tab_selected_rules=True
-                    )
-                    self._fill_missing_defaults()
-                    return
+                if isinstance(full, dict):
+                    candidate = full.get("workflows")
+                    if isinstance(candidate, dict):
+                        project_workflows = candidate
+
+            # Snapshot the project's verbatim workflows section BEFORE merging.
+            # This is the only thing save_config() writes — pack defaults
+            # never leak into project config.json (Codex H2).
+            self._project_workflow_snapshot = deepcopy(project_workflows)
+
+            if pack_defaults or project_workflows:
+                merged = _merge_workflows(pack_defaults, project_workflows)
+                # Run button-label migration on the merged dict so older
+                # per-project configs upgrade cleanly. Also migrate the
+                # snapshot so future saves persist the upgraded labels.
+                self._migrate_button_labels_in_place(merged)
+                self._migrate_button_labels_in_place(self._project_workflow_snapshot)
+                self._populate_from_workflows(merged, drop_tab_selected_rules=True)
+                self._fill_missing_defaults()
+                return
 
         # Fall back to the repo-shared tab_contexts file.
         if self._fallback_path.exists():
@@ -303,6 +359,153 @@ class TaskConfigManager:
         log.info("No config file present (project=%s, fallback=%s); using defaults.",
                  self._project_root, self._fallback_path)
         self._initialize_defaults()
+
+    # ------------------------------------------------------------------
+    # Pack discovery (Phase 3)
+    # ------------------------------------------------------------------
+
+    def _resolve_selected_packs(self) -> List[str]:
+        """Return the ``packs.selected_packs`` list from the project's
+        ``config.json``, or empty in non-project mode."""
+        if self._project_root is None:
+            return []
+        proj = self._project_config_path()
+        if not proj or not proj.exists():
+            return []
+        data = _safe_read_json(proj)
+        if not isinstance(data, dict):
+            return []
+        packs = data.get("packs", {})
+        if not isinstance(packs, dict):
+            return []
+        selected = packs.get("selected_packs", [])
+        return [pid for pid in selected if isinstance(pid, str)]
+
+    def _load_pack_workflow_defaults(self) -> Dict[str, Any]:
+        """Aggregate ``workflows`` dicts from every selected pack.
+
+        For each pack id in ``packs.selected_packs``, the loader resolves
+        the pack's ``pack_workflow_defaults.json`` via the manifest chain
+        (drivers_registry.json → rules_index.json:workflow_defaults) and
+        reads it. Packs without a manifest entry, without the
+        ``workflow_defaults`` field, or whose defaults file is missing
+        are skipped with a debug log. No Python import: packs may live
+        in a different venv than the workflow editor (Codex Q5).
+
+        Multiple packs may declare overlapping tabs. Resolution is
+        deterministic by alphabetical pack id (first wins per key).
+        Phase 5 will refine this with format_version-aware routing.
+        """
+        selected = self._resolve_selected_packs()
+        aggregate: Dict[str, Any] = {}
+        for pack_id in sorted(selected):
+            defaults_path = self._find_pack_workflow_defaults(pack_id)
+            if defaults_path is None:
+                continue
+            data = _safe_read_json(defaults_path)
+            if not isinstance(data, dict):
+                continue
+            workflows = data.get("workflows")
+            if not isinstance(workflows, dict):
+                continue
+            for tab_id, tab_cfg in workflows.items():
+                if not isinstance(tab_cfg, dict):
+                    continue
+                agg_tab = aggregate.setdefault(tab_id, {})
+                for key, value in tab_cfg.items():
+                    if key not in agg_tab:
+                        agg_tab[key] = value
+        return aggregate
+
+    def _find_pack_workflow_defaults(self, pack_id: str) -> Optional[Path]:
+        """Resolve via drivers_registry.json + rules_index.json:workflow_defaults.
+
+        Chain:
+
+        1. Locate ``<repo>/external/rules_packager/drivers_registry.json``
+           by walking up from this module's ``__file__``.
+        2. Look up the entry where ``id == pack_id``.
+        3. Resolve ``rules.source.path`` (relative to the registry's
+           directory).
+        4. Read the per-pack ``rules.rules_index`` file (relative to the
+           source path).
+        5. Read its ``workflow_defaults`` field (relative to the
+           rules_index.json itself).
+
+        Returns ``None`` at any step that fails — packs without a
+        manifest entry or without ``workflow_defaults`` are simply
+        skipped. No ``importlib`` calls: pack code may not be present in
+        the workflow editor's venv (Codex Q5).
+        """
+        registry_path = self._find_drivers_registry()
+        if registry_path is None:
+            log.debug("drivers_registry.json not found; no pack defaults for %r", pack_id)
+            return None
+        data = _safe_read_json(registry_path)
+        if not isinstance(data, dict):
+            return None
+        entry = next(
+            (p for p in data.get("packs", [])
+             if isinstance(p, dict) and p.get("id") == pack_id),
+            None,
+        )
+        if entry is None:
+            log.debug("Pack %r has no entry in %s", pack_id, registry_path)
+            return None
+        rules = entry.get("rules", {})
+        if not isinstance(rules, dict):
+            return None
+        source = rules.get("source", {})
+        src_path = source.get("path") if isinstance(source, dict) else None
+        rules_index_rel = rules.get("rules_index")
+        if not isinstance(src_path, str) or not isinstance(rules_index_rel, str):
+            log.debug("Pack %r entry missing rules.source.path or rules.rules_index", pack_id)
+            return None
+        source_root = (registry_path.parent / src_path).resolve()
+        rules_index_path = source_root / rules_index_rel
+        idx = _safe_read_json(rules_index_path)
+        if not isinstance(idx, dict):
+            log.debug("Pack %r: unreadable rules_index at %s", pack_id, rules_index_path)
+            return None
+        wf_rel = idx.get("workflow_defaults")
+        if not isinstance(wf_rel, str):
+            log.debug("Pack %r: rules_index has no workflow_defaults field", pack_id)
+            return None
+        defaults_path = (rules_index_path.parent / wf_rel).resolve()
+        if not defaults_path.exists():
+            log.warning(
+                "Pack %r: workflow_defaults points at missing file %s",
+                pack_id, defaults_path,
+            )
+            return None
+        log.debug("Pack %r → %s", pack_id, defaults_path)
+        return defaults_path
+
+    def _find_drivers_registry(self) -> Optional[Path]:
+        """Walk up from ``__file__`` looking for
+        ``external/rules_packager/drivers_registry.json``.
+
+        Cached per-instance: the registry location is a property of the
+        install layout, not of the active project. ``False`` is the
+        sentinel meaning "searched, not found" so we don't re-walk on
+        every project open.
+        """
+        cached = self._drivers_registry_cached
+        if isinstance(cached, Path):
+            return cached
+        if cached is False:
+            return None
+        cur = Path(__file__).resolve()
+        for _ in range(8):  # Plenty of headroom for our submodule layout.
+            candidate = cur.parent / "external" / "rules_packager" / "drivers_registry.json"
+            if candidate.exists():
+                self._drivers_registry_cached = candidate
+                return candidate
+            if cur.parent == cur:
+                break
+            cur = cur.parent
+        self._drivers_registry_cached = False
+        return None
 
     def _populate_from_workflows(
         self,
@@ -541,6 +744,88 @@ class TaskConfigManager:
     # Save
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Snapshot stamping (Codex H2: pack defaults never round-trip through save)
+    # ------------------------------------------------------------------
+
+    def _stamp_task_in_snapshot(self, tab_id: str, task_id: str) -> None:
+        """Mirror the typed-cache state of ``<tab_id, task_id>`` into
+        ``_project_workflow_snapshot``. Called from every mutation API
+        so the snapshot stays current; save writes only the snapshot.
+
+        Two filters keep pack data from leaking when bulk callers like
+        ``SettingsDialog._on_save`` round-trip merged caches back
+        through ``set_all_tasks_for_tab`` (Codex Q1):
+
+        * If the task is bit-identical to its pack default AND the
+          snapshot didn't already declare it, this is a no-op (pack
+          data stays in the pack file, not in project config).
+        * If the snapshot already had the task OR the task differs from
+          pack defaults, the snapshot is updated — the user has taken
+          ownership of these fields.
+        """
+        task = next(
+            (t for t in self._task_configs.get(tab_id, []) if t.id == task_id),
+            None,
+        )
+        if task is None:
+            return
+        new_entry = task.to_dict()
+
+        tab_snap_existing = self._project_workflow_snapshot.get(tab_id, {})
+        snapshot_tasks = (
+            tab_snap_existing.get("tasks", [])
+            if isinstance(tab_snap_existing, dict) else []
+        )
+        already_in_snapshot = any(
+            isinstance(t, dict) and t.get("id") == task_id
+            for t in snapshot_tasks if isinstance(snapshot_tasks, list)
+        )
+        pack_task = self._pack_task_dicts_by_tab.get(tab_id, {}).get(task_id)
+        if pack_task is not None and not already_in_snapshot:
+            if _task_dicts_equal(new_entry, pack_task):
+                return  # Pack-identical and never owned by project — no leak.
+
+        tab_snap = self._project_workflow_snapshot.setdefault(tab_id, {})
+        tasks_list = tab_snap.setdefault("tasks", [])
+        for i, existing in enumerate(tasks_list):
+            if isinstance(existing, dict) and existing.get("id") == task_id:
+                tasks_list[i] = new_entry
+                return
+        tasks_list.append(new_entry)
+
+    def _remove_task_from_snapshot(self, tab_id: str, task_id: str) -> None:
+        """Drop *task_id* from the snapshot's tasks list if present."""
+        tab_snap = self._project_workflow_snapshot.get(tab_id)
+        if not isinstance(tab_snap, dict):
+            return
+        tasks_list = tab_snap.get("tasks")
+        if not isinstance(tasks_list, list):
+            return
+        tab_snap["tasks"] = [
+            t for t in tasks_list
+            if not (isinstance(t, dict) and t.get("id") == task_id)
+        ]
+
+    # ------------------------------------------------------------------
+    # Single-writer injection (Codex H1.D / Q7)
+    # ------------------------------------------------------------------
+
+    def register_workflows_writer(
+        self, writer: Optional[Callable[[Dict[str, Any]], bool]]
+    ) -> None:
+        """Register the function that persists the workflows section in
+        project mode. When set, ``save_config()`` calls ``writer(payload)``
+        instead of writing ``<project>/config/config.json`` directly,
+        letting the parent app funnel BOTH ``ProjectConfigDialog`` AND
+        workflow-editor saves through one path. Pass ``None`` to clear.
+
+        Phase 4 wires this; without a registered writer, project-mode
+        saves fall back to a direct atomic write (legacy behavior).
+        """
+        with self._lock:
+            self._workflows_writer = writer
+
     def _build_workflows_section(self) -> Dict[str, Any]:
         """Reassemble the workflows section from typed caches + extras."""
         out: Dict[str, Any] = {}
@@ -557,26 +842,50 @@ class TaskConfigManager:
         return out
 
     def _save_config_internal(self) -> None:
-        """Atomically persist current state to the active sink. Lock-held."""
-        workflows = self._build_workflows_section()
+        """Atomically persist current state to the active sink. Lock-held.
 
-        target = self._project_config_path() if self._project_root else self._fallback_path
-        if target is None:
-            log.error("No save target — project_root=None and no fallback path")
-            return
+        Project mode writes ONLY the project-authored snapshot
+        (``_project_workflow_snapshot``). Pack defaults stay in pack
+        files and are re-merged at load — preventing inherited
+        validators / tasks from being baked into project config.json
+        (Codex H2).
 
-        target.parent.mkdir(parents=True, exist_ok=True)
-
+        If a single-writer callback is registered via
+        ``register_workflows_writer``, project-mode saves route through
+        it instead of writing directly. Unregistered = legacy direct
+        write (Codex H1.D).
+        """
         if self._project_root is not None:
-            # Project mode: preserve-and-overlay on the full config.json.
+            payload = deepcopy(self._project_workflow_snapshot)
+            if self._workflows_writer is not None:
+                ok = bool(self._workflows_writer(payload))
+                if not ok:
+                    log.error("Registered workflows writer reported failure.")
+                return
+
+            target = self._project_config_path()
+            if target is None:
+                log.error("No save target — project_root set but path resolution failed")
+                return
+            target.parent.mkdir(parents=True, exist_ok=True)
+            log.warning(
+                "Direct project-mode save (no single-writer registered). "
+                "Phase 4 wires register_workflows_writer to close Codex H1; "
+                "concurrent ProjectConfigDialog commits could race."
+            )
             full = _safe_read_json(target) if target.exists() else {}
             if not isinstance(full, dict):
                 full = {}
-            full["workflows"] = workflows
+            full["workflows"] = payload
             _atomic_write_json(target, full)
-        else:
-            # Legacy single-file mode: write workflows as the file root.
-            _atomic_write_json(target, workflows)
+            return
+
+        # Legacy single-file mode: write merged workflows as the file root.
+        if self._fallback_path is None:
+            log.error("No save target — project_root=None and no fallback path")
+            return
+        self._fallback_path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write_json(self._fallback_path, self._build_workflows_section())
 
     def save_config(self) -> bool:
         """Thread-safe atomic save to the active sink."""
@@ -604,6 +913,8 @@ class TaskConfigManager:
             self._task_configs.clear()
             self._chat_configs.clear()
             self._raw_extras.clear()
+            self._project_workflow_snapshot = {}
+            self._pack_task_dicts_by_tab = {}
             self._project_root = new_root
             self._load_config()
 
@@ -662,6 +973,24 @@ class TaskConfigManager:
                 return ChatConfig(enabled=c.enabled, system_prompt=c.system_prompt)
             return ChatConfig()
 
+    def get_validator_specs_for_tab(self, tab_id: str) -> List[Dict[str, Any]]:
+        """Return the ``workflows.<tab>.validators`` list as a list of
+        spec dicts (each carries at least ``id``; optionally ``label`` and
+        ``enabled``). Returns an empty list when the tab has no
+        validators configured.
+
+        The list comes from the layered merge of pack defaults + project
+        overrides (see ``_load_pack_workflow_defaults``). Validator
+        specs live in ``_raw_extras`` since the Phase-1 schema treats
+        ``validators`` as an unknown-to-Phase-1 key preserved verbatim.
+        """
+        with self._lock:
+            extras = self._raw_extras.get(tab_id, {})
+            validators = extras.get("validators", [])
+            if not isinstance(validators, list):
+                return []
+            return [dict(v) for v in validators if isinstance(v, dict) and v.get("id")]
+
     def get_selected_rules_for_task(
         self, tab_id: str, task_id: str
     ) -> SelectedRules:
@@ -686,6 +1015,7 @@ class TaskConfigManager:
                     log.warning("Task '%s' already exists in tab '%s'", task_config.id, tab_id)
                     return False
             self._task_configs[tab_id].append(task_config)
+            self._stamp_task_in_snapshot(tab_id, task_config.id)
             return True
 
     def update_task(self, tab_id: str, task_config: TaskConfig) -> bool:
@@ -695,6 +1025,7 @@ class TaskConfigManager:
             for i, existing in enumerate(self._task_configs[tab_id]):
                 if existing.id == task_config.id:
                     self._task_configs[tab_id][i] = task_config
+                    self._stamp_task_in_snapshot(tab_id, task_config.id)
                     return True
         return False
 
@@ -705,6 +1036,7 @@ class TaskConfigManager:
             for i, task in enumerate(self._task_configs[tab_id]):
                 if task.id == task_id:
                     self._task_configs[tab_id].pop(i)
+                    self._remove_task_from_snapshot(tab_id, task_id)
                     return True
         return False
 
@@ -726,6 +1058,9 @@ class TaskConfigManager:
                 except OSError as e:
                     log.warning("Failed to back up config: %s", e)
             self._task_configs[tab_id] = [TaskConfig(**asdict(t)) for t in defaults]
+            # Drop the tab from the snapshot so save reverts to the
+            # pack/baked-in defaults rather than persisting them.
+            self._project_workflow_snapshot.pop(tab_id, None)
             return True
 
     def set_task_enabled(self, tab_id: str, task_id: str, enabled: bool) -> bool:
@@ -735,16 +1070,47 @@ class TaskConfigManager:
             for task in self._task_configs.get(tab_id, []):
                 if task.id == task_id:
                     task.enabled = enabled
+                    self._stamp_task_in_snapshot(tab_id, task_id)
                     return True
         return False
 
     def set_all_tasks_for_tab(self, tab_id: str, tasks: List[TaskConfig]) -> None:
+        """Replace this tab's tasks. The typed cache takes the full list
+        (callers reading via ``get_all_tasks_for_tab`` see everything),
+        but the snapshot stamps per-task with the pack-identical filter
+        so pack tasks the caller round-tripped untouched don't get
+        persisted as project overrides (Codex Q1).
+        """
         with self._lock:
             self._task_configs[tab_id] = list(tasks)
+            new_ids = [task.id for task in tasks]
+            # Per-task stamp (filters pack-identical entries away).
+            for task in tasks:
+                self._stamp_task_in_snapshot(tab_id, task.id)
+            # Drop snapshot entries for tasks no longer in the input —
+            # the user deleted them (or filtered them out).
+            tab_snap = self._project_workflow_snapshot.get(tab_id)
+            if isinstance(tab_snap, dict):
+                existing = tab_snap.get("tasks")
+                if isinstance(existing, list):
+                    kept = [
+                        t for t in existing
+                        if isinstance(t, dict) and t.get("id") in new_ids
+                    ]
+                    if kept:
+                        tab_snap["tasks"] = kept
+                    else:
+                        tab_snap.pop("tasks", None)
+                # Clean up an empty tab entry left behind by the filter
+                # (no tasks AND no sibling keys → nothing to persist).
+                if not tab_snap:
+                    self._project_workflow_snapshot.pop(tab_id, None)
 
     def set_chat_config(self, tab_id: str, chat_config: ChatConfig) -> None:
         with self._lock:
             self._chat_configs[tab_id] = chat_config
+            tab_snap = self._project_workflow_snapshot.setdefault(tab_id, {})
+            tab_snap["chat_config"] = chat_config.to_dict()
 
     def update_task_config(
         self,
@@ -783,6 +1149,11 @@ class TaskConfigManager:
                 return
             for task in tasks:
                 task.selected_rules = _clone_selected_rules(selected)
+                # Persist intent: a rule-set edit applies to every task
+                # in this tab, so every task gets stamped (including
+                # previously-pack-only tasks the user is implicitly
+                # claiming ownership of by editing rules).
+                self._stamp_task_in_snapshot(tab_id, task.id)
 
 
 # ---------------------------------------------------------------------------
@@ -814,3 +1185,37 @@ def _clone_selected_rules(value: SelectedRules) -> SelectedRules:
     if isinstance(value, list):
         return list(value)
     return value
+
+
+def _task_dicts_equal(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+    """True iff two task dicts represent the same TaskConfig values.
+
+    Compares the canonical set of TaskConfig fields only — extras in
+    either dict are ignored. This is what the snapshot-stamp filter
+    uses to decide "is this task bit-identical to its pack default".
+    """
+    keys = {f.name for f in fields(TaskConfig)}
+    return all(a.get(k) == b.get(k) for k in keys)
+
+
+def _merge_workflows(base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:
+    """Shallow per-tab merge: ``overlay`` (project) wins per-key.
+
+    Implements the plan's Phase-2 merge rules verbatim:
+
+    * Project ``tasks`` fully replace pack ``tasks`` when present.
+    * Project ``validators`` fully replace pack ``validators`` when present.
+    * Project ``chat_config`` fully replaces pack ``chat_config``.
+    * Unknown keys: project wins on conflict, otherwise the pack value
+      survives untouched (round-trips via ``_raw_extras``).
+    """
+    merged: Dict[str, Any] = {}
+    for tab_id in set(base) | set(overlay):
+        b = base.get(tab_id, {})
+        o = overlay.get(tab_id, {})
+        if not isinstance(b, dict):
+            b = {}
+        if not isinstance(o, dict):
+            o = {}
+        merged[tab_id] = {**b, **o}
+    return merged

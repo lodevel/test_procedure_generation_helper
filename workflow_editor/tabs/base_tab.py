@@ -170,13 +170,179 @@ class BaseTab(QWidget):
     
     def sync_editors_to_artifacts(self):
         """Sync editor content to ArtifactManager without saving to disk.
-        
+
         Called before dirty checks, tab switches, and saves to ensure
         ArtifactManager has the latest editor content.
-        
+
         Override in subclasses that have editors.
         """
         pass
+
+    # ------------------------------------------------------------------
+    # Validator buttons (Phase 2/3 — registry-driven)
+    # ------------------------------------------------------------------
+
+    def _build_validator_buttons(self, parent_layout: QHBoxLayout) -> int:
+        # Remember the layout so ``rebuild_validator_buttons`` can refresh
+        # it when the active project (and therefore the validator config)
+        # changes.
+        self._validator_button_layout = parent_layout
+        return self._populate_validator_buttons(parent_layout)
+
+    def rebuild_validator_buttons(self) -> None:
+        """Rebuild this tab's validator buttons against the current
+        TaskConfigManager state. Called by
+        ``MainWindow.refresh_all_button_labels`` after
+        ``task_config_manager.reload(project_root)`` so that opening a
+        project surfaces its configured validators."""
+        layout = getattr(self, "_validator_button_layout", None)
+        if layout is None:
+            return
+        # Remove existing validator buttons (tagged with the validator_id
+        # property). Leave any non-validator widgets the tab put in the
+        # same row (e.g. Format JSON) in place.
+        for i in reversed(range(layout.count())):
+            item = layout.itemAt(i)
+            widget = item.widget() if item is not None else None
+            if isinstance(widget, QPushButton) and widget.property("validator_id"):
+                layout.removeWidget(widget)
+                widget.deleteLater()
+        self._populate_validator_buttons(layout)
+
+    def _populate_validator_buttons(self, parent_layout: QHBoxLayout) -> int:
+        """Populate *parent_layout* with one button per registered validator
+        listed in ``workflows.<tab>.validators``.
+
+        Returns the count of buttons actually added. Skips disabled
+        specs and validators whose id has no matching registry entry
+        (with a warning log so the operator can see why a config-
+        declared validator failed to appear).
+
+        Modal feedback is dropped universally (plan decision 2026-05-10);
+        outcomes route to the dock panel only. The tab's
+        ``status_message`` signal carries a one-line summary for the
+        status bar.
+        """
+        from ..core.validators_registry import (
+            ensure_builtins_registered,
+            is_registered,
+        )
+
+        manager = self.task_config_manager
+        tab_id = getattr(self, "tab_id", None)
+        if manager is None or tab_id is None:
+            return 0
+        if not hasattr(manager, "get_validator_specs_for_tab"):
+            return 0  # older TaskConfigManager — Phase 1 install
+
+        ensure_builtins_registered()
+        specs = manager.get_validator_specs_for_tab(tab_id)
+
+        added = 0
+        for spec in specs:
+            vid = spec.get("id")
+            if not vid or not spec.get("enabled", True):
+                continue
+            if not is_registered(vid):
+                log.warning(
+                    "Tab %s: validator id %r is not in the registry; skipping button.",
+                    tab_id, vid,
+                )
+                continue
+            label = spec.get("label") or self._derive_validator_label(vid)
+            tooltip = spec.get("tooltip") or f"Run validator: {vid}"
+            btn = self.create_button(
+                label,
+                # default-arg capture so the loop variable isn't late-bound.
+                callback=lambda _checked=False, _vid=vid: self._run_validator(_vid),
+                tooltip=tooltip,
+            )
+            btn.setProperty("validator_id", vid)
+            parent_layout.addWidget(btn)
+            added += 1
+        return added
+
+    def _derive_validator_label(self, validator_id: str) -> str:
+        """Fallback label for a validator without an explicit ``label`` —
+        e.g. ``rules_packager_base.validate_procedure`` → ``Validate Procedure``."""
+        short = validator_id.rsplit(".", 1)[-1]
+        return short.replace("_", " ").title()
+
+    def _get_artifact_for_validation(self, name: str) -> Optional[str]:
+        """Return the *current* (live editor) content for a validator.
+
+        Default implementation reads from the artifact manager (which may
+        be slightly behind the live editor if the user hasn't synced).
+        Tabs with editors should override to read the editor directly
+        OR call ``sync_editors_to_artifacts()`` before validation.
+        """
+        am = getattr(self.main_window, "artifact_manager", None)
+        if am is None:
+            return None
+        artifact = None
+        if name == "procedure_text":
+            artifact = getattr(am, "procedure_text", None)
+        elif name == "procedure_json":
+            artifact = getattr(am, "procedure_json", None)
+        elif name == "test_code":
+            artifact = getattr(am, "test_code", None)
+        return artifact.content if artifact else None
+
+    def _run_validator(self, validator_id: str) -> None:
+        """Look up *validator_id*, build a ``ValidatorContext`` from the
+        tab's live state, dispatch, and route the outcome to the dock."""
+        from ..core.validators_registry import (
+            ValidatorContext,
+            get as get_validator,
+        )
+        from ..llm.validator_dispatch import render_validation_outcome_summary
+
+        # Push editor → artifact_manager so live content is visible to
+        # validators reading via the default ``_get_artifact_for_validation``.
+        try:
+            self.sync_editors_to_artifacts()
+        except Exception:
+            log.debug("sync_editors_to_artifacts raised; continuing", exc_info=True)
+
+        try:
+            validator = get_validator(validator_id)
+        except KeyError:
+            log.error("Validator %r not registered at click time", validator_id)
+            self.status_message.emit(
+                f"Validator {validator_id!r} is not registered (see logs)."
+            )
+            return
+
+        ctx = ValidatorContext(
+            artifact_text=self._get_artifact_for_validation("procedure_text"),
+            artifact_json=self._get_artifact_for_validation("procedure_json"),
+            artifact_code=self._get_artifact_for_validation("test_code"),
+            project_root=self.project_manager.project_root,
+            tab_id=getattr(self, "tab_id", ""),
+        )
+
+        try:
+            outcome = validator(ctx)
+        except Exception as exc:
+            log.exception("Validator %s raised: %s", validator_id, exc)
+            self.status_message.emit(f"Validator {validator_id} crashed; see logs.")
+            return
+
+        dock = getattr(self.main_window, "dock", None)
+        if outcome.skipped:
+            # Clear stale findings + status hint. No modal (plan 2026-05-10).
+            if dock is not None:
+                dock.show_validation_result_from_list([])
+            self.status_message.emit(
+                outcome.reason or f"{self._derive_validator_label(validator_id)}: skipped."
+            )
+            return
+
+        if dock is not None:
+            dock.show_validation_result_from_list(
+                [issue.to_dock_dict() for issue in outcome.issues]
+            )
+        self.status_message.emit(render_validation_outcome_summary(outcome))
     
     def save_all_artifacts(self):
         """Save all artifacts managed by this tab (sync + save + reset dirty).

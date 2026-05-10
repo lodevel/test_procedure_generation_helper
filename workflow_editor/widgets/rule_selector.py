@@ -3,6 +3,11 @@ Rule Selector Widget - UI for selecting which rules to include per tab.
 
 Provides checkboxes for each rule file, allowing users to manually
 select which rules are included in the LLM context for each tab.
+
+After Phase 1 of the workflows-to-project-config refactor, persistence
+flows through ``TaskConfigManager.set_selected_rules_for_tab`` (which
+propagates the selection to each task in the tab). The widget keeps a
+tab-level UI; per-task customization will land in Phase 4's editor.
 """
 
 from typing import TYPE_CHECKING
@@ -15,6 +20,7 @@ from PySide6.QtCore import Signal, Qt
 
 if TYPE_CHECKING:
     from ..core import ProjectManager
+    from ..core.task_config import TaskConfigManager
 
 from ..theme import disabled_text
 
@@ -22,30 +28,40 @@ from ..theme import disabled_text
 class RuleSelectorWidget(QGroupBox):
     """
     Widget for selecting rules to include in tab context.
-    
+
     Features:
     - Checkbox for each rule file
     - Select All / Clear All buttons
-    - Persists selections to config via ProjectManager
+    - Persists selections via TaskConfigManager (per-task selected_rules,
+      uniformly populated across the tab's tasks for now).
     """
-    
+
     # Signal emitted when rule selection changes
     rules_changed = Signal(list)  # List of selected rule filenames
-    
-    def __init__(self, tab_id: str, project_manager: "ProjectManager", parent=None):
+
+    def __init__(
+        self,
+        tab_id: str,
+        project_manager: "ProjectManager",
+        task_config_manager: "TaskConfigManager",
+        parent=None,
+    ):
         """
         Initialize rule selector.
-        
+
         Args:
             tab_id: Tab identifier ("text_json", "json_code")
-            project_manager: ProjectManager for loading/saving config
+            project_manager: ProjectManager for enumerating available rules
+            task_config_manager: TaskConfigManager that owns the selection
+                under ``workflows.<tab>.tasks[*].selected_rules``
             parent: Parent widget
         """
         super().__init__("Rule Selection", parent)
         self.tab_id = tab_id
         self.project_manager = project_manager
+        self.task_config_manager = task_config_manager
         self.checkboxes: dict[str, QCheckBox] = {}
-        
+
         self._setup_ui()
         self._load_rules()
     
@@ -99,34 +115,46 @@ class RuleSelectorWidget(QGroupBox):
         for checkbox in self.checkboxes.values():
             checkbox.deleteLater()
         self.checkboxes.clear()
-        
+
         # Get available rule files
         rule_files = self.project_manager.get_rules_files()
-        
+
         if not rule_files:
             no_rules_label = QLabel("No rules available")
             no_rules_label.setStyleSheet(f"color: {disabled_text()}; font-style: italic;")
             self.checkbox_layout.addWidget(no_rules_label)
             self._update_count()
             return
-        
-        # Load current selections from config
-        config = self.project_manager.load_tab_contexts_config()
-        tab_config = config.get(self.tab_id, {"selected_rules": "all"})
-        selected_rules = self.project_manager.get_expanded_selected_rules(tab_config)
-        
+
+        # Resolve the tab's current selection — pulled from the first task
+        # in the tab (rule selection is uniform across tasks within a tab
+        # in Phase 1; the per-task editor lands in Phase 4).
+        available_filenames = [rf.name for rf in rule_files]
+        selected_rules = self._read_current_selection(available_filenames)
+
         # Create checkbox for each rule
-        for rule_file in rule_files:
-            filename = rule_file.name
+        for filename in available_filenames:
             checkbox = QCheckBox(filename)
             checkbox.setChecked(filename in selected_rules)
             checkbox.stateChanged.connect(self._on_selection_changed)
-            
+
             self.checkbox_layout.addWidget(checkbox)
             self.checkboxes[filename] = checkbox
-        
+
         self.checkbox_layout.addStretch()
         self._update_count()
+
+    def _read_current_selection(self, available_filenames: list[str]) -> list[str]:
+        """Resolve the tab's current ``selected_rules`` to a concrete list of
+        filenames, expanding the ``"all"`` sentinel against the project's
+        available rule files."""
+        tasks = self.task_config_manager.get_all_tasks_for_tab(self.tab_id)
+        raw = tasks[0].selected_rules if tasks else None
+        if raw is None or raw == "all":
+            return list(available_filenames)
+        if isinstance(raw, list):
+            return list(raw)
+        return list(available_filenames)
     
     def _on_selection_changed(self):
         """Handle checkbox state change."""
@@ -159,20 +187,10 @@ class RuleSelectorWidget(QGroupBox):
         ]
     
     def _save_selections(self, selected_rules: list[str]):
-        """
-        Save current selections to config.
-        
-        Args:
-            selected_rules: List of selected rule filenames
-        """
-        # Load config
-        config = self.project_manager.load_tab_contexts_config()
-        
-        # Update this tab's selections
-        config[self.tab_id]["selected_rules"] = selected_rules
-        
-        # Save config
-        self.project_manager.save_tab_contexts_config(config)
+        """Save current selections through the task-config single-writer
+        contract (Phase 1: propagates to every task in the tab)."""
+        self.task_config_manager.set_selected_rules_for_tab(self.tab_id, selected_rules)
+        self.task_config_manager.save_config()
     
     def _update_count(self):
         """Update the rule count label."""
@@ -193,22 +211,30 @@ class RuleSelectorDialog(QDialog):
     Returns selected rules when accepted.
     """
     
-    def __init__(self, tab_id: str, project_manager: "ProjectManager", parent=None):
+    def __init__(
+        self,
+        tab_id: str,
+        project_manager: "ProjectManager",
+        task_config_manager: "TaskConfigManager",
+        parent=None,
+    ):
         """
         Initialize rule selector dialog.
-        
+
         Args:
             tab_id: Tab identifier ("text_json", "json_code")
-            project_manager: ProjectManager for loading/saving config
+            project_manager: ProjectManager for enumerating available rules
+            task_config_manager: TaskConfigManager that owns the selection
             parent: Parent widget
         """
         super().__init__(parent)
         self.setWindowTitle(f"Select Rules - {tab_id}")
         self.resize(500, 400)
-        
+
         self.tab_id = tab_id
         self.project_manager = project_manager
-        
+        self.task_config_manager = task_config_manager
+
         self._setup_ui()
     
     def _setup_ui(self):
@@ -221,7 +247,9 @@ class RuleSelectorDialog(QDialog):
         layout.addWidget(info)
         
         # Rule selector widget
-        self.rule_selector = RuleSelectorWidget(self.tab_id, self.project_manager, self)
+        self.rule_selector = RuleSelectorWidget(
+            self.tab_id, self.project_manager, self.task_config_manager, self
+        )
         layout.addWidget(self.rule_selector)
         
         # OK/Cancel buttons

@@ -105,10 +105,13 @@ class MainWindow(QMainWindow):
         self._config_watcher.fileChanged.connect(self._on_config_file_changed)
         self._watched_config_path: Optional[Path] = None
         
-        # Initialize task config manager
-        config_dir = Path(__file__).parent.parent / "config"
-        config_path = config_dir / "tab_contexts.json"
-        self.task_config_manager = TaskConfigManager(config_path)
+        # Initialize task config manager pointing at the repo-shared
+        # fallback. ``reload(project_root)`` is called below whenever a
+        # project is loaded (CLI or interactive), switching the manager
+        # into project-mode and triggering the legacy
+        # ``tab_contexts.json`` → ``config.json:workflows`` migration.
+        fallback_path = Path(__file__).parent.parent / "config" / "tab_contexts.json"
+        self.task_config_manager = TaskConfigManager(fallback_path=fallback_path)
         
         # Initialize LLM
         self._settings = load_settings()
@@ -125,13 +128,19 @@ class MainWindow(QMainWindow):
         
         # Apply settings
         self._apply_settings()
-        
+
         # Setup keyboard shortcuts
         self._setup_shortcuts()
-        
+
         # Disable tabs and dock until a test is loaded
         self.tab_widget.setEnabled(False)
         self.dock.setEnabled(False)
+
+        # Refresh button labels whenever the active project's workflow
+        # config switches (after reload(project_root) lifts a project's
+        # ``config.json:workflows`` overrides). Tabs are constructed
+        # above so the callback can safely iterate them.
+        self.task_config_manager.register_reload_callback(self.refresh_all_button_labels)
 
     def showEvent(self, event):
         """Handle window show event - process CLI arguments after UI is ready."""
@@ -154,11 +163,14 @@ class MainWindow(QMainWindow):
                 if not self.project_manager.set_project_root(self._cli_project_root):
                     log.error(f"Failed to set project root: {self._cli_project_root}")
                     return
-                
+
+                # Switch task configurations to the CLI-supplied project.
+                self.task_config_manager.reload(self.project_manager.project_root)
+
                 # Update workspace widget
                 self.workspace_widget._load_test_list()
                 self.workspace_widget.new_test_btn.setEnabled(True)
-                
+
                 # Detect rules
                 self.project_manager.detect_rules_root()
                 self._update_project_rules_indicators()
@@ -1159,10 +1171,15 @@ class MainWindow(QMainWindow):
         # Now initialize the UI with the new project
         self.workspace_widget._load_test_list()
         self.workspace_widget.new_test_btn.setEnabled(True)
-        
+
         # Detect rules (will prompt user if not found)
         self.project_manager.detect_rules_root()
-        
+
+        # Switch task configurations to the freshly-created project so
+        # any workflow saves land in the new ``config.json``. The
+        # registered reload callback refreshes button labels.
+        self.task_config_manager.reload(self.project_manager.project_root)
+
         # Update status bar indicators
         self._update_project_rules_indicators()
         self.text_json_tab.refresh_parser_button()
@@ -1198,10 +1215,15 @@ class MainWindow(QMainWindow):
         if self.project_manager.set_project_root(project_path):
             self.workspace_widget._load_test_list()
             self.workspace_widget.new_test_btn.setEnabled(True)
-            
+
             # Detect rules
             self.project_manager.detect_rules_root()
-            
+
+            # Switch task configurations to the newly-opened project — this
+            # clears the cache under lock, runs any legacy tab_contexts.json
+            # migration, and re-reads the workflows section.
+            self.task_config_manager.reload(self.project_manager.project_root)
+
             # Update status bar indicators
             self._update_project_rules_indicators()
             self.text_json_tab.refresh_parser_button()
@@ -1219,7 +1241,10 @@ class MainWindow(QMainWindow):
                 self.workspace_widget._load_test_list()
                 self.workspace_widget.new_test_btn.setEnabled(True)
                 self.project_manager.detect_rules_root()
-                
+
+                # Switch task configurations to the detected project root.
+                self.task_config_manager.reload(self.project_manager.project_root)
+
                 # Update status bar indicators
                 self._update_project_rules_indicators()
                 self.text_json_tab.refresh_parser_button()

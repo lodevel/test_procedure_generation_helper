@@ -121,7 +121,12 @@ class DockWidget(QDockWidget):
             return
         
         # Show dialog
-        dialog = RuleSelectorDialog(tab_id, self.main_window.project_manager, self)
+        dialog = RuleSelectorDialog(
+            tab_id,
+            self.main_window.project_manager,
+            self.main_window.task_config_manager,
+            self,
+        )
         if dialog.exec():
             selected_rules = dialog.get_selected_rules()
             # Update tab context with new rules

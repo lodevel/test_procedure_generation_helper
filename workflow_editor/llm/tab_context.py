@@ -24,6 +24,7 @@ from ..core.session_state import SessionState
 
 if TYPE_CHECKING:
     from ..core import ProjectManager, ArtifactManager
+    from ..core.task_config import TaskConfigManager
     from .backend_factory import BackendFactory
 
 log = logging.getLogger(__name__)
@@ -133,22 +134,26 @@ class TabContext:
         backend_factory: "BackendFactory",
         project_manager: "ProjectManager",
         artifact_manager: "ArtifactManager",
+        task_config_manager: "TaskConfigManager",
         session_state: "SessionState" = None,  # Ignored - kept for backward compatibility
     ):
         """
         Initialize tab context.
-        
+
         Args:
             tab_id: Tab identifier ("text_only", "text_json", "json_code")
             backend_factory: Factory for creating backend instances
-            project_manager: Project manager for config and rules
+            project_manager: Project manager for rule enumeration
             artifact_manager: Artifact manager for current content
+            task_config_manager: TaskConfigManager — owns per-task
+                ``selected_rules`` resolution after Phase 1.
             session_state: DEPRECATED - ignored. Each tab creates its own SessionState.
         """
         self.tab_id = tab_id
         self._backend_factory = backend_factory
         self._backend: Optional[LLMBackend] = None  # Lazy initialization
         self.project_manager = project_manager
+        self.task_config_manager = task_config_manager
         self.artifact_manager = artifact_manager
         
         # Per-tab session state (in-memory only, not persisted)
@@ -182,20 +187,9 @@ class TabContext:
         self._last_text_content: Optional[str] = None
         self._rules_sent: bool = False
         
-        # Load selected rules from config
-        log.info(f"TabContext {tab_id}: Initializing - about to load config...")
-        log.info(f"TabContext {tab_id}: project_root = {self.project_manager.project_root}")
-        config_path = self.project_manager.get_tab_contexts_config_path()
-        log.info(f"TabContext {tab_id}: config_path = {config_path}")
-        
-        config = self.project_manager.load_tab_contexts_config()
-        log.info(f"TabContext {tab_id}: Full config loaded = {config}")
-        
-        self.tab_config = config.get(self.tab_id, {"selected_rules": "all"})
-        log.info(f"TabContext {tab_id}: My tab_config (from key '{self.tab_id}') = {self.tab_config}")
-        
-        log.info(f"TabContext initialized for {tab_id}")
-        log.debug(f"TabContext {self.tab_id}: loaded config = {self.tab_config}")
+        log.info(
+            f"TabContext initialized for {tab_id} (project_root={self.project_manager.project_root})"
+        )
     
     @property
     def backend(self) -> LLMBackend:
@@ -263,27 +257,13 @@ class TabContext:
         """
         self.artifact_manager = artifact_manager
         # Note: session_state parameter is ignored - each tab has its own per-tab SessionState
-        
-        # FIX #1: Reload config now that project_root is available
-        # During initialization, project_root=None causes default config to load
-        # Now that a project is open, reload from actual tab_contexts.json
-        old_config = self.tab_config.copy()
-        log.info(f"TabContext {self.tab_id}: Reloading config (project opened)")
-        log.info(f"TabContext {self.tab_id}: OLD config = {old_config}")
-        
-        # Reload config from project's tab_contexts.json
-        config = self.project_manager.load_tab_contexts_config()
-        self.tab_config = config.get(self.tab_id, {"selected_rules": "all"})
-        
-        log.info(f"TabContext {self.tab_id}: NEW config = {self.tab_config}")
-        
-        # If config changed, clear rules checksum to force rules resend
-        if old_config != self.tab_config:
-            log.info(f"TabContext {self.tab_id}: Config changed! Clearing rules checksum to force resend")
-            self._rules_checksum = None
-        else:
-            log.info(f"TabContext {self.tab_id}: Config unchanged")
-        
+
+        # Workflow config reloads are driven externally by MainWindow calling
+        # ``task_config_manager.reload(project_root)`` when a project opens.
+        # Clear the rules checksum so the next LLM request resends rules
+        # against the (possibly new) per-task selection.
+        self._rules_checksum = None
+
         log.info(f"TabContext {self.tab_id}: managers updated")
     
     def reset_conversation(self):
@@ -301,17 +281,41 @@ class TabContext:
         log.info(f"TabContext {self.tab_id}: conversation reset (_first_interaction=True, optimization state cleared)")
     
     def get_selected_rules(self) -> list[str]:
+        """Resolve the rule filenames to send for the current LLM request.
+
+        After Phase 1 of the workflows-to-project-config refactor,
+        ``selected_rules`` is per-task. We pick the task that's actively
+        being executed (``self._current_task``) when one is set, and fall
+        back to the tab's first task otherwise. The ``"all"`` sentinel
+        expands against the project's available rule files.
         """
-        Get list of selected rule filenames for this tab.
-        
-        Returns:
-            List of rule filenames (e.g., ['rule1.md', 'rule2.md'])
-        """
-        log.info(f"TabContext {self.tab_id}: get_selected_rules() called")
-        log.info(f"TabContext {self.tab_id}: self.tab_config = {self.tab_config}")
-        selected_rules = self.project_manager.get_expanded_selected_rules(self.tab_config)
-        log.info(f"TabContext {self.tab_id}: get_selected_rules() returning {len(selected_rules)} rules: {selected_rules}")
-        return selected_rules
+        raw = self._raw_selected_rules_for_current_task()
+        if raw is None or raw == "all":
+            return [rf.name for rf in self.project_manager.get_rules_files()]
+        if isinstance(raw, list):
+            return list(raw)
+        log.warning(
+            f"TabContext {self.tab_id}: unexpected selected_rules type %r; falling back to all",
+            type(raw).__name__,
+        )
+        return [rf.name for rf in self.project_manager.get_rules_files()]
+
+    def _raw_selected_rules_for_current_task(self):
+        """Look up the per-task ``selected_rules`` value (no expansion)."""
+        # Phase 1 stores selected_rules per task; prefer the task that's
+        # being executed right now (``_current_task`` set by ``_build_request``).
+        if self._current_task is not None:
+            value = self.task_config_manager.get_selected_rules_for_task(
+                self.tab_id, self._current_task.value
+            )
+            if value is not None:
+                return value
+        # No active task yet — use the first task's selection as a stable
+        # representative for "this tab".
+        tasks = self.task_config_manager.get_all_tasks_for_tab(self.tab_id)
+        if tasks:
+            return tasks[0].selected_rules
+        return None
     
     def update_backend(self, new_backend: LLMBackend):
         """
@@ -514,24 +518,21 @@ class TabContext:
         log.debug(f"TabContext {self.tab_id}: Optimization state confirmed after successful delivery")
     
     def set_selected_rules(self, rule_filenames: list[str]):
+        """Update selected rules for this tab and persist via TaskConfigManager.
+
+        Phase 1 keeps the UI tab-level: the same list propagates to every
+        task in the tab. Per-task selection lands in Phase 4's editor.
         """
-        Update selected rules for this tab and save to config.
-        
-        Args:
-            rule_filenames: List of rule filenames to select
-        """
-        self.tab_config["selected_rules"] = rule_filenames
-        
-        # Save to config
-        config = self.project_manager.load_tab_contexts_config()
-        config[self.tab_id] = self.tab_config
-        self.project_manager.save_tab_contexts_config(config)
-        
-        # Clear rules checksum to force resend with new selection
-        # This ensures the new rule selection will be sent on the next LLM request
+        self.task_config_manager.set_selected_rules_for_tab(self.tab_id, rule_filenames)
+        self.task_config_manager.save_config()
+
+        # Clear rules checksum so the next LLM request resends rules.
         self._rules_checksum = None
-        
-        log.info(f"TabContext {self.tab_id}: rules updated to {len(rule_filenames)} selected, checksum cleared")
+
+        log.info(
+            f"TabContext {self.tab_id}: rules updated to {len(rule_filenames)} selected, "
+            "checksum cleared"
+        )
     
     def get_selected_rules_content(self) -> Optional[str]:
         """

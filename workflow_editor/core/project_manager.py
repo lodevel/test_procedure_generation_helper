@@ -101,7 +101,7 @@ class ProjectManager:
         
         Args:
             project_path: Path where project should be created
-            create_config: If True, creates config/ folder with default tab_contexts.json
+            create_config: If True, creates an (empty) config/ folder. Workflow defaults are written lazily by TaskConfigManager on first save.
             create_readme: If True, creates a basic README.md file
             
         Returns:
@@ -153,39 +153,14 @@ You can include:
                     f.write(rules_readme_content)
                 log.info(f"Created rules/README.md: {rules_readme}")
             
-            # Create config/ folder with default tab_contexts.json if requested
+            # Create config/ folder if requested. Workflow defaults live
+            # in the project's ``config/config.json:workflows`` section
+            # and are written by ``TaskConfigManager.save_config()`` on
+            # demand — no seed file needed at create time.
             if create_config:
                 config_dir = project_path / "config"
                 config_dir.mkdir(exist_ok=True)
                 log.info(f"Created config/ folder: {config_dir}")
-                
-                # Create default tab_contexts.json
-                tab_contexts_path = config_dir / "tab_contexts.json"
-                if not tab_contexts_path.exists():
-                    default_config = {}
-                    for tab_id in ["text_only", "text_json", "json_code"]:
-                        tasks = DEFAULT_TASK_CONFIGS.get(tab_id, [])
-                        chat_config = DEFAULT_CHAT_CONFIG.get(tab_id)
-                        
-                        default_config[tab_id] = {
-                            "tasks": [
-                                {
-                                    "name": task.name,
-                                    "button_label": task.button_label,
-                                    "prompt_template": task.prompt_template,
-                                    "enabled": task.enabled
-                                }
-                                for task in tasks
-                            ],
-                            "chat_config": {
-                                "enabled": chat_config.enabled if chat_config else True,
-                                "system_prompt": chat_config.system_prompt if chat_config else None
-                            }
-                        }
-                    
-                    with open(tab_contexts_path, 'w', encoding='utf-8') as f:
-                        json.dump(default_config, f, indent=2)
-                    log.info(f"Created tab_contexts.json: {tab_contexts_path}")
             
             # Create README.md if requested
             if create_readme:
@@ -204,8 +179,7 @@ Test procedure project created with Workflow Editor.
     - `test.py` - Python test implementation
 - `rules/` - LLM rules and guidance (markdown files)
   - Add `.md` files here to guide test procedure generation
-- `config/` - Configuration files
-  - `tab_contexts.json` - Task and chat configurations per tab
+- `config/` - Configuration files (``config.json:workflows`` holds per-tab tasks and chat settings)
 
 ## Getting Started
 
@@ -637,128 +611,3 @@ Test procedure project created with Workflow Editor.
         except OSError:
             return None
     
-    def get_tab_contexts_config_path(self) -> Optional[Path]:
-        """Get the path to tab_contexts.json config file."""
-        log.info(f"ProjectManager: get_tab_contexts_config_path() called")
-        log.info(f"ProjectManager: project_root = {self.project_root}")
-        if self.project_root is None:
-            log.warning("ProjectManager: project_root is None! Cannot determine config path.")
-            return None
-        
-        config_dir = self.project_root / "config"
-        config_dir.mkdir(exist_ok=True)
-        
-        config_path = config_dir / "tab_contexts.json"
-        log.info(f"ProjectManager: config_path = {config_path}")
-        log.info(f"ProjectManager: config file exists = {config_path.exists()}")
-        return config_path
-    
-    def load_tab_contexts_config(self) -> dict:
-        """
-        Load tab contexts configuration from config/tab_contexts.json.
-        
-        Returns:
-            Dictionary with tab configurations. If file doesn't exist,
-            returns default config with all rules selected.
-        """
-        log.info("ProjectManager: load_tab_contexts_config() called")
-        config_path = self.get_tab_contexts_config_path()
-        log.info(f"ProjectManager: config_path = {config_path}")
-        
-        # Default config - all rules selected for all tabs
-        default_config = {
-            "text_only": {
-                "selected_rules": "all"
-            },
-            "text_json": {
-                "selected_rules": "all"  # Will be expanded to list of rule filenames
-            },
-            "json_code": {
-                "selected_rules": "all"
-            }
-        }
-        
-        if config_path is None:
-            log.warning("ProjectManager: config_path is None! Returning default config with 'all' rules.")
-            return default_config
-        
-        if not config_path.exists():
-            log.warning(f"ProjectManager: Config file does not exist: {config_path}")
-            log.warning("ProjectManager: Returning default config with 'all' rules.")
-            return default_config
-        
-        try:
-            log.info(f"ProjectManager: Reading config file: {config_path}")
-            with open(config_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                log.info(f"ProjectManager: Config file content:\n{content}")
-                config = json.loads(content)
-            
-            log.info(f"ProjectManager: Parsed config = {config}")
-            
-            # Validate structure - ensure all tabs exist
-            for tab_id in ["text_only", "text_json", "json_code"]:
-                if tab_id not in config:
-                    log.warning(f"ProjectManager: tab_id '{tab_id}' missing from config, adding default")
-                    config[tab_id] = default_config[tab_id].copy()
-            
-            log.info(f"ProjectManager: Final config after validation = {config}")
-            return config
-        except (json.JSONDecodeError, OSError) as e:
-            log.error(f"Failed to load tab_contexts.json: {e}, using defaults")
-            return default_config
-    
-    def save_tab_contexts_config(self, config: dict) -> bool:
-        """
-        Save tab contexts configuration to config/tab_contexts.json.
-        
-        Args:
-            config: Dictionary with tab configurations
-            
-        Returns:
-            True if saved successfully, False otherwise
-        """
-        config_path = self.get_tab_contexts_config_path()
-        if config_path is None:
-            return False
-        
-        try:
-            # Ensure config directory exists
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            with open(config_path, 'w', encoding='utf-8') as f:
-                json.dump(config, f, indent=2)
-            
-            return True
-        except OSError as e:
-            log.error(f"Failed to save tab_contexts.json: {e}")
-            return False
-    
-    def get_expanded_selected_rules(self, tab_config: dict) -> list[str]:
-        """
-        Expand 'all' to list of rule filenames.
-        
-        Args:
-            tab_config: Tab configuration dict with 'selected_rules' field
-            
-        Returns:
-            List of rule filenames (e.g., ['rule1.md', 'rule2.md'])
-        """
-        log.info(f"ProjectManager: get_expanded_selected_rules() called with tab_config = {tab_config}")
-        selected = tab_config.get("selected_rules", "all")
-        log.info(f"ProjectManager: selected_rules value = {repr(selected)}")
-        
-        if selected == "all":
-            log.info("ProjectManager: 'all' detected - expanding to all rule files")
-            all_rules = [f.name for f in self.get_rules_files()]
-            log.info(f"ProjectManager: Expanded to {len(all_rules)} rules: {all_rules}")
-            return all_rules
-        
-        # selected should be a list of filenames
-        if isinstance(selected, list):
-            log.info(f"ProjectManager: List detected - returning {len(selected)} rules: {selected}")
-            return selected
-        
-        log.warning(f"ProjectManager: Unexpected selected_rules type: {type(selected)} - returning empty list")
-        return []
-

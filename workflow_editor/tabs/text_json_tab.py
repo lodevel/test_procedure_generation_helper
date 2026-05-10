@@ -55,6 +55,7 @@ class TextJsonTab(LLMTabMixin, BaseTab):
             backend_factory=main_window.backend_factory,
             project_manager=main_window.project_manager,
             artifact_manager=main_window.artifact_manager,
+            task_config_manager=main_window.task_config_manager,
             session_state=main_window.session_state
         )
     

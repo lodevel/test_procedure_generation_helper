@@ -81,7 +81,7 @@ class NewProjectDialog(QDialog):
         
         self.create_config_check = QCheckBox("config/ folder with default settings")
         self.create_config_check.setChecked(False)
-        self.create_config_check.setToolTip("Creates config/tab_contexts.json with default task configurations")
+        self.create_config_check.setToolTip("Creates an empty config/ folder (workflows section written lazily into config.json)")
         options_layout.addWidget(self.create_config_check)
         
         self.create_readme_check = QCheckBox("README.md file")

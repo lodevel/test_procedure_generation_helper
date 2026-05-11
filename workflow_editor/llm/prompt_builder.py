@@ -134,10 +134,18 @@ Do NOT generate 'test_code' or 'procedure_text' proposals for this task.
         LLMTask.AD_HOC_CHAT: """
 Task: Respond to user question or request.
 
-The user is asking a question or making a request related to test procedure authoring.
-Respond helpfully based on the context provided.
-If the user asks for changes to an artifact, include a proposal in your response.
-If the user asks a question, answer it without modifying artifacts.
+The user is asking a question or making a request related to test
+procedure authoring. Respond CONSERVATIVELY:
+
+- Only review or propose changes when the user EXPLICITLY asks for
+  them (e.g. "review this", "fix the equipment IDs", "rewrite step 3").
+- If the user's intent is unclear OR the message is conversational
+  ("hi", "test", "?", short greetings, ambiguous one-liners), ask a
+  brief clarifying question. Do NOT proactively review the procedure
+  or produce a proposal.
+- If the user asks a question, answer it without modifying artifacts.
+- Never include a proposal (procedure_json, test_code, procedure_text)
+  unless the user explicitly asked for a change.
 """,
         
         LLMTask.REVIEW_CODE: """
@@ -322,16 +330,19 @@ Rules:
     def _get_task_prompt(self, task: LLMTask) -> str:
         """
         Get the prompt template for a task with fallback chain.
-        
+
         Resolution order:
         1. Custom prompt from TaskConfigManager (if configured)
+        1b. For AD_HOC_CHAT: per-tab ``chat_config.system_prompt`` (so
+            the workflows-dialog Chat editor actually takes effect at
+            runtime — Phase 4.5).
         2. Custom prompt from deprecated custom_prompts dict (if provided)
         3. DEFAULT_PROMPTS for the specific task
         4. DEFAULT_PROMPTS[AD_HOC_CHAT] as last resort
-        
+
         Args:
             task: The LLM task to get prompt for
-        
+
         Returns:
             Prompt template string
         """
@@ -341,12 +352,23 @@ Rules:
             if task_config is not None and task_config.prompt_template is not None:
                 log.debug(f"Using custom prompt for task '{task.value}' from TaskConfigManager")
                 return task_config.prompt_template
-        
+
+        # 1b. For AD_HOC_CHAT, consult the tab's chat_config.system_prompt.
+        # The workflows dialog's Chat section edits this field; without
+        # this wiring the field was stored-but-unused.
+        if (task == LLMTask.AD_HOC_CHAT
+                and self._task_config_manager is not None
+                and self._tab_id is not None):
+            chat = self._task_config_manager.get_chat_config(self._tab_id)
+            if chat is not None and chat.system_prompt:
+                log.debug(f"Using chat_config.system_prompt for tab '{self._tab_id}'")
+                return chat.system_prompt
+
         # 2. Try deprecated custom_prompts dict (backward compatibility)
         if task in self._custom_prompts_dict:
             log.debug(f"Using custom prompt for task '{task.value}' from deprecated custom_prompts")
             return self._custom_prompts_dict[task]
-        
+
         # 3. Try DEFAULT_PROMPTS for specific task
         if task in self.DEFAULT_PROMPTS:
             return self.DEFAULT_PROMPTS[task]

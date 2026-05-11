@@ -2,7 +2,7 @@
 import pytest
 from pathlib import Path
 from workflow_editor.llm import PromptBuilder, LLMTask, LLMRequest
-from workflow_editor.core.task_config import TaskConfigManager, TaskConfig
+from workflow_editor.core.task_config import ChatConfig, TaskConfigManager, TaskConfig
 
 class TestPromptBuilderInstructions:
     def test_all_tasks_have_instructions(self):
@@ -216,7 +216,92 @@ class TestPromptBuilderTaskConfigIntegration:
         )
         
         prompt = builder.build(request)
-        
+
         # Should use TaskConfigManager prompt, not legacy
         assert tcm_prompt in prompt
         assert legacy_prompt not in prompt
+
+
+class TestPromptBuilderChatConfigWiring:
+    """Phase 4.5: chat_config.system_prompt is actually consulted at
+    runtime for AD_HOC_CHAT. Previously stored but not applied — a
+    bug that should never have shipped."""
+
+    def test_chat_config_system_prompt_wins_over_default(self, tmp_path):
+        """When the tab's chat_config has a custom system_prompt, it
+        replaces the DEFAULT_PROMPTS[AD_HOC_CHAT] text for AD_HOC_CHAT
+        requests on that tab."""
+        manager = TaskConfigManager(tmp_path / "fallback.json")
+        custom = "BE TERSE. Only answer the user's literal question."
+        manager.set_chat_config(
+            "text_only",
+            ChatConfig(enabled=True, system_prompt=custom),
+        )
+
+        builder = PromptBuilder(task_config_manager=manager, tab_id="text_only")
+        request = LLMRequest(
+            task=LLMTask.AD_HOC_CHAT, strict_mode=False,
+            procedure_json=None, test_code=None, procedure_text=None,
+            rules_content=None, session_summary=None,
+            user_message="hi",
+        )
+        prompt = builder.build(request)
+        assert custom in prompt
+        # The default text shouldn't sneak in alongside.
+        assert "Respond CONSERVATIVELY" not in prompt
+
+    def test_chat_config_blank_falls_through_to_default(self, tmp_path):
+        """system_prompt of None or empty string falls through to the
+        DEFAULT_PROMPTS[AD_HOC_CHAT] text. Same intent as None in the
+        task_template field."""
+        manager = TaskConfigManager(tmp_path / "fallback.json")
+        manager.set_chat_config(
+            "text_only", ChatConfig(enabled=True, system_prompt=None),
+        )
+        builder = PromptBuilder(task_config_manager=manager, tab_id="text_only")
+        request = LLMRequest(
+            task=LLMTask.AD_HOC_CHAT, strict_mode=False,
+            procedure_json=None, test_code=None, procedure_text=None,
+            rules_content=None, session_summary=None,
+            user_message="hello",
+        )
+        prompt = builder.build(request)
+        # Default text surfaces.
+        assert "Respond CONSERVATIVELY" in prompt
+
+    def test_chat_config_does_not_affect_non_chat_tasks(self, tmp_path):
+        """Setting chat_config.system_prompt for a tab must NOT
+        override the prompts of non-chat tasks on that tab."""
+        manager = TaskConfigManager(tmp_path / "fallback.json")
+        manager.set_chat_config(
+            "text_json",
+            ChatConfig(enabled=True, system_prompt="CHAT ONLY"),
+        )
+        builder = PromptBuilder(task_config_manager=manager, tab_id="text_json")
+        request = LLMRequest(
+            task=LLMTask.DERIVE_JSON_FROM_TEXT, strict_mode=True,
+            procedure_json=None, test_code=None,
+            procedure_text="Step 1: do X", rules_content=None,
+            session_summary=None, user_message=None,
+        )
+        prompt = builder.build(request)
+        assert "CHAT ONLY" not in prompt
+        # Default DERIVE_JSON prompt body is present (TaskConfigManager
+        # has the baked editor default for it).
+        assert "Derive procedure.json" in prompt
+
+
+class TestAdHocChatPromptIsConservative:
+    """The default AD_HOC_CHAT prompt must instruct the LLM NOT to
+    proactively review or propose. Regression for the bug where typing
+    'test message' triggered an unsolicited full procedure review."""
+
+    def test_default_prompt_forbids_unsolicited_proposals(self):
+        prompt = PromptBuilder.DEFAULT_PROMPTS[LLMTask.AD_HOC_CHAT]
+        lowered = prompt.lower()
+        assert "conservatively" in lowered
+        assert "explicitly" in lowered
+        # Mentions the clarifying-question fallback for ambiguous input.
+        assert "clarif" in lowered
+        # Mentions the never-include-a-proposal rule.
+        assert "proposal" in lowered

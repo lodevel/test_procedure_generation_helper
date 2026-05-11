@@ -80,6 +80,44 @@ def test_is_loop_available_runs_probe_when_enabled_true(tmp_path):
     assert "disabled in project settings" not in reason
 
 
+def test_is_loop_available_surfaces_text_renderer_load_error(tmp_path):
+    """When parsers.text_renderer is selected but the variant file
+    raises during __init__ (e.g. stale rules_packager_base wheel
+    missing an import), the reason must surface the underlying error,
+    NOT the generic "no variant configured" message.
+
+    Regression for the user-report 2026-05-11: validator stayed greyed
+    out even though canonical text_renderer was selected — the host
+    venv had an older wheel missing `check_name_fidelity` and the load
+    failure was silently swallowed.
+    """
+    root = tmp_path / "proj"
+    cfg = root / "config"
+    parsers_dir = cfg / "parsers" / "text_renderer"
+    parsers_dir.mkdir(parents=True)
+    (cfg / "config.json").write_text(json.dumps({
+        "parsers": {"text_renderer": "broken"},
+    }), encoding="utf-8")
+    # A variant that fails to instantiate — simulates a wheel-mismatch.
+    (parsers_dir / "broken.py").write_text(
+        "class ProcedureTextRenderer:\n"
+        "    def __init__(self):\n"
+        "        raise RuntimeError('wheel out of date, reinstall')\n",
+        encoding="utf-8",
+    )
+
+    available, reason = is_loop_available(root)
+    assert available is False
+    # The real cause must appear in the reason — operator needs to know
+    # to reinstall, not to "pick a variant".
+    assert "wheel out of date" in reason, (
+        f"expected underlying RuntimeError in reason, got: {reason!r}"
+    )
+    # Must NOT be the "no variant configured" message — a variant IS
+    # configured; it just crashed.
+    assert "no text_renderer variant configured" not in reason
+
+
 def test_save_setting_persists_enabled_flag(tmp_path):
     root = _project(tmp_path)
     save_setting(root, "enabled", False)

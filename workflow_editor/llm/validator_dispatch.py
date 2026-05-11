@@ -370,6 +370,25 @@ def _import_validator(project_root: Optional[Path] = None):
         return None, None
 
 
+def _diagnose_text_renderer(project_root: Path) -> Optional[str]:
+    """Return the real reason text_renderer failed to load, or None.
+
+    Delegates to :meth:`ProjectManager.get_parser_load_error` after re-
+    probing the loader so the diagnostic cache is fresh. Returns the
+    underlying load failure verbatim (e.g. "wheel out of date"); returns
+    ``None`` when the variant simply isn't configured (caller emits a
+    "no variant configured" message instead).
+    """
+    try:
+        from ..core.project_manager import ProjectManager
+        pm = ProjectManager(project_root=project_root)
+        # Re-probe so _last_load_errors reflects the current on-disk state.
+        pm.get_text_renderer()
+        return pm.get_parser_load_error("text_renderer")
+    except Exception as exc:  # noqa: BLE001 — diagnostic must never crash
+        return f"diagnostic probe crashed: {type(exc).__name__}: {exc}"
+
+
 # --------------------------------------------------------------------------- #
 # Artifact-shape dispatch handlers                                            #
 # --------------------------------------------------------------------------- #
@@ -899,6 +918,9 @@ def is_loop_available(project_root: Optional[Path]) -> tuple[bool, str]:
     # 2. Existing availability probe.
     _, avail_fn = _import_validator(project_root)
     if avail_fn is None:
+        diag = _diagnose_text_renderer(project_root)
+        if diag:
+            return False, f"deterministic validator unavailable — {diag}"
         return False, "deterministic validator unavailable — no text_renderer variant configured"
     try:
         if not avail_fn():

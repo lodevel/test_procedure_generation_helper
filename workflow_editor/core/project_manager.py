@@ -66,6 +66,11 @@ class ProjectManager:
     _rules_content: Optional[str] = field(default=None, repr=False)
     _rules_files: list[Path] = field(default_factory=list, repr=False)
     _equipment_patterns_cache: Optional[list[re.Pattern[str]]] = field(default=None, repr=False)
+    # Per-kind diagnostic for the last _load_parser failure. Populated by
+    # _load_parser when import / instantiation crashes so callers (notably
+    # is_loop_available) can surface the real error instead of the
+    # generic "no variant configured" message.
+    _last_load_errors: dict[str, str] = field(default_factory=dict, repr=False)
     
     def set_project_root(self, path: Path) -> bool:
         """
@@ -76,6 +81,10 @@ class ProjectManager:
         if self.is_valid_project_root(path):
             self.project_root = path
             self._equipment_patterns_cache = None
+            # Drop diagnostics from any previous project — a stale
+            # "wheel out of date" message from a different project must
+            # not leak into is_loop_available for the new one.
+            self._last_load_errors.clear()
             return True
         return False
     
@@ -328,6 +337,9 @@ Test procedure project created with Workflow Editor.
         import importlib.util
         import sys
 
+        # Reset the diagnostic for this kind before re-probing.
+        self._last_load_errors.pop(kind, None)
+
         config_dir = self.get_config_dir()
         if config_dir is None:
             return None
@@ -348,10 +360,12 @@ Test procedure project created with Workflow Editor.
                 if candidate.exists():
                     parser_path = candidate
                 else:
-                    log.warning(
+                    msg = (
                         f"parsers.{kind}='{selected}' selected but file "
-                        f"not found at {candidate}; falling back to legacy."
+                        f"not found at {candidate}"
                     )
+                    log.warning(msg + "; falling back to legacy.")
+                    self._last_load_errors[kind] = msg
 
         # Legacy fallback for kinds that pre-date the parsers/ layout.
         if parser_path is None and legacy_filename:
@@ -371,7 +385,9 @@ Test procedure project created with Workflow Editor.
         try:
             spec = importlib.util.spec_from_file_location(module_name, parser_path)
             if spec is None or spec.loader is None:
-                log.warning(f"Could not build import spec for parser at {parser_path}")
+                msg = f"Could not build import spec for parser at {parser_path}"
+                log.warning(msg)
+                self._last_load_errors[kind] = msg
                 return None
             module = importlib.util.module_from_spec(spec)
             # Register before exec_module so @dataclass / inspect / typing
@@ -382,24 +398,44 @@ Test procedure project created with Workflow Editor.
             sys.modules[module_name] = module
             spec.loader.exec_module(module)
         except SyntaxError as e:
-            log.warning(f"Syntax error in {kind} parser {parser_path}: {e}")
+            msg = f"Syntax error in {parser_path.name}: {e}"
+            log.warning(f"{kind}: {msg}")
+            self._last_load_errors[kind] = msg
             return None
         except ImportError as e:
-            log.warning(f"Import error loading {kind} parser {parser_path}: {e}")
+            msg = f"Import error in {parser_path.name}: {e}"
+            log.warning(f"{kind}: {msg}")
+            self._last_load_errors[kind] = msg
             return None
         except Exception as e:
-            log.warning(f"Failed to load {kind} parser from {parser_path}: {e}")
+            msg = f"Failed to load {parser_path.name}: {e}"
+            log.warning(f"{kind}: {msg}")
+            self._last_load_errors[kind] = msg
             return None
 
         cls = getattr(module, class_name, None)
         if cls is None:
-            log.warning(f"{kind} parser at {parser_path} has no {class_name} class")
+            msg = f"{parser_path.name} has no {class_name} class"
+            log.warning(f"{kind}: {msg}")
+            self._last_load_errors[kind] = msg
             return None
         try:
             return cls()
         except Exception as e:
-            log.warning(f"{class_name}.__init__ failed for {parser_path}: {e}")
+            msg = f"{class_name}.__init__ failed in {parser_path.name}: {e}"
+            log.warning(msg)
+            self._last_load_errors[kind] = msg
             return None
+
+    def get_parser_load_error(self, kind: str) -> Optional[str]:
+        """Return the most recent load-failure reason for a parser kind
+        (e.g. ``"text_renderer"``). ``None`` means either no failure was
+        recorded yet, or the loader has not been called for this kind.
+        Consumed by :func:`workflow_editor.llm.validator_dispatch.is_loop_available`
+        to surface the real failure to the operator instead of a generic
+        "no variant configured" message.
+        """
+        return self._last_load_errors.get(kind)
 
     def load_equipment_patterns(self) -> list[re.Pattern[str]]:
         """Load equipment-configuration patterns from the project config.

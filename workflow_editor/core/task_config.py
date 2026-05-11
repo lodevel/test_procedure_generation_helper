@@ -106,39 +106,70 @@ class ChatConfig:
         return cls(**{k: v for k, v in data.items() if k in ("enabled", "system_prompt")})
 
 
-# Default task configurations for each tab.
-DEFAULT_TASK_CONFIGS: Dict[str, List[TaskConfig]] = {
-    "text_only": [
-        TaskConfig(
-            id=LLMTask.REVIEW_TEXT_PROCEDURE.value,
-            name="Review Text Procedure",
-            button_label="Review Text",
-        ),
-    ],
-    "text_json": [
-        TaskConfig(id=LLMTask.DERIVE_JSON_FROM_TEXT.value,   name="Derive JSON from Text",   button_label="Text → JSON"),
-        TaskConfig(id=LLMTask.RENDER_TEXT_FROM_JSON.value,   name="Render Text from JSON",   button_label="JSON → Text"),
-        TaskConfig(id=LLMTask.REVIEW_TEXT_PROCEDURE.value,   name="Review Text Procedure",   button_label="Review Text"),
-        TaskConfig(id=LLMTask.REVIEW_JSON.value,             name="Review JSON",             button_label="Review JSON"),
-        TaskConfig(id=LLMTask.REVIEW_TEXT_VS_JSON.value,     name="Review Text vs JSON",     button_label="Check Text↔JSON"),
-    ],
-    "json_code": [
-        TaskConfig(id=LLMTask.GENERATE_CODE_FROM_JSON.value, name="Generate Code from JSON", button_label="JSON → Code"),
-        TaskConfig(id=LLMTask.DERIVE_JSON_FROM_CODE.value,   name="Derive JSON from Code",   button_label="Code → JSON"),
-        TaskConfig(id=LLMTask.REVIEW_JSON.value,             name="Review JSON",             button_label="Review JSON"),
-        TaskConfig(id=LLMTask.REVIEW_CODE.value,             name="Review Code",             button_label="Review Code"),
-        TaskConfig(id=LLMTask.REVIEW_CODE_VS_JSON.value,     name="Review Code vs JSON",     button_label="Check JSON↔Code"),
-    ],
-}
+# ---------------------------------------------------------------------------
+# Workflow editor defaults
+# ---------------------------------------------------------------------------
+#
+# DEFAULT_TASK_CONFIGS / DEFAULT_CHAT_CONFIG are loaded from
+# ``default_workflows.json`` (next to this module) at import time so the
+# parent app's Project Configuration → Workflows tab can read the exact
+# same defaults via a simple JSON read — no cross-package import. The
+# JSON file is the source of truth; the in-code dicts mirror it.
+#
+# If the JSON file is missing or malformed, we fall back to a minimal
+# baked-in set so tests that monkey-patch the file path still work.
+
+DEFAULT_WORKFLOWS_JSON_PATH: Path = (
+    Path(__file__).parent / "default_workflows.json"
+)
 
 
-# Default chat configuration per tab.
-DEFAULT_CHAT_CONFIG: Dict[str, ChatConfig] = {
-    "text_only":   ChatConfig(enabled=True,  system_prompt=None),
-    "text_json":   ChatConfig(enabled=True,  system_prompt=None),
-    "json_code":   ChatConfig(enabled=True,  system_prompt=None),
-    "traceability": ChatConfig(enabled=False, system_prompt=None),
-}
+def _load_default_workflows() -> Dict[str, Any]:
+    """Read ``default_workflows.json``; return empty dict on any error."""
+    try:
+        with open(DEFAULT_WORKFLOWS_JSON_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError) as exc:
+        log.warning("Could not load %s: %s — using empty defaults.",
+                    DEFAULT_WORKFLOWS_JSON_PATH, exc)
+        return {}
+
+
+def _build_default_task_configs(
+    raw: Dict[str, Any]
+) -> Dict[str, List[TaskConfig]]:
+    out: Dict[str, List[TaskConfig]] = {}
+    for tab_id, tab_cfg in raw.items():
+        if not isinstance(tab_cfg, dict):
+            continue
+        tasks = tab_cfg.get("tasks")
+        if not isinstance(tasks, list):
+            continue
+        out[tab_id] = [
+            TaskConfig.from_dict(t) for t in tasks if isinstance(t, dict)
+        ]
+    return out
+
+
+def _build_default_chat_config(raw: Dict[str, Any]) -> Dict[str, ChatConfig]:
+    out: Dict[str, ChatConfig] = {}
+    for tab_id, tab_cfg in raw.items():
+        if not isinstance(tab_cfg, dict):
+            continue
+        chat = tab_cfg.get("chat_config")
+        if isinstance(chat, dict):
+            out[tab_id] = ChatConfig.from_dict(chat)
+    return out
+
+
+_DEFAULT_WORKFLOWS_RAW: Dict[str, Any] = _load_default_workflows()
+DEFAULT_TASK_CONFIGS: Dict[str, List[TaskConfig]] = _build_default_task_configs(
+    _DEFAULT_WORKFLOWS_RAW
+)
+DEFAULT_CHAT_CONFIG: Dict[str, ChatConfig] = _build_default_chat_config(
+    _DEFAULT_WORKFLOWS_RAW
+)
 
 
 # Keys we model directly on the tab dict. Everything else (including the
@@ -1199,15 +1230,24 @@ def _task_dicts_equal(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
 
 
 def _merge_workflows(base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:
-    """Shallow per-tab merge: ``overlay`` (project) wins per-key.
+    """Per-tab merge: ``overlay`` (e.g. project) wins per-entry within
+    each section, NOT wholesale per section.
 
-    Implements the plan's Phase-2 merge rules verbatim:
+    Phase 4.2 deepens the merge so overriding one task no longer drops
+    the pack/editor's other tasks. Per-section semantics:
 
-    * Project ``tasks`` fully replace pack ``tasks`` when present.
-    * Project ``validators`` fully replace pack ``validators`` when present.
-    * Project ``chat_config`` fully replaces pack ``chat_config``.
-    * Unknown keys: project wins on conflict, otherwise the pack value
-      survives untouched (round-trips via ``_raw_extras``).
+    * ``tasks`` and ``validators``: list-of-dicts merged by ``id``.
+      Overlay entries override matching ids; base entries with ids not
+      in overlay are kept. Result order is overlay-first then base
+      tail (overlay-declared entries surface to the user first).
+    * ``chat_config``: dict; overlay wins shallow (sub-keys preserved
+      from base when overlay omits them, e.g. project sets ``enabled``
+      but leaves ``system_prompt`` to pack/editor).
+    * Unknown keys: overlay wins on conflict, otherwise base value
+      survives.
+
+    Project tasks lists with ids not in any base are appended verbatim
+    (the user has added something new).
     """
     merged: Dict[str, Any] = {}
     for tab_id in set(base) | set(overlay):
@@ -1217,5 +1257,59 @@ def _merge_workflows(base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str,
             b = {}
         if not isinstance(o, dict):
             o = {}
-        merged[tab_id] = {**b, **o}
+        merged[tab_id] = _merge_tab(b, o)
     return merged
+
+
+def _merge_tab(base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:
+    """Helper: merge a single tab's dict per the Phase-4.2 rules."""
+    out: Dict[str, Any] = {}
+    # Start from base; overlay overwrites per-key below.
+    for k, v in base.items():
+        out[k] = v
+    for k, v in overlay.items():
+        if k in ("tasks", "validators") and isinstance(v, list) and isinstance(out.get(k), list):
+            out[k] = _merge_list_by_id(out[k], v)
+        elif k == "chat_config" and isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = {**out[k], **v}
+        else:
+            out[k] = v
+    return out
+
+
+def _merge_list_by_id(base: list, overlay: list) -> list:
+    """Per-id merge for list-of-dicts. Overlay entries by ``id`` win.
+
+    Result order: overlay first (in its original order), then base
+    entries whose ids aren't in overlay (in their original order).
+    Entries without an ``id`` field in either list are appended at the
+    end (overlay first then base) to keep them visible.
+    """
+    overlay_by_id: Dict[str, Dict[str, Any]] = {}
+    overlay_orphans: list = []
+    for entry in overlay:
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str):
+            overlay_by_id[entry["id"]] = entry
+        else:
+            overlay_orphans.append(entry)
+
+    out: list = []
+    seen_ids: set = set()
+    # Overlay first (preserves user-intent ordering).
+    for entry in overlay:
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str):
+            if entry["id"] not in seen_ids:
+                out.append(entry)
+                seen_ids.add(entry["id"])
+    # Then base entries with ids not in overlay.
+    for entry in base:
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str):
+            if entry["id"] not in overlay_by_id and entry["id"] not in seen_ids:
+                out.append(entry)
+                seen_ids.add(entry["id"])
+    # Orphans (no id) appended last.
+    out.extend(overlay_orphans)
+    for entry in base:
+        if not (isinstance(entry, dict) and isinstance(entry.get("id"), str)):
+            out.append(entry)
+    return out

@@ -77,10 +77,12 @@ def test_pack_defaults_surface_through_get_validator_specs(fn_hardware_project):
         )
 
 
-def test_project_validators_replace_pack_for_overridden_tab_only(fn_hardware_project):
-    """When the project declares ``workflows.text_json.validators``, that
-    list FULLY REPLACES the pack list for text_json. Other tabs (text_only,
-    json_code) keep the pack defaults — the merge is per-tab, not deep."""
+def test_project_validators_merge_by_id_with_pack(fn_hardware_project):
+    """Phase 4.2 deepens the merge to per-id within tasks/validators.
+    Project entries override matching ids; pack entries with ids not
+    in the project's list are still surfaced. Lets users override one
+    validator's enabled flag without dropping the pack's other validators.
+    """
     cfg_path = fn_hardware_project / "config" / "config.json"
     full = json.loads(cfg_path.read_text(encoding="utf-8"))
     project_validators = [
@@ -92,11 +94,15 @@ def test_project_validators_replace_pack_for_overridden_tab_only(fn_hardware_pro
 
     mgr = TaskConfigManager(_FALLBACK_PATH, project_root=fn_hardware_project)
 
-    # Overridden tab: project list wins verbatim.
-    assert mgr.get_validator_specs_for_tab("text_json") == project_validators
+    # Overridden tab: project list FIRST, then pack ids not in project.
+    pack_for_text_json = _base_pack_validators_for_tab("text_json")
+    project_ids = {v["id"] for v in project_validators}
+    pack_tail = [v for v in pack_for_text_json if v["id"] not in project_ids]
+    expected = project_validators + pack_tail
+    assert mgr.get_validator_specs_for_tab("text_json") == expected
 
     # Non-overridden tabs: pack defaults preserved.
     for tab_id in ("text_only", "json_code"):
-        expected = _base_pack_validators_for_tab(tab_id)
-        if expected:
-            assert mgr.get_validator_specs_for_tab(tab_id) == expected
+        expected_full = _base_pack_validators_for_tab(tab_id)
+        if expected_full:
+            assert mgr.get_validator_specs_for_tab(tab_id) == expected_full

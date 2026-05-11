@@ -235,6 +235,30 @@ class BaseTab(QWidget):
         if not hasattr(manager, "get_validator_specs_for_tab"):
             return 0  # older TaskConfigManager — Phase 1 install
 
+        # Probe validator availability so unusable buttons don't render.
+        # Two levels (Phase 4.6):
+        #   - Master toggle (validator_loop.enabled=false): hide ALL
+        #     validator buttons. Operator explicitly opted out.
+        #   - validate_procedure-specific availability: hide ONLY the
+        #     "Validate Procedure" button when its deps (text_renderer +
+        #     pack-side bijective handler) aren't present. Other
+        #     validators (json_schema, python_syntax) are stateless and
+        #     keep showing — they only "skip" if the relevant artifact
+        #     is empty at click time.
+        project_root = getattr(self.project_manager, "project_root", None)
+        hide_procedure_button = False
+        try:
+            if project_root is not None:
+                from ..llm.validator_loop_settings import is_enabled
+                if not is_enabled(project_root):
+                    return 0
+                from ..llm.validator_dispatch import is_loop_available
+                loop_avail, _ = is_loop_available(project_root)
+                hide_procedure_button = not loop_avail
+        except Exception:
+            log.debug("validator availability probe failed; rendering buttons",
+                      exc_info=True)
+
         ensure_builtins_registered()
         specs = manager.get_validator_specs_for_tab(tab_id)
 
@@ -248,6 +272,10 @@ class BaseTab(QWidget):
                     "Tab %s: validator id %r is not in the registry; skipping button.",
                     tab_id, vid,
                 )
+                continue
+            # Hide the Validate Procedure button when its deps aren't
+            # available — config-issue case (Phase 4.6 fix).
+            if hide_procedure_button and vid.endswith(".validate_procedure"):
                 continue
             label = spec.get("label") or self._derive_validator_label(vid)
             tooltip = spec.get("tooltip") or f"Run validator: {vid}"
@@ -330,12 +358,21 @@ class BaseTab(QWidget):
 
         dock = getattr(self.main_window, "dock", None)
         if outcome.skipped:
-            # Clear stale findings + status hint. No modal (plan 2026-05-10).
-            if dock is not None:
-                dock.show_validation_result_from_list([])
-            self.status_message.emit(
-                outcome.reason or f"{self._derive_validator_label(validator_id)}: skipped."
+            # Surface the skip reason in the dock's findings panel so
+            # "Validate Procedure" doesn't appear to be a silent no-op
+            # (Phase 4.6 fix). A single info-severity row with the
+            # validator id + skip reason replaces the stale findings.
+            reason_text = outcome.reason or (
+                f"{self._derive_validator_label(validator_id)}: skipped."
             )
+            if dock is not None:
+                dock.show_validation_result_from_list([{
+                    "severity": "info",
+                    "code": "VALIDATOR_SKIPPED",
+                    "message": reason_text,
+                    "location": validator_id,
+                }])
+            self.status_message.emit(reason_text)
             return
 
         if dock is not None:

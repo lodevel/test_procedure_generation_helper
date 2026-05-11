@@ -89,3 +89,209 @@ def test_save_setting_persists_enabled_flag(tmp_path):
     assert on_disk[SECTION_NAME]["enabled"] is False
     # Re-read via the helper.
     assert is_enabled(root) is False
+
+
+# ---------------------------------------------------------------------------
+# Auto-correct preference key is distinct from master enable
+# ---------------------------------------------------------------------------
+
+
+def test_auto_correct_key_is_separate_from_enabled(tmp_path):
+    """Phase 4.6 split: chat-panel writes ``auto_correct``, Settings
+    master toggle writes ``enabled``. They must not stomp each other."""
+    root = _project(tmp_path)
+    # Master toggle off.
+    save_setting(root, "enabled", False)
+    # Operator separately toggles auto-correct on.
+    save_setting(root, "auto_correct", True)
+
+    on_disk = json.loads(
+        (root / "config" / "config.json").read_text(encoding="utf-8")
+    )
+    section = on_disk[SECTION_NAME]
+    assert section["enabled"] is False
+    assert section["auto_correct"] is True
+    # Master toggle still wins for the dispatch path.
+    assert is_enabled(root) is False
+
+
+# ---------------------------------------------------------------------------
+# Auto-correct checkbox visual semantics (Phase 4.6)
+# ---------------------------------------------------------------------------
+
+
+def test_set_validator_status_unchecks_disabled_checkbox(tmp_path):
+    """When validator becomes unavailable, the auto-correct checkbox
+    must be both UNCHECKED and disabled — never "checked + greyed".
+    The stored preference is preserved so a later "available" call
+    restores it.
+    """
+    from PySide6.QtWidgets import QApplication
+    from unittest.mock import MagicMock
+    from workflow_editor.dock.chat_panel import ChatPanel
+    app = QApplication.instance() or QApplication([])  # noqa: F841
+
+    panel = ChatPanel(main_window=MagicMock())
+    # Operator's stored preference: checked.
+    panel.set_auto_correct_enabled(True)
+    assert panel.auto_correct_checkbox.isChecked() is True
+
+    # Validator becomes unavailable → unchecked + disabled.
+    panel.set_validator_status(available=False, reason="disabled in project settings (test)")
+    assert panel.auto_correct_checkbox.isEnabled() is False
+    assert panel.auto_correct_checkbox.isChecked() is False
+    # Stored preference preserved.
+    assert panel._stored_auto_correct is True
+
+    # Validator becomes available again → enabled + restored to stored value.
+    panel.set_validator_status(available=True)
+    assert panel.auto_correct_checkbox.isEnabled() is True
+    assert panel.auto_correct_checkbox.isChecked() is True
+
+
+def test_validate_procedure_button_hidden_when_deps_missing(qapp_factory=None):
+    """When validate_procedure's dependency probe (is_loop_available)
+    returns False — e.g. no text_renderer picked — the button must
+    not render. Other validator buttons (json_schema, python_syntax)
+    keep showing.
+
+    Phase 4.6: 'if the validator isn't available in the project, that
+    button doesn't show — that should have been the case already.'
+    """
+    from PySide6.QtWidgets import QApplication, QHBoxLayout
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    import pytest
+    app = QApplication.instance() or QApplication([])  # noqa: F841
+
+    # Build a manager that surfaces the three baked-in validators.
+    from workflow_editor.core.task_config import TaskConfigManager
+    from workflow_editor.core.validators_registry import (
+        ensure_builtins_registered, unregister_all,
+    )
+    from workflow_editor.tabs.base_tab import BaseTab
+    unregister_all()
+    ensure_builtins_registered()
+
+    import tempfile
+    from pathlib import Path
+    tmp = Path(tempfile.mkdtemp(prefix="test_btn_hide_"))
+    cfg = tmp / "config"
+    cfg.mkdir()
+    import json as _json
+    (cfg / "config.json").write_text(_json.dumps({
+        "manifest": {"name": "test"},
+        # Master toggle ON. No text_renderer in parsers → procedure
+        # validator's deps are missing.
+        "validator_loop": {"enabled": True},
+        "workflows": {
+            "text_json": {
+                "validators": [
+                    {"id": "rules_packager_base.validate_procedure", "enabled": True},
+                    {"id": "rules_packager_base.validate_json_schema", "enabled": True},
+                    {"id": "core.check_python_syntax", "enabled": True},
+                ],
+            },
+        },
+    }), encoding="utf-8")
+
+    manager = TaskConfigManager(tmp / "no_fallback.json", project_root=tmp)
+    mw = MagicMock()
+    mw.task_config_manager = manager
+    mw.project_manager = SimpleNamespace(project_root=tmp)
+    tab = BaseTab(mw)
+    tab.tab_id = "text_json"
+    layout = QHBoxLayout()
+    tab._build_validator_buttons(layout)
+
+    button_ids = []
+    from PySide6.QtWidgets import QPushButton
+    for i in range(layout.count()):
+        w = layout.itemAt(i).widget()
+        if isinstance(w, QPushButton) and w.property("validator_id"):
+            button_ids.append(w.property("validator_id"))
+
+    # validate_procedure button must be HIDDEN — its deps aren't met.
+    assert "rules_packager_base.validate_procedure" not in button_ids
+    # Other validators keep showing.
+    assert "rules_packager_base.validate_json_schema" in button_ids
+    assert "core.check_python_syntax" in button_ids
+
+    import shutil
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_all_validator_buttons_hidden_when_master_toggle_off():
+    """Master toggle OFF (validator_loop.enabled=false) hides ALL
+    validator buttons regardless of which specific validator is
+    listed."""
+    from PySide6.QtWidgets import QApplication, QHBoxLayout, QPushButton
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from workflow_editor.core.task_config import TaskConfigManager
+    from workflow_editor.core.validators_registry import (
+        ensure_builtins_registered, unregister_all,
+    )
+    from workflow_editor.tabs.base_tab import BaseTab
+    app = QApplication.instance() or QApplication([])  # noqa: F841
+    unregister_all()
+    ensure_builtins_registered()
+
+    import tempfile, json as _json
+    from pathlib import Path
+    tmp = Path(tempfile.mkdtemp(prefix="test_master_off_"))
+    cfg = tmp / "config"
+    cfg.mkdir()
+    (cfg / "config.json").write_text(_json.dumps({
+        "manifest": {"name": "test"},
+        "validator_loop": {"enabled": False},
+        "workflows": {
+            "text_json": {
+                "validators": [
+                    {"id": "rules_packager_base.validate_procedure", "enabled": True},
+                    {"id": "rules_packager_base.validate_json_schema", "enabled": True},
+                    {"id": "core.check_python_syntax", "enabled": True},
+                ],
+            },
+        },
+    }), encoding="utf-8")
+
+    manager = TaskConfigManager(tmp / "no_fallback.json", project_root=tmp)
+    mw = MagicMock()
+    mw.task_config_manager = manager
+    mw.project_manager = SimpleNamespace(project_root=tmp)
+    tab = BaseTab(mw)
+    tab.tab_id = "text_json"
+    layout = QHBoxLayout()
+    added = tab._build_validator_buttons(layout)
+    assert added == 0
+
+    import shutil
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_chat_panel_toggle_writes_auto_correct_not_enabled(tmp_path):
+    """The chat panel's checkbox toggle must persist under the
+    ``auto_correct`` key, NOT ``enabled`` (which is reserved for the
+    Settings master toggle)."""
+    from PySide6.QtWidgets import QApplication
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from workflow_editor.dock.chat_panel import ChatPanel
+    app = QApplication.instance() or QApplication([])  # noqa: F841
+
+    root = _project(tmp_path)
+    panel = ChatPanel(main_window=MagicMock())
+    panel._current_tab_context = SimpleNamespace(
+        project_manager=SimpleNamespace(project_root=root)
+    )
+    # Trigger the toggled handler directly.
+    panel._on_auto_correct_toggled(False)
+
+    on_disk = json.loads(
+        (root / "config" / "config.json").read_text(encoding="utf-8")
+    )
+    section = on_disk[SECTION_NAME]
+    assert section["auto_correct"] is False
+    # Master enable key must NOT have been touched.
+    assert "enabled" not in section

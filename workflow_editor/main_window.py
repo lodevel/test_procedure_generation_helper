@@ -1504,8 +1504,18 @@ class MainWindow(QMainWindow):
             self._settings = dialog.get_settings()
             self._init_llm_backend()
             self._apply_settings()
-            # Refresh button labels after settings change
+            # Refresh button labels + validator buttons after settings change
             self.refresh_all_button_labels()
+            # Also refresh the chat panel's validator-status indicator
+            # + auto-correct checkbox so the master toggle in Settings →
+            # Validator takes effect immediately (Phase 4.6).
+            try:
+                current = self.tab_widget.currentWidget()
+                ctx = getattr(current, "tab_context", None)
+                if ctx is not None:
+                    self.dock.chat_panel._refresh_validator_ui_for_context(ctx)
+            except Exception:
+                log.debug("post-settings validator UI refresh failed", exc_info=True)
 
     def _on_configure_workflows(self):
         """Point the user at the parent app's workflows editor.

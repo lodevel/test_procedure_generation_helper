@@ -85,7 +85,12 @@ class ChatPanel(QWidget):
         self._cumulative_tokens = 0  # Track total tokens used in conversation
         self._context_limit = 16384  # Default, will be updated by main_window
         self._current_tab_context: Optional["TabContext"] = None  # Currently displayed tab context
-        
+        # Stored auto-correct preference (decoupled from the checkbox's
+        # visual state). When the validator is unavailable the checkbox
+        # is forced unchecked + disabled but this remembers the user's
+        # actual intent so a later set_validator_status(True) restores it.
+        self._stored_auto_correct: bool = True
+
         self._setup_ui()
     
     # set_chat_history removed: chat history is now per-tab only
@@ -301,7 +306,15 @@ class ChatPanel(QWidget):
     def set_auto_correct_enabled(self, enabled: bool) -> None:
         """Persist the operator's stored preference into the checkbox
         without firing the toggled signal. Called on project load to
-        restore the per-project setting from ``config.json``."""
+        restore the per-project setting from ``config.json``.
+
+        The user's intent is also remembered in ``_stored_auto_correct``
+        so :meth:`set_validator_status` can force the checkbox visually
+        unchecked when the validator is unavailable / disabled, while
+        preserving the preference for the next time the validator
+        becomes available.
+        """
+        self._stored_auto_correct = bool(enabled)
         self.auto_correct_checkbox.blockSignals(True)
         try:
             self.auto_correct_checkbox.setChecked(bool(enabled))
@@ -335,15 +348,18 @@ class ChatPanel(QWidget):
     def _on_auto_correct_toggled(self, checked: bool) -> None:
         """Persist the toggle change to ``<project>/config/config.json``.
 
-        Delegates the actual JSON I/O to ``validator_loop_settings`` so
-        the chat panel stays focused on widget concerns. The settings
-        module's ``save_setting`` preserves every other section.
+        Writes ``validator_loop.auto_correct`` (NOT ``enabled`` — that
+        key is the project-level master toggle owned by Settings →
+        Validator; Phase 4.6 split the two concepts apart).
         """
+        # Update the stored preference even if no project is open —
+        # ensures a later switch_context restores the right state.
+        self._stored_auto_correct = bool(checked)
         project_root = self._current_project_root()
         if project_root is None:
             return
         from ..llm.validator_loop_settings import save_setting
-        save_setting(project_root, "enabled", bool(checked))
+        save_setting(project_root, "auto_correct", bool(checked))
 
     def _load_validator_loop_for_context(self, tab_context) -> None:
         """Read the persisted ``validator_loop`` section from the active
@@ -353,8 +369,13 @@ class ChatPanel(QWidget):
             return
         from ..llm.validator_loop_settings import load_settings
         section = load_settings(project_root)
-        if "enabled" in section:
-            self.set_auto_correct_enabled(bool(section["enabled"]))
+        if "auto_correct" in section:
+            self.set_auto_correct_enabled(bool(section["auto_correct"]))
+        else:
+            # No persisted preference: default to True so a freshly-loaded
+            # project with the validator available enters the loop by
+            # default. Operators can opt out via the checkbox.
+            self.set_auto_correct_enabled(True)
 
     def _current_project_root(self, tab_context=None):
         """Resolve the active project root from the supplied context (or
@@ -642,12 +663,21 @@ class ChatPanel(QWidget):
 
     def set_validator_status(self, available: bool, reason: str = "") -> None:
         """Update the validator-status indicator AND the auto-correct
-        checkbox's enabled state.
+        checkbox.
 
-        The dot is the always-visible signal so operators know what the
-        downstream tooling can do before they invoke it. The auto-correct
-        checkbox is greyed out when ``available`` is False so operators
-        can't toggle on something that has nothing to validate against.
+        Visual contract (Phase 4.6 fix):
+
+        * available → checkbox enabled, restored to the operator's
+          stored preference (``_stored_auto_correct``).
+        * unavailable → checkbox forcibly **unchecked AND disabled** so
+          the UI never shows "auto-correct on but greyed" (which read
+          as "running but I can't stop it"). The stored preference is
+          preserved internally so the next time the validator becomes
+          available the checkbox returns to it.
+
+        The toggled signal is blocked while we mutate the checkbox
+        state so the persistence write isn't fired for a forced visual
+        reset.
         """
         if available:
             self.validator_status_label.setText("● validator")
@@ -655,6 +685,11 @@ class ChatPanel(QWidget):
             self.validator_status_label.setToolTip(_TOOLTIP_STATUS_AVAILABLE)
             self.auto_correct_checkbox.setEnabled(True)
             self.auto_correct_checkbox.setToolTip(_TOOLTIP_AUTO_CORRECT_AVAILABLE)
+            self.auto_correct_checkbox.blockSignals(True)
+            try:
+                self.auto_correct_checkbox.setChecked(self._stored_auto_correct)
+            finally:
+                self.auto_correct_checkbox.blockSignals(False)
         else:
             self.validator_status_label.setText("○ validator")
             self.validator_status_label.setStyleSheet(
@@ -663,10 +698,19 @@ class ChatPanel(QWidget):
             self.validator_status_label.setToolTip(
                 _with_reason(_TOOLTIP_STATUS_UNAVAILABLE, reason)
             )
-            self.auto_correct_checkbox.setEnabled(False)
             self.auto_correct_checkbox.setToolTip(
                 _with_reason(_TOOLTIP_AUTO_CORRECT_UNAVAILABLE, reason)
             )
+            # Force unchecked WITHOUT firing the toggled signal — we
+            # don't want this visual reset to corrupt the persisted
+            # preference. The user's stored intent stays in
+            # ``_stored_auto_correct``.
+            self.auto_correct_checkbox.blockSignals(True)
+            try:
+                self.auto_correct_checkbox.setChecked(False)
+            finally:
+                self.auto_correct_checkbox.blockSignals(False)
+            self.auto_correct_checkbox.setEnabled(False)
         self.validator_status_label.setVisible(True)
     
     def _update_context_label(self):

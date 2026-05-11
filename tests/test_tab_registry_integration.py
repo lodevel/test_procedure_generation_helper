@@ -257,9 +257,11 @@ def test_click_dispatches_through_registry_to_dock(tmp_path, qapp):
     mw.dock.show_validation_result_from_list.assert_called_once_with([])
 
 
-def test_click_skipped_outcome_clears_dock_findings(tmp_path, qapp):
-    """A ``skipped=True`` outcome clears stale findings (empty list to
-    the dock) and emits a status hint. No modal popup (plan 2026-05-10)."""
+def test_click_skipped_outcome_surfaces_info_row_in_dock(tmp_path, qapp):
+    """A ``skipped=True`` outcome now surfaces an INFO row in the dock
+    (with code ``VALIDATOR_SKIPPED`` + the reason) so a click on
+    Validate isn't a silent no-op. Status hint also fires. No modal
+    popup (plan 2026-05-10)."""
     project_root = tmp_path / "proj"
     _seed_project(project_root, validators=[
         {"id": "pack.skip.always", "enabled": True},
@@ -282,7 +284,13 @@ def test_click_skipped_outcome_clears_dock_findings(tmp_path, qapp):
     )
     button.click()
 
-    mw.dock.show_validation_result_from_list.assert_called_once_with([])
+    mw.dock.show_validation_result_from_list.assert_called_once()
+    args, _ = mw.dock.show_validation_result_from_list.call_args
+    issues_list = args[0]
+    assert len(issues_list) == 1
+    assert issues_list[0]["code"] == "VALIDATOR_SKIPPED"
+    assert "not applicable" in issues_list[0]["message"]
+    assert issues_list[0]["severity"] == "info"
     assert status_msgs == ["not applicable"]
 
 

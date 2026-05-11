@@ -27,6 +27,9 @@ from workflow_editor.llm.backend_base import LLMResponse, LLMProposal
 from workflow_editor.llm.validator_dispatch import (
     _auto_restore_operator_only_fields,
     _extract_meta_requirement_from_text,
+    format_validator_feedback,
+    ValidationIssueView,
+    ValidationOutcome,
 )
 
 
@@ -122,6 +125,38 @@ class AutoRestoreHappyPathTests(unittest.TestCase):
             _extract_meta_requirement_from_text(response.procedure_text.content),
             "",
         )
+
+    def test_empty_baseline_strips_requirement_line(self) -> None:
+        """Regression: when baseline is empty/absent and the LLM
+        invented a value, auto-restore must DELETE the requirement
+        line entirely, not emit ``requirement:`` (no space) or
+        ``requirement: `` (empty value).
+
+        Per Canonical_Text_Procedure_v2.md §"Canonical key order":
+        "Omit optional keys entirely when absent (do not emit empty
+        values)". Two failure modes the fix prevents:
+
+        - ``requirement:`` (no space) → parser GRAM_META_SEPARATOR
+          rejects → self-inflicted retry loop where auto-restore
+          introduces the error and asks the LLM to fix our output.
+        - ``requirement: `` (empty value) → spec-violating, plus
+          ``preserve_human_only_fields`` at apply time strips lines
+          the original didn't have anyway.
+        """
+        baseline_text = _v2_text(None)
+        response = _make_response(text_value="LLM-invented value")
+        _auto_restore_operator_only_fields(
+            response, {"text": baseline_text, "json": "", "code": ""}
+        )
+        content = response.procedure_text.content
+        # No requirement line of any shape should remain.
+        self.assertNotIn("requirement:", content, (
+            f"auto-restore left a requirement line in the proposal; "
+            f"per spec it must be stripped entirely. Full text:\n{content}"
+        ))
+        # No blank line introduced where the stripped line used to be.
+        self.assertNotIn("\n\nfncore_pack", content,
+                         "stripping requirement left a stray blank line")
 
     def test_baseline_value_response_modified_restored_to_baseline(self) -> None:
         # Case (b): baseline `"X"` + response `"Y"` → restore to `"X"`.
@@ -226,6 +261,66 @@ class AutoRestoreEdgeCaseTests(unittest.TestCase):
         # JSON side: `meta.requirement` is absent (canonical "not supplied").
         json_proc = json.loads(response.procedure_json.content)
         self.assertNotIn("requirement", json_proc.get("meta", {}))
+
+
+class FormatValidatorFeedbackFiltersTests(unittest.TestCase):
+    """The LLM-facing retry feedback message must filter informational
+    issues the LLM cannot act on. Two categories:
+
+    * ``fixable_by == "operator"`` — design-time operator-only fields.
+    * ``severity == "warning"`` — the system already handled this
+      (e.g. META_REQUIREMENT_AUTO_RESTORED fires AFTER auto-restore
+      mutated the proposal). Telling the LLM to "fix" it wastes a
+      retry turn and risks re-introducing the very thing auto-restore
+      stripped.
+    """
+
+    def test_warnings_filtered_from_llm_feedback(self) -> None:
+        outcome = ValidationOutcome(
+            ok=False,
+            skipped=False,
+            issues=[
+                # Informational — the system fixed this already.
+                ValidationIssueView(
+                    code="META_REQUIREMENT_AUTO_RESTORED",
+                    message="Auto-restored requirement to baseline",
+                    severity="warning",
+                ),
+                # Real error the LLM CAN fix.
+                ValidationIssueView(
+                    code="GRAM_STEP_INVALID",
+                    message="Step verb unrecognized: 'frobnicate'",
+                    severity="error",
+                ),
+            ],
+        )
+        text = format_validator_feedback(outcome, attempt=1, max_attempts=3)
+        # Real error is shown.
+        self.assertIn("Step verb unrecognized", text)
+        # Auto-restore warning is NOT — saved as one error, not two.
+        self.assertNotIn("Auto-restored requirement to baseline", text)
+        self.assertIn("1 error(s)", text)
+        self.assertNotIn("2 error(s)", text)
+
+    def test_all_warnings_yields_empty_feedback(self) -> None:
+        # If every issue is a warning, the LLM has nothing actionable —
+        # caller should short-circuit (no retry). format_validator_feedback
+        # returns "" defensively in that case.
+        outcome = ValidationOutcome(
+            ok=False,
+            skipped=False,
+            issues=[
+                ValidationIssueView(
+                    code="META_REQUIREMENT_AUTO_RESTORED",
+                    message="restored",
+                    severity="warning",
+                ),
+            ],
+        )
+        self.assertEqual(
+            format_validator_feedback(outcome, attempt=1, max_attempts=3),
+            "",
+        )
 
 
 if __name__ == "__main__":

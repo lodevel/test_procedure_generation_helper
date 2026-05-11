@@ -645,6 +645,16 @@ _META_REQUIREMENT_LINE_RE = _re.compile(
     r"^requirement:(?:[ \t]+([^\n]*?))?[ \t]*$", _re.MULTILINE
 )
 
+# Variant that also consumes the trailing newline so deleting the line
+# doesn't leave a blank line in the Meta block (which the parser flags
+# as GRAM_META_BLANK_LINE). Used when baseline is empty/absent and the
+# auto-restore needs to omit the requirement key entirely (per
+# Canonical_Text_Procedure_v2.md §"Canonical key order": "do not emit
+# empty values").
+_META_REQUIREMENT_LINE_STRIP_RE = _re.compile(
+    r"^requirement:(?:[ \t]+[^\n]*?)?[ \t]*\n", _re.MULTILINE
+)
+
 
 def _extract_meta_requirement_from_text(text: str) -> str:
     """Pull the `meta.requirement` value from a canonical-text procedure.
@@ -753,16 +763,29 @@ def _restore_requirement_in_text_proposal(
     proposed_value = _extract_meta_requirement_from_text(content)
     if proposed_value == baseline_value:
         return None
-    # Build the canonical replacement line.
-    new_line = "requirement:" if not baseline_value else f"requirement: {baseline_value}"
-    if _META_REQUIREMENT_LINE_RE.search(content):
-        new_content = _META_REQUIREMENT_LINE_RE.sub(new_line, content, count=1)
+    # Two cases per Canonical_Text_Procedure_v2.md §Meta "Canonical key
+    # order": empty / absent baseline → DELETE the line entirely
+    # ("Omit optional keys entirely when absent (do not emit empty
+    # values)"). Non-empty baseline → write the canonical
+    # 'requirement: <value>' form. Emitting "requirement:" verbatim
+    # would violate the parser's GRAM_META_SEPARATOR check
+    # (header_meta.py:109) and create a self-inflicted retry loop where
+    # auto-restore introduces a syntax error and the LLM is asked to
+    # fix our output.
+    if baseline_value:
+        new_line = f"requirement: {baseline_value}"
+        if _META_REQUIREMENT_LINE_RE.search(content):
+            new_content = _META_REQUIREMENT_LINE_RE.sub(new_line, content, count=1)
+        else:
+            # Proposal lacks the line entirely but baseline expects a
+            # value — caller's handlers will flag the missing key.
+            return None
     else:
-        # Line was absent in proposal — but proposed_value would have been
-        # "" so we'd have early-returned above when baseline_value also "".
-        # If we get here, baseline_value is non-empty and proposal lacks
-        # the line entirely. Skip mutation; let the handlers flag it.
-        return None
+        # Baseline empty → strip the line entirely. Consume the
+        # trailing newline too so we don't leave a stray blank line.
+        new_content = _META_REQUIREMENT_LINE_STRIP_RE.sub("", content, count=1)
+        if new_content == content:
+            return None
     proposal.content = new_content
     return (proposed_value, baseline_value)
 
@@ -970,11 +993,21 @@ def format_validator_feedback(
     them wastes tokens and confuses the rewrite. They remain visible to the
     operator via the dock widget.
 
+    Warnings (``severity == "warning"``) are also filtered out — they
+    document state the system already handled (e.g.
+    ``META_REQUIREMENT_AUTO_RESTORED`` which fires AFTER the auto-
+    restore mutated the proposal). Asking the LLM to "fix" something
+    the system already fixed wastes a retry turn and risks the LLM
+    re-introducing the very thing auto-restore stripped.
+
     Set ``include_fix_hints=False`` to suppress the per-finding fix hint
     lines (useful for evaluating raw LLM correction ability without the
     parser's prescriptive guidance, or for keeping the feedback turn short).
     """
-    llm_issues = [i for i in outcome.issues if i.fixable_by != "operator"]
+    llm_issues = [
+        i for i in outcome.issues
+        if i.fixable_by != "operator" and i.severity != "warning"
+    ]
     if not llm_issues:
         # All findings are operator-only — caller should have short-circuited.
         # Defensive empty return; callers must not pass this through.

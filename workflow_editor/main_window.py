@@ -101,9 +101,17 @@ class MainWindow(QMainWindow):
         # File watcher for project's config.json — drives live refresh of
         # parser-button visibility when the parent app's Config dialog (or
         # any external editor) writes the file.
+        # We watch BOTH the file and its parent directory: ProjectConfigDialog
+        # commits via rmtree+copytree, which deletes the file before
+        # recreating it. The fileChanged signal fires on delete but
+        # we can't re-add the watch while the file is missing — the
+        # directoryChanged signal catches the subsequent recreate so
+        # we re-arm the file watch then (Codex Phase-4 review MEDIUM Q2).
         self._config_watcher = QFileSystemWatcher(self)
         self._config_watcher.fileChanged.connect(self._on_config_file_changed)
+        self._config_watcher.directoryChanged.connect(self._on_config_dir_changed)
         self._watched_config_path: Optional[Path] = None
+        self._watched_config_dir: Optional[Path] = None
         
         # Initialize task config manager pointing at the repo-shared
         # fallback. ``reload(project_root)`` is called below whenever a
@@ -1282,10 +1290,13 @@ class MainWindow(QMainWindow):
                 )
 
     def _watch_project_config(self) -> None:
-        """Watch the active project's config.json for live parser refresh.
+        """Watch the active project's config.json + its parent dir.
 
-        Removes any previous watch path before adding the new one. Safe
-        to call repeatedly (e.g. after switching projects).
+        Removes any previous watches before adding the new ones. Safe
+        to call repeatedly (e.g. after switching projects). The parent
+        directory watch is the safety net for rmtree+copytree commits
+        where the fileChanged signal fires on delete and we miss the
+        subsequent recreate (Codex Q2).
         """
         config_dir = self.project_manager.get_config_dir()
         new_path = (config_dir / "config.json") if config_dir else None
@@ -1293,10 +1304,18 @@ class MainWindow(QMainWindow):
         if self._watched_config_path is not None:
             self._config_watcher.removePath(str(self._watched_config_path))
             self._watched_config_path = None
+        if self._watched_config_dir is not None:
+            self._config_watcher.removePath(str(self._watched_config_dir))
+            self._watched_config_dir = None
 
         if new_path and new_path.exists():
             self._config_watcher.addPath(str(new_path))
             self._watched_config_path = new_path
+        # Watch the parent dir regardless of file presence — survives
+        # the brief delete-recreate window of ProjectConfigDialog commits.
+        if config_dir is not None and config_dir.exists():
+            self._config_watcher.addPath(str(config_dir))
+            self._watched_config_dir = config_dir
 
     def _on_config_file_changed(self, path: str) -> None:
         """Refresh parser- and workflow-driven UI when config.json changes.
@@ -1312,19 +1331,47 @@ class MainWindow(QMainWindow):
         ``rebuild_validator_buttons`` on every tab (registered in
         Phase 2/3).
         """
+        self._handle_config_change()
+        p = Path(path)
+        if p.exists() and str(p) not in self._config_watcher.files():
+            self._config_watcher.addPath(str(p))
+
+    def _on_config_dir_changed(self, path: str) -> None:
+        """Directory-level watch fires when config.json is created/
+        recreated by an external writer (e.g. ProjectConfigDialog's
+        rmtree+copytree commit). Re-arms the file watch and triggers
+        the same hot-reload as a direct file change. Phase 4.6.2."""
+        if self._watched_config_path is None:
+            return
+        # If the file watch dropped during a rmtree window, re-add it
+        # now that the directory event tells us the file is back.
+        file_str = str(self._watched_config_path)
+        if (self._watched_config_path.exists()
+                and file_str not in self._config_watcher.files()):
+            self._config_watcher.addPath(file_str)
+            self._handle_config_change()
+
+    def _handle_config_change(self) -> None:
+        """Single funnel for hot-reload work — called by both the
+        file-change and directory-change paths so logic stays in one
+        place."""
         self.text_json_tab.refresh_parser_button()
         self.json_code_tab.refresh_code_parser_button()
-
         try:
             project_root = self.project_manager.project_root
             if project_root is not None:
                 self.task_config_manager.reload(project_root)
         except Exception:  # never let the watcher die on a load error
             log.exception("Hot-reload of TaskConfigManager failed")
-
-        p = Path(path)
-        if p.exists() and str(p) not in self._config_watcher.files():
-            self._config_watcher.addPath(str(p))
+        # Also refresh the chat panel's validator-status indicator so
+        # auto-correct checkbox + dot reflect the new state.
+        try:
+            current = self.tab_widget.currentWidget()
+            ctx = getattr(current, "tab_context", None)
+            if ctx is not None:
+                self.dock.chat_panel._refresh_validator_ui_for_context(ctx)
+        except Exception:
+            log.debug("post-config-change chat-panel refresh failed", exc_info=True)
     
     def _on_save(self):
         """Save artifacts managed by the current tab.

@@ -5,7 +5,7 @@
         "id": "review_text_procedure",
         "name": "Review Text Procedure",
         "button_label": "Review Text",
-        "prompt_template": null,
+        "prompt_template": "Task: Review procedure text for correctness and completeness.\n\nAnalyze the provided procedure text and identify:\n- Ambiguous or unclear steps\n- Missing equipment specifications\n- Missing measurement parameters\n- Rule violations (if rules provided)\n\nReport issues in validation.issues[] with severity, code, message, location, and suggested_fix.\nIf you find issues, include a procedure_text proposal with the corrected version.\nYou may ask clarifying questions if needed.\n\nIMPORTANT: In your response, ONLY include a 'procedure_text' proposal if needed.\nDo NOT generate 'procedure_json' or 'test_code' proposals for this task.",
         "enabled": true,
         "max_validator_attempts": null,
         "selected_rules": null
@@ -13,7 +13,7 @@
     ],
     "chat_config": {
       "enabled": true,
-      "system_prompt": null
+      "system_prompt": "Task: Respond to user question or request.\n\nThe user is asking a question or making a request related to test procedure authoring.\nRespond helpfully based on the context provided.\nIf the user asks for changes to an artifact, include a proposal in your response.\nIf the user asks a question, answer it without modifying artifacts."
     }
   },
   "text_json": {
@@ -22,7 +22,7 @@
         "id": "derive_json_from_text",
         "name": "Derive JSON from Text",
         "button_label": "Text → JSON",
-        "prompt_template": null,
+        "prompt_template": "Task: Derive procedure.json from procedure text.\n\nConvert the natural language procedure text into a structured procedure.json.\nExtract and structure:\n- Test name and description\n- Equipment requirements\n- Step-by-step procedure\n- Expected results and pass/fail criteria\n\nIMPORTANT: In your response, ONLY include a 'procedure_json' proposal.\nDo NOT generate 'test_code' or 'procedure_text' proposals for this task.",
         "enabled": true,
         "max_validator_attempts": null,
         "selected_rules": null
@@ -31,7 +31,7 @@
         "id": "render_text_from_json",
         "name": "Render Text from JSON",
         "button_label": "JSON → Text",
-        "prompt_template": null,
+        "prompt_template": "Task: Render procedure.json as human-readable text.\n\nConvert the structured JSON into a clear, readable procedure document.\nFormat as markdown with:\n- Title and description\n- Equipment list\n- Numbered steps with clear instructions\n- Expected results",
         "enabled": true,
         "max_validator_attempts": null,
         "selected_rules": null
@@ -40,7 +40,7 @@
         "id": "review_text_procedure",
         "name": "Review Text Procedure",
         "button_label": "Review Text",
-        "prompt_template": null,
+        "prompt_template": "Task: Review procedure text for correctness and completeness.\n\nAnalyze the provided procedure text and identify:\n- Ambiguous or unclear steps\n- Missing equipment specifications\n- Missing measurement parameters\n- Rule violations (if rules provided)\n\nReport issues in validation.issues[] with severity, code, message, location, and suggested_fix.\nIf you find issues, include a procedure_text proposal with the corrected version.\nYou may ask clarifying questions if needed.\n\nIMPORTANT: In your response, ONLY include a 'procedure_text' proposal if needed.\nDo NOT generate 'procedure_json' or 'test_code' proposals for this task.",
         "enabled": true,
         "max_validator_attempts": null,
         "selected_rules": null
@@ -49,7 +49,7 @@
         "id": "review_json",
         "name": "Review JSON",
         "button_label": "Review JSON",
-        "prompt_template": null,
+        "prompt_template": "Task: Review procedure.json for correctness and completeness.\n\nAnalyze the provided procedure.json and identify:\n- Missing required fields\n- Incomplete step descriptions\n- Equipment specification issues\n- Any violations of the rules (if provided)\n\nReport issues in validation.issues[] with severity, code, message, location, and suggested_fix.\nIf you find issues, include a procedure_json proposal with the corrected version.\nYou may ask clarifying questions if needed.",
         "enabled": true,
         "max_validator_attempts": null,
         "selected_rules": null
@@ -58,7 +58,7 @@
         "id": "review_text_vs_json",
         "name": "Review Text vs JSON",
         "button_label": "Check Text↔JSON",
-        "prompt_template": null,
+        "prompt_template": "Task: Check coherence between procedure text and procedure.json.\n\nCompare the procedure text with the procedure JSON and identify:\n- Step count mismatches\n- Step content/intent mismatches\n- Equipment list differences\n- Expected result differences\n\nReport issues in validation.issues[] with severity, code, message, location, and suggested_fix.\nIf you find issues, include proposals (procedure_text and/or procedure_json) with the corrected versions.\nYou may ask clarifying questions if needed.",
         "enabled": true,
         "max_validator_attempts": null,
         "selected_rules": null
@@ -66,7 +66,7 @@
     ],
     "chat_config": {
       "enabled": true,
-      "system_prompt": null
+      "system_prompt": "Task: Respond to user question or request.\n\nThe user is asking a question or making a request related to test procedure authoring.\nRespond helpfully based on the context provided.\nIf the user asks for changes to an artifact, include a proposal in your response.\nIf the user asks a question, answer it without modifying artifacts."
     }
   },
   "json_code": {
@@ -75,7 +75,7 @@
         "id": "generate_code_from_json",
         "name": "Generate Code from JSON",
         "button_label": "JSON → Code",
-        "prompt_template": null,
+        "prompt_template": "Task: Generate test code from procedure.json.\n\nGenerate Python test code that implements the procedure described in the JSON.\nRequirements:\n- Include # Step N markers for each step\n- Follow the equipment and measurement specifications\n- Handle errors appropriately",
         "enabled": true,
         "max_validator_attempts": null,
         "selected_rules": null
@@ -84,7 +84,7 @@
         "id": "derive_json_from_code",
         "name": "Derive JSON from Code",
         "button_label": "Code → JSON",
-        "prompt_template": null,
+        "prompt_template": "Task: Derive procedure.json from test code.\n\nAnalyze the provided Python test code and create a structured procedure.json that describes the test procedure.\nExtract:\n- Test name and description\n- Board/equipment requirements\n- Test steps (from # Step N markers or inferred from code)\n- Expected results",
         "enabled": true,
         "max_validator_attempts": null,
         "selected_rules": null
@@ -93,7 +93,7 @@
         "id": "review_json",
         "name": "Review JSON",
         "button_label": "Review JSON",
-        "prompt_template": null,
+        "prompt_template": "Task: Review procedure.json for correctness and completeness.\n\nAnalyze the provided procedure.json and identify:\n- Missing required fields\n- Incomplete step descriptions\n- Equipment specification issues\n- Any violations of the rules (if provided)\n\nReport issues in validation.issues[] with severity, code, message, location, and suggested_fix.\nIf you find issues, include a procedure_json proposal with the corrected version.\nYou may ask clarifying questions if needed.",
         "enabled": true,
         "max_validator_attempts": null,
         "selected_rules": null
@@ -102,7 +102,7 @@
         "id": "review_code",
         "name": "Review Code",
         "button_label": "Review Code",
-        "prompt_template": null,
+        "prompt_template": "Task: Review test code for correctness and rule compliance.\n\nAnalyze the provided Python test code and identify:\n- Missing or incorrect step markers\n- Equipment handling issues\n- Measurement structure problems\n- Error handling gaps\n- Rule violations (if rules provided)\n- Code quality issues\n\nReport issues in validation.issues[] with severity, code, message, location, and suggested_fix.\nIf you find issues, include a test_code proposal with the corrected version.\nYou may ask clarifying questions if needed.\n\nIMPORTANT: In your response, ONLY include a 'test_code' proposal if needed.\nDo NOT generate 'procedure_json' or 'procedure_text' proposals for this task.",
         "enabled": true,
         "max_validator_attempts": null,
         "selected_rules": null
@@ -111,7 +111,7 @@
         "id": "review_code_vs_json",
         "name": "Review Code vs JSON",
         "button_label": "Check JSON↔Code",
-        "prompt_template": null,
+        "prompt_template": "Task: Check coherence between procedure.json and test code.\n\nCompare the procedure JSON with the test code and identify:\n- Steps in JSON without corresponding code blocks\n- Code blocks without corresponding JSON steps\n- Equipment mismatches\n- Measurement/expectation mismatches\n- Rule violations in either artifact\n\nReport issues in validation.issues[] with severity, code, message, location, and suggested_fix.\nIf you find issues, include proposals (procedure_json and/or test_code) with the corrected versions.\nYou may ask clarifying questions if needed.",
         "enabled": true,
         "max_validator_attempts": null,
         "selected_rules": null
@@ -119,7 +119,7 @@
     ],
     "chat_config": {
       "enabled": true,
-      "system_prompt": null
+      "system_prompt": "Task: Respond to user question or request.\n\nThe user is asking a question or making a request related to test procedure authoring.\nRespond helpfully based on the context provided.\nIf the user asks for changes to an artifact, include a proposal in your response.\nIf the user asks a question, answer it without modifying artifacts."
     }
   },
   "traceability": {

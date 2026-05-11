@@ -239,10 +239,13 @@ class TestTaskConfigManagerConvenience:
         )
         assert success is True
         
-        # Verify only button label changed
+        # Verify only button label changed; prompt_template carries the
+        # editor's baked-in default (Phase 4.3 baked DEFAULT_TASK_INSTRUCTIONS
+        # into default_workflows.json so they round-trip as task defaults).
         task = manager.get_task_config("text_json", LLMTask.DERIVE_JSON_FROM_TEXT.value)
         assert task.button_label == "New Label"
-        assert task.prompt_template is None  # Unchanged
+        assert task.prompt_template is not None
+        assert "Derive procedure.json" in task.prompt_template
         assert task.enabled is True  # Unchanged
     
     def test_update_task_config_prompt_template(self, tmp_path):

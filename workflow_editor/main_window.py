@@ -1290,13 +1290,28 @@ class MainWindow(QMainWindow):
             self._watched_config_path = new_path
 
     def _on_config_file_changed(self, path: str) -> None:
-        """Refresh parser-driven UI when the project's config.json changes.
+        """Refresh parser- and workflow-driven UI when config.json changes.
 
         Some editors atomic-write (delete + recreate), which silently
         drops the watch — re-add the path defensively after each event.
+
+        Phase 4 hot-reload: when the parent app's ProjectConfigDialog
+        commits a workflows edit, reload the TaskConfigManager so the
+        running workflow editor's button labels + validator rows
+        reflect the change without restart. The reload-callback chain
+        fires ``refresh_all_button_labels``, which itself calls
+        ``rebuild_validator_buttons`` on every tab (registered in
+        Phase 2/3).
         """
         self.text_json_tab.refresh_parser_button()
         self.json_code_tab.refresh_code_parser_button()
+
+        try:
+            project_root = self.project_manager.project_root
+            if project_root is not None:
+                self.task_config_manager.reload(project_root)
+        except Exception:  # never let the watcher die on a load error
+            log.exception("Hot-reload of TaskConfigManager failed")
 
         p = Path(path)
         if p.exists() and str(p) not in self._config_watcher.files():

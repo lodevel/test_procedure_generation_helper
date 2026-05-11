@@ -1278,37 +1278,46 @@ def _merge_tab(base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _merge_list_by_id(base: list, overlay: list) -> list:
-    """Per-id merge for list-of-dicts. Overlay entries by ``id`` win.
+    """Per-id, per-field merge for list-of-dicts.
 
-    Result order: overlay first (in its original order), then base
-    entries whose ids aren't in overlay (in their original order).
-    Entries without an ``id`` field in either list are appended at the
-    end (overlay first then base) to keep them visible.
+    For ids present in both lists, fields are merged at the field
+    level: overlay's value wins ONLY when it's not ``None``. ``None``
+    in the overlay means "fall through to the base value" — required
+    so projects that save a task with ``prompt_template: null``
+    (because the user only edited button_label) don't stomp the
+    editor's default prompt.
+
+    Result order: overlay-id first, then base ids not in overlay.
+    Orphans (entries without an id) tail-appended.
     """
-    overlay_by_id: Dict[str, Dict[str, Any]] = {}
-    overlay_orphans: list = []
-    for entry in overlay:
+    base_by_id: Dict[str, Dict[str, Any]] = {}
+    for entry in base:
         if isinstance(entry, dict) and isinstance(entry.get("id"), str):
-            overlay_by_id[entry["id"]] = entry
-        else:
-            overlay_orphans.append(entry)
+            base_by_id[entry["id"]] = entry
 
     out: list = []
     seen_ids: set = set()
-    # Overlay first (preserves user-intent ordering).
     for entry in overlay:
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str):
+            eid = entry["id"]
+            if eid in seen_ids:
+                continue
+            base_entry = base_by_id.get(eid, {})
+            merged = dict(base_entry)
+            for k, v in entry.items():
+                if v is not None:
+                    merged[k] = v
+            out.append(merged)
+            seen_ids.add(eid)
+    for entry in base:
         if isinstance(entry, dict) and isinstance(entry.get("id"), str):
             if entry["id"] not in seen_ids:
                 out.append(entry)
                 seen_ids.add(entry["id"])
-    # Then base entries with ids not in overlay.
-    for entry in base:
-        if isinstance(entry, dict) and isinstance(entry.get("id"), str):
-            if entry["id"] not in overlay_by_id and entry["id"] not in seen_ids:
-                out.append(entry)
-                seen_ids.add(entry["id"])
-    # Orphans (no id) appended last.
-    out.extend(overlay_orphans)
+    # Orphans (no id) — overlay first then base.
+    for entry in overlay:
+        if not (isinstance(entry, dict) and isinstance(entry.get("id"), str)):
+            out.append(entry)
     for entry in base:
         if not (isinstance(entry, dict) and isinstance(entry.get("id"), str)):
             out.append(entry)

@@ -614,8 +614,17 @@ class LLMTabMixin:
         """Emit a once-per-tab system message when the deterministic path
         isn't available, then suppress further notifications until the
         tab is recreated. Avoids spamming the chat with the same banner
-        on every LLM call."""
+        on every LLM call.
+
+        Suppressed entirely when the operator explicitly opted out via
+        ``validator_loop.enabled=false`` — in that case there's nothing
+        to warn about, the user already knows (Phase 4.6).
+        """
         if getattr(self.tab_context, "_validator_unavailable_warned", False):
+            return
+        if "disabled in project settings" in reason:
+            # User opt-out → don't nag.
+            self.tab_context._validator_unavailable_warned = True
             return
         self.tab_context._validator_unavailable_warned = True
         self.main_window.dock.chat_panel.add_message(

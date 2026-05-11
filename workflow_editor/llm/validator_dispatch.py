@@ -880,9 +880,23 @@ def is_loop_available(project_root: Optional[Path]) -> tuple[bool, str]:
     """Coarse availability probe used to gate the operator toggle's enabled
     state. Returns ``(available, reason)`` — when available is False, the
     reason is shown in the toggle's tooltip.
+
+    Resolution order:
+      1. ``validator_loop.enabled`` flag in the project config — when
+         False, the validator is intentionally OFF and we return the
+         "disabled" reason. Callers suppress validator-unavailable
+         warnings for this reason (Phase 4.6: stop nagging operators
+         who opted out).
+      2. Probe the per-project text_renderer + the pack's bijective
+         handler. Either missing → "validator unavailable" reason.
     """
     if project_root is None:
         return False, "no active project"
+    # 1. Per-project explicit opt-out.
+    from .validator_loop_settings import is_enabled as _is_enabled
+    if not _is_enabled(project_root):
+        return False, "disabled in project settings (validator_loop.enabled=false)"
+    # 2. Existing availability probe.
     _, avail_fn = _import_validator(project_root)
     if avail_fn is None:
         return False, "deterministic validator unavailable — no text_renderer variant configured"

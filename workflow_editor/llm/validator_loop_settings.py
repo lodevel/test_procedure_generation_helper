@@ -48,6 +48,22 @@ by ``config_manager.seed_project_from_config`` (any key not in the four
 overwritten sections is passed through untouched)."""
 
 
+def is_enabled(project_root: Path | None) -> bool:
+    """True iff the deterministic validator is enabled for this project.
+
+    Reads ``validator_loop.enabled`` from the project config; defaults to
+    True when the key is absent (back-compat with projects that predate
+    the toggle). Callers use this to short-circuit ``is_loop_available``
+    so operators who explicitly opted out of the validator stop seeing
+    "validator unavailable" warnings (Phase 4.6).
+    """
+    if project_root is None:
+        return True
+    section = load_settings(project_root)
+    val = section.get("enabled", True)
+    return bool(val)
+
+
 def load_settings(project_root: Path) -> dict[str, Any]:
     """Read the ``validator_loop`` section from the project's config.
 

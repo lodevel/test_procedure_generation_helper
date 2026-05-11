@@ -456,6 +456,21 @@ class SettingsDialog(QDialog):
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
+        # Top-level enable/disable: operator opt-out (Phase 4.6).
+        # When unchecked, the deterministic validator is skipped, the
+        # auto-correct checkbox is greyed (no loop to run), and the
+        # "validator unavailable" chat warning is suppressed.
+        self.validator_enabled = QCheckBox("Enable deterministic validator")
+        self.validator_enabled.setChecked(True)
+        self.validator_enabled.setToolTip(
+            "Master switch for the per-project deterministic validator + "
+            "its auto-correction loop. Uncheck to skip validation entirely "
+            "for this project. When enabled, the validator additionally "
+            "requires a text_renderer to be picked in "
+            "Project Config → Parsers."
+        )
+        layout.addWidget(self.validator_enabled)
+
         retry_group = QGroupBox("Auto-correction loop")
         retry_form = QFormLayout(retry_group)
 
@@ -469,6 +484,9 @@ class SettingsDialog(QDialog):
             "~95%% of fixable failures empirically. Per-project."
         )
         retry_form.addRow("Max validator-correction attempts:", self.validator_max_attempts)
+
+        # Disable the retry-cap row when the master toggle is off.
+        self.validator_enabled.toggled.connect(retry_group.setEnabled)
 
         layout.addWidget(retry_group)
 
@@ -485,6 +503,7 @@ class SettingsDialog(QDialog):
 
         # Disable when no project is bound — there's nowhere to persist.
         if self._project_root is None:
+            self.validator_enabled.setEnabled(False)
             self.validator_max_attempts.setEnabled(False)
             disabled_note = QLabel(
                 "<i>No project open — open a project to edit these settings.</i>"
@@ -506,6 +525,8 @@ class SettingsDialog(QDialog):
         except Exception:
             log.exception("Failed to load validator_loop settings")
             return
+        if "enabled" in section:
+            self.validator_enabled.setChecked(bool(section["enabled"]))
         if "max_attempts" in section:
             try:
                 self.validator_max_attempts.setValue(int(section["max_attempts"]))
@@ -523,12 +544,16 @@ class SettingsDialog(QDialog):
         try:
             from ..llm.validator_loop_settings import save_setting
             save_setting(
+                self._project_root, "enabled",
+                bool(self.validator_enabled.isChecked()),
+            )
+            save_setting(
                 self._project_root,
                 "max_attempts",
                 int(self.validator_max_attempts.value()),
             )
         except Exception:
-            log.exception("Failed to persist validator_loop.max_attempts")
+            log.exception("Failed to persist validator_loop settings")
 
     def _load_values(self):
         """Load values from settings.

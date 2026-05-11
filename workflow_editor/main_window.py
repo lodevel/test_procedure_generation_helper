@@ -406,9 +406,18 @@ class MainWindow(QMainWindow):
         settings_action.setShortcut("Ctrl+,")
         settings_action.triggered.connect(self._on_settings)
         file_menu.addAction(settings_action)
-        
+
+        workflows_action = QAction("Configure &Workflows...", self)
+        workflows_action.setToolTip(
+            "Edit per-project prompts, button labels, validators and chat "
+            "config. Opens via the parent app's Project Configuration → "
+            "Workflows tab; live edits hot-reload here."
+        )
+        workflows_action.triggered.connect(self._on_configure_workflows)
+        file_menu.addAction(workflows_action)
+
         file_menu.addSeparator()
-        
+
         exit_action = QAction("E&xit", self)
         exit_action.setShortcut(QKeySequence.Quit)
         exit_action.triggered.connect(self.close)
@@ -1497,7 +1506,47 @@ class MainWindow(QMainWindow):
             self._apply_settings()
             # Refresh button labels after settings change
             self.refresh_all_button_labels()
-    
+
+    def _on_configure_workflows(self):
+        """Point the user at the parent app's workflows editor.
+
+        The workflow editor is a submodule and can't import the parent
+        app's ProjectConfigDialog. Show a hint dialog and offer to open
+        the project's ``config.json`` in the OS default editor as a
+        power-user fallback. Any external edit will be picked up by the
+        config-file watcher (Phase 4 hot reload).
+        """
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
+        project_root = self.project_manager.project_root
+        if project_root is None:
+            QMessageBox.information(
+                self,
+                "No Project Open",
+                "Open or create a project first. Workflow configuration "
+                "is per-project.",
+            )
+            return
+
+        config_json = project_root / "config" / "config.json"
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Information)
+        msg.setWindowTitle("Configure Workflows")
+        msg.setText(
+            "Workflow configuration (prompts, button labels, validator "
+            "buttons, chat) lives in the parent app's "
+            "<b>Project Configuration → Workflows</b> tab.<br><br>"
+            "Apply changes there and they hot-reload here automatically."
+        )
+        open_btn = msg.addButton(
+            "Open config.json in editor", QMessageBox.ActionRole
+        )
+        msg.addButton(QMessageBox.Ok)
+        msg.exec()
+        if msg.clickedButton() is open_btn and config_json.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(config_json)))
+
     def _on_clean(self):
         """Open clean dialog."""
         if not self.artifact_manager:

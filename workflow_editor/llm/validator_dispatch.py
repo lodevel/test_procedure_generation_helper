@@ -314,8 +314,25 @@ def _outcome_from_report(report: Any) -> ValidationOutcome:
 
 
 def _outcome_from_parse_error(exc: Any) -> ValidationOutcome:
-    """Convert a ``ParseError`` raised by ``text_parser.parse`` to an
-    :class:`ValidationOutcome` carrying a single issue."""
+    """Convert a ParseError-shaped exception into a
+    :class:`ValidationOutcome`.
+
+    Two cases:
+
+    * The exception carries a non-empty ``.findings`` list (Phase 5.1
+      ``pack_parsers.ParseFailure``): every Finding becomes a row so
+      the structured-error dialog shows all the wheel's reasons, not
+      just the first. Without this fan-out the dialog renders one
+      catch-all "[PARSE_ERROR] parsing failed" line and silently drops
+      every secondary finding.
+    * The exception has only ``.code`` / ``.message`` / ``.line`` (the
+      legacy ``ParseError`` shape from the v2.0.0 wrapper): single
+      catch-all issue is built from those attributes.
+    """
+    findings = getattr(exc, "findings", None) or []
+    if findings:
+        issues = [_issue_from_validator(f) for f in findings]
+        return ValidationOutcome(ok=False, skipped=False, issues=issues)
     issue = ValidationIssueView(
         code=getattr(exc, "code", "PARSE_ERROR") or "PARSE_ERROR",
         message=str(exc) if str(exc) else getattr(exc, "message", ""),
@@ -341,52 +358,27 @@ def _skipped(reason: str) -> ValidationOutcome:
 def _import_validator(project_root: Optional[Path] = None):
     """Resolve the (validate_fn, deterministic_path_available_fn) pair.
 
-    Loads the project-selected ``text_renderer`` variant. The variant
-    must expose ``ProcedureTextRenderer`` with
-    ``validate(text=, json_obj=, mode=) -> Report`` whose errors carry
-    code/message/severity/location/fix_hint/fixable_by attributes.
+    Phase 5.1: imports directly from the rules_packager_base wheel via
+    :mod:`workflow_editor.llm.pack_parsers`. The legacy project-local
+    wrapper layer (``<project>/config/parsers/text_renderer/*.py``) is
+    gone; one parser version per pack, the wheel is the source of truth.
 
-    Returns ``(None, None)`` when no project_root is given, no variant is
-    configured, or the variant fails to load. The caller treats this as
-    "deterministic path unavailable" and the GUI falls back to LLM-only.
-
-    The legacy ``rules_packager_base.bijective_validator`` (v2.0.0 framework)
-    fallback was removed: v2.0.0 grammar is incompatible with v2.0.1 rules
-    (canonical PSU/scope forms differ; running v2.0.0 against v2.0.1 procedures
-    silently rejects valid output and drives LLM rewriters into garbage).
+    Returns ``(None, None)`` when the wheel isn't importable. The caller
+    treats this as "deterministic path unavailable" and the GUI falls
+    back to LLM-only. ``project_root`` is kept on the signature for
+    backward compatibility with callers; it isn't consulted today
+    (validators don't need it — they import from the wheel directly).
     """
-    if project_root is None:
-        return None, None
+    del project_root  # no longer used; kept for caller compatibility
     try:
-        # Lazy import avoids circular: validator_dispatch <- llm/ <- core/project_manager
-        from ..core.project_manager import ProjectManager
-        pm = ProjectManager(project_root=project_root)
-        renderer = pm.get_text_renderer()
-        if renderer is None:
-            return None, None
-        return renderer.validate, lambda: True
+        from . import pack_parsers
     except Exception as exc:  # noqa: BLE001
-        log.info("project text_renderer not loadable (%s); GUI falls back to LLM-only.", exc)
+        log.info("pack_parsers import failed (%s); GUI falls back to LLM-only.", exc)
         return None, None
-
-
-def _diagnose_text_renderer(project_root: Path) -> Optional[str]:
-    """Return the real reason text_renderer failed to load, or None.
-
-    Delegates to :meth:`ProjectManager.get_parser_load_error` after re-
-    probing the loader so the diagnostic cache is fresh. Returns the
-    underlying load failure verbatim (e.g. "wheel out of date"); returns
-    ``None`` when the variant simply isn't configured (caller emits a
-    "no variant configured" message instead).
-    """
-    try:
-        from ..core.project_manager import ProjectManager
-        pm = ProjectManager(project_root=project_root)
-        # Re-probe so _last_load_errors reflects the current on-disk state.
-        pm.get_text_renderer()
-        return pm.get_parser_load_error("text_renderer")
-    except Exception as exc:  # noqa: BLE001 — diagnostic must never crash
-        return f"diagnostic probe crashed: {type(exc).__name__}: {exc}"
+    available, _ = pack_parsers.is_available()
+    if not available:
+        return None, None
+    return pack_parsers.validate, lambda: True
 
 
 # --------------------------------------------------------------------------- #
@@ -878,12 +870,11 @@ def validate_response(
     """
     if project_root is None:
         return _skipped("no active project")
-    validate_fn, _ = _import_validator(project_root)
-    if validate_fn is None:
-        return _skipped(
-            "deterministic validator unavailable: neither project text_renderer "
-            "variant could be loaded — pick a text_renderer in Project Config -> Parsers"
-        )
+    from . import pack_parsers
+    available, reason = pack_parsers.is_available()
+    if not available:
+        return _skipped(f"deterministic validator unavailable: {reason}")
+    validate_fn = pack_parsers.validate
 
     # Phase 7.1 (2026-04-30): auto-restore operator-only meta fields the
     # LLM tried to populate or modify. Runs BEFORE the artifact handlers
@@ -938,18 +929,12 @@ def is_loop_available(project_root: Optional[Path]) -> tuple[bool, str]:
     from .validator_loop_settings import is_enabled as _is_enabled
     if not _is_enabled(project_root):
         return False, "disabled in project settings (validator_loop.enabled=false)"
-    # 2. Existing availability probe.
-    _, avail_fn = _import_validator(project_root)
-    if avail_fn is None:
-        diag = _diagnose_text_renderer(project_root)
-        if diag:
-            return False, f"deterministic validator unavailable — {diag}"
-        return False, "deterministic validator unavailable — no text_renderer variant configured"
-    try:
-        if not avail_fn():
-            return False, "no pack registered bijective handlers in this venv"
-    except Exception as exc:
-        return False, f"validator probe crashed: {type(exc).__name__}: {exc}"
+    # 2. Wheel-import probe. Phase 5.1: no per-project wrapper layer to
+    # diagnose; the wheel either imports or it doesn't.
+    from . import pack_parsers
+    available, reason = pack_parsers.is_available()
+    if not available:
+        return False, f"deterministic validator unavailable — {reason}"
     return True, "deterministic path active"
 
 
@@ -1076,13 +1061,10 @@ def validate_current_state(
     benefits from seeing soft-warning codes too — operators can read them and
     decide whether to act.
     """
-    validate_fn, _ = _import_validator(project_root)
-    if validate_fn is None:
-        return _skipped(
-            "Validator unavailable: project text_renderer variant could not "
-            "be loaded. Reinstall rules_packager_base wheel and pick a "
-            "text_renderer variant in Project Config -> Parsers."
-        )
+    from . import pack_parsers
+    available, reason = pack_parsers.is_available()
+    if not available:
+        return _skipped(f"Validator unavailable: {reason}")
 
     if not (text or json_str or code):
         return _skipped(
@@ -1100,20 +1082,14 @@ def validate_current_state(
                 f"procedure.json is not valid JSON: {exc}",
             ))
 
-    # v2.0.x design: bench identification lives in test.py module
-    # constants. The inventory is extracted from those constants for
-    # forward-only codegen (Doc 12). Falls back to legacy
-    # `<project>/inventory.json` for projects pre-dating v2.0.x.
-    inventory: Optional[dict[str, Any]] = None
-    if code and json_obj is not None:
-        inventory = _resolve_inventory(json_obj, project_root, code=code)
+    # Note: Phase 5.1 no longer wires inventory / code through the
+    # renderer-side validate. The legacy renderer ignored them anyway
+    # (codegen path is separate; see pack_parsers.generate_code).
 
     try:
-        report = validate_fn(
+        report = pack_parsers.validate(
             text=text or None,
             json_obj=json_obj,
-            code=code or None,
-            inventory=inventory,
             mode="all",
         )
     except Exception as exc:  # pragma: no cover — defensive only

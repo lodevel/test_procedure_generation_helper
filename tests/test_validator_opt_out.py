@@ -68,54 +68,50 @@ def test_is_loop_available_returns_disabled_when_user_opted_out(tmp_path):
     assert "disabled in project settings" in reason
 
 
-def test_is_loop_available_runs_probe_when_enabled_true(tmp_path):
-    """With enabled=True and no text_renderer configured, the function
-    falls through to the existing probe, which yields the "validator
-    unavailable" reason (not the "disabled" one)."""
+def test_is_loop_available_runs_probe_when_enabled_true(tmp_path, monkeypatch):
+    """With enabled=True the function falls through to the wheel-import
+    probe. Phase 5.1: no per-project parser variant gate — the wheel
+    decides.
+    """
+    # Simulate wheel-missing so the probe returns False (the test runs
+    # in a venv where the wheel may or may not be installed; we don't
+    # want availability tied to that).
+    from workflow_editor.llm import pack_parsers
+    monkeypatch.setattr(
+        pack_parsers, "is_available",
+        lambda: (False, "rules_packager_base not importable in test venv"),
+    )
     root = _project(tmp_path, {"enabled": True})
     available, reason = is_loop_available(root)
     assert available is False
-    # Existing path: missing text_renderer → "validator unavailable".
-    # Not the "disabled" reason — operator did NOT opt out.
+    # The reason should reflect the wheel-import failure, NOT the
+    # "disabled in project settings" branch (operator did not opt out).
     assert "disabled in project settings" not in reason
+    assert "not importable" in reason
 
 
-def test_is_loop_available_surfaces_text_renderer_load_error(tmp_path):
-    """When parsers.text_renderer is selected but the variant file
-    raises during __init__ (e.g. stale rules_packager_base wheel
-    missing an import), the reason must surface the underlying error,
-    NOT the generic "no variant configured" message.
+def test_is_loop_available_surfaces_wheel_import_error(tmp_path, monkeypatch):
+    """When the rules_packager_base wheel can't be imported (stale wheel,
+    pre-2.0.1 install, wrong venv), `is_loop_available` returns False
+    with the underlying ImportError message in the reason so the operator
+    sees "reinstall the wheel" — not a generic "no variant" message.
 
     Regression for the user-report 2026-05-11: validator stayed greyed
-    out even though canonical text_renderer was selected — the host
-    venv had an older wheel missing `check_name_fidelity` and the load
-    failure was silently swallowed.
+    out because the host venv had a wheel missing `check_name_fidelity`.
     """
-    root = tmp_path / "proj"
-    cfg = root / "config"
-    parsers_dir = cfg / "parsers" / "text_renderer"
-    parsers_dir.mkdir(parents=True)
-    (cfg / "config.json").write_text(json.dumps({
-        "parsers": {"text_renderer": "broken"},
-    }), encoding="utf-8")
-    # A variant that fails to instantiate — simulates a wheel-mismatch.
-    (parsers_dir / "broken.py").write_text(
-        "class ProcedureTextRenderer:\n"
-        "    def __init__(self):\n"
-        "        raise RuntimeError('wheel out of date, reinstall')\n",
-        encoding="utf-8",
+    from workflow_editor.llm import pack_parsers
+    fake_error = (
+        "rules_packager_base.rules.v2_0_1.parser is not importable: "
+        "cannot import name 'check_name_fidelity'. Reinstall the "
+        "rules_packager_base wheel (>= 2.0.1)."
     )
-
+    monkeypatch.setattr(
+        pack_parsers, "is_available", lambda: (False, fake_error),
+    )
+    root = _project(tmp_path, {"enabled": True})
     available, reason = is_loop_available(root)
     assert available is False
-    # The real cause must appear in the reason — operator needs to know
-    # to reinstall, not to "pick a variant".
-    assert "wheel out of date" in reason, (
-        f"expected underlying RuntimeError in reason, got: {reason!r}"
-    )
-    # Must NOT be the "no variant configured" message — a variant IS
-    # configured; it just crashed.
-    assert "no text_renderer variant configured" not in reason
+    assert "Reinstall the rules_packager_base wheel" in reason
 
 
 def test_save_setting_persists_enabled_flag(tmp_path):
@@ -187,29 +183,32 @@ def test_set_validator_status_unchecks_disabled_checkbox(tmp_path):
     assert panel.auto_correct_checkbox.isChecked() is True
 
 
-def test_validate_procedure_button_hidden_when_deps_missing(qapp_factory=None):
-    """When validate_procedure's dependency probe (is_loop_available)
-    returns False — e.g. no text_renderer picked — the button must
-    not render. Other validator buttons (json_schema, python_syntax)
-    keep showing.
-
-    Phase 4.6: 'if the validator isn't available in the project, that
-    button doesn't show — that should have been the case already.'
+def test_validate_procedure_button_hidden_when_wheel_unavailable(monkeypatch):
+    """Phase 5.1: the rules_packager_base validators
+    (`validate_procedure`, `validate_json_schema`) are gated on
+    `pack_parsers.is_available()` — i.e. the wheel imports cleanly.
+    When the wheel is missing, both pack-shipped validators must
+    hide; the pack-independent `core.check_python_syntax` keeps showing.
     """
     from PySide6.QtWidgets import QApplication, QHBoxLayout
     from types import SimpleNamespace
     from unittest.mock import MagicMock
-    import pytest
     app = QApplication.instance() or QApplication([])  # noqa: F841
 
-    # Build a manager that surfaces the three baked-in validators.
     from workflow_editor.core.task_config import TaskConfigManager
     from workflow_editor.core.validators_registry import (
         ensure_builtins_registered, unregister_all,
     )
+    from workflow_editor.llm import pack_parsers
     from workflow_editor.tabs.base_tab import BaseTab
     unregister_all()
     ensure_builtins_registered()
+
+    # Wheel-unavailable → pack-shipped validators must hide.
+    monkeypatch.setattr(
+        pack_parsers, "is_available",
+        lambda: (False, "rules_packager_base not in this venv"),
+    )
 
     import tempfile
     from pathlib import Path
@@ -219,8 +218,6 @@ def test_validate_procedure_button_hidden_when_deps_missing(qapp_factory=None):
     import json as _json
     (cfg / "config.json").write_text(_json.dumps({
         "manifest": {"name": "test"},
-        # Master toggle ON. No text_renderer in parsers → procedure
-        # validator's deps are missing.
         "validator_loop": {"enabled": True},
         "workflows": {
             "text_json": {
@@ -249,9 +246,10 @@ def test_validate_procedure_button_hidden_when_deps_missing(qapp_factory=None):
         if isinstance(w, QPushButton) and w.property("validator_id"):
             button_ids.append(w.property("validator_id"))
 
-    # validate_procedure button must be HIDDEN — its deps aren't met.
+    # Wheel-dependent validator hidden when wheel can't import.
     assert "rules_packager_base.validate_procedure" not in button_ids
-    # Other validators keep showing.
+    # Self-contained validators (in-process JSON schema check,
+    # py_compile syntax) don't depend on the wheel — keep showing.
     assert "rules_packager_base.validate_json_schema" in button_ids
     assert "core.check_python_syntax" in button_ids
 

@@ -512,20 +512,16 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
                 self.main_window.dock.chat_panel.add_system_message("✗ Rejected changes to test.py")
 
     def refresh_code_parser_button(self):
-        """Show or hide the Quick Code button based on project's code_parser variant."""
-        has_parser = self.project_manager.get_code_parser() is not None
-        self.quick_code_btn.setVisible(has_parser)
+        """Show or hide the Quick Code button based on whether the
+        rules_packager_base wheel imports cleanly. Phase 5.1: no more
+        per-project parser variant."""
+        from ..llm import pack_parsers
+        available, _ = pack_parsers.is_available()
+        self.quick_code_btn.setVisible(available)
 
     def _on_quick_code(self):
         """Deterministic JSON → Code without LLM (rule-based, instant)."""
-        parser = self.project_manager.get_code_parser()
-        if parser is None:
-            self.show_warning(
-                "No Parser",
-                "No code_parser variant selected.\n"
-                "Configure one via Project Config → Parsers to enable Quick Code."
-            )
-            return
+        from ..llm import pack_parsers
         json_text = self.json_editor.toPlainText().strip()
         if not json_text:
             self.show_warning("No Content", "JSON editor is empty. Add JSON before generating code.")
@@ -536,13 +532,16 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
             self.show_error("Invalid JSON", f"Cannot parse procedure JSON:\n\n{e}")
             return
 
-        # The parser is a user-supplied plugin; structured ParseError /
-        # codegen failures route through the shared validator-error
-        # dialog so the operator sees the same rendering across surfaces.
         try:
-            parse_result = parser.parse(procedure)
+            code_str, warnings = pack_parsers.generate_code(
+                procedure,
+                getattr(self.project_manager, "project_root", None),
+            )
+        except pack_parsers.ParserUnavailable as e:
+            self.show_warning("Code Generator Unavailable", str(e))
+            return
         except Exception as e:
-            log.exception("Quick Code: parser raised")
+            log.exception("Quick Code: codegen raised")
             from ..dialogs.validator_error_dialog import ValidatorErrorDialog
             ValidatorErrorDialog.show_from_exception(
                 e,
@@ -554,29 +553,6 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
                 parent=self,
             )
             return
-
-        # Contract: parse() -> tuple[str, list[str]].
-        if (not isinstance(parse_result, tuple)) or len(parse_result) != 2:
-            self.show_error(
-                "Parser Error",
-                "Parser returned an unexpected value. Expected a "
-                "(code_str, warnings_list) tuple."
-            )
-            return
-        code_str, warnings = parse_result
-        if not isinstance(code_str, str):
-            self.show_error(
-                "Parser Error",
-                f"Parser returned a non-string code "
-                f"({type(code_str).__name__}); cannot apply."
-            )
-            return
-        if not isinstance(warnings, list):
-            log.warning(
-                "Code parser returned non-list warnings (%s); coercing to [].",
-                type(warnings).__name__,
-            )
-            warnings = []
 
         current_code = self.code_editor.toPlainText().strip()
 

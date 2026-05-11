@@ -66,25 +66,16 @@ class ProjectManager:
     _rules_content: Optional[str] = field(default=None, repr=False)
     _rules_files: list[Path] = field(default_factory=list, repr=False)
     _equipment_patterns_cache: Optional[list[re.Pattern[str]]] = field(default=None, repr=False)
-    # Per-kind diagnostic for the last _load_parser failure. Populated by
-    # _load_parser when import / instantiation crashes so callers (notably
-    # is_loop_available) can surface the real error instead of the
-    # generic "no variant configured" message.
-    _last_load_errors: dict[str, str] = field(default_factory=dict, repr=False)
-    
+
     def set_project_root(self, path: Path) -> bool:
         """
         Set project root if valid.
-        
+
         Returns True if path is a valid project root.
         """
         if self.is_valid_project_root(path):
             self.project_root = path
             self._equipment_patterns_cache = None
-            # Drop diagnostics from any previous project — a stale
-            # "wheel out of date" message from a different project must
-            # not leak into is_loop_available for the new one.
-            self._last_load_errors.clear()
             return True
         return False
     
@@ -252,190 +243,14 @@ Test procedure project created with Workflow Editor.
         config_dir = self.project_root / "config"
         return config_dir if config_dir.exists() else None
 
-    def get_text_parser(self):
-        """Load the project's selected text-parser variant.
-
-        Resolves ``config/config.json -> parsers.json_parser`` to
-        ``config/parsers/json_parser/<value>.py``; falls back to the
-        legacy ``config/text_parser.py`` for projects seeded before the
-        ``parsers/`` layout existed. The loaded module must define
-        ``class ProcedureTextParser`` with a
-        ``parse(text: str) -> tuple[dict, list[str]]`` method.
-
-        See :meth:`_load_parser` for details.
-        """
-        return self._load_parser(
-            "json_parser", "ProcedureTextParser",
-            legacy_filename="text_parser.py",
-        )
-
-    def get_code_parser(self):
-        """Load the project's selected code-parser variant.
-
-        Resolves ``config/config.json -> parsers.code_parser`` to
-        ``config/parsers/code_parser/<value>.py``. The loaded module
-        must define ``class ProcedureCodeParser`` with a
-        ``parse(procedure: dict) -> tuple[str, list[str]]`` method that
-        returns Python source for the test file plus non-fatal warning
-        messages to surface in the UI.
-
-        See :meth:`_load_parser` for details.
-        """
-        return self._load_parser("code_parser", "ProcedureCodeParser")
-
-    def get_text_renderer(self):
-        """Load the project's selected text-renderer variant.
-
-        Resolves ``config/config.json -> parsers.text_renderer`` to
-        ``config/parsers/text_renderer/<value>.py``. The loaded module
-        must define ``class ProcedureTextRenderer`` exposing:
-
-          - ``validate(text=None, json_obj=None, mode='all') -> Report``
-            where ``Report`` has ``.ok: bool`` and ``.errors: list``;
-            each error exposes ``.code``, ``.message``, ``.severity``,
-            ``.location``, ``.fix_hint``, ``.fixable_by`` (the same shape
-            ``llm/validator_dispatch.py`` reads from the legacy
-            ``bijective_validator``).
-          - ``render(json_obj) -> str`` (Phase 2 — may raise
-            NotImplementedError until canonical-text emission lands in
-            the wheel).
-
-        Returns ``None`` when no variant is configured. The workflow
-        editor's validator dispatch falls back to the legacy
-        ``bijective_validator`` path in that case.
-        """
-        return self._load_parser("text_renderer", "ProcedureTextRenderer")
-
-    def _load_parser(
-        self,
-        kind: str,
-        class_name: str,
-        *,
-        legacy_filename: Optional[str] = None,
-    ):
-        """Generic loader for a project-supplied parser plugin.
-
-        Resolution order:
-
-        1. Read ``config/config.json`` and look up ``parsers.<kind>``.
-           If set, load ``config/parsers/<kind>/<value>.py``.
-        2. (Optional) Fall back to ``config/<legacy_filename>`` if
-           provided and the primary path resolved nothing — preserves
-           backward compatibility for kinds that existed before the
-           ``parsers/`` layout.
-
-        The loaded module must define a class named *class_name*
-        exposing a ``parse`` method. No caching: each call re-reads the
-        file so developers editing a parser variant see the effect on
-        the next user action without restarting the editor.
-
-        Returns an instantiated parser on success, or ``None`` when no
-        parser is configured / the file is missing / loading fails (in
-        which case the consuming UI hides its action button and a
-        warning is logged).
-        """
-        import importlib.util
-        import sys
-
-        # Reset the diagnostic for this kind before re-probing.
-        self._last_load_errors.pop(kind, None)
-
-        config_dir = self.get_config_dir()
-        if config_dir is None:
-            return None
-
-        parser_path: Optional[Path] = None
-
-        # Preferred: customer-template selection in config.json.
-        config_file = config_dir / "config.json"
-        if config_file.exists():
-            try:
-                cfg = json.loads(config_file.read_text(encoding="utf-8"))
-            except Exception as e:
-                log.warning(f"Failed to read project config.json for parser selection: {e}")
-                cfg = {}
-            selected = (cfg.get("parsers") or {}).get(kind)
-            if selected:
-                candidate = config_dir / "parsers" / kind / f"{selected}.py"
-                if candidate.exists():
-                    parser_path = candidate
-                else:
-                    msg = (
-                        f"parsers.{kind}='{selected}' selected but file "
-                        f"not found at {candidate}"
-                    )
-                    log.warning(msg + "; falling back to legacy.")
-                    self._last_load_errors[kind] = msg
-
-        # Legacy fallback for kinds that pre-date the parsers/ layout.
-        if parser_path is None and legacy_filename:
-            legacy = config_dir / legacy_filename
-            if legacy.exists():
-                parser_path = legacy
-
-        if parser_path is None:
-            return None
-
-        # Namespace the dynamic module by absolute path so switching
-        # projects in a single session does not reuse a stale module
-        # cached under a shared name.
-        module_name = f"_project_parser_{kind}_{abs(hash(str(parser_path.resolve())))}"
-        sys.modules.pop(module_name, None)
-
-        try:
-            spec = importlib.util.spec_from_file_location(module_name, parser_path)
-            if spec is None or spec.loader is None:
-                msg = f"Could not build import spec for parser at {parser_path}"
-                log.warning(msg)
-                self._last_load_errors[kind] = msg
-                return None
-            module = importlib.util.module_from_spec(spec)
-            # Register before exec_module so @dataclass / inspect / typing
-            # machinery that does sys.modules.get(cls.__module__) finds the
-            # module. Required since Python 3.13 (dataclass._is_type calls
-            # sys.modules.get(...).__dict__). Cleaned up on next reload via
-            # the sys.modules.pop above.
-            sys.modules[module_name] = module
-            spec.loader.exec_module(module)
-        except SyntaxError as e:
-            msg = f"Syntax error in {parser_path.name}: {e}"
-            log.warning(f"{kind}: {msg}")
-            self._last_load_errors[kind] = msg
-            return None
-        except ImportError as e:
-            msg = f"Import error in {parser_path.name}: {e}"
-            log.warning(f"{kind}: {msg}")
-            self._last_load_errors[kind] = msg
-            return None
-        except Exception as e:
-            msg = f"Failed to load {parser_path.name}: {e}"
-            log.warning(f"{kind}: {msg}")
-            self._last_load_errors[kind] = msg
-            return None
-
-        cls = getattr(module, class_name, None)
-        if cls is None:
-            msg = f"{parser_path.name} has no {class_name} class"
-            log.warning(f"{kind}: {msg}")
-            self._last_load_errors[kind] = msg
-            return None
-        try:
-            return cls()
-        except Exception as e:
-            msg = f"{class_name}.__init__ failed in {parser_path.name}: {e}"
-            log.warning(msg)
-            self._last_load_errors[kind] = msg
-            return None
-
-    def get_parser_load_error(self, kind: str) -> Optional[str]:
-        """Return the most recent load-failure reason for a parser kind
-        (e.g. ``"text_renderer"``). ``None`` means either no failure was
-        recorded yet, or the loader has not been called for this kind.
-        Consumed by :func:`workflow_editor.llm.validator_dispatch.is_loop_available`
-        to surface the real failure to the operator instead of a generic
-        "no variant configured" message.
-        """
-        return self._last_load_errors.get(kind)
+    # Phase 5.1 (2026-05-11): the per-project parser/renderer loader
+    # chain (get_text_parser, get_code_parser, get_text_renderer,
+    # _load_parser, _last_load_errors, get_parser_load_error) was
+    # deleted. Validators and Quick Parse / Quick Code now import from
+    # the rules_packager_base wheel directly via
+    # workflow_editor.llm.pack_parsers. Project-local
+    # config/parsers/<kind>/*.py wrappers are no longer consulted; the
+    # folder is left in place for legacy projects but inert.
 
     def load_equipment_patterns(self) -> list[re.Pattern[str]]:
         """Load equipment-configuration patterns from the project config.

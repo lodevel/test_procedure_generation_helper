@@ -301,32 +301,30 @@ class TextJsonTab(LLMTabMixin, BaseTab):
 
 
     def refresh_parser_button(self):
-        """Show or hide the Quick Parse button based on project's config/text_parser.py."""
-        has_parser = self.project_manager.get_text_parser() is not None
-        self.quick_parse_btn.setVisible(has_parser)
+        """Show or hide the Quick Parse button based on whether the
+        rules_packager_base wheel imports cleanly. Phase 5.1: no more
+        per-project parser variant — the wheel is the source of truth."""
+        from ..llm import pack_parsers
+        available, _ = pack_parsers.is_available()
+        self.quick_parse_btn.setVisible(available)
 
     def _on_quick_parse(self):
         """Deterministic Text → JSON without LLM (rule-based, instant)."""
-        parser = self.project_manager.get_text_parser()
-        if parser is None:
-            self.show_warning(
-                "No Parser",
-                "No text_parser.py found in config/.\nAdd one to enable Quick Parse."
-            )
-            return
+        from ..llm import pack_parsers
         text = self.text_editor.toPlainText().strip()
         if not text:
             self.show_warning("No Content", "Procedure text is empty. Add text before parsing.")
             return
 
-        # The parser module is user-supplied (per-project plugin); any
-        # exception it raises is a parser bug OR a structured ParseError
-        # carrying a code + fix_hint. Route through the shared
-        # validator-error dialog so the operator sees the same structured
-        # rendering whether the failure came from Quick Parse or from
-        # the LLM-with-feedback loop's residual issues.
+        # pack_parsers.parse_text raises ParseFailure on grammar errors
+        # (with .code, .fix_hint, .findings — same shape the legacy
+        # ParseError carried) or ParserUnavailable if the wheel isn't
+        # importable. Route both through the structured dialog.
         try:
-            parse_result = parser.parse(text)
+            result, warnings = pack_parsers.parse_text(text)
+        except pack_parsers.ParserUnavailable as e:
+            self.show_warning("Parser Unavailable", str(e))
+            return
         except Exception as e:
             log.exception("Quick Parse: parser raised")
             from ..dialogs.validator_error_dialog import ValidatorErrorDialog
@@ -340,29 +338,6 @@ class TextJsonTab(LLMTabMixin, BaseTab):
                 parent=self,
             )
             return
-
-        # Contract: parse() -> tuple[dict, list[str]].
-        if (not isinstance(parse_result, tuple)) or len(parse_result) != 2:
-            self.show_error(
-                "Parser Error",
-                "Parser returned an unexpected value. Expected a "
-                "(procedure_dict, warnings_list) tuple."
-            )
-            return
-        result, warnings = parse_result
-        if not isinstance(result, dict):
-            self.show_error(
-                "Parser Error",
-                f"Parser returned a non-dict procedure "
-                f"({type(result).__name__}); cannot apply."
-            )
-            return
-        if not isinstance(warnings, list):
-            log.warning(
-                "Parser returned non-list warnings (%s); coercing to [].",
-                type(warnings).__name__,
-            )
-            warnings = []
 
         # Populate media[] on each step from the project's
         # config/text_parser.py extractor. The v2 deterministic text

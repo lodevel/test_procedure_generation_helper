@@ -217,13 +217,21 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
     # Event handlers
     def _on_json_changed(self):
         """Handle JSON editor changes."""
+        # Mirror live editor into artifact_manager — see text_only_tab
+        # for the rationale.
+        self.artifact_manager.set_content(
+            ArtifactType.PROCEDURE_JSON, self.json_editor.toPlainText()
+        )
         self._json_dirty = True
         self._update_json_status()
         self.tab_context.mark_artifact_modified("procedure_json")
         self.content_changed.emit()
-    
+
     def _on_code_changed(self):
         """Handle code editor changes."""
+        self.artifact_manager.set_content(
+            ArtifactType.TEST_CODE, self.code_editor.toPlainText()
+        )
         self._code_dirty = True
         self._update_code_status()
         self._update_step_markers()
@@ -306,52 +314,52 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
 
     def _on_generate_code(self):
         """JSON → Code transformation (strict mode)."""
-        if not self.artifact_manager.procedure_json.content:
+        if not self.json_editor.toPlainText():
             self.show_warning("No JSON", "JSON editor is empty. Write JSON first.")
             return
         self._run_task_async(LLMTask.GENERATE_CODE_FROM_JSON, strict_mode=True)
-    
+
     def _on_force_generate_code(self):
         """JSON → Code transformation (force mode)."""
-        if not self.artifact_manager.procedure_json.content:
+        if not self.json_editor.toPlainText():
             self.show_warning("No JSON", "JSON editor is empty. Write JSON first.")
             return
         self._run_task_async(LLMTask.GENERATE_CODE_FROM_JSON, strict_mode=False)
-    
+
     def _on_derive_json(self):
         """Code → JSON transformation (strict mode)."""
-        if not self.artifact_manager.test_code.content:
+        if not self.code_editor.toPlainText():
             self.show_warning("No Code", "Code editor is empty. Write code first.")
             return
         self._run_task_async(LLMTask.DERIVE_JSON_FROM_CODE, strict_mode=True)
-    
+
     def _on_force_derive_json(self):
         """Code → JSON transformation (force mode)."""
-        if not self.artifact_manager.test_code.content:
+        if not self.code_editor.toPlainText():
             self.show_warning("No Code", "Code editor is empty. Write code first.")
             return
         self._run_task_async(LLMTask.DERIVE_JSON_FROM_CODE, strict_mode=False)
-    
+
     def _on_review_json(self):
         """Review JSON with LLM."""
-        if not self.artifact_manager.procedure_json.content:
+        if not self.json_editor.toPlainText():
             self.show_warning("No JSON", "JSON editor is empty.")
             return
         self._run_task_async(LLMTask.REVIEW_JSON)
-    
+
     def _on_review_code(self):
         """Review code with LLM."""
-        if not self.artifact_manager.test_code.content:
+        if not self.code_editor.toPlainText():
             self.show_warning("No Code", "Code editor is empty.")
             return
         self._run_task_async(LLMTask.REVIEW_CODE)
-    
+
     def _on_check_coherence(self):
         """Check JSON↔Code coherence."""
-        if not self.artifact_manager.procedure_json.content:
+        if not self.json_editor.toPlainText():
             self.show_warning("No JSON", "JSON editor is empty.")
             return
-        if not self.artifact_manager.test_code.content:
+        if not self.code_editor.toPlainText():
             self.show_warning("No Code", "Code editor is empty.")
             return
         self._run_task_async(LLMTask.REVIEW_CODE_VS_JSON)

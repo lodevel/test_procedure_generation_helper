@@ -105,6 +105,41 @@ def _make_tab(qapp, main_window, tab_id: str = "text_json") -> BaseTab:
 # ---------------------------------------------------------------------------
 
 
+def test_validator_run_posts_chat_message(tmp_path, qapp):
+    """Regression: clicking a validator button must echo a one-line
+    system message into the chat panel so the operator knows the
+    button fired — even when the validator passes silently.
+
+    Bug report (2026-05-11): "I tried to hit the validate button in the
+    next tab but nothing happens, maybe a small text in the chat so we
+    know it executed?"
+    """
+    project_root = tmp_path / "proj"
+    _seed_project(project_root, validators=[
+        {"id": "rules_packager_base.validate_json_schema", "enabled": True},
+    ])
+    ensure_builtins_registered()
+    manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
+    mw = _mock_main_window(tmp_path, manager, project_root)
+    # MagicMock'd dock — capture chat_panel.add_system_message calls.
+    mw.dock.chat_panel = MagicMock()
+    tab = _make_tab(qapp, mw, tab_id="text_json")
+
+    tab._run_validator("rules_packager_base.validate_json_schema")
+
+    # Either an error during validation (validator may not be importable
+    # in CI without rules_packager_base) or a clean result both must
+    # post a system message — operator never sees a silent click.
+    assert mw.dock.chat_panel.add_system_message.called, (
+        "_run_validator must echo a system message in the chat panel; "
+        "the dock's findings panel can be hidden/off-screen."
+    )
+    args = mw.dock.chat_panel.add_system_message.call_args[0]
+    assert "Validate Json Schema" in args[0], (
+        f"chat-panel echo should name the validator; got: {args[0]!r}"
+    )
+
+
 def test_buttons_built_from_project_validators(tmp_path, qapp):
     """A project carrying a validators list produces one button per
     enabled, registered validator."""

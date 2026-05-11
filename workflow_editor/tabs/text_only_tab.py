@@ -119,6 +119,15 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         return layout
 
     def _on_text_changed(self):
+        # Mirror live editor content into the artifact_manager so callers
+        # that read `procedure_text.content` (Review/Validate empty-checks,
+        # token estimators, dock widgets) see what the user just typed,
+        # not the last-saved snapshot. Without this, hitting Review on
+        # unsaved text yielded "No Text" because the check ran against
+        # disk-loaded content.
+        self.artifact_manager.set_content(
+            ArtifactType.PROCEDURE_TEXT, self.text_editor.toPlainText()
+        )
         self._text_dirty = True
         self._update_text_status()
         self.tab_context.mark_artifact_modified("procedure_text")
@@ -162,7 +171,7 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         return None  # never expose JSON/code from this tab
 
     def _on_review_text(self):
-        if not self.artifact_manager.procedure_text.content:
+        if not self.text_editor.toPlainText():
             self.show_warning("No Text", "Text editor is empty. Write text first.")
             return
         self._run_task_async(LLMTask.REVIEW_TEXT_PROCEDURE)

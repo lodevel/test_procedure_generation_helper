@@ -357,14 +357,15 @@ class BaseTab(QWidget):
             return
 
         dock = getattr(self.main_window, "dock", None)
+        chat_panel = getattr(dock, "chat_panel", None) if dock else None
+        label = self._derive_validator_label(validator_id)
+
         if outcome.skipped:
             # Surface the skip reason in the dock's findings panel so
             # "Validate Procedure" doesn't appear to be a silent no-op
             # (Phase 4.6 fix). A single info-severity row with the
             # validator id + skip reason replaces the stale findings.
-            reason_text = outcome.reason or (
-                f"{self._derive_validator_label(validator_id)}: skipped."
-            )
+            reason_text = outcome.reason or f"{label}: skipped."
             if dock is not None:
                 dock.show_validation_result_from_list([{
                     "severity": "info",
@@ -373,13 +374,25 @@ class BaseTab(QWidget):
                     "location": validator_id,
                 }])
             self.status_message.emit(reason_text)
+            # Post a system message in the chat so the operator sees
+            # that the click did something — the findings panel can be
+            # hidden / off-screen.
+            if chat_panel is not None:
+                chat_panel.add_system_message(f"⚙️ {label}: skipped — {reason_text}")
             return
 
         if dock is not None:
             dock.show_validation_result_from_list(
                 [issue.to_dock_dict() for issue in outcome.issues]
             )
-        self.status_message.emit(render_validation_outcome_summary(outcome))
+        summary = render_validation_outcome_summary(outcome)
+        self.status_message.emit(summary)
+        # Chat-panel echo: makes it obvious the button fired and
+        # whether the run passed / found issues. Without this, a clean
+        # pass clears the findings panel silently and users assume the
+        # button didn't work.
+        if chat_panel is not None:
+            chat_panel.add_system_message(f"⚙️ {label}: {summary}")
     
     def save_all_artifacts(self):
         """Save all artifacts managed by this tab (sync + save + reset dirty).

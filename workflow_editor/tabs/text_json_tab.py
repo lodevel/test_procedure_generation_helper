@@ -205,13 +205,21 @@ class TextJsonTab(LLMTabMixin, BaseTab):
     # Event handlers
     def _on_text_changed(self):
         """Handle text editor changes."""
+        # Mirror live editor into artifact_manager — see text_only_tab
+        # for the rationale. Empty-checks in _on_review_* read this.
+        self.artifact_manager.set_content(
+            ArtifactType.PROCEDURE_TEXT, self.text_editor.toPlainText()
+        )
         self._text_dirty = True
         self._update_text_status()
         self.tab_context.mark_artifact_modified("procedure_text")
         self.content_changed.emit()
-    
+
     def _on_json_changed(self):
         """Handle JSON editor changes."""
+        self.artifact_manager.set_content(
+            ArtifactType.PROCEDURE_JSON, self.json_editor.toPlainText()
+        )
         self._json_dirty = True
         self._update_json_status()
         self.tab_context.mark_artifact_modified("procedure_json")
@@ -403,45 +411,45 @@ class TextJsonTab(LLMTabMixin, BaseTab):
 
     def _on_derive_json(self):
         """Text → JSON transformation (strict mode)."""
-        if not self.artifact_manager.procedure_text.content:
+        if not self.text_editor.toPlainText():
             self.show_warning("No Content", "Procedure text is empty. Add text before generating JSON.")
             return
         self._run_task_async(LLMTask.DERIVE_JSON_FROM_TEXT, strict_mode=True)
-    
+
     def _on_force_derive_json(self):
         """Text → JSON transformation (force mode)."""
         self._run_task_async(LLMTask.DERIVE_JSON_FROM_TEXT, strict_mode=False)
-    
+
     def _on_render_text(self):
         """JSON → Text transformation."""
-        if not self.artifact_manager.procedure_json.content:
+        if not self.json_editor.toPlainText():
             self.show_warning(
                 "No JSON",
                 "JSON editor is empty. Write JSON first or load a test with existing JSON."
             )
             return
         self._run_task_async(LLMTask.RENDER_TEXT_FROM_JSON)
-    
+
     def _on_review_text(self):
         """Review text with LLM."""
-        if not self.artifact_manager.procedure_text.content:
+        if not self.text_editor.toPlainText():
             self.show_warning("No Text", "Text editor is empty. Write text first.")
             return
         self._run_task_async(LLMTask.REVIEW_TEXT_PROCEDURE)
-    
+
     def _on_review_json(self):
         """Review JSON with LLM."""
-        if not self.artifact_manager.procedure_json.content:
+        if not self.json_editor.toPlainText():
             self.show_warning("No JSON", "JSON editor is empty. Write JSON first.")
             return
         self._run_task_async(LLMTask.REVIEW_JSON)
-    
+
     def _on_check_coherence(self):
         """Check Text↔JSON coherence."""
-        if not self.artifact_manager.procedure_text.content:
+        if not self.text_editor.toPlainText():
             self.show_warning("No Text", "Text editor is empty.")
             return
-        if not self.artifact_manager.procedure_json.content:
+        if not self.json_editor.toPlainText():
             self.show_warning("No JSON", "JSON editor is empty.")
             return
         self._run_task_async(LLMTask.REVIEW_TEXT_VS_JSON)

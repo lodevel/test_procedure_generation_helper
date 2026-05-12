@@ -237,12 +237,6 @@ class TaskConfigManager:
         # refresh button labels without TaskConfigManager importing Qt.
         self._reload_callbacks: List[Callable[[], None]] = []
 
-        # drivers_registry.json discovery cache. None = not searched;
-        # ``False`` sentinel = searched but not found; otherwise the
-        # resolved Path. Cached at process scope is fine — the registry
-        # location is a property of the install layout, not the project.
-        self._drivers_registry_cached: Union[Path, bool, None] = None
-
         # Single-writer injection point (Codex H1.D / Q7). When
         # registered, project-mode saves route the workflows payload
         # through this callback instead of writing directly — lets the
@@ -395,189 +389,33 @@ class TaskConfigManager:
     # Pack discovery (Phase 3)
     # ------------------------------------------------------------------
 
-    def _resolve_selected_packs(self) -> List[str]:
-        """Return the ``packs.selected_packs`` list from the project's
-        ``config.json``, or empty in non-project mode."""
-        if self._project_root is None:
-            return []
-        proj = self._project_config_path()
-        if not proj or not proj.exists():
-            return []
-        data = _safe_read_json(proj)
-        if not isinstance(data, dict):
-            return []
-        packs = data.get("packs", {})
-        if not isinstance(packs, dict):
-            return []
-        selected = packs.get("selected_packs", [])
-        return [pid for pid in selected if isinstance(pid, str)]
-
     def _load_pack_workflow_defaults(self) -> Dict[str, Any]:
-        """Return the workflows-block defaults for this project.
+        """Return the workflows-block defaults injected by the parent.
 
-        Two paths:
+        Phase 5h: the legacy manifest-walk path (resolve
+        ``packs.selected_packs`` + read each pack's
+        ``pack_workflow_defaults.json``) was removed. The parent app
+        owns bundle resolution and hands the editor a path via
+        ``TPG_BUNDLE_DEFAULTS_PATH``; this method just reads that
+        file's ``workflows`` block.
 
-        1. **Bundle-backed** (preferred, Phase 4a): the parent app
-           launches us with ``TPG_BUNDLE_DEFAULTS_PATH`` pointing at
-           the active bundle's pre-merged ``defaults.json``. Read its
-           ``workflows`` block and return — no per-pack walk needed.
-        2. **Legacy manifest walk**: for each pack id in
-           ``packs.selected_packs``, resolve the pack's
-           ``pack_workflow_defaults.json`` via the manifest chain
-           (drivers_registry.json → rules_index.json:workflow_defaults).
-           First-wins per tab key, alphabetical pack id order.
-
-        The two paths are mutually exclusive — bundle wins when its
-        env var resolves to a readable file. The legacy walk stays
-        alive during the bundle migration; Phase 5 deletes it.
-        """
-        bundle_workflows = self._load_bundle_workflow_defaults()
-        if bundle_workflows is not None:
-            return bundle_workflows
-
-        selected = self._resolve_selected_packs()
-        aggregate: Dict[str, Any] = {}
-        for pack_id in sorted(selected):
-            defaults_path = self._find_pack_workflow_defaults(pack_id)
-            if defaults_path is None:
-                continue
-            data = _safe_read_json(defaults_path)
-            if not isinstance(data, dict):
-                continue
-            workflows = data.get("workflows")
-            if not isinstance(workflows, dict):
-                continue
-            for tab_id, tab_cfg in workflows.items():
-                if not isinstance(tab_cfg, dict):
-                    continue
-                agg_tab = aggregate.setdefault(tab_id, {})
-                for key, value in tab_cfg.items():
-                    if key not in agg_tab:
-                        agg_tab[key] = value
-        return aggregate
-
-    def _load_bundle_workflow_defaults(self) -> Optional[Dict[str, Any]]:
-        """Read the ``workflows`` block from the bundle's pre-merged
-        ``defaults.json`` when the parent app injects its path.
-
-        The parent (``main_window._launch_workflow_editor``) sets
-        ``TPG_BUNDLE_DEFAULTS_PATH=<bundle>/defaults.json`` before
-        starting the editor subprocess. This keeps the editor
-        decoupled from the bundle library's filesystem layout — Box B
-        gets handed the answer instead of walking to find it.
-
-        Return semantics tri-state:
-
-        * ``None`` — env var unset, file missing, or wrong top-level
-          shape. Caller falls through to the manifest walk.
-        * ``{}`` — bundle's defaults.json is readable but ships no
-          ``workflows`` block. Legitimate "no workflow defaults"
-          state; caller does NOT fall through (the bundle is the
-          authoritative source when bound).
-        * ``{<tab_id>: {...}}`` — happy path.
+        Returns ``{}`` when the env var is unset, the file is missing
+        or malformed, or the bundle ships no workflows block. The
+        editor's merge with its baked-in defaults degrades gracefully
+        to editor-defaults-only.
         """
         import os
         path_str = os.environ.get("TPG_BUNDLE_DEFAULTS_PATH")
         if not path_str:
-            return None
+            return {}
         defaults_path = Path(path_str)
         if not defaults_path.is_file():
-            return None
+            return {}
         data = _safe_read_json(defaults_path)
         if not isinstance(data, dict):
-            return None
+            return {}
         workflows = data.get("workflows")
         return workflows if isinstance(workflows, dict) else {}
-
-    def _find_pack_workflow_defaults(self, pack_id: str) -> Optional[Path]:
-        """Resolve via drivers_registry.json + rules_index.json:workflow_defaults.
-
-        Chain:
-
-        1. Locate ``<repo>/external/rules_packager/drivers_registry.json``
-           by walking up from this module's ``__file__``.
-        2. Look up the entry where ``id == pack_id``.
-        3. Resolve ``rules.source.path`` (relative to the registry's
-           directory).
-        4. Read the per-pack ``rules.rules_index`` file (relative to the
-           source path).
-        5. Read its ``workflow_defaults`` field (relative to the
-           rules_index.json itself).
-
-        Returns ``None`` at any step that fails — packs without a
-        manifest entry or without ``workflow_defaults`` are simply
-        skipped. No ``importlib`` calls: pack code may not be present in
-        the workflow editor's venv (Codex Q5).
-        """
-        registry_path = self._find_drivers_registry()
-        if registry_path is None:
-            log.debug("drivers_registry.json not found; no pack defaults for %r", pack_id)
-            return None
-        data = _safe_read_json(registry_path)
-        if not isinstance(data, dict):
-            return None
-        entry = next(
-            (p for p in data.get("packs", [])
-             if isinstance(p, dict) and p.get("id") == pack_id),
-            None,
-        )
-        if entry is None:
-            log.debug("Pack %r has no entry in %s", pack_id, registry_path)
-            return None
-        rules = entry.get("rules", {})
-        if not isinstance(rules, dict):
-            return None
-        source = rules.get("source", {})
-        src_path = source.get("path") if isinstance(source, dict) else None
-        rules_index_rel = rules.get("rules_index")
-        if not isinstance(src_path, str) or not isinstance(rules_index_rel, str):
-            log.debug("Pack %r entry missing rules.source.path or rules.rules_index", pack_id)
-            return None
-        source_root = (registry_path.parent / src_path).resolve()
-        rules_index_path = source_root / rules_index_rel
-        idx = _safe_read_json(rules_index_path)
-        if not isinstance(idx, dict):
-            log.debug("Pack %r: unreadable rules_index at %s", pack_id, rules_index_path)
-            return None
-        wf_rel = idx.get("workflow_defaults")
-        if not isinstance(wf_rel, str):
-            log.debug("Pack %r: rules_index has no workflow_defaults field", pack_id)
-            return None
-        defaults_path = (rules_index_path.parent / wf_rel).resolve()
-        if not defaults_path.exists():
-            log.warning(
-                "Pack %r: workflow_defaults points at missing file %s",
-                pack_id, defaults_path,
-            )
-            return None
-        log.debug("Pack %r → %s", pack_id, defaults_path)
-        return defaults_path
-
-    def _find_drivers_registry(self) -> Optional[Path]:
-        """Walk up from ``__file__`` looking for
-        ``external/rules_packager/drivers_registry.json``.
-
-        Cached per-instance: the registry location is a property of the
-        install layout, not of the active project. ``False`` is the
-        sentinel meaning "searched, not found" so we don't re-walk on
-        every project open.
-        """
-        cached = self._drivers_registry_cached
-        if isinstance(cached, Path):
-            return cached
-        if cached is False:
-            return None
-        cur = Path(__file__).resolve()
-        for _ in range(8):  # Plenty of headroom for our submodule layout.
-            candidate = cur.parent / "external" / "rules_packager" / "drivers_registry.json"
-            if candidate.exists():
-                self._drivers_registry_cached = candidate
-                return candidate
-            if cur.parent == cur:
-                break
-            cur = cur.parent
-        self._drivers_registry_cached = False
-        return None
 
     def _populate_from_workflows(
         self,

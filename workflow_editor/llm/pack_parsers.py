@@ -331,3 +331,49 @@ def _format_finding(finding: Any) -> str:
     line = getattr(finding, "line", 0)
     msg = getattr(finding, "message", str(finding))
     return f"line {line} [{code}] {msg}"
+
+
+# ---------------------------------------------------------------------------
+# Step-text extraction from canonical procedure_text.md
+# ---------------------------------------------------------------------------
+
+
+import re as _step_re
+
+_STEP_TEXTS_LINE_RE = _step_re.compile(r"^\s*(\d+)\.\s+(.+?)\s*$", _step_re.MULTILINE)
+_STEPS_SECTION_RE = _step_re.compile(
+    r"^##\s+Steps\s*$(.*?)(?=^##\s+|\Z)",
+    _step_re.MULTILINE | _step_re.DOTALL,
+)
+
+
+def step_texts_from_canonical(procedure_text: str) -> dict[int, str]:
+    """Return ``{step_number: canonical_line}`` from a procedure_text.md.
+
+    Scans the ``## Steps`` section for lines matching ``<n>. <text>.``
+    and returns one entry per step. Used by the workflow editor's
+    JSON-Code + Traceability tabs to surface the operator-readable
+    step description even when the JSON step is an op-call shape
+    (``{"op": "psu.set_voltage", "device": "PSU1", ...}``) carrying no
+    top-level ``text`` field.
+
+    Returns an empty dict when no Steps section is present or no
+    numbered lines are found — callers fall back to ``step.get("text")``
+    or a placeholder.
+    """
+    if not procedure_text:
+        return {}
+    section_match = _STEPS_SECTION_RE.search(procedure_text)
+    if section_match is None:
+        return {}
+    body = section_match.group(1)
+    out: dict[int, str] = {}
+    for m in _STEP_TEXTS_LINE_RE.finditer(body):
+        try:
+            n = int(m.group(1))
+        except ValueError:
+            continue
+        # Strip the trailing period that canonical-text mandates.
+        text = m.group(2).rstrip(".").rstrip()
+        out[n] = text
+    return out

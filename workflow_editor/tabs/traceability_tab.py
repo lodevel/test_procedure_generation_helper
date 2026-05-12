@@ -138,16 +138,31 @@ class TraceabilityTab(BaseTab):
     
     def _build_step_list(self):
         """Build the step list combining JSON and code info."""
+        # Operator-readable step text comes from procedure_text.md.
+        # v2.0.1 op-call JSON steps (psu.set_voltage, etc.) carry NO
+        # top-level "text" field — only structured fields — so reading
+        # step.get("text") on those returns "" and the column shows
+        # empty. The procedure_text.md has canonical "<n>. <prose>."
+        # for every step.
+        from ..llm.pack_parsers import step_texts_from_canonical
+        proc_text = self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT)
+        canonical_lookup = step_texts_from_canonical(proc_text or "")
+
         # Use JSON steps as primary source
         if self._json_steps:
             for i, step in enumerate(self._json_steps):
                 step_num = i + 1
-                
-                if isinstance(step, dict):
-                    text = step.get("text", str(step))[:60]
-                else:
-                    text = str(step)[:60]
-                
+
+                # Resolve display text: procedure_text.md wins; fall back
+                # to JSON step's "text" field (operator-prose steps);
+                # last resort the raw repr.
+                text = canonical_lookup.get(step_num) or ""
+                if not text and isinstance(step, dict):
+                    text = step.get("text", "") or ""
+                if not text:
+                    text = str(step) if not isinstance(step, dict) else f"(no text — op={step.get('op','?')})"
+                text = text[:60]
+
                 # Check if code has this step
                 has_code = any(b.step_number == step_num for b in self._step_blocks)
                 
@@ -221,14 +236,20 @@ class TraceabilityTab(BaseTab):
                 break
         
         if block:
-            # Show step text from JSON (wrapped at 80 chars)
-            if self._json_steps and step_num <= len(self._json_steps):
+            # Step description prefers procedure_text.md (covers op-call
+            # JSON steps that carry no top-level "text" field). Same
+            # resolution chain as _build_step_list.
+            from ..llm.pack_parsers import step_texts_from_canonical
+            proc_text = self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT)
+            canonical_lookup = step_texts_from_canonical(proc_text or "")
+            step_text = canonical_lookup.get(step_num, "")
+            if not step_text and self._json_steps and step_num <= len(self._json_steps):
                 step_data = self._json_steps[step_num - 1]
                 if isinstance(step_data, dict):
-                    step_text = step_data.get("text", "")
+                    step_text = step_data.get("text", "") or ""
                 else:
                     step_text = str(step_data)
-                # Wrap text at 80 chars for display
+            if step_text:
                 wrapped_text = '\n'.join(textwrap.wrap(step_text, width=80))
                 self.code_header.setText(f"STEP {step_num}: {wrapped_text}")
                 self.code_header.setToolTip(step_text)  # Full text in tooltip

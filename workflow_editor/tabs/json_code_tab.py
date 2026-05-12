@@ -623,7 +623,7 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         """Update step markers sidebar from current code, with step text from JSON."""
         self.step_list.clear()
         code = self.code_editor.toPlainText()
-        
+
         # Get step texts from JSON
         json_steps = []
         try:
@@ -633,19 +633,27 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
                 json_steps = json_data.get("steps", [])
         except (json.JSONDecodeError, Exception):
             pass
-        
+
+        # Prefer procedure_text.md step lines for the display — covers
+        # v2.0.1 op-call JSON steps (psu.set_voltage, etc.) that carry
+        # no top-level "text" field.
+        from ..llm.pack_parsers import step_texts_from_canonical
+        proc_text = self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT)
+        canonical_lookup = step_texts_from_canonical(proc_text or "")
+
         if code:
             blocks = self._parser.parse(code)
             if blocks:
                 for block in blocks:
                     step_num = block.step_number
-                    
-                    # Get step text from JSON if available
-                    step_text = ""
-                    if json_steps and step_num <= len(json_steps):
+
+                    # Resolve display text: procedure_text.md wins, then
+                    # JSON's "text" field, then empty.
+                    step_text = canonical_lookup.get(step_num) or ""
+                    if not step_text and json_steps and step_num <= len(json_steps):
                         step_data = json_steps[step_num - 1]
                         if isinstance(step_data, dict):
-                            step_text = step_data.get("text", "")
+                            step_text = step_data.get("text", "") or ""
                         else:
                             step_text = str(step_data)
                     

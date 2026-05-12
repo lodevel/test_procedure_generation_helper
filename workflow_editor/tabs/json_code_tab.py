@@ -9,6 +9,7 @@ Actions support bidirectional transformation.
 
 import logging
 import json
+from typing import Any
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QSplitter, QGroupBox,
     QPushButton, QLabel, QPlainTextEdit,
@@ -84,6 +85,12 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         self._json_dirty = False
         self._code_dirty = False
         self._parser = StepMarkerParser()
+        # Phase 5.x: step list is sourced from procedure_json["steps"]
+        # (canonical upstream of code). This dict maps each JSON step's
+        # `n` to its code-side StepBlock (if any) so click jumps can
+        # position the code editor. Repopulated by _update_step_markers
+        # on every re-render.
+        self._code_blocks_by_n: dict[int, Any] = {}
     
     def _create_json_panel(self):
         """Create JSON editor (left side)."""
@@ -609,36 +616,50 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         self.status_message.emit("⚡ Quick Code complete")
     
     def _on_step_clicked(self, item: QListWidgetItem):
-        """Jump to the step marker in the code editor AND focus the
-        matching step entry in the procedure.json editor."""
-        block = item.data(Qt.UserRole)
+        """Click a step → jump in BOTH editors (JSON always; code when
+        a matching block exists).
+
+        The item's UserRole carries the step's ``n`` (int). Code blocks
+        are looked up via the per-render cache populated by
+        :meth:`_update_step_markers`. Per the v2.0.1 invariant (JSON
+        upstream of code), the step is always in JSON; the only
+        possible mismatch is "JSON has step, code doesn't yet" — the
+        code jump is skipped for those rows.
+        """
+        step_num = item.data(Qt.UserRole)
+        if not isinstance(step_num, int):
+            return
+        # Code editor — only if codegen has produced a block for this n.
+        block = self._code_blocks_by_n.get(step_num)
         if block:
-            # Code editor jump (existing behavior).
             cursor = self.code_editor.textCursor()
             cursor.movePosition(QTextCursor.MoveOperation.Start)
             for _ in range(block.start_line - 1):
                 cursor.movePosition(QTextCursor.MoveOperation.Down)
             self.code_editor.setTextCursor(cursor)
             self.code_editor.centerCursor()
-            # JSON editor jump — find the step by its `"n": <num>` line.
-            self._focus_json_step(block.step_number)
+        # JSON editor — always. The step exists in JSON by construction.
+        self._focus_json_step(step_num)
 
     def _focus_json_step(self, step_num: int) -> None:
-        """Scroll the JSON editor to the step whose ``n`` field matches
-        ``step_num`` and select the line so it's visibly highlighted.
-        No-op when the line can't be found (one-line JSON, unindented,
-        missing ``n`` field).
-        """
-        json_text = self.json_editor.toPlainText()
-        if not json_text:
-            return
+        """Scroll the JSON editor to the step's ``"n": <num>`` line and
+        select it. The step is guaranteed to be in JSON (it was sourced
+        from JSON); the only way to miss is an operator manually
+        reformatting the JSON off the canonical ``indent=2`` shape, in
+        which case we log debug and no-op rather than guess."""
         import re
+        json_text = self.json_editor.toPlainText()
         # Line-anchored match on the indented JSON shape produced by
-        # `json.dumps(..., indent=2)`. The trailing word-boundary
+        # `json.dumps(..., indent=2)`. Word-boundary on the number
         # prevents matching `"n": 12` when looking for step 1.
         pattern = re.compile(rf'^\s*"n":\s*{step_num}\b', re.MULTILINE)
         m = pattern.search(json_text)
         if m is None:
+            log.debug(
+                "Could not locate step %d in JSON editor (non-canonical "
+                "indent?); no-op'ing the jump.",
+                step_num,
+            )
             return
         line_start = json_text.rfind("\n", 0, m.start()) + 1
         cursor = self.json_editor.textCursor()
@@ -649,64 +670,81 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         )
         self.json_editor.setTextCursor(cursor)
         self.json_editor.centerCursor()
-    
-    def _update_step_markers(self):
-        """Update step markers sidebar from current code, with step text from JSON."""
-        self.step_list.clear()
-        code = self.code_editor.toPlainText()
 
-        # Get step texts from JSON
-        json_steps = []
+    def _update_step_markers(self):
+        """Rebuild the step list from procedure.json's ``steps[]`` (the
+        canonical upstream of code). Code markers are consulted only to
+        annotate which steps codegen has produced.
+
+        Status semantics:
+        - ✓ Step N: <text>  — JSON has it AND code has a matching
+          ``# STEP_BEGIN N`` block.
+        - ✗ Step N: <text>  — JSON has it; code doesn't (regenerate
+          test.py to fill in).
+        """
+        self.step_list.clear()
+        self._code_blocks_by_n = {}
+
+        # JSON is the source of truth for the step list.
+        json_steps: list[Any] = []
         try:
             json_content = self.json_editor.toPlainText()
             if json_content.strip():
                 json_data = json.loads(json_content)
-                json_steps = json_data.get("steps", [])
+                json_steps = json_data.get("steps", []) or []
         except (json.JSONDecodeError, Exception):
             pass
+        if not json_steps:
+            self.step_status.setText("No steps in JSON")
+            return
 
-        # Prefer procedure_text.md step lines for the display — covers
-        # v2.0.1 op-call JSON steps (psu.set_voltage, etc.) that carry
-        # no top-level "text" field.
+        # Secondary: code-marker map for click→code-jump.
+        code = self.code_editor.toPlainText()
+        if code:
+            for block in self._parser.parse(code):
+                self._code_blocks_by_n[block.step_number] = block
+
+        # Display-text lookup from procedure_text.md.
         from ..llm.pack_parsers import step_texts_from_canonical
         proc_text = self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT)
         canonical_lookup = step_texts_from_canonical(proc_text or "")
 
-        if code:
-            blocks = self._parser.parse(code)
-            if blocks:
-                for block in blocks:
-                    step_num = block.step_number
+        with_code = 0
+        for step in json_steps:
+            if not isinstance(step, dict):
+                continue
+            n = step.get("n")
+            if not isinstance(n, int):
+                continue
 
-                    # Resolve display text: procedure_text.md wins, then
-                    # JSON's "text" field, then empty.
-                    step_text = canonical_lookup.get(step_num) or ""
-                    if not step_text and json_steps and step_num <= len(json_steps):
-                        step_data = json_steps[step_num - 1]
-                        if isinstance(step_data, dict):
-                            step_text = step_data.get("text", "") or ""
-                        else:
-                            step_text = str(step_data)
-                    
-                    # Display truncated text in list
-                    if step_text:
-                        display_text = f"Step {step_num}: {step_text[:40]}{'...' if len(step_text) > 40 else ''}"
-                    else:
-                        display_text = f"Step {step_num}"
-                    
-                    item = QListWidgetItem(display_text)
-                    item.setData(Qt.UserRole, block)
-                    # Full text in tooltip
-                    tooltip = f"Lines {block.start_line}-{block.end_line}"
-                    if step_text:
-                        tooltip = f"{step_text}\n\n{tooltip}"
-                    item.setToolTip(tooltip)
-                    self.step_list.addItem(item)
-                self.step_status.setText(f"{len(blocks)} steps")
+            step_text = canonical_lookup.get(n) or step.get("text", "") or ""
+            block = self._code_blocks_by_n.get(n)
+            if block:
+                with_code += 1
+
+            if step_text:
+                trimmed = f"{step_text[:40]}{'...' if len(step_text) > 40 else ''}"
+                body = f"Step {n}: {trimmed}"
             else:
-                self.step_status.setText("No steps detected")
-        else:
-            self.step_status.setText("No code")
+                body = f"Step {n}"
+            prefix = "✓" if block else "✗"
+
+            item = QListWidgetItem(f"{prefix} {body}")
+            item.setData(Qt.UserRole, n)
+            if not block:
+                item.setForeground(Qt.red)
+            tooltip_parts: list[str] = []
+            if step_text:
+                tooltip_parts.append(step_text)
+            if block:
+                tooltip_parts.append(f"Code lines {block.start_line}-{block.end_line}")
+            else:
+                tooltip_parts.append("(no code block — regenerate test.py)")
+            item.setToolTip("\n\n".join(tooltip_parts))
+            self.step_list.addItem(item)
+
+        total = len(json_steps)
+        self.step_status.setText(f"{total} steps in JSON ({with_code} with code)")
     
     def _update_json_status(self):
         """Update JSON status label."""

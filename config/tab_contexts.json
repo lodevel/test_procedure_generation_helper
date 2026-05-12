@@ -1,18 +1,6 @@
 {
   "text_json": {
-    "selected_rules": [
-      "01_Canonical_Text_DSL_v2.md",
-      "02_Procedure_Json_Schema_v2.md",
-      "03_Macro_DSL_v2.md",
-      "04_Expected_Expression_Grammar_v2.md",
-      "06_Equipment_and_Inventory_v2.md",
-      "10_LLM_Rewrite_Workflow_v2.md",
-      "11_Text_Json_Bijection_v2.md",
-      "SCPI_PSU_Grammar_v2.md",
-      "SCPI_Electronic_Load_Grammar_v2.md",
-      "SCPI_Oscilloscope_Grammar_v2.md",
-      "fncore_mockup_Grammar_v2.md"
-    ],
+    "selected_rules": "all",
     "tasks": [
       {
         "id": "derive_json_from_text",
@@ -61,16 +49,7 @@
     }
   },
   "json_code": {
-    "selected_rules": [
-      "02_Procedure_Json_Schema_v2.md",
-      "05_Lifecycle_and_Cleanup_v2.md",
-      "06_Equipment_and_Inventory_v2.md",
-      "07_Helpers_API_Contract_v2.md",
-      "08_Result_API_Contract_v2.md",
-      "10_LLM_Rewrite_Workflow_v2.md",
-      "12_Codegen_Specification_v2.md",
-      "fncore_mockup_API_Contract_v2.md"
-    ],
+    "selected_rules": "all",
     "tasks": [
       {
         "id": "generate_code_from_json",
@@ -127,6 +106,7 @@
     }
   },
   "text_only": {
+    "selected_rules": "all",
     "tasks": [
       {
         "id": "review_text_procedure",

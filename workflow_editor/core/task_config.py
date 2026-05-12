@@ -413,20 +413,28 @@ class TaskConfigManager:
         return [pid for pid in selected if isinstance(pid, str)]
 
     def _load_pack_workflow_defaults(self) -> Dict[str, Any]:
-        """Aggregate ``workflows`` dicts from every selected pack.
+        """Return the workflows-block defaults for this project.
 
-        For each pack id in ``packs.selected_packs``, the loader resolves
-        the pack's ``pack_workflow_defaults.json`` via the manifest chain
-        (drivers_registry.json → rules_index.json:workflow_defaults) and
-        reads it. Packs without a manifest entry, without the
-        ``workflow_defaults`` field, or whose defaults file is missing
-        are skipped with a debug log. No Python import: packs may live
-        in a different venv than the workflow editor (Codex Q5).
+        Two paths:
 
-        Multiple packs may declare overlapping tabs. Resolution is
-        deterministic by alphabetical pack id (first wins per key).
-        Phase 5 will refine this with format_version-aware routing.
+        1. **Bundle-backed** (preferred, Phase 4a): the parent app
+           launches us with ``TPG_BUNDLE_DEFAULTS_PATH`` pointing at
+           the active bundle's pre-merged ``defaults.json``. Read its
+           ``workflows`` block and return — no per-pack walk needed.
+        2. **Legacy manifest walk**: for each pack id in
+           ``packs.selected_packs``, resolve the pack's
+           ``pack_workflow_defaults.json`` via the manifest chain
+           (drivers_registry.json → rules_index.json:workflow_defaults).
+           First-wins per tab key, alphabetical pack id order.
+
+        The two paths are mutually exclusive — bundle wins when its
+        env var resolves to a readable file. The legacy walk stays
+        alive during the bundle migration; Phase 5 deletes it.
         """
+        bundle_workflows = self._load_bundle_workflow_defaults()
+        if bundle_workflows is not None:
+            return bundle_workflows
+
         selected = self._resolve_selected_packs()
         aggregate: Dict[str, Any] = {}
         for pack_id in sorted(selected):
@@ -447,6 +455,33 @@ class TaskConfigManager:
                     if key not in agg_tab:
                         agg_tab[key] = value
         return aggregate
+
+    def _load_bundle_workflow_defaults(self) -> Optional[Dict[str, Any]]:
+        """Read the ``workflows`` block from the bundle's pre-merged
+        ``defaults.json`` when the parent app injects its path.
+
+        The parent (``main_window._launch_workflow_editor``) sets
+        ``TPG_BUNDLE_DEFAULTS_PATH=<bundle>/defaults.json`` before
+        starting the editor subprocess. This keeps the editor
+        decoupled from the bundle library's filesystem layout — Box B
+        gets handed the answer instead of walking to find it.
+
+        Returns the workflows dict on hit, or None when the env var
+        isn't set or points at an unreadable file (caller falls
+        through to the manifest walk).
+        """
+        import os
+        path_str = os.environ.get("TPG_BUNDLE_DEFAULTS_PATH")
+        if not path_str:
+            return None
+        defaults_path = Path(path_str)
+        if not defaults_path.is_file():
+            return None
+        data = _safe_read_json(defaults_path)
+        if not isinstance(data, dict):
+            return None
+        workflows = data.get("workflows")
+        return workflows if isinstance(workflows, dict) else {}
 
     def _find_pack_workflow_defaults(self, pack_id: str) -> Optional[Path]:
         """Resolve via drivers_registry.json + rules_index.json:workflow_defaults.

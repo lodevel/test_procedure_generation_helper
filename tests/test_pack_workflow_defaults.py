@@ -424,3 +424,71 @@ def test_merge_workflows_non_dict_tab_value_tolerated():
     base = {"text_json": "not-a-dict"}
     overlay = {"text_json": {"a": 1}}
     assert _merge_workflows(base, overlay) == {"text_json": {"a": 1}}
+
+
+# ---------------------------------------------------------------------------
+# Phase 4a: bundle-defaults hand-off via TPG_BUNDLE_DEFAULTS_PATH
+# ---------------------------------------------------------------------------
+
+
+def test_bundle_env_var_short_circuits_manifest_walk(monkeypatch, tmp_path):
+    """When the parent app sets TPG_BUNDLE_DEFAULTS_PATH, the editor's
+    pack-defaults loader reads from that file and skips the legacy
+    manifest walk. Verifies the Phase 4a hand-off contract."""
+    defaults_path = tmp_path / "defaults.json"
+    defaults_path.write_text(json.dumps({
+        "workflows": {
+            "text_json": {"validators": [{"id": "bundle.v"}]},
+        },
+        # parsers/extractors are also in the bundle's defaults but
+        # the editor only reads the workflows block.
+        "extractors": {"equipment": {"module": "m"}},
+    }), encoding="utf-8")
+    monkeypatch.setenv("TPG_BUNDLE_DEFAULTS_PATH", str(defaults_path))
+
+    mgr = TaskConfigManager(fallback_path=tmp_path / "no_fallback.json")
+    result = mgr._load_pack_workflow_defaults()
+    assert result == {"text_json": {"validators": [{"id": "bundle.v"}]}}
+
+
+def test_bundle_env_var_unset_falls_through_to_manifest_walk(monkeypatch,
+                                                              tmp_path):
+    """No env var → behaviour unchanged from before Phase 4a (manifest
+    walk path). The legacy projects with no bundle: ref still work."""
+    monkeypatch.delenv("TPG_BUNDLE_DEFAULTS_PATH", raising=False)
+    mgr = TaskConfigManager(fallback_path=tmp_path / "no_fallback.json")
+    # No registered packs, no env var → empty dict (not a crash).
+    assert mgr._load_pack_workflow_defaults() == {}
+
+
+def test_bundle_env_var_pointing_at_missing_file_falls_through(monkeypatch,
+                                                                 tmp_path):
+    """Defensive: a stale env var pointing at a deleted file must not
+    crash the editor — fall through to the manifest walk."""
+    monkeypatch.setenv("TPG_BUNDLE_DEFAULTS_PATH", str(tmp_path / "gone.json"))
+    mgr = TaskConfigManager(fallback_path=tmp_path / "no_fallback.json")
+    assert mgr._load_pack_workflow_defaults() == {}
+
+
+def test_bundle_env_var_pointing_at_malformed_file_falls_through(monkeypatch,
+                                                                   tmp_path):
+    """A defaults.json with wrong shape (no workflows block, or whole
+    thing isn't an object) falls through gracefully."""
+    bad = tmp_path / "bad.json"
+    bad.write_text("[]", encoding="utf-8")
+    monkeypatch.setenv("TPG_BUNDLE_DEFAULTS_PATH", str(bad))
+    mgr = TaskConfigManager(fallback_path=tmp_path / "no_fallback.json")
+    assert mgr._load_pack_workflow_defaults() == {}
+
+
+def test_bundle_env_var_with_no_workflows_block_returns_empty(monkeypatch,
+                                                                tmp_path):
+    """defaults.json present but workflows: missing → return empty
+    dict (not None and not fall through). The bundle's contract is
+    that it ships every section; an absent workflows block is a real
+    'no workflow defaults' state, not 'use the legacy walk'."""
+    defaults_path = tmp_path / "defaults.json"
+    defaults_path.write_text(json.dumps({"extractors": {}}), encoding="utf-8")
+    monkeypatch.setenv("TPG_BUNDLE_DEFAULTS_PATH", str(defaults_path))
+    mgr = TaskConfigManager(fallback_path=tmp_path / "no_fallback.json")
+    assert mgr._load_pack_workflow_defaults() == {}

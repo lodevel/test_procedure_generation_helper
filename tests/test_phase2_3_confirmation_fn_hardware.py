@@ -39,8 +39,21 @@ _BASE_DEFAULTS = (
 
 
 @pytest.fixture
-def fn_hardware_project(tmp_path):
-    """Seed a project from FN_hardware's manifest + packs (no workflows)."""
+def fn_hardware_project(tmp_path, monkeypatch):
+    """Seed a project carrying FN_hardware's manifest + a pinned pack
+    set, exercising the legacy manifest-walk path.
+
+    Phase 4c migrated the on-disk FN_hardware template from
+    ``packs.selected_packs`` to ``bundle:``. These Phase 2/3
+    confirmation tests pin the **manifest-walk** behavior — they
+    pre-date bundles. Rather than chase FN_hardware's current shape,
+    pin the legacy pack list explicitly so this regression suite
+    stays meaningful regardless of the template's migration state.
+
+    Also clears ``TPG_BUNDLE_DEFAULTS_PATH`` in case the parent app
+    set it in the environment — the test exercises the fallback path.
+    """
+    monkeypatch.delenv("TPG_BUNDLE_DEFAULTS_PATH", raising=False)
     root = tmp_path / "fn_proj"
     cfg = root / "config"
     cfg.mkdir(parents=True)
@@ -48,7 +61,14 @@ def fn_hardware_project(tmp_path):
     fn_config = json.loads((_FN_HARDWARE / "config.json").read_text(encoding="utf-8"))
     project_config = {
         "manifest": fn_config.get("manifest", {}),
-        "packs": fn_config.get("packs", {}),
+        # Hard-pin the legacy pack list. FN_hardware shipped with
+        # base + fncore-mockup-driver + labscpi pre-bundle; only base
+        # has pack_workflow_defaults.json today.
+        "packs": {
+            "selected_packs": [
+                "base", "fncore-mockup-driver", "labscpi",
+            ],
+        },
     }
     (cfg / "config.json").write_text(
         json.dumps(project_config, indent=2), encoding="utf-8"

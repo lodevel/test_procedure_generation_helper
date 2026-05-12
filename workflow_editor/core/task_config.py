@@ -466,9 +466,15 @@ class TaskConfigManager:
         decoupled from the bundle library's filesystem layout — Box B
         gets handed the answer instead of walking to find it.
 
-        Returns the workflows dict on hit, or None when the env var
-        isn't set or points at an unreadable file (caller falls
-        through to the manifest walk).
+        Return semantics tri-state:
+
+        * ``None`` — env var unset, file missing, or wrong top-level
+          shape. Caller falls through to the manifest walk.
+        * ``{}`` — bundle's defaults.json is readable but ships no
+          ``workflows`` block. Legitimate "no workflow defaults"
+          state; caller does NOT fall through (the bundle is the
+          authoritative source when bound).
+        * ``{<tab_id>: {...}}`` — happy path.
         """
         import os
         path_str = os.environ.get("TPG_BUNDLE_DEFAULTS_PATH")

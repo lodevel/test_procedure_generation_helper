@@ -138,23 +138,21 @@ def generate_code(
 ) -> tuple[str, list[str]]:
     """Generate test.py source from a procedure JSON dict.
 
-    Reads ``<project_root>/inventory.json`` for per-equipment bench
-    details (visa addresses, channels, timeouts) — mirrors the legacy
-    wrapper's resolution. When inventory is absent OR the procedure
-    pins constants in the existing test code, the caller should
-    extract from code via ``validator_dispatch._inventory_from_code``
-    first and pass the resolved inventory.
-
-    For the Quick Code button's simple case (operator clicks button,
-    no existing test code to extract from), inventory comes from the
-    project's ``inventory.json``.
+    Phase 7a (2026-05-12): the legacy ``<project>/inventory.json``
+    fallback is gone. Per the v2.0.x design, bench-identification
+    fields (visa, port, baud, timeout, remote) live as module
+    constants in the generated test.py and are preserved across
+    regeneration. Quick Code generates fresh code with codegen
+    defaults; the operator then edits those defaults via the
+    Equipment Editor and the sync mechanism skips them from drift
+    detection. There is no longer a sidecar inventory file.
 
     Returns ``(code, warnings)``. Raises :class:`ParserUnavailable` if
     the wheel isn't importable.
     """
+    del project_root  # no inventory file to consult; left for API symmetry
     wheel_codegen = _import_codegen()
-    inventory = _load_inventory(project_root) if project_root else None
-    code = wheel_codegen.generate(procedure, inventory)
+    code = wheel_codegen.generate(procedure, None)
     return code, []
 
 
@@ -172,25 +170,6 @@ def _import_codegen():
             f"importable: {exc}. Reinstall the rules_packager_base wheel "
             f"(>= 2.0.1) into the venv running the workflow editor. The "
             f"LLM fallback remains available."
-        ) from exc
-
-
-def _load_inventory(project_root: Path) -> Optional[dict[str, Any]]:
-    """Read ``<project_root>/inventory.json``. Returns None when absent
-    so codegen can still run for procedures that don't need
-    per-equipment bench data (the wheel tolerates ``inventory=None``).
-    Raises RuntimeError on malformed JSON so the caller surfaces a
-    clear "fix inventory.json" message instead of an opaque codegen
-    crash."""
-    path = project_root / "inventory.json"
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"Inventory file at {path} is not valid JSON: {exc}. "
-            f"Fix the file or fall back to LLM Quick Code."
         ) from exc
 
 

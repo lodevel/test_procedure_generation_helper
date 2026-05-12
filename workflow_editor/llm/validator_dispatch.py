@@ -140,9 +140,6 @@ def render_validation_outcome_summary(outcome: "ValidationOutcome") -> str:
 # --------------------------------------------------------------------------- #
 
 
-_INVENTORY_CACHE: dict[Path, tuple[float, dict[str, Any]]] = {}
-
-
 def _resolve_inventory(
     json_obj: dict[str, Any],
     project_root: Optional[Path],
@@ -153,22 +150,17 @@ def _resolve_inventory(
     Per the v2.0.x design: bench identification (visa, port, baud,
     timeout, remote, manual_override) lives in the generated test.py
     module constants. This helper assembles the inventory dict by
-    AST-extracting those constants from ``code`` (used for forward-only
-    codegen; see ``12_Codegen_Specification_v2.md``).
+    AST-extracting those constants from ``code``.
 
-    Resolution order:
-      1. If ``code`` carries operator-pinned constants, build the
-         inventory from them. This is the v2.0.x path.
-      2. Otherwise fall back to legacy ``<project>/inventory.json``
-         for projects pre-dating the v2.0.x design.
-      3. If neither is available, return None.
+    Phase 7a (2026-05-12): the legacy
+    ``<project>/inventory.json`` fallback was removed. v2.0.x is the
+    single supported model; pre-v2.0.x projects with sidecar
+    inventory files are no longer auto-loaded. Returns None when no
+    constants can be extracted; callers treat that as "no inventory
+    available" and codegen runs against its hardcoded defaults.
     """
-    inv = _inventory_from_code(json_obj, code)
-    if inv is not None:
-        return inv
-    if project_root is not None:
-        return _load_inventory(project_root)
-    return None
+    del project_root  # no longer consulted; kept on signature for callers
+    return _inventory_from_code(json_obj, code)
 
 
 def _inventory_from_code(
@@ -238,32 +230,6 @@ def _inventory_from_code(
         instruments[eq_id] = slot
 
     return {"format_version": "2.0.0", "instruments": instruments}
-
-
-def _load_inventory(project_root: Path) -> Optional[dict[str, Any]]:
-    """Read ``<project_root>/inventory.json`` with an mtime-keyed cache.
-
-    Returns ``None`` if the file is missing — JSON↔code validation needs an
-    inventory; absence is treated by the caller as "skipped" rather than
-    "failed" so a partly-set-up project keeps working.
-    """
-    path = project_root / "inventory.json"
-    if not path.exists():
-        return None
-    try:
-        mtime = path.stat().st_mtime
-    except OSError:
-        return None
-    cached = _INVENTORY_CACHE.get(path)
-    if cached is not None and cached[0] == mtime:
-        return cached[1]
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        log.warning("inventory.json at %s failed to load: %s", path, exc)
-        return None
-    _INVENTORY_CACHE[path] = (mtime, data)
-    return data
 
 
 # --------------------------------------------------------------------------- #

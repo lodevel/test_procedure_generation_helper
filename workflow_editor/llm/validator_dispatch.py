@@ -193,7 +193,8 @@ def _inventory_from_code(
         return None
 
     # Map each suffix to its inventory-side field name. Mirrors the
-    # codegen substitution table in `12_Json_Code_Bijection_v2.md` §3.
+    # codegen's _FIELD_SUFFIX table in
+    # rules_packager_base/rules/v2_0_1/parser/codegen.py.
     suffix_to_field = {
         "_VISA": "visa",
         "_CHANNEL": "channel",

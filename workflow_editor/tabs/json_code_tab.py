@@ -609,15 +609,46 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         self.status_message.emit("⚡ Quick Code complete")
     
     def _on_step_clicked(self, item: QListWidgetItem):
-        """Jump to step marker in code editor."""
+        """Jump to the step marker in the code editor AND focus the
+        matching step entry in the procedure.json editor."""
         block = item.data(Qt.UserRole)
         if block:
+            # Code editor jump (existing behavior).
             cursor = self.code_editor.textCursor()
             cursor.movePosition(QTextCursor.MoveOperation.Start)
             for _ in range(block.start_line - 1):
                 cursor.movePosition(QTextCursor.MoveOperation.Down)
             self.code_editor.setTextCursor(cursor)
             self.code_editor.centerCursor()
+            # JSON editor jump — find the step by its `"n": <num>` line.
+            self._focus_json_step(block.step_number)
+
+    def _focus_json_step(self, step_num: int) -> None:
+        """Scroll the JSON editor to the step whose ``n`` field matches
+        ``step_num`` and select the line so it's visibly highlighted.
+        No-op when the line can't be found (one-line JSON, unindented,
+        missing ``n`` field).
+        """
+        json_text = self.json_editor.toPlainText()
+        if not json_text:
+            return
+        import re
+        # Line-anchored match on the indented JSON shape produced by
+        # `json.dumps(..., indent=2)`. The trailing word-boundary
+        # prevents matching `"n": 12` when looking for step 1.
+        pattern = re.compile(rf'^\s*"n":\s*{step_num}\b', re.MULTILINE)
+        m = pattern.search(json_text)
+        if m is None:
+            return
+        line_start = json_text.rfind("\n", 0, m.start()) + 1
+        cursor = self.json_editor.textCursor()
+        cursor.setPosition(line_start)
+        cursor.movePosition(
+            QTextCursor.MoveOperation.EndOfLine,
+            QTextCursor.MoveMode.KeepAnchor,
+        )
+        self.json_editor.setTextCursor(cursor)
+        self.json_editor.centerCursor()
     
     def _update_step_markers(self):
         """Update step markers sidebar from current code, with step text from JSON."""

@@ -27,8 +27,9 @@
                 self.workspace_widget._load_test_list()
                 self.workspace_widget.new_test_btn.setEnabled(True)
                 
-                # Detect rules
-                self.project_manager.detect_rules_root()
+                # Detect rules. Honor the CLI override when one was passed
+                # in; otherwise fall through to project-relative auto-detect.
+                self.project_manager.detect_rules_root(self._cli_rules_root)
                 self._update_project_rules_indicators()
             
             # Step 2: Determine which test to open

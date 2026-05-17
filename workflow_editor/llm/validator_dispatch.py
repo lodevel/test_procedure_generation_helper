@@ -332,20 +332,22 @@ def _import_validator(project_root: Optional[Path] = None):
 
     Returns ``(None, None)`` when the wheel isn't importable. The caller
     treats this as "deterministic path unavailable" and the GUI falls
-    back to LLM-only. ``project_root`` is kept on the signature for
-    backward compatibility with callers; it isn't consulted today
-    (validators don't need it — they import from the wheel directly).
+    back to LLM-only.
+
+    The returned ``validate_fn`` is a partial with ``project_root`` bound
+    so downstream handlers don't need to thread it explicitly.
     """
-    del project_root  # no longer used; kept for caller compatibility
     try:
         from . import pack_parsers
     except Exception as exc:  # noqa: BLE001
         log.info("pack_parsers import failed (%s); GUI falls back to LLM-only.", exc)
         return None, None
-    available, _ = pack_parsers.is_available()
+    available, _ = pack_parsers.is_available(project_root)
     if not available:
         return None, None
-    return pack_parsers.validate, lambda: True
+    import functools
+    validate_fn = functools.partial(pack_parsers.validate, project_root=project_root)
+    return validate_fn, lambda: True
 
 
 # --------------------------------------------------------------------------- #
@@ -838,10 +840,11 @@ def validate_response(
     if project_root is None:
         return _skipped("no active project")
     from . import pack_parsers
-    available, reason = pack_parsers.is_available()
+    import functools
+    available, reason = pack_parsers.is_available(project_root)
     if not available:
         return _skipped(f"deterministic validator unavailable: {reason}")
-    validate_fn = pack_parsers.validate
+    validate_fn = functools.partial(pack_parsers.validate, project_root=project_root)
 
     # Phase 7.1 (2026-04-30): auto-restore operator-only meta fields the
     # LLM tried to populate or modify. Runs BEFORE the artifact handlers
@@ -896,10 +899,9 @@ def is_loop_available(project_root: Optional[Path]) -> tuple[bool, str]:
     from .validator_loop_settings import is_enabled as _is_enabled
     if not _is_enabled(project_root):
         return False, "disabled in project settings (validator_loop.enabled=false)"
-    # 2. Wheel-import probe. Phase 5.1: no per-project wrapper layer to
-    # diagnose; the wheel either imports or it doesn't.
+    # 2. Wheel-import probe via the project's own venv Python.
     from . import pack_parsers
-    available, reason = pack_parsers.is_available()
+    available, reason = pack_parsers.is_available(project_root)
     if not available:
         return False, f"deterministic validator unavailable — {reason}"
     return True, "deterministic path active"
@@ -1029,7 +1031,7 @@ def validate_current_state(
     decide whether to act.
     """
     from . import pack_parsers
-    available, reason = pack_parsers.is_available()
+    available, reason = pack_parsers.is_available(project_root)
     if not available:
         return _skipped(f"Validator unavailable: {reason}")
 
@@ -1058,6 +1060,7 @@ def validate_current_state(
             text=text or None,
             json_obj=json_obj,
             mode="all",
+            project_root=project_root,
         )
     except Exception as exc:  # pragma: no cover — defensive only
         log.exception("validate_current_state: validator raised: %s", exc)

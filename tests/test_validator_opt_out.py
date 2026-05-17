@@ -79,7 +79,7 @@ def test_is_loop_available_runs_probe_when_enabled_true(tmp_path, monkeypatch):
     from workflow_editor.llm import pack_parsers
     monkeypatch.setattr(
         pack_parsers, "is_available",
-        lambda: (False, "rules_packager_base not importable in test venv"),
+        lambda project_root=None: (False, "rules_packager_base not importable in test venv"),
     )
     root = _project(tmp_path, {"enabled": True})
     available, reason = is_loop_available(root)
@@ -106,7 +106,7 @@ def test_is_loop_available_surfaces_wheel_import_error(tmp_path, monkeypatch):
         "rules_packager_base wheel (>= 2.0.1)."
     )
     monkeypatch.setattr(
-        pack_parsers, "is_available", lambda: (False, fake_error),
+        pack_parsers, "is_available", lambda project_root=None: (False, fake_error),
     )
     root = _project(tmp_path, {"enabled": True})
     available, reason = is_loop_available(root)
@@ -207,7 +207,7 @@ def test_validate_procedure_button_hidden_when_wheel_unavailable(monkeypatch):
     # Wheel-unavailable → pack-shipped validators must hide.
     monkeypatch.setattr(
         pack_parsers, "is_available",
-        lambda: (False, "rules_packager_base not in this venv"),
+        lambda project_root=None: (False, "rules_packager_base not in this venv"),
     )
 
     import tempfile

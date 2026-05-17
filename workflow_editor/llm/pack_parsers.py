@@ -1,66 +1,203 @@
-"""Phase 5.1: direct wheel-side parser/validator helpers.
+"""Phase 5.1: direct wheel-side parser/validator helpers — subprocess edition.
 
-Replaces the project-local
-``<project>/config/parsers/<kind>/<variant>.py`` wrapper layer. The
-wrapper classes (`ProcedureTextParser`, `ProcedureCodeParser`,
-`ProcedureTextRenderer`) only adapted the wheel's public API to a
-specific method shape the editor invented; they carried no
-project-specific logic. With three operations exposed by the wheel
-(``parse``, ``render``, ``validate_schema``, ``check_name_fidelity``,
-``codegen.generate``), nothing is gained by routing through a
-per-project Python file — but plenty is lost when the wheel's API
-moves (e.g. the v2.0.0 ``bijective_validator`` → v2.0.1
-``rules.v2_0_1.parser`` rename silently breaks every wrapper).
+Each entry point dispatches to the **project's** venv Python rather than the
+editor's own interpreter, so the wheel imported is the one bundled with the
+active project (which may differ from the GUI's installed wheel).
 
-This module imports from the wheel directly. The editor's Quick
-Parse / Quick Code buttons and the deterministic-validator dispatch
-all call into here. Per-project parser variants are no longer a
-concept — the active rules pack ships exactly one parser version,
-and the wheel is the single source of truth.
+When ``project_root=None`` (editor startup, no project loaded) every entry
+point falls back to in-process import — the original behaviour — so
+standalone-editor mode stays usable.
 
-When the wheel is missing or pre-2.0.1, every entry point raises a
-``ParserUnavailable`` with a uniform "reinstall the wheel" message;
-callers surface it as a tooltip / status / chat-panel echo.
+Mechanism
+---------
+- Sibling script ``_pack_parsers_subprocess.py`` is a standalone CLI runner.
+  It reads a JSON op-spec from stdin and writes a JSON result to stdout.
+- The subprocess is invoked by FILE PATH (not ``-m``)::
 
-Eager imports would drag rules_packager_base into every editor
-startup; lazy imports keep the editor robust against a stale or
-missing wheel (the LLM workflow still works).
+      <project>/.venv/Scripts/python.exe <abs>/_pack_parsers_subprocess.py
+
+  Invoking via ``-m`` would trigger ``workflow_editor/__init__.py`` which
+  imports PySide6 (the editor GUI). The project venv has the bundle wheels
+  but NOT PySide6 — and shouldn't, since it is for test execution only.
+  Running the script by path keeps ``__name__ == "__main__"`` and skips the
+  package init entirely.
+
+Fallback (project_root=None)
+-----------------------------
+``is_available()`` and every other entry point call the in-process helpers
+(``_inproc_*``) directly.  This is the original behaviour; it is kept because
+the GUI may probe ``is_available()`` during startup before any project is open.
+
+is_available() caching
+-----------------------
+``is_available(project_root)`` is cheap but may be polled on every repaint;
+it is cached per ``(project_root, venv_python_mtime)``.
 """
 from __future__ import annotations
 
+import functools
 import json
 import logging
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
 log = logging.getLogger(__name__)
 
-
-# Wheel version we expect (and that the v2.0.1 grammar requires).
+# Wheel version we expect (used in error messages only; the subprocess
+# runner imports the real wheel).
 _REQUIRED_WHEEL = "rules_packager_base.rules.v2_0_1.parser"
+
+# Default timeouts (seconds).
+_TIMEOUT_IS_AVAILABLE = 5
+_TIMEOUT_DEFAULT = 30
+
+# env-var overrides
+_ENV_TIMEOUT = "TPG_PACK_PARSER_TIMEOUT"
 
 
 class ParserUnavailable(RuntimeError):
-    """Raised when the deterministic parser/codegen path can't run.
+    """Raised when the deterministic parser/codegen path can't run."""
 
-    Carries a uniform message so callers (chat-panel echo, tooltip,
-    button-hide logic) can show one error to the operator: "reinstall
-    the wheel". Distinct from a ParseError (which carries grammar-level
-    failure detail and goes to the structured-error dialog).
-    """
+
+class ParseFailure(Exception):
+    """Raised by :func:`parse_text` when the wheel's parser produced
+    error-severity findings. Duck-typed against the legacy ParseError
+    (carries ``.code``, ``.line``, ``.column``, ``.fix_hint``,
+    ``.findings``)."""
 
 
 # ---------------------------------------------------------------------------
-# Wheel-import helpers (lazy, cached)
+# Path helpers
 # ---------------------------------------------------------------------------
 
 
-def _import_wheel():
-    """Import the v2.0.1 parser module; cache the module object.
+def _venv_python(project_root: Path) -> Path:
+    """Resolve the project venv Python path (Windows or POSIX)."""
+    if sys.platform == "win32" or os.name == "nt":
+        return project_root / ".venv" / "Scripts" / "python.exe"
+    return project_root / ".venv" / "bin" / "python"
 
-    Returns the module. Raises :class:`ParserUnavailable` with a fix
-    hint if the wheel isn't installed / is too old.
+
+def _timeout() -> int:
+    try:
+        return int(os.environ.get(_ENV_TIMEOUT, _TIMEOUT_DEFAULT))
+    except (ValueError, TypeError):
+        return _TIMEOUT_DEFAULT
+
+
+# ---------------------------------------------------------------------------
+# is_available() cache
+# ---------------------------------------------------------------------------
+
+# Cache: (project_root_str, mtime_ns) → (available, reason)
+_IS_AVAILABLE_CACHE: dict[tuple[str, int], tuple[bool, str]] = {}
+
+
+def _cached_is_available(project_python: Path) -> tuple[bool, str]:
+    try:
+        mtime = project_python.stat().st_mtime_ns
+    except OSError:
+        return False, f"Project venv Python not found: {project_python}"
+    key = (str(project_python), mtime)
+    if key in _IS_AVAILABLE_CACHE:
+        return _IS_AVAILABLE_CACHE[key]
+    result = _subprocess_call(
+        project_python,
+        {"op": "is_available"},
+        timeout=_TIMEOUT_IS_AVAILABLE,
+    )
+    if result.get("ok") and "available" in result:
+        out = (result["available"], result.get("reason", ""))
+    else:
+        out = (False, result.get("error", "subprocess error"))
+    _IS_AVAILABLE_CACHE[key] = out
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Subprocess dispatcher
+# ---------------------------------------------------------------------------
+
+
+def _subprocess_call(
+    project_python: Path,
+    spec: dict[str, Any],
+    timeout: int,
+) -> dict[str, Any]:
+    """Invoke the subprocess runner and return its parsed JSON output.
+
+    Never raises — returns ``{"ok": False, "error": ..., "kind": ...}`` on
+    any transport-level failure so callers can map it uniformly.
+
+    The runner is invoked as a standalone script file, NOT via ``-m``.
+    Running it as a module would trigger ``workflow_editor/__init__.py``
+    which imports PySide6 (the editor GUI). The project's venv has the
+    bundle wheels but NOT PySide6 — and shouldn't, since the project
+    venv is for test execution, not the editor UI. Invoking by path
+    sets ``__name__ == "__main__"`` and skips the package init.
     """
+    runner_path = Path(__file__).resolve().parent / "_pack_parsers_subprocess.py"
+
+    try:
+        proc = subprocess.run(
+            [str(project_python), str(runner_path)],
+            input=json.dumps(spec),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "kind": "ParserUnavailable",
+            "error": f"Subprocess timed out after {timeout}s (op={spec.get('op')})",
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "kind": "ParserUnavailable",
+            "error": f"Failed to launch subprocess: {exc}",
+        }
+
+    if proc.returncode != 0:
+        stderr = proc.stderr.strip() if proc.stderr else "(no stderr)"
+        return {
+            "ok": False,
+            "kind": "ParserUnavailable",
+            "error": f"Subprocess exited {proc.returncode}: {stderr}",
+        }
+
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        return {
+            "ok": False,
+            "kind": "Other",
+            "error": f"Subprocess stdout is not valid JSON: {exc}\nstdout={proc.stdout!r}",
+        }
+
+
+def _resolve_project_python(project_root: Path) -> Path:
+    """Return the project venv Python path; raise ParserUnavailable if absent."""
+    py = _venv_python(project_root)
+    if not py.exists():
+        raise ParserUnavailable(
+            f"No project venv at {py}. "
+            f"Reinstall the project bundle to create the venv. "
+            f"The LLM fallback remains available."
+        )
+    return py
+
+
+# ---------------------------------------------------------------------------
+# In-process fallback helpers (project_root=None path)
+# ---------------------------------------------------------------------------
+
+
+def _inproc_import_wheel():
     try:
         import rules_packager_base.rules.v2_0_1.parser as _parser
         return _parser
@@ -73,94 +210,7 @@ def _import_wheel():
         ) from exc
 
 
-def is_available() -> tuple[bool, str]:
-    """Probe whether the wheel imports cleanly. Returns ``(available, reason)``.
-
-    Used by ``validator_dispatch.is_loop_available`` and the editor's
-    chat-panel validator-status indicator. Cheap — just a single
-    ``import``. Doesn't touch the project's config dir at all.
-    """
-    try:
-        _import_wheel()
-        return True, "deterministic path active"
-    except ParserUnavailable as exc:
-        return False, str(exc)
-
-
-# ---------------------------------------------------------------------------
-# Quick Parse — canonical text → procedure JSON
-# ---------------------------------------------------------------------------
-
-
-def parse_text(text: str) -> tuple[dict[str, Any], list[str]]:
-    """Parse canonical-text procedure into the v2.0.1 JSON shape.
-
-    Returns ``(procedure_json, warnings)``:
-      - ``procedure_json`` — the parsed dict.
-      - ``warnings`` — list of human-readable strings from non-error
-        findings (the wheel reports `severity="warning"` findings here).
-
-    Raises:
-      :class:`ParserUnavailable` if the wheel isn't importable.
-      ``ParseFailure`` (a generic Exception with .findings) if the
-        wheel produced error-severity findings — callers route this to
-        ``ValidatorErrorDialog`` for structured rendering. The
-        exception type carries ``code`` and ``fix_hint`` attributes for
-        compatibility with the legacy ParseError shape.
-    """
-    wheel = _import_wheel()
-    result = wheel.parse(text)
-    if not result.success or result.json is None:
-        errors = result.errors if hasattr(result, "errors") else [
-            f for f in result.findings if f.severity == "error"
-        ]
-        raise _make_parse_failure(errors, result.findings)
-    warnings = [
-        _format_finding(f) for f in result.findings if f.severity == "warning"
-    ]
-    return result.json, warnings
-
-
-def render_text(procedure_json: dict[str, Any]) -> str:
-    """Emit canonical-text procedure from the v2.0.1 JSON shape."""
-    wheel = _import_wheel()
-    return wheel.render(procedure_json)
-
-
-# ---------------------------------------------------------------------------
-# Quick Code — procedure JSON → Python test code
-# ---------------------------------------------------------------------------
-
-
-def generate_code(
-    procedure: dict[str, Any],
-    project_root: Optional[Path],
-) -> tuple[str, list[str]]:
-    """Generate test.py source from a procedure JSON dict.
-
-    Phase 7a (2026-05-12): the legacy ``<project>/inventory.json``
-    fallback is gone. Per the v2.0.x design, bench-identification
-    fields (visa, port, baud, timeout, remote) live as module
-    constants in the generated test.py and are preserved across
-    regeneration. Quick Code generates fresh code with codegen
-    defaults; the operator then edits those defaults via the
-    Equipment Editor and the sync mechanism skips them from drift
-    detection. There is no longer a sidecar inventory file.
-
-    Returns ``(code, warnings)``. Raises :class:`ParserUnavailable` if
-    the wheel isn't importable.
-    """
-    del project_root  # no inventory file to consult; left for API symmetry
-    wheel_codegen = _import_codegen()
-    code = wheel_codegen.generate(procedure, None)
-    return code, []
-
-
-def _import_codegen():
-    """Import the v2.0.1 codegen submodule; raise ParserUnavailable on
-    failure. Codegen lives at ``rules_packager_base.rules.v2_0_1.parser.codegen``,
-    NOT at the legacy ``rules_packager_base.bijective_validator.codegen``
-    (which Codex flagged as not present in the current wheel)."""
+def _inproc_import_codegen():
     try:
         from rules_packager_base.rules.v2_0_1.parser import codegen as _codegen
         return _codegen
@@ -174,8 +224,102 @@ def _import_codegen():
 
 
 # ---------------------------------------------------------------------------
-# Full validation — used by validators_builtin.validate_procedure
+# Public entry points
 # ---------------------------------------------------------------------------
+
+
+def is_available(
+    project_root: Optional[Path] = None,
+) -> tuple[bool, str]:
+    """Probe whether the wheel imports cleanly. Returns ``(available, reason)``.
+
+    When ``project_root`` is None (no project open), probes the editor's own
+    venv via in-process import (original behaviour). When ``project_root`` is
+    given, invokes the project venv Python as a subprocess; result is cached
+    per ``(venv_python_path, mtime)``.
+    """
+    if project_root is None:
+        try:
+            _inproc_import_wheel()
+            return True, "deterministic path active"
+        except ParserUnavailable as exc:
+            return False, str(exc)
+
+    try:
+        project_python = _resolve_project_python(project_root)
+    except ParserUnavailable as exc:
+        return False, str(exc)
+    return _cached_is_available(project_python)
+
+
+def parse_text(
+    text: str,
+    project_root: Optional[Path] = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """Parse canonical-text procedure into the v2.0.1 JSON shape.
+
+    Returns ``(procedure_json, warnings)``. Raises :class:`ParserUnavailable`
+    or :class:`ParseFailure` on failure.
+    """
+    if project_root is None:
+        return _inproc_parse_text(text)
+
+    project_python = _resolve_project_python(project_root)
+    result = _subprocess_call(
+        project_python,
+        {"op": "parse_text", "text": text},
+        timeout=_timeout(),
+    )
+
+    if not result.get("ok"):
+        kind = result.get("kind", "Other")
+        if kind == "ParseFailure":
+            return _reconstruct_parse_failure(result)
+        raise ParserUnavailable(result.get("error", "subprocess error"))
+
+    return result["json"], result.get("warnings", [])
+
+
+def render_text(
+    procedure_json: dict[str, Any],
+    project_root: Optional[Path] = None,
+) -> str:
+    """Emit canonical-text procedure from the v2.0.1 JSON shape."""
+    if project_root is None:
+        return _inproc_render_text(procedure_json)
+
+    project_python = _resolve_project_python(project_root)
+    result = _subprocess_call(
+        project_python,
+        {"op": "render_text", "procedure_json": procedure_json},
+        timeout=_timeout(),
+    )
+    if not result.get("ok"):
+        raise ParserUnavailable(result.get("error", "subprocess error"))
+    return result["text"]
+
+
+def generate_code(
+    procedure: dict[str, Any],
+    project_root: Optional[Path] = None,
+) -> tuple[str, list[str]]:
+    """Generate test.py source from a procedure JSON dict.
+
+    Returns ``(code, warnings)``. Raises :class:`ParserUnavailable` if the
+    wheel isn't importable.
+    """
+    if project_root is None:
+        return _inproc_generate_code(procedure)
+
+    project_python = _resolve_project_python(project_root)
+    result = _subprocess_call(
+        project_python,
+        {"op": "generate_code", "procedure": procedure},
+        timeout=_timeout(),
+    )
+    if not result.get("ok"):
+        raise ParserUnavailable(result.get("error", "subprocess error"))
+    return result["code"], result.get("warnings", [])
 
 
 def validate(
@@ -185,23 +329,78 @@ def validate(
     mode: str = "all",
     original_text: Optional[str] = None,
     check_names: bool = True,
+    project_root: Optional[Path] = None,
 ) -> "_ValidateReport":
     """Run the full deterministic validation pipeline.
 
-    Composes:
-      - ``parse(text)`` — grammar parse + lex (when text is provided).
-      - ``validate_schema(json_obj)`` — schema + topology + semantic.
-      - ``check_name_fidelity(text, original_text)`` — catch the LLM
-        stripping `+HIGH_28V` → `HIGH_28V` etc. (when both text and
-        original_text are provided AND check_names=True).
-
     Returns a ``_ValidateReport`` duck-typed against the legacy
-    ProcedureTextRenderer.validate() shape so
-    ``validator_dispatch._outcome_from_report`` can consume it
-    unchanged. Raises :class:`ParserUnavailable` if the wheel isn't
-    importable.
+    ProcedureTextRenderer.validate() shape. Raises :class:`ParserUnavailable`
+    if the wheel isn't importable.
     """
-    wheel = _import_wheel()
+    if project_root is None:
+        return _inproc_validate(
+            text=text,
+            json_obj=json_obj,
+            mode=mode,
+            original_text=original_text,
+            check_names=check_names,
+        )
+
+    project_python = _resolve_project_python(project_root)
+    spec: dict[str, Any] = {"op": "validate", "mode": mode, "check_names": check_names}
+    if text is not None:
+        spec["text"] = text
+    if json_obj is not None:
+        spec["json_obj"] = json_obj
+    if original_text is not None:
+        spec["original_text"] = original_text
+
+    result = _subprocess_call(project_python, spec, timeout=_timeout())
+    if not result.get("ok"):
+        raise ParserUnavailable(result.get("error", "subprocess error"))
+
+    return _ValidateReport(_reconstruct_issues_from_dicts(result.get("findings", [])))
+
+
+# ---------------------------------------------------------------------------
+# In-process implementations (used when project_root=None)
+# ---------------------------------------------------------------------------
+
+
+def _inproc_parse_text(text: str) -> tuple[dict[str, Any], list[str]]:
+    wheel = _inproc_import_wheel()
+    result = wheel.parse(text)
+    if not result.success or result.json is None:
+        errors = result.errors if hasattr(result, "errors") else [
+            f for f in result.findings if f.severity == "error"
+        ]
+        raise _make_parse_failure(errors, result.findings)
+    warnings = [
+        _format_finding(f) for f in result.findings if f.severity == "warning"
+    ]
+    return result.json, warnings
+
+
+def _inproc_render_text(procedure_json: dict[str, Any]) -> str:
+    wheel = _inproc_import_wheel()
+    return wheel.render(procedure_json)
+
+
+def _inproc_generate_code(procedure: dict[str, Any]) -> tuple[str, list[str]]:
+    codegen = _inproc_import_codegen()
+    code = codegen.generate(procedure, None)
+    return code, []
+
+
+def _inproc_validate(
+    *,
+    text: Optional[str],
+    json_obj: Optional[dict[str, Any]],
+    mode: str,
+    original_text: Optional[str],
+    check_names: bool,
+) -> "_ValidateReport":
+    wheel = _inproc_import_wheel()
     findings: list[Any] = []
 
     parsed_json = json_obj
@@ -220,15 +419,52 @@ def validate(
     return _ValidateReport(findings)
 
 
-class _Issue:
-    """Editor-facing adapter over a wheel ``Finding``. Mirrors the
-    legacy canonical.py wrapper's _Issue shape so
-    ``validator_dispatch._issue_from_validator`` can consume it:
+# ---------------------------------------------------------------------------
+# Reconstruction helpers: JSON dicts → editor-facing types
+# ---------------------------------------------------------------------------
 
-      - ``.location`` is a dict ``{line, column}`` (legacy shape) so
-        ``_format_location`` renders it as ``"line=X column=Y"``.
-        Raw Findings carry ``.line``/``.col`` attributes which the
-        validator_dispatch issue-builder doesn't know how to read.
+
+def _reconstruct_parse_failure(result: dict[str, Any]) -> "never":
+    """Raise ParseFailure reconstructed from a subprocess error dict."""
+    findings_dicts = result.get("findings", [])
+    issues = [_IssueFromDict(d) for d in findings_dicts]
+    exc = ParseFailure(result.get("error", "Parsing failed."))
+    exc.code = result.get("code", "PARSE_ERROR")
+    exc.line = result.get("line")
+    exc.column = result.get("column")
+    exc.fix_hint = result.get("fix_hint", "")
+    exc.findings = issues
+    raise exc
+
+
+def _reconstruct_issues_from_dicts(findings: list[dict]) -> list["_IssueFromDict"]:
+    return [_IssueFromDict(d) for d in findings]
+
+
+class _IssueFromDict:
+    """Editor-facing _Issue reconstructed from a subprocess JSON dict."""
+
+    def __init__(self, d: dict) -> None:
+        self.code = d.get("code", "") or ""
+        self.message = d.get("message", "") or ""
+        self.severity = d.get("severity", "error") or "error"
+        line = d.get("line", 0) or 0
+        col = d.get("col", 0) or 0
+        loc: dict[str, Any] = {}
+        if line:
+            loc["line"] = line
+        if col:
+            loc["column"] = col
+        self.location = loc
+        self.fix_hint = d.get("fix_hint", "") or ""
+        self.fixable_by = d.get("fixable_by", "either") or "either"
+
+
+class _Issue:
+    """Editor-facing adapter over a wheel ``Finding`` (in-process path).
+
+    Mirrors the legacy canonical.py wrapper's _Issue shape so
+    ``validator_dispatch._issue_from_validator`` can consume it.
     """
 
     def __init__(self, finding: Any) -> None:
@@ -248,39 +484,24 @@ class _Issue:
 
 
 class _ValidateReport:
-    """Duck-typed report shape that mirrors the legacy
-    ProcedureTextRenderer.validate() return:
-      - ``.ok: bool`` — True iff no error-severity finding.
-      - ``.errors: list[_Issue]`` — error-severity only.
-      - ``.warnings: list[_Issue]`` — warning-severity (validate_current_state
-        surfaces these alongside errors for the operator-facing panel).
-    """
+    """Duck-typed report shape consumed by ``validator_dispatch``."""
 
     def __init__(self, findings: list[Any]) -> None:
-        # Adapt every Finding to the editor-facing _Issue shape.
-        self._issues = [_Issue(f) for f in findings]
-        # Mirror the legacy report's coarse "ok" — block iff any error.
+        # Accept both Finding objects (in-process) and _IssueFromDict (subprocess).
+        self._issues = [
+            f if hasattr(f, "location") else _Issue(f) for f in findings
+        ]
         self.ok = not any(i.severity == "error" for i in self._issues)
         self.errors = [i for i in self._issues if i.severity == "error"]
         self.warnings = [i for i in self._issues if i.severity == "warning"]
 
 
 # ---------------------------------------------------------------------------
-# Internal: ParseFailure construction
+# Internal: ParseFailure construction (in-process path)
 # ---------------------------------------------------------------------------
 
 
 def _make_parse_failure(errors: list[Any], findings: list[Any]) -> "ParseFailure":
-    """Build a ParseFailure carrying the first error's code+fix_hint
-    plus the full findings list. Mirrors the legacy ParseError shape
-    so ValidatorErrorDialog.show_from_exception treats it identically.
-
-    ``findings`` is pre-wrapped in :class:`_Issue` so every entry has
-    the editor-facing shape (`.location` as a dict, `.fixable_by`,
-    etc.) — ``validator_dispatch._outcome_from_parse_error`` fans them
-    out into a multi-row ValidationOutcome so every wheel finding
-    surfaces in the structured-error dialog, not just the primary.
-    """
     primary = errors[0] if errors else None
     code = getattr(primary, "code", "PARSE_ERROR") if primary else "PARSE_ERROR"
     line = getattr(primary, "line", None) if primary else None
@@ -296,16 +517,7 @@ def _make_parse_failure(errors: list[Any], findings: list[Any]) -> "ParseFailure
     return exc
 
 
-class ParseFailure(Exception):
-    """Raised by :func:`parse_text` when the wheel's parser produced
-    error-severity findings. Duck-typed against the legacy ParseError
-    (carries ``.code``, ``.line``, ``.column``, ``.fix_hint``,
-    ``.findings``)."""
-
-
 def _format_finding(finding: Any) -> str:
-    """One-line human-readable string for a Finding. Used for the
-    warnings list returned by :func:`parse_text`."""
     code = getattr(finding, "code", "?")
     line = getattr(finding, "line", 0)
     msg = getattr(finding, "message", str(finding))
@@ -313,7 +525,7 @@ def _format_finding(finding: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Step-text extraction from canonical procedure_text.md
+# Step-text extraction from canonical procedure_text.md (no wheel needed)
 # ---------------------------------------------------------------------------
 
 
@@ -329,16 +541,7 @@ _STEPS_SECTION_RE = _step_re.compile(
 def step_texts_from_canonical(procedure_text: str) -> dict[int, str]:
     """Return ``{step_number: canonical_line}`` from a procedure_text.md.
 
-    Scans the ``## Steps`` section for lines matching ``<n>. <text>.``
-    and returns one entry per step. Used by the workflow editor's
-    JSON-Code + Traceability tabs to surface the operator-readable
-    step description even when the JSON step is an op-call shape
-    (``{"op": "psu.set_voltage", "device": "PSU1", ...}``) carrying no
-    top-level ``text`` field.
-
-    Returns an empty dict when no Steps section is present or no
-    numbered lines are found — callers fall back to ``step.get("text")``
-    or a placeholder.
+    Pure-regex helper — no wheel import. Unchanged from pre-refactor.
     """
     if not procedure_text:
         return {}
@@ -352,7 +555,6 @@ def step_texts_from_canonical(procedure_text: str) -> dict[int, str]:
             n = int(m.group(1))
         except ValueError:
             continue
-        # Strip the trailing period that canonical-text mandates.
         text = m.group(2).rstrip(".").rstrip()
         out[n] = text
     return out

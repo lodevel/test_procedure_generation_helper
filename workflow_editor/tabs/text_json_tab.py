@@ -302,10 +302,10 @@ class TextJsonTab(LLMTabMixin, BaseTab):
 
     def refresh_parser_button(self):
         """Show or hide the Quick Parse button based on whether the
-        rules_packager_base wheel imports cleanly. Phase 5.1: no more
-        per-project parser variant — the wheel is the source of truth."""
+        rules_packager_base wheel imports cleanly in the project venv."""
         from ..llm import pack_parsers
-        available, _ = pack_parsers.is_available()
+        project_root = getattr(self.project_manager, "project_root", None)
+        available, _ = pack_parsers.is_available(project_root)
         self.quick_parse_btn.setVisible(available)
 
     def _on_quick_parse(self):
@@ -320,8 +320,9 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         # (with .code, .fix_hint, .findings — same shape the legacy
         # ParseError carried) or ParserUnavailable if the wheel isn't
         # importable. Route both through the structured dialog.
+        project_root = getattr(self.project_manager, "project_root", None)
         try:
-            result, warnings = pack_parsers.parse_text(text)
+            result, warnings = pack_parsers.parse_text(text, project_root=project_root)
         except pack_parsers.ParserUnavailable as e:
             self.show_warning("Parser Unavailable", str(e))
             return

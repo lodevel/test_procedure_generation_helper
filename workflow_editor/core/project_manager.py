@@ -61,7 +61,15 @@ class ProjectManager:
     project_root: Optional[Path] = None
     rules_root: Optional[Path] = None
     rules_state: RulesState = RulesState.NOT_CHECKED
-    
+
+    # Sticky CLI override. When set, every detect_rules_root() call
+    # honors it before falling back to project-relative auto-detection.
+    # Without this, the various post-launch detect calls (test-open,
+    # project-open from menu, etc.) would silently re-fall back to the
+    # default project-relative path, even when the launching GUI passed
+    # an explicit --rules-root.
+    cli_rules_root_override: Optional[Path] = None
+
     # Cached rules content
     _rules_content: Optional[str] = field(default=None, repr=False)
     _rules_files: list[Path] = field(default_factory=list, repr=False)
@@ -336,28 +344,34 @@ Test procedure project created with Workflow Editor.
     def detect_rules_root(self, cli_rules_root: Optional[Path] = None) -> bool:
         """
         Detect rules root following fallback order:
-        
-        1. CLI --rules-root if provided
+
+        1. CLI --rules-root if provided (this call's arg, OR the sticky
+           override set via :attr:`cli_rules_root_override` at startup)
         2. <project_root>/config/rules/ (spec default)
         3. <project_root>/rules/ (common alternative)
         4. <project_root>/../rules/ (sibling folder)
         5. Return False to indicate user prompt needed
-        
+
         Returns True if rules were found, False if user needs to choose.
         """
         import logging
         log = logging.getLogger(__name__)
-        
+
+        # Prefer the explicit per-call arg; fall back to the sticky
+        # override so post-launch detect calls (test-open, project-open
+        # from menu) don't silently revert to project-relative paths.
+        effective_cli = cli_rules_root if cli_rules_root is not None else self.cli_rules_root_override
+
         # 1. CLI argument
-        if cli_rules_root is not None:
-            if self._is_valid_rules_root(cli_rules_root):
-                self.rules_root = cli_rules_root
+        if effective_cli is not None:
+            if self._is_valid_rules_root(effective_cli):
+                self.rules_root = effective_cli
                 self.rules_state = RulesState.LOADED
                 self._load_rules()
-                log.info(f"Rules loaded from CLI arg: {cli_rules_root}")
+                log.info(f"Rules loaded from CLI arg: {effective_cli}")
                 return True
             else:
-                log.warning(f"CLI rules root invalid: {cli_rules_root}")
+                log.warning(f"CLI rules root invalid: {effective_cli}")
         
         # 2-4. Fallback locations
         if self.project_root is not None:

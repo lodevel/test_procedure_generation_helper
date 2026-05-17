@@ -520,10 +520,10 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
 
     def refresh_code_parser_button(self):
         """Show or hide the Quick Code button based on whether the
-        rules_packager_base wheel imports cleanly. Phase 5.1: no more
-        per-project parser variant."""
+        rules_packager_base wheel imports cleanly in the project venv."""
         from ..llm import pack_parsers
-        available, _ = pack_parsers.is_available()
+        project_root = getattr(self.project_manager, "project_root", None)
+        available, _ = pack_parsers.is_available(project_root)
         self.quick_code_btn.setVisible(available)
 
     def _on_quick_code(self):

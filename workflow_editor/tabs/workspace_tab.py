@@ -39,6 +39,11 @@ class WorkspaceTab(BaseTab):
     test_selected = Signal(Path)  # Emitted when a test is selected
     test_opened = Signal(Path)    # Emitted when a test should be opened
     test_deleted = Signal(Path)   # Emitted when a test folder was deleted
+    # Right-clicking the currently-loaded test → Mark Procedure In Sync.
+    # The loaded test holds in-memory session_state that would overwrite
+    # any disk-only write; main_window connects this signal to the
+    # existing acknowledgment flow which handles both layers atomically.
+    request_mark_loaded_in_sync = Signal()
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -142,7 +147,9 @@ class WorkspaceTab(BaseTab):
             return False
 
         patterns = self.project_manager.get_equipment_patterns()
-        canonical_files = ("procedure.json", "test.py")
+        # Must mirror ArtifactManager._SYNC_TRACKED_NAMES — adding text
+        # so operator edits to procedure_text.md flip the ⚠️ flag too.
+        canonical_files = ("procedure.json", "test.py", "procedure_text.md")
         for filename in canonical_files:
             stored = stored_hashes.get(filename)
             if not stored:
@@ -209,24 +216,116 @@ class WorkspaceTab(BaseTab):
         item = self.test_list.itemAt(position)
         if not item:
             return
-        
+
         path = item.data(Qt.UserRole)
         if not path:
             return
-        
+
         menu = QMenu(self)
-        
+
         open_action = menu.addAction("Open")
+
+        # Mark In Sync — disabled only when the test is already in
+        # sync (nothing to baseline). The loaded-vs-unloaded split is
+        # handled at click time: loaded goes through main_window's
+        # acknowledgment flow (in-memory + disk atomically), unloaded
+        # writes the hash baseline directly to .llm_session.json.
+        out_of_sync = self._is_test_out_of_sync(path)
+        is_loaded = (path == self._current_opened_test)
+        mark_sync_action = menu.addAction("Mark Procedure In Sync")
+        mark_sync_action.setEnabled(out_of_sync)
+        if not out_of_sync:
+            mark_sync_action.setToolTip("Already in sync — nothing to do.")
+        elif is_loaded:
+            mark_sync_action.setToolTip(
+                "Acknowledge the loaded test's artifacts as coherent "
+                "(confirms via dialog and updates the session state)."
+            )
+        else:
+            mark_sync_action.setToolTip(
+                "Acknowledge procedure_text.md / procedure.json / test.py "
+                "as coherent. Rewrites the hash baseline in .llm_session.json."
+            )
+
         menu.addSeparator()
         delete_action = menu.addAction("Delete Test...")
         delete_action.setToolTip("Permanently delete this test folder and all its contents")
-        
+
         action = menu.exec(self.test_list.mapToGlobal(position))
-        
+
         if action == open_action:
             self.test_opened.emit(path)
+        elif action == mark_sync_action:
+            if is_loaded:
+                self.request_mark_loaded_in_sync.emit()
+            else:
+                self._mark_test_in_sync(path)
         elif action == delete_action:
             self._delete_test(path)
+
+    def _mark_test_in_sync(self, path: Path):
+        """Rebaseline ``.llm_session.json`` for *path*.
+
+        Computes the same normalised SHA-256 hashes that
+        :meth:`_is_test_out_of_sync` compares against, then writes them
+        to the test's session file alongside ``artifacts_in_sync=True``.
+        Preserves any other session-state fields already on disk
+        (intent, decisions, open_questions, …) by reading-then-merging.
+
+        Only called for unloaded tests — the context menu disables
+        this entry when ``path == self._current_opened_test`` so the
+        loaded path stays under main_window control.
+        """
+        session_file = path / ".llm_session.json"
+        if session_file.exists():
+            try:
+                data = json.loads(session_file.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    data = {}
+            except Exception:
+                data = {}
+        else:
+            data = {}
+
+        patterns = self.project_manager.get_equipment_patterns()
+        # Must mirror ArtifactManager._SYNC_TRACKED_NAMES — adding text
+        # so operator edits to procedure_text.md flip the ⚠️ flag too.
+        canonical_files = ("procedure.json", "test.py", "procedure_text.md")
+        hashes: dict = dict(data.get("artifact_hashes", {}))
+        for filename in canonical_files:
+            file_path = path / filename
+            if not file_path.exists():
+                continue
+            try:
+                content = file_path.read_text(encoding="utf-8")
+            except Exception as e:
+                QMessageBox.critical(
+                    self, "Mark In Sync Failed",
+                    f"Could not read {filename}:\n{e}",
+                )
+                return
+            normalised = normalize_for_hash(content, filename, patterns)
+            hashes[filename] = hashlib.sha256(
+                normalised.encode("utf-8"),
+            ).hexdigest()
+
+        data["artifact_hashes"] = hashes
+        data["artifacts_in_sync"] = True
+
+        try:
+            session_file.parent.mkdir(parents=True, exist_ok=True)
+            session_file.write_text(
+                json.dumps(data, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Mark In Sync Failed",
+                f"Could not write {session_file.name}:\n{e}",
+            )
+            return
+
+        self.refresh()
     
     def _delete_test(self, path: Path):
         """Delete a test folder after confirmation."""

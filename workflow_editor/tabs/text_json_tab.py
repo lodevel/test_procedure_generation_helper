@@ -184,14 +184,28 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         format_row.addStretch()
         file_layout.addLayout(format_row)
 
-        # Quick Parse row — hidden until project provides config/text_parser.py
+        # Deterministic ⚡ row — bidirectional. Both buttons hidden
+        # until the rules_packager_base wheel is importable in the
+        # project venv (see refresh_parser_button).
         parse_row = QHBoxLayout()
         self.quick_parse_btn = self.create_button(
-            "⚡ Quick Parse", self._on_quick_parse,
-            tooltip="Parse structured text to JSON without LLM (rule-based, instant)"
+            "⚡ Text → JSON", self._on_quick_parse,
+            tooltip="Deterministic Text → JSON (rule-based, instant, no LLM)"
         )
         self.quick_parse_btn.setVisible(False)
         parse_row.addWidget(self.quick_parse_btn)
+        self.quick_render_btn = self.create_button(
+            "⚡ JSON → Text", self._on_quick_render,
+            tooltip="Deterministic JSON → Text (rule-based, instant, no LLM)"
+        )
+        self.quick_render_btn.setVisible(False)
+        parse_row.addWidget(self.quick_render_btn)
+        self.parse_and_generate_btn = self.create_button(
+            "⚡ Parse + Generate", self._on_parse_and_generate,
+            tooltip="One click: Text → JSON → test.py (strict; aborts on any warning)"
+        )
+        self.parse_and_generate_btn.setVisible(False)
+        parse_row.addWidget(self.parse_and_generate_btn)
         parse_row.addStretch()
         file_layout.addLayout(parse_row)
         
@@ -301,12 +315,17 @@ class TextJsonTab(LLMTabMixin, BaseTab):
 
 
     def refresh_parser_button(self):
-        """Show or hide the Quick Parse button based on whether the
-        rules_packager_base wheel imports cleanly in the project venv."""
+        """Show or hide both deterministic ⚡ buttons (Text→JSON and
+        JSON→Text) based on whether the rules_packager_base wheel
+        imports cleanly in the project venv. Single toggle because
+        both buttons share the same wheel dependency.
+        """
         from ..llm import pack_parsers
         project_root = getattr(self.project_manager, "project_root", None)
         available, _ = pack_parsers.is_available(project_root)
         self.quick_parse_btn.setVisible(available)
+        self.quick_render_btn.setVisible(available)
+        self.parse_and_generate_btn.setVisible(available)
 
     def _on_quick_parse(self):
         """Deterministic Text → JSON without LLM (rule-based, instant)."""
@@ -384,6 +403,78 @@ class TextJsonTab(LLMTabMixin, BaseTab):
                 "⚡ Quick Parse complete — no warnings."
             )
         self.status_message.emit("⚡ Quick Parse complete")
+
+    def _on_quick_render(self):
+        """Deterministic JSON → Text without LLM (rule-based, instant)."""
+        from ..llm import pack_parsers
+        json_text = self.json_editor.toPlainText().strip()
+        if not json_text:
+            self.show_warning(
+                "No JSON",
+                "JSON editor is empty. Write JSON first or load a test "
+                "with existing JSON.",
+            )
+            return
+
+        try:
+            procedure = json.loads(json_text)
+        except json.JSONDecodeError as e:
+            self.show_warning("Invalid JSON", f"JSON parse failed:\n{e}")
+            return
+
+        project_root = getattr(self.project_manager, "project_root", None)
+        try:
+            result_text = pack_parsers.render_text(
+                procedure, project_root=project_root,
+            )
+        except pack_parsers.ParserUnavailable as e:
+            self.show_warning("Parser Unavailable", str(e))
+            return
+        except Exception as e:
+            log.exception("Quick Render: emitter raised")
+            from ..dialogs.validator_error_dialog import ValidatorErrorDialog
+            ValidatorErrorDialog.show_from_exception(
+                e,
+                title="Quick Render — emitter findings",
+                intro=(
+                    "The deterministic JSON→Text emitter rejected the "
+                    "input. Fix the JSON or fall back to the LLM workflow."
+                ),
+                parent=self,
+            )
+            return
+
+        current_text = self.text_editor.toPlainText().strip()
+        if current_text:
+            accepted, final_content = DiffViewer.show_diff(
+                current_text,
+                result_text,
+                "Review Changes: procedure_text.md (Quick Render)",
+                self,
+            )
+            if not accepted:
+                self.main_window.dock.chat_panel.add_system_message(
+                    "✗ Quick Render — changes rejected."
+                )
+                return
+            result_text = final_content
+
+        self.text_editor.setPlainText(result_text)
+        self.artifact_manager.set_content(
+            ArtifactType.PROCEDURE_TEXT, result_text,
+        )
+        self._text_dirty = True
+        self._update_text_status()
+
+        self.main_window.dock.chat_panel.add_system_message(
+            "⚡ Quick Render complete."
+        )
+        self.status_message.emit("⚡ Quick Render complete")
+
+    def _on_parse_and_generate(self):
+        """Strict one-click: Text → JSON → test.py with diff review.
+        Delegates to the shared LLMTabMixin helper."""
+        self._run_deterministic_parse_and_generate()
 
     def _on_derive_json(self):
         """Text → JSON transformation (strict mode)."""
@@ -496,7 +587,13 @@ class TextJsonTab(LLMTabMixin, BaseTab):
 
     def _handle_text_proposal(self, proposal):
         """Handle procedure_text proposal."""
-        if proposal.mode == "replace":
+        # Accept "create" alongside "replace" — semantically identical
+        # (full content for the artifact). The LLM emits "create" for
+        # fresh authoring (empty editor) and "replace" for overwriting
+        # existing content; both paths land the same way in the diff
+        # dialog. "patch" is intentionally NOT included — partial-edit
+        # semantics need a different handler.
+        if proposal.mode in ("replace", "create"):
             # Serialize dict to string if needed
             if isinstance(proposal.content, dict):
                 content_str = json.dumps(proposal.content, indent=2)
@@ -526,7 +623,13 @@ class TextJsonTab(LLMTabMixin, BaseTab):
     
     def _handle_json_proposal(self, proposal):
         """Handle procedure_json proposal."""
-        if proposal.mode == "replace":
+        # Accept "create" alongside "replace" — semantically identical
+        # (full content for the artifact). The LLM emits "create" for
+        # fresh authoring (empty editor) and "replace" for overwriting
+        # existing content; both paths land the same way in the diff
+        # dialog. "patch" is intentionally NOT included — partial-edit
+        # semantics need a different handler.
+        if proposal.mode in ("replace", "create"):
             # Serialize dict to JSON string if needed
             if isinstance(proposal.content, dict):
                 proposed_dict = dict(proposal.content)

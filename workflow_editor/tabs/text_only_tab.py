@@ -104,6 +104,12 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
             "Save Text", self._on_save_text, tooltip="Save procedure text to disk"
         )
         save_row.addWidget(self.save_text_btn)
+        self.parse_and_generate_btn = self.create_button(
+            "⚡ Parse + Generate", self._on_parse_and_generate,
+            tooltip="One click: Text → JSON → test.py (strict; aborts on any warning)",
+        )
+        self.parse_and_generate_btn.setVisible(False)
+        save_row.addWidget(self.parse_and_generate_btn)
         save_row.addStretch()
         file_layout.addLayout(save_row)
 
@@ -176,6 +182,21 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
             return
         self._run_task_async(LLMTask.REVIEW_TEXT_PROCEDURE)
 
+    def refresh_parser_button(self):
+        """Show ⚡ Parse + Generate when the rules_packager_base wheel is
+        importable in the project venv. Mirrors text_json_tab so the
+        button hides cleanly on bench setups without the wheel.
+        """
+        from ..llm import pack_parsers
+        project_root = getattr(self.project_manager, "project_root", None)
+        available, _ = pack_parsers.is_available(project_root)
+        self.parse_and_generate_btn.setVisible(available)
+
+    def _on_parse_and_generate(self):
+        """Strict one-click: Text → JSON → test.py with diff review.
+        Delegates to the shared LLMTabMixin helper."""
+        self._run_deterministic_parse_and_generate()
+
     def _get_task_description(
         self, task: LLMTask, user_message: str = None, custom_task_id: str = None
     ) -> str:
@@ -219,7 +240,9 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         return parsed
 
     def _handle_text_proposal(self, proposal):
-        if proposal.mode != "replace":
+        # Accept "create" alongside "replace" — see text_json_tab for
+        # rationale. "patch" stays excluded.
+        if proposal.mode not in ("replace", "create"):
             return
 
         if isinstance(proposal.content, dict):

@@ -14,6 +14,7 @@ Instance attributes expected on ``self`` (provided by BaseTab / __init__):
   tab_id, tab_context, task_config_manager, main_window, status_message
 """
 
+import json
 import logging
 from datetime import datetime
 
@@ -36,6 +37,175 @@ log = logging.getLogger(__name__)
 
 class LLMTabMixin:
     """Mixin providing the shared LLM async pipeline for editor tabs."""
+
+    # ------------------------------------------------------------------ #
+    # Deterministic one-click pipeline (shared by Text tabs)              #
+    # ------------------------------------------------------------------ #
+
+    def _run_deterministic_parse_and_generate(self):
+        """Strict one-click: Text → JSON → test.py with diff review.
+
+        Shared by :class:`TextOnlyTab` and :class:`TextJsonTab`. Reads the
+        live text editor, parses to JSON and generates code deterministically
+        (no LLM), aborts on any parser/codegen warning, shows a DiffViewer for
+        each artifact whose current content is non-empty, then writes
+        ``procedure_text`` (if dirty), ``procedure.json`` and ``test.py``.
+
+        Diff bases come from the ArtifactManager. The text and JSON editors
+        mirror their content there on every keystroke, so those bases are
+        fresh. The ``test_code`` base is whatever was last loaded/saved (no
+        Text tab has a code editor to mirror from) — the diff preview for
+        test.py may therefore lag an out-of-band edit, but the write itself
+        is always correct.
+        """
+        from ..core import ArtifactType
+        from ..llm import pack_parsers
+        from ..llm.media_extraction import populate_media_on_steps
+        from ..dialogs import DiffViewer
+
+        text = self.text_editor.toPlainText().strip()
+        if not text:
+            self.show_warning("No Content", "Procedure text is empty. Add text first.")
+            return
+
+        project_root = getattr(self.project_manager, "project_root", None)
+
+        def _abort(reason: str):
+            self.main_window.dock.chat_panel.add_system_message(reason)
+
+        # --- Text → JSON (strict) ---
+        try:
+            procedure, parse_warnings = pack_parsers.parse_text(
+                text, project_root=project_root,
+            )
+        except pack_parsers.ParserUnavailable as e:
+            self.show_warning("Parser Unavailable", str(e))
+            return
+        except Exception as e:
+            log.exception("Parse + Generate: parse_text raised")
+            from ..dialogs.validator_error_dialog import ValidatorErrorDialog
+            ValidatorErrorDialog.show_from_exception(
+                e, title="Parse + Generate — parser findings",
+                intro="The deterministic Text→JSON parser rejected the input.",
+                parent=self,
+            )
+            return
+
+        if parse_warnings:
+            warn_lines = "\n".join(f"  • {w}" for w in parse_warnings)
+            _abort(f"✗ Parse + Generate aborted — parser produced {len(parse_warnings)} warning(s).")
+            self.show_warning(
+                "Parse + Generate — strict",
+                f"Parser produced {len(parse_warnings)} warning(s); aborting "
+                f"(strict mode):\n\n{warn_lines}",
+            )
+            return
+
+        populate_media_on_steps(procedure, project_root)
+        # ensure_ascii=False matches the LLM JSON-proposal write path so the
+        # diff base (artifact_manager content) doesn't show spurious \uXXXX vs
+        # literal-unit-symbol noise (µ, ±, Ω are common in this domain).
+        procedure_str = json.dumps(procedure, indent=2, ensure_ascii=False)
+
+        # --- JSON → code (strict) ---
+        try:
+            code, gen_warnings = pack_parsers.generate_code(
+                procedure, project_root=project_root,
+            )
+        except pack_parsers.ParserUnavailable as e:
+            self.show_warning("Parser Unavailable", str(e))
+            return
+        except Exception as e:
+            log.exception("Parse + Generate: generate_code raised")
+            from ..dialogs.validator_error_dialog import ValidatorErrorDialog
+            ValidatorErrorDialog.show_from_exception(
+                e, title="Parse + Generate — codegen findings",
+                intro="The deterministic JSON→Code generator failed.",
+                parent=self,
+            )
+            return
+
+        if gen_warnings:
+            warn_lines = "\n".join(f"  • {w}" for w in gen_warnings)
+            _abort(f"✗ Parse + Generate aborted — codegen produced {len(gen_warnings)} warning(s).")
+            self.show_warning(
+                "Parse + Generate — strict",
+                f"Codegen produced {len(gen_warnings)} warning(s); aborting "
+                f"before writing files (strict mode):\n\n{warn_lines}",
+            )
+            return
+
+        # --- Review diffs against current artifacts before writing ---
+        current_json = (self.artifact_manager.get_content(ArtifactType.PROCEDURE_JSON) or "").strip()
+        if current_json:
+            accepted, procedure_str = DiffViewer.show_diff(
+                current_json, procedure_str,
+                "Review Changes: procedure.json (Parse + Generate)",
+                self,
+            )
+            if not accepted:
+                _abort("✗ Parse + Generate — JSON changes rejected.")
+                return
+
+        current_code = (self.artifact_manager.get_content(ArtifactType.TEST_CODE) or "").strip()
+        # Preserve operator-pinned bench-identification constants (VISA/COM,
+        # baud, timeout, remote, channel) from the existing test.py. Codegen
+        # emits inventory defaults (ASRL1::INSTR, COM1) that would otherwise
+        # clobber the operator's real bench addresses on every regen. Same
+        # merge json_code_tab's Quick Code applies.
+        if current_code:
+            from ..llm.code_constants_merge import preserve_bench_constants
+            equipment_ids = [
+                eq.get("id") for eq in (procedure.get("equipment") or [])
+                if isinstance(eq, dict) and eq.get("id")
+            ]
+            code, replaced = preserve_bench_constants(code, current_code, equipment_ids)
+            if replaced:
+                log.info(
+                    "Parse + Generate: preserved %d operator-pinned constant(s): %s",
+                    len(replaced), ", ".join(replaced),
+                )
+        if current_code:
+            accepted, code = DiffViewer.show_diff(
+                current_code, code,
+                "Review Changes: test.py (Parse + Generate)",
+                self,
+            )
+            if not accepted:
+                _abort("✗ Parse + Generate — code changes rejected.")
+                return
+
+        # --- Write: text (if dirty) → JSON → code ---
+        if getattr(self, "_text_dirty", False):
+            self.artifact_manager.set_content(
+                ArtifactType.PROCEDURE_TEXT, self.text_editor.toPlainText(),
+            )
+            self.artifact_manager.save_artifact(ArtifactType.PROCEDURE_TEXT)
+            self.artifact_manager.procedure_text.mark_clean()
+            self._text_dirty = False
+            if hasattr(self, "_update_text_status"):
+                self._update_text_status()
+
+        self.artifact_manager.set_content(ArtifactType.PROCEDURE_JSON, procedure_str)
+        self.artifact_manager.save_artifact(ArtifactType.PROCEDURE_JSON)
+        self.artifact_manager.procedure_json.mark_clean()
+
+        self.artifact_manager.set_content(ArtifactType.TEST_CODE, code)
+        self.artifact_manager.save_artifact(ArtifactType.TEST_CODE)
+        self.artifact_manager.test_code.mark_clean()
+
+        # Reflect the new JSON in the tab's editor widget if it has one.
+        if hasattr(self, "json_editor"):
+            self.json_editor.setPlainText(procedure_str)
+            self._json_dirty = False
+            if hasattr(self, "_update_json_status"):
+                self._update_json_status()
+
+        self.main_window.dock.chat_panel.add_system_message(
+            "⚡ Parse + Generate complete — procedure.json and test.py saved."
+        )
+        self.status_message.emit("⚡ Parse + Generate complete")
+        self.artifact_saved.emit()
 
     # ------------------------------------------------------------------ #
     # Task dispatch                                                        #
@@ -186,10 +356,12 @@ class LLMTabMixin:
 
     def _cleanup_thinking_ui(self, response, is_active: bool) -> None:
         """Remove the chat panel's thinking-spinner and surface the raw
-        response in the raw viewer. No-op when the tab isn't active."""
+        response in the raw viewer. The chat panel is a shared dock so its
+        re-enable must run unconditionally; only the active-tab-specific UI
+        (thinking-message, raw viewer) is guarded."""
+        self.main_window.dock.chat_panel.set_llm_active(False)
         if not is_active:
             return
-        self.main_window.dock.chat_panel.set_llm_active(False)
         self.main_window.dock.chat_panel.remove_thinking_message()
         self.main_window.dock.raw_viewer.show_response(response.raw_response)
 
@@ -298,8 +470,11 @@ class LLMTabMixin:
         self._pending_request = None
         is_active = self._is_active_tab()
 
+        # Re-enable the shared chat panel unconditionally — gating it on the
+        # originating tab still being active left the input permanently
+        # disabled when the operator switched tabs mid-run.
+        self.main_window.dock.chat_panel.set_llm_active(False)
         if is_active:
-            self.main_window.dock.chat_panel.set_llm_active(False)
             self.main_window.dock.chat_panel.remove_thinking_message()
 
         # FSM transition: any LLM error (including cancel) terminates the

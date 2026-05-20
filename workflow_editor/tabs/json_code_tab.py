@@ -437,7 +437,9 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
 
     def _handle_json_proposal(self, proposal):
         """Handle procedure_json proposal."""
-        if proposal.mode == "replace":
+        # Accept "create" alongside "replace" — see text_json_tab for
+        # rationale. "patch" stays excluded.
+        if proposal.mode in ("replace", "create"):
             # Serialize dict to JSON string if needed
             if isinstance(proposal.content, dict):
                 content_str = json.dumps(proposal.content, indent=2)
@@ -464,7 +466,9 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
     
     def _handle_code_proposal(self, proposal):
         """Handle test_code proposal."""
-        if proposal.mode == "replace":
+        # Accept "create" alongside "replace" — see text_json_tab for
+        # rationale. "patch" stays excluded.
+        if proposal.mode in ("replace", "create"):
             # Serialize dict to string if needed
             if isinstance(proposal.content, dict):
                 content_str = json.dumps(proposal.content, indent=2)

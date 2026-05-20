@@ -284,6 +284,21 @@ class ArtifactManager:
         """Compute a SHA-256 hex digest of content."""
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
+    # Files tracked for sync detection. procedure_text.md is included
+    # because operator edits to the canonical text imply the JSON /
+    # code derived from it may now be stale — the user expects the
+    # workspace ⚠️ flag in that case too.
+    _SYNC_TRACKED_NAMES: tuple[str, ...] = (
+        "procedure.json", "test.py", "procedure_text.md",
+    )
+
+    def _sync_tracked_mapping(self) -> dict[str, "Artifact"]:
+        return {
+            self.PROCEDURE_JSON_NAME: self.procedure_json,
+            self.TEST_CODE_NAME: self.test_code,
+            self.PROCEDURE_TEXT_NAME: self.procedure_text,
+        }
+
     def compute_hashes(self) -> dict[str, str]:
         """Compute hashes for all loaded canonical artifacts.
 
@@ -291,11 +306,7 @@ class ArtifactManager:
         Only includes artifacts that have non-empty content.
         """
         hashes: dict[str, str] = {}
-        mapping = {
-            self.PROCEDURE_JSON_NAME: self.procedure_json,
-            self.TEST_CODE_NAME: self.test_code,
-        }
-        for name, artifact in mapping.items():
+        for name, artifact in self._sync_tracked_mapping().items():
             if artifact.content:
                 normalised = normalize_for_hash(artifact.content, name, self._exclusion_patterns)
                 hashes[name] = self._hash_content(normalised)
@@ -308,11 +319,7 @@ class ArtifactManager:
         stored hash (i.e. were edited externally since last save/load).
         """
         changed: list[str] = []
-        mapping = {
-            self.PROCEDURE_JSON_NAME: self.procedure_json,
-            self.TEST_CODE_NAME: self.test_code,
-        }
-        for name, artifact in mapping.items():
+        for name, artifact in self._sync_tracked_mapping().items():
             if not artifact.exists_on_disk:
                 continue
             try:

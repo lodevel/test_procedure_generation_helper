@@ -453,18 +453,6 @@ class MainWindow(QMainWindow):
         self.mark_sync_action.triggered.connect(self._on_sync_indicator_clicked)
         edit_menu.addAction(self.mark_sync_action)
 
-        edit_menu.addSeparator()
-
-        self.validate_action = QAction("&Validate Procedure", self)
-        self.validate_action.setShortcut("Ctrl+Shift+V")
-        self.validate_action.setToolTip(
-            "Run the deterministic validator (R1 text↔JSON, R3 schema, R4 topology) "
-            "against the current artifacts and show findings in the dock panel."
-        )
-        self.validate_action.triggered.connect(self._on_validate_procedure)
-        edit_menu.addAction(self.validate_action)
-
-        
         # View menu
         view_menu = menubar.addMenu("&View")
         
@@ -523,6 +511,12 @@ class MainWindow(QMainWindow):
         self.workspace_widget = WorkspaceTab(self)
         self.workspace_widget.test_opened.connect(self._on_test_opened)
         self.workspace_widget.test_deleted.connect(self._on_test_deleted)
+        # Right-click "Mark Procedure In Sync" on the loaded test routes
+        # through the existing acknowledgment flow (handles in-memory
+        # session_state + disk write atomically, pops the confirmation).
+        self.workspace_widget.request_mark_loaded_in_sync.connect(
+            self._on_sync_indicator_clicked,
+        )
         
         # Create dock widget
         self.workspace_dock = QDockWidget("Workspace", self)
@@ -793,50 +787,6 @@ class MainWindow(QMainWindow):
             self.workspace_widget.refresh()
             self.status_bar.showMessage("Artifacts marked as in sync", 2000)
 
-    def _on_validate_procedure(self):
-        """Run the deterministic validator on the current on-disk artifacts.
-
-        Independent of the LLM-loop FSM: reads procedure_text / procedure.json
-        / test.py from the artifact_manager, runs every applicable round-trip
-        (R1 text↔JSON, R3 schema, R4 topology, R2 JSON↔code when inventory is
-        available), and pushes the structured findings into the dock panel.
-        Both errors and warnings are displayed so the operator sees soft codes
-        like ``META_KEY_ORDER`` or ``EXP_PCT_DEGENERATE`` alongside hard errors.
-        """
-        from .llm.validator_dispatch import validate_current_state
-
-        if not self.artifact_manager:
-            self.status_bar.showMessage(
-                "Validate Procedure: no test loaded.", 4000,
-            )
-            return
-
-        text = self.artifact_manager.procedure_text.content or None
-        json_str = self.artifact_manager.procedure_json.content or None
-        code = self.artifact_manager.test_code.content or None
-        project_root = (
-            self.project_manager.project_root
-            if self.project_manager else None
-        )
-
-        outcome = validate_current_state(
-            project_root=project_root,
-            text=text,
-            json_str=json_str,
-            code=code,
-        )
-
-        from .llm.validator_dispatch import render_validation_outcome_summary
-        if outcome.skipped:
-            self.dock.show_validation_result_from_list([])
-        else:
-            self.dock.show_validation_result_from_list(
-                [issue.to_dock_dict() for issue in outcome.issues]
-            )
-        self.status_bar.showMessage(
-            render_validation_outcome_summary(outcome), 5000,
-        )
-
     def _check_artifact_coherence(self) -> bool:
         """Check if JSON and Code artifacts are in sync and warn if not.
         
@@ -1023,6 +973,7 @@ class MainWindow(QMainWindow):
         # added/removed). Re-evaluate visibility here so the Quick Parse
         # button state is consistent per-test.
         self.text_json_tab.refresh_parser_button()
+        self.text_only_tab.refresh_parser_button()
         self.json_code_tab.refresh_code_parser_button()
         
         # Refresh dock panels with session data
@@ -1218,6 +1169,7 @@ class MainWindow(QMainWindow):
         # Update status bar indicators
         self._update_project_rules_indicators()
         self.text_json_tab.refresh_parser_button()
+        self.text_only_tab.refresh_parser_button()
         self.json_code_tab.refresh_code_parser_button()
         self._watch_project_config()
         
@@ -1262,6 +1214,7 @@ class MainWindow(QMainWindow):
             # Update status bar indicators
             self._update_project_rules_indicators()
             self.text_json_tab.refresh_parser_button()
+            self.text_only_tab.refresh_parser_button()
             self.json_code_tab.refresh_code_parser_button()
             self._watch_project_config()
             
@@ -1283,6 +1236,7 @@ class MainWindow(QMainWindow):
                 # Update status bar indicators
                 self._update_project_rules_indicators()
                 self.text_json_tab.refresh_parser_button()
+                self.text_only_tab.refresh_parser_button()
                 self.json_code_tab.refresh_code_parser_button()
                 self._watch_project_config()
                 
@@ -1364,6 +1318,7 @@ class MainWindow(QMainWindow):
         file-change and directory-change paths so logic stays in one
         place."""
         self.text_json_tab.refresh_parser_button()
+        self.text_only_tab.refresh_parser_button()
         self.json_code_tab.refresh_code_parser_button()
         try:
             project_root = self.project_manager.project_root

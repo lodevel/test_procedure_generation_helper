@@ -52,16 +52,6 @@ class LLMProposal:
 
 
 @dataclass
-class TextPatch:
-    """A proposed text patch."""
-    line_start: int
-    line_end: int
-    original: str
-    proposed: str
-    reason: str = ""
-
-
-@dataclass
 class ValidationIssue:
     """A validation issue from LLM response."""
     severity: str  # "error" or "warning"
@@ -108,8 +98,7 @@ class LLMResponse:
     procedure_json: Optional[LLMProposal] = None
     test_code: Optional[LLMProposal] = None
     procedure_text: Optional[LLMProposal] = None
-    text_patches: list[TextPatch] = field(default_factory=list)
-    
+
     # Session updates
     session_delta: dict[str, Any] = field(default_factory=dict)
     
@@ -121,8 +110,6 @@ class LLMResponse:
         if self.test_code and self.test_code.is_valid:
             return True
         if self.procedure_text and self.procedure_text.is_valid:
-            return True
-        if self.text_patches:
             return True
         return False
     

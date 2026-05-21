@@ -219,16 +219,7 @@ You MUST respond with a valid JSON object following this schema:
     "procedure_text": {
       "mode": "replace",
       "content": "the full markdown text"
-    },
-    "text_patches": [
-      {
-        "line_start": 1,
-        "line_end": 3,
-        "original": "original text",
-        "proposed": "proposed replacement",
-        "reason": "why this change"
-      }
-    ]
+    }
   },
   "session_delta": {
     "intent": "updated intent if changed",

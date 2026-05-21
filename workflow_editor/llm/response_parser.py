@@ -10,10 +10,9 @@ import re
 from typing import Optional, Any
 
 from .backend_base import (
-    LLMResponse, 
-    LLMTask, 
-    LLMProposal, 
-    TextPatch, 
+    LLMResponse,
+    LLMTask,
+    LLMProposal,
     ValidationIssue
 )
 
@@ -292,17 +291,7 @@ class ResponseParser:
             response.procedure_text = self._parse_proposal(
                 proposals.get("procedure_text")
             )
-            
-            # Text patches
-            for patch_data in proposals.get("text_patches", []) or []:
-                response.text_patches.append(TextPatch(
-                    line_start=patch_data.get("line_start", 0),
-                    line_end=patch_data.get("line_end", 0),
-                    original=patch_data.get("original", ""),
-                    proposed=patch_data.get("proposed", ""),
-                    reason=patch_data.get("reason", ""),
-                ))
-        
+
         # Session delta
         response.session_delta = data.get("session_delta", {})
         

@@ -445,14 +445,19 @@ class OpenCodeBackend(LLMBackend):
             event_data_buffer = ""
             event_type = ""
             
-            for line in sse_response.iter_lines(decode_unicode=True):
+            # decode_unicode=False → iter_lines yields raw bytes, decoded as
+            # UTF-8 explicitly below. With decode_unicode=True, requests guesses
+            # the charset and defaults to ISO-8859-1 for text/* responses
+            # without an explicit charset, mojibaking UTF-8 (e.g. the apostrophe
+            # ’ U+2019 → "â€™", rendering as boxes in the chat thinking view).
+            for line in sse_response.iter_lines(decode_unicode=False):
                 if self._cancel_requested:
                     log.debug("Streaming: cancelled by user")
                     break
-                
+
                 if line is None:
                     continue
-                
+
                 line_str = line if isinstance(line, str) else line.decode("utf-8", errors="replace")
                 
                 # SSE protocol parsing

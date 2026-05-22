@@ -70,6 +70,10 @@ class ValidationIssueView:
     location: str = ""
     fix_hint: str = ""
     fixable_by: str = "either"  # "llm" | "operator" | "either"
+    # Line in the LLM-authored fragment's coordinates once the text handler has
+    # translated it (None if outside the LLM-owned region or not line-based); the
+    # operator-facing full-document location stays in ``location``.
+    line: Optional[int] = None
 
     def to_dock_dict(self) -> dict[str, str]:
         """Render to the dict shape ``dock_widget.show_validation_result_from_list``
@@ -261,13 +265,16 @@ def _issue_from_validator(issue: Any) -> ValidationIssueView:
     editor-facing view. Defensive against missing attributes — duck-typed
     against the renderer's Issue shape (code/message/severity/location/
     fix_hint/fixable_by)."""
+    loc_raw = getattr(issue, "location", None)
+    line = loc_raw.get("line") if isinstance(loc_raw, dict) else None
     return ValidationIssueView(
         code=getattr(issue, "code", "") or "",
         message=getattr(issue, "message", "") or "",
         severity=getattr(issue, "severity", "error") or "error",
-        location=_format_location(getattr(issue, "location", None)),
+        location=_format_location(loc_raw),
         fix_hint=getattr(issue, "fix_hint", "") or "",
         fixable_by=getattr(issue, "fixable_by", "either") or "either",
+        line=line,
     )
 
 
@@ -453,6 +460,31 @@ def _resolve_code_for_crosscheck(
     return str(proposed) if proposed is not None else None
 
 
+def _fragment_line_shift(recon_text: str, fragment_text: str) -> int:
+    """Line shift (reconstructed-doc line − fragment line) for the body region.
+
+    Reconstruction prepends operator-owned identity (title/description/``## Meta``)
+    ahead of the LLM-authored body fragment, so a finding the validator reports in
+    reconstructed-doc coordinates is offset from where the LLM actually wrote it.
+    Anchoring on the first non-blank fragment line gives that constant shift; both
+    indices are 0-based so the delta equals the 1-based delta. Returns 0 when the
+    anchor can't be located (no reconstruction shift assumed).
+
+    Both sides are split with ``splitlines()`` so CRLF/LF/CR fragments and the
+    LF-normalized recon line up (terminators dropped). The recon body is appended
+    after the identity, so its anchor is the *last* occurrence — using it tolerates
+    the same anchor line appearing in the prepended identity. Residual assumption:
+    the anchor is not duplicated *within* the LLM body itself."""
+    recon_lines = recon_text.splitlines()
+    frag_lines = fragment_text.splitlines()
+    anchor = next((l for l in frag_lines if l.strip()), None)  # first non-blank
+    if anchor is None or anchor not in recon_lines:
+        return 0
+    recon_idx = len(recon_lines) - 1 - recon_lines[::-1].index(anchor)
+    frag_idx = frag_lines.index(anchor)
+    return recon_idx - frag_idx
+
+
 def _validate_proposed_text(
     response: LLMResponse,
     current: CurrentArtifacts,
@@ -483,8 +515,13 @@ def _validate_proposed_text(
     recon = reconstruction.reconstruct_for_pipeline(
         str(proposed_text), original_text, project_root=project_root,
     )
+    # recon.text is set even on failure (half-built doc); compute the shift so we
+    # can translate full-doc line numbers back to fragment coords per-issue below.
+    shift = _fragment_line_shift(recon.text, str(proposed_text))
     if not recon.success:
-        return _outcome_from_report(recon)  # surfaces RECON_* / body findings
+        outcome = _outcome_from_report(recon)  # surfaces RECON_* / body findings
+        _translate_issue_lines(outcome, shift)
+        return outcome
     reconstructed_text = recon.text
 
     json_obj = _resolve_json_for_crosscheck(response, current)
@@ -497,7 +534,24 @@ def _validate_proposed_text(
         original_text=original_text,
         check_names=check_names,
     )
-    return _outcome_from_report(report)
+    outcome = _outcome_from_report(report)
+    _translate_issue_lines(outcome, shift)
+    return outcome
+
+
+def _translate_issue_lines(outcome: ValidationOutcome, shift: int) -> None:
+    """Rewrite each issue's ``.line`` from reconstructed-doc to fragment coords.
+
+    This is the ONE place that knows the text path's coordinate space, so the
+    translation lives here rather than at render time — json-handler findings
+    (their own coords, offset 0) are never touched. ``issue.line`` becomes
+    fragment-coords (LLM-facing); ``issue.location`` is left UNTOUCHED so the
+    operator dock keeps the full-document location. A translated line < 1 sits in
+    the parser-owned identity region (the LLM can't address it) → ``None``."""
+    for issue in outcome.issues:
+        if issue.line is not None:
+            frag = issue.line - shift
+            issue.line = frag if frag >= 1 else None
 
 
 def _name_fidelity_enabled(project_root: Optional[Path]) -> bool:
@@ -927,7 +981,16 @@ def format_validator_feedback(
         "",
     ]
     for issue in llm_issues:
-        loc = f" at {issue.location}" if issue.location else ""
+        if issue.line is not None:
+            # ``issue.line`` is already in fragment coordinates — the text handler
+            # translated it (json findings carry their own coords, never shifted).
+            loc = f" at line {issue.line}"
+        elif issue.location:
+            # No structured line (e.g. schema/pointer findings) — the pointer is
+            # coordinate-free, so show it untranslated.
+            loc = f" at {issue.location}"
+        else:
+            loc = ""
         lines.append(f"  - {issue.message}{loc}")
         if include_fix_hints and issue.fix_hint:
             lines.append(f"    fix hint: {issue.fix_hint}")

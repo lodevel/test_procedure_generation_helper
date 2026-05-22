@@ -48,6 +48,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from . import reconstruction
 from .backend_base import LLMResponse
 
 log = logging.getLogger(__name__)
@@ -458,27 +459,39 @@ def _validate_proposed_text(
     project_root: Path,
     validate_fn: Callable[..., Any],
 ) -> Optional[ValidationOutcome]:
-    """The LLM proposed a ``procedure_text`` update. Run R1 against the
-    current/proposed json (whichever is in scope); if no json is
-    available, fall back to text-alone parse+R3+R4 via the validator's
-    text-only path. Also runs name-fidelity (catches LLM stripping
-    leading/trailing/internal punctuation from named tokens like
-    `+HIGH_28V` -> `HIGH_28V`) when the project config allows it.
+    """The LLM proposed a ``procedure_text`` update. Reconstruct the body
+    fragment against the prior procedure (so operator-owned identity comes
+    from the prior, not the LLM), then validate the reconstructed full
+    document. Runs R1 against the current/proposed json (whichever is in
+    scope); if no json is available, falls back to text-alone parse+R3+R4
+    via the validator's text-only path. Also runs name-fidelity (catches
+    LLM stripping leading/trailing/internal punctuation from named tokens
+    like `+HIGH_28V` -> `HIGH_28V`) when the project config allows it.
     """
     proposed_text = _proposal_content(response, "procedure_text")
     if proposed_text is None:
         return None
-    json_obj = _resolve_json_for_crosscheck(response, current)
-
     # Pass the operator's pre-LLM text as `original_text` so the renderer
     # can run name-fidelity. The disable key (config.json -> validation.
     # name_fidelity = "disabled") opts the project out for cases where
     # the heuristic produces too many false positives.
-    original_text = getattr(current, "text", None)
+    original_text = current.get("text")
+
+    # Reconstruct the operator-owned sections from the prior BEFORE
+    # validating, so the validator sees the full document the operator
+    # will actually apply (identity + Meta from prior, body from the LLM).
+    recon = reconstruction.reconstruct_for_pipeline(
+        str(proposed_text), original_text, project_root=project_root,
+    )
+    if not recon.success:
+        return _outcome_from_report(recon)  # surfaces RECON_* / body findings
+    reconstructed_text = recon.text
+
+    json_obj = _resolve_json_for_crosscheck(response, current)
     check_names = _name_fidelity_enabled(project_root)
 
     report = validate_fn(
-        text=str(proposed_text),
+        text=reconstructed_text,
         json_obj=json_obj,
         mode="all",
         original_text=original_text,
@@ -606,16 +619,6 @@ _META_REQUIREMENT_LINE_RE = _re.compile(
     r"^requirement:(?:[ \t]+([^\n]*?))?[ \t]*$", _re.MULTILINE
 )
 
-# Variant that also consumes the trailing newline so deleting the line
-# doesn't leave a blank line in the Meta block (which the parser flags
-# as GRAM_META_BLANK_LINE). Used when baseline is empty/absent and the
-# auto-restore needs to omit the requirement key entirely (per
-# Canonical_Text_Procedure_v2.md §"Canonical key order": "do not emit
-# empty values").
-_META_REQUIREMENT_LINE_STRIP_RE = _re.compile(
-    r"^requirement:(?:[ \t]+[^\n]*?)?[ \t]*\n", _re.MULTILINE
-)
-
 
 def _extract_meta_requirement_from_text(text: str) -> str:
     """Pull the `meta.requirement` value from a canonical-text procedure.
@@ -646,24 +649,24 @@ def _auto_restore_operator_only_fields(
     comparison.
 
     For each operator-only field in :data:`_OPERATOR_ONLY_META_FIELDS`,
-    if the response's value differs from the baseline:
-      * Mutates ``response.procedure_text.content`` (when proposed) to
-        rewrite the ``requirement:`` line with the baseline value.
+    if the response's JSON value differs from the baseline:
       * Mutates ``response.procedure_json.content`` (when proposed) to
         rewrite ``meta[<field>]`` with the baseline value.
+
+    The TEXT side is intentionally NOT touched here: the text apply/validate
+    path runs section-ownership reconstruction, which rebuilds ``## Meta``
+    (including ``requirement:``) wholesale from the prior. Line-editing the
+    text proposal would be a dead effect — the reconstructed Meta overrides
+    it — and would emit a misleading ``META_REQUIREMENT_AUTO_RESTORED``
+    warning. The JSON path does NOT reconstruct, so its restore stays live.
 
     Returns a list of informational :class:`ValidationIssueView` (severity
     ``warning``) describing each restoration.
 
-    Multi-slot consistency rule: when the LLM proposed BOTH text and JSON
-    on the same turn, both proposals are restored to the same baseline
-    value verbatim — preserving the proposal-pair coherence the LLM
-    intended to ship.
-
     The implementation does NOT call the full text_parser/text_emitter to
-    avoid a stale-wheel dependency: a regex line-replace on the
-    `requirement:` line is sufficient and works regardless of which
-    rules_packager_base version is installed.
+    avoid a stale-wheel dependency: a dict edit on ``meta[<field>]`` is
+    sufficient and works regardless of which rules_packager_base version is
+    installed.
     """
     issues: list[ValidationIssueView] = []
     baseline_text = current_artifacts.get("text") if current_artifacts else None
@@ -678,10 +681,9 @@ def _auto_restore_operator_only_fields(
         if field_name != "requirement":
             continue  # add per-field handlers as the set grows
         baseline_value = _extract_meta_requirement_from_text(baseline_text)
-        text_change = _restore_requirement_in_text_proposal(response, baseline_value)
         json_change = _restore_requirement_in_json_proposal(response, baseline_value)
-        if text_change or json_change:
-            from_value = (text_change or json_change)[0]
+        if json_change:
+            from_value = json_change[0]
             issues.append(ValidationIssueView(
                 code="META_REQUIREMENT_AUTO_RESTORED",
                 severity="warning",
@@ -702,53 +704,6 @@ def _auto_restore_operator_only_fields(
                 ),
             ))
     return issues
-
-
-def _restore_requirement_in_text_proposal(
-    response: LLMResponse,
-    baseline_value: str,
-) -> Optional[tuple[str, str]]:
-    """Mutate `response.procedure_text.content` to restore baseline.
-
-    Returns ``(from_value, to_value)`` if a change was applied, ``None``
-    if no change was needed or no text proposal exists. Uses a regex
-    line-replace on the `requirement:` line — no full-procedure parse
-    needed.
-    """
-    proposal = getattr(response, "procedure_text", None)
-    if proposal is None or not getattr(proposal, "is_valid", False):
-        return None
-    content = proposal.content
-    if not isinstance(content, str):
-        return None
-    proposed_value = _extract_meta_requirement_from_text(content)
-    if proposed_value == baseline_value:
-        return None
-    # Two cases per Canonical_Text_Procedure_v2.md §Meta "Canonical key
-    # order": empty / absent baseline → DELETE the line entirely
-    # ("Omit optional keys entirely when absent (do not emit empty
-    # values)"). Non-empty baseline → write the canonical
-    # 'requirement: <value>' form. Emitting "requirement:" verbatim
-    # would violate the parser's GRAM_META_SEPARATOR check
-    # (header_meta.py:109) and create a self-inflicted retry loop where
-    # auto-restore introduces a syntax error and the LLM is asked to
-    # fix our output.
-    if baseline_value:
-        new_line = f"requirement: {baseline_value}"
-        if _META_REQUIREMENT_LINE_RE.search(content):
-            new_content = _META_REQUIREMENT_LINE_RE.sub(new_line, content, count=1)
-        else:
-            # Proposal lacks the line entirely but baseline expects a
-            # value — caller's handlers will flag the missing key.
-            return None
-    else:
-        # Baseline empty → strip the line entirely. Consume the
-        # trailing newline too so we don't leave a stray blank line.
-        new_content = _META_REQUIREMENT_LINE_STRIP_RE.sub("", content, count=1)
-        if new_content == content:
-            return None
-    proposal.content = new_content
-    return (proposed_value, baseline_value)
 
 
 def _restore_requirement_in_json_proposal(

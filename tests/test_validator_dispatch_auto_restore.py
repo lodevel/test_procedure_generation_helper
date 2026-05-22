@@ -104,10 +104,13 @@ class AutoRestoreHappyPathTests(unittest.TestCase):
     """The five core scenarios from the Phase 7.1 plan."""
 
     def test_baseline_empty_response_invented_restored(self) -> None:
-        # Case (a): baseline empty + response populated → restore to empty.
+        # Case (a): baseline empty + JSON response populated → restore to
+        # empty. The auto-restore is JSON-side ONLY now (the text apply/
+        # validate path reconstructs ## Meta from the prior, so line-editing
+        # the text proposal is a dead effect — removed in the B2b fix).
         baseline_text = _v2_text(None)
         response = _make_response(
-            text_value="SCOPE configured at 1 V/div"  # invented
+            json_value="SCOPE configured at 1 V/div"  # invented
         )
         issues = _auto_restore_operator_only_fields(
             response, {"text": baseline_text, "json": "", "code": ""}
@@ -116,63 +119,57 @@ class AutoRestoreHappyPathTests(unittest.TestCase):
         self.assertEqual(len(issues), 1)
         self.assertEqual(issues[0].code, "META_REQUIREMENT_AUTO_RESTORED")
         self.assertEqual(issues[0].severity, "warning")
-        # Response text mutated: requirement line is now empty.
-        # Use the same regex-extract that the auto-restore uses, to be
-        # independent of which rules_packager_base wheel is installed
-        # (the wheel may predate Phase 7 evening's empty-`requirement:`
-        # parser relaxation).
-        self.assertEqual(
-            _extract_meta_requirement_from_text(response.procedure_text.content),
-            "",
+        # Response JSON mutated: meta.requirement is absent (canonical
+        # "not supplied" form for an empty baseline).
+        json_proc = json.loads(response.procedure_json.content)
+        self.assertNotIn("requirement", json_proc.get("meta", {}))
+
+    def test_text_only_proposal_is_noop(self) -> None:
+        # B2b: a TEXT-only proposal no longer triggers auto-restore. The
+        # text apply/validate path reconstructs ## Meta (incl. requirement)
+        # from the prior, so the text proposal is left untouched and no
+        # misleading META_REQUIREMENT_AUTO_RESTORED warning is emitted.
+        baseline_text = _v2_text(None)
+        response = _make_response(text_value="SCOPE configured at 1 V/div")
+        before = response.procedure_text.content
+        issues = _auto_restore_operator_only_fields(
+            response, {"text": baseline_text, "json": "", "code": ""}
         )
+        self.assertEqual(issues, [])
+        self.assertEqual(response.procedure_text.content, before)
 
-    def test_empty_baseline_strips_requirement_line(self) -> None:
-        """Regression: when baseline is empty/absent and the LLM
-        invented a value, auto-restore must DELETE the requirement
-        line entirely, not emit ``requirement:`` (no space) or
-        ``requirement: `` (empty value).
+    def test_empty_baseline_drops_json_requirement_key(self) -> None:
+        """Regression (JSON side): when baseline is empty/absent and the LLM
+        invented a value in the JSON proposal, auto-restore must DROP the
+        ``meta.requirement`` key entirely (canonical "not supplied" form),
+        not write an empty string.
 
-        Per Canonical_Text_Procedure_v2.md §"Canonical key order":
-        "Omit optional keys entirely when absent (do not emit empty
-        values)". Two failure modes the fix prevents:
-
-        - ``requirement:`` (no space) → parser GRAM_META_SEPARATOR
-          rejects → self-inflicted retry loop where auto-restore
-          introduces the error and asks the LLM to fix our output.
-        - ``requirement: `` (empty value) → spec-violating, plus
-          ``preserve_human_only_fields`` at apply time strips lines
-          the original didn't have anyway.
+        Per Canonical_Text_Procedure_v2.md §"Canonical key order": "Omit
+        optional keys entirely when absent (do not emit empty values)". The
+        text side is no longer line-edited here — reconstruction rebuilds
+        ## Meta from the prior at apply/validate time.
         """
         baseline_text = _v2_text(None)
-        response = _make_response(text_value="LLM-invented value")
+        response = _make_response(json_value="LLM-invented value")
         _auto_restore_operator_only_fields(
             response, {"text": baseline_text, "json": "", "code": ""}
         )
-        content = response.procedure_text.content
-        # No requirement line of any shape should remain.
-        self.assertNotIn("requirement:", content, (
-            f"auto-restore left a requirement line in the proposal; "
-            f"per spec it must be stripped entirely. Full text:\n{content}"
-        ))
-        # No blank line introduced where the stripped line used to be.
-        self.assertNotIn("\n\nfncore_pack", content,
-                         "stripping requirement left a stray blank line")
+        json_proc = json.loads(response.procedure_json.content)
+        self.assertNotIn("requirement", json_proc.get("meta", {}))
 
     def test_baseline_value_response_modified_restored_to_baseline(self) -> None:
-        # Case (b): baseline `"X"` + response `"Y"` → restore to `"X"`.
+        # Case (b): baseline `"X"` + JSON response `"Y"` → restore to `"X"`.
         baseline_text = _v2_text("IEC-62133 §4.3")
         response = _make_response(
-            text_value="IEC-62133 §4.3 — annotated by LLM"
+            json_value="IEC-62133 §4.3 — annotated by LLM"
         )
         issues = _auto_restore_operator_only_fields(
             response, {"text": baseline_text, "json": "", "code": ""}
         )
         self.assertEqual(len(issues), 1)
         self.assertEqual(issues[0].code, "META_REQUIREMENT_AUTO_RESTORED")
-        self.assertEqual(
-            _extract_meta_requirement_from_text(response.procedure_text.content),
-            "IEC-62133 §4.3",
-        )
+        json_proc = json.loads(response.procedure_json.content)
+        self.assertEqual(json_proc["meta"]["requirement"], "IEC-62133 §4.3")
 
     def test_both_empty_noop(self) -> None:
         # Case (c): baseline empty + response empty → no change, no warning.
@@ -235,32 +232,31 @@ class AutoRestoreEdgeCaseTests(unittest.TestCase):
         )
         self.assertEqual(issues, [])
 
-    def test_multi_slot_consistency_both_restored(self) -> None:
-        # Codex: when LLM proposes BOTH text and JSON with mutated
-        # meta.requirement, both must be restored to the same baseline
-        # value. After restore, the text-side `requirement:` line is
-        # empty AND the json-side `meta.requirement` is absent.
+    def test_multi_slot_json_restored_text_untouched(self) -> None:
+        # B2b: when the LLM proposes BOTH text and JSON with a mutated
+        # meta.requirement, ONLY the JSON side is restored. The text side is
+        # left untouched — the text apply/validate path reconstructs ## Meta
+        # from the prior, so line-editing the text proposal here would be a
+        # dead effect (and would emit a misleading warning).
         baseline_text = _v2_text(None)
         response = _make_response(
             text_value="invented in text",
             json_value="invented in json — possibly different",
         )
+        text_before = response.procedure_text.content
         issues = _auto_restore_operator_only_fields(
             response, {"text": baseline_text, "json": "", "code": ""}
         )
-        # Implementation emits one warning per field (currently just
-        # `requirement`), regardless of how many slots changed. Either
-        # 1 or 2 issues is acceptable here.
-        self.assertGreaterEqual(len(issues), 1)
+        # One warning for the JSON-side restoration.
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "META_REQUIREMENT_AUTO_RESTORED")
 
-        # Text side: `requirement:` line is empty.
-        self.assertEqual(
-            _extract_meta_requirement_from_text(response.procedure_text.content),
-            "",
-        )
         # JSON side: `meta.requirement` is absent (canonical "not supplied").
         json_proc = json.loads(response.procedure_json.content)
         self.assertNotIn("requirement", json_proc.get("meta", {}))
+
+        # Text side: untouched — reconstruction owns ## Meta now.
+        self.assertEqual(response.procedure_text.content, text_before)
 
 
 class FormatValidatorFeedbackFiltersTests(unittest.TestCase):

@@ -22,7 +22,7 @@ from .llm_tab_mixin import LLMTabMixin
 from .json_tab import JsonSyntaxHighlighter
 from ..core import ArtifactType
 from ..llm import TabContext, LLMTask
-from ..llm.response_parser import preserve_human_only_fields
+from ..llm.reconstruction import reconstructed_or_error
 from ..dialogs import DiffViewer
 from ..theme import status_modified, status_saved
 
@@ -602,9 +602,19 @@ class TextJsonTab(LLMTabMixin, BaseTab):
 
             # Show diff dialog for user to accept/reject
             current_content = self.text_editor.toPlainText()
-            # Restore human-only fields (test id, requirement:) from the original
-            # before showing the diff — the LLM is forbidden from touching these.
-            content_str = preserve_human_only_fields(current_content, content_str)
+            # Reconstruct operator-owned sections (test id, description, Meta)
+            # from the prior before showing the diff — the LLM authors only the
+            # body sections; identity is parser-owned.
+            project_root = getattr(self.project_manager, "project_root", None)
+            reconstructed, err = reconstructed_or_error(
+                content_str, current_content, project_root=project_root
+            )
+            if err:
+                self.main_window.dock.chat_panel.add_system_message(
+                    f"⚠ Could not reconstruct procedure_text.md: {err}"
+                )
+                return
+            content_str = reconstructed
             accepted, final_content = DiffViewer.show_diff(
                 current_content,
                 content_str,

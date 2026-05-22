@@ -11,8 +11,10 @@ proposes unexpected artifacts (e.g., proposing procedure_text when
 the task is DERIVE_JSON_FROM_TEXT).
 """
 
-from typing import Optional
+from typing import Iterable, Optional
+from . import section_ownership
 from .backend_base import LLMTask
+from .section_ownership import SectionOwnership
 
 # Text-only Tab Contract
 # Allows: procedure_text proposals only (smaller rule context, no JSON/code)
@@ -83,16 +85,56 @@ This contract ensures you stay focused on JSON and code artifacts only.
 
 
 
-def get_contract_for_tab(tab_id: str) -> str:
+def render_section_emit_list(ownership: SectionOwnership) -> str:
+    """Render the procedure_text section-ownership instruction block from a
+    resolved SectionOwnership. Lists the LLM-owned sections in canonical order
+    (with headings) as the ONLY things to author, and the parser-owned ones as
+    must-not-emit / auto-preserved."""
+    owned: list[str] = []
+    parser_owned: list[str] = []
+    for section in section_ownership.CANONICAL_SECTION_ORDER:
+        heading = section_ownership.SECTION_HEADINGS[section]
+        if section in ownership.llm_sections:
+            owned.append(heading)
+        else:
+            parser_owned.append(heading)
+
+    lines = ["**Section ownership (procedure_text):**"]
+    if owned:
+        lines.append("Author ONLY these sections, in this exact order, and nothing else:")
+        for i, heading in enumerate(owned, start=1):
+            lines.append(f"{i}. {heading}")
+    else:
+        lines.append(
+            "All sections are operator-owned for this task — do not author any "
+            "procedure_text section; return no procedure_text proposal."
+        )
+    lines.append(
+        "Do NOT emit these — they are operator-owned and reconstructed "
+        "automatically (emitting them has no effect):"
+    )
+    for heading in parser_owned:
+        lines.append(f"- {heading}")
+    if owned:
+        lines.append("Start your output at the first owned section.")
+    return "\n".join(lines)
+
+
+def get_contract_for_tab(
+    tab_id: str, *, llm_owned_sections: Optional[Iterable[str]] = None
+) -> str:
     """
     Get the output contract for a specific tab.
-    
+
     Args:
-        tab_id: Tab identifier ("text_json", "json_code")
-        
+        tab_id: Tab identifier ("text_only", "text_json", "json_code")
+        llm_owned_sections: Optional override of the LLM-owned section set,
+            threaded into the section emit-list for text-producing tabs.
+
     Returns:
-        The output contract string for the specified tab
-        
+        The output contract string for the specified tab. Text-producing tabs
+        ("text_only", "text_json") have the section emit-list appended.
+
     Raises:
         ValueError: If tab_id is not recognized
     """
@@ -101,11 +143,17 @@ def get_contract_for_tab(tab_id: str) -> str:
         "text_json": TEXT_JSON_CONTRACT,
         "json_code": JSON_CODE_CONTRACT,
     }
-    
+
     if tab_id not in contracts:
         raise ValueError(f"Unknown tab_id: {tab_id}. Valid values: {list(contracts.keys())}")
-    
-    return contracts[tab_id]
+
+    base_contract = contracts[tab_id]
+    if tab_id in ("text_only", "text_json"):
+        ownership = section_ownership.resolve(
+            section_ownership.DEFAULT_OWNERSHIP, llm_owned_sections
+        )
+        return base_contract + "\n" + render_section_emit_list(ownership)
+    return base_contract
 
 
 def get_allowed_artifacts(tab_id: str) -> list[str]:

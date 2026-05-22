@@ -54,12 +54,12 @@ def _format_finding(f) -> str:
 
 
 def _import_wheel():
-    import rules_packager_base.rules.v2_0_1.parser as _parser
+    import rules_packager_base.rules.v2_0_2.parser as _parser
     return _parser
 
 
 def _import_codegen():
-    from rules_packager_base.rules.v2_0_1.parser import codegen as _codegen
+    from rules_packager_base.rules.v2_0_2.parser import codegen as _codegen
     return _codegen
 
 
@@ -73,7 +73,7 @@ def _op_is_available(spec: dict) -> dict:
             "ok": True,
             "available": False,
             "reason": (
-                f"rules_packager_base.rules.v2_0_1.parser is not importable: {exc}. "
+                f"rules_packager_base.rules.v2_0_2.parser is not importable: {exc}. "
                 f"Reinstall the rules_packager_base wheel (>= 2.0.1)."
             ),
         }

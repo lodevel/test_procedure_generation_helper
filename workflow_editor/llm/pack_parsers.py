@@ -48,7 +48,7 @@ log = logging.getLogger(__name__)
 
 # Wheel version we expect (used in error messages only; the subprocess
 # runner imports the real wheel).
-_REQUIRED_WHEEL = "rules_packager_base.rules.v2_0_1.parser"
+_REQUIRED_WHEEL = "rules_packager_base.rules.v2_0_2.parser"
 
 # Default timeouts (seconds).
 _TIMEOUT_IS_AVAILABLE = 5
@@ -199,7 +199,7 @@ def _resolve_project_python(project_root: Path) -> Path:
 
 def _inproc_import_wheel():
     try:
-        import rules_packager_base.rules.v2_0_1.parser as _parser
+        import rules_packager_base.rules.v2_0_2.parser as _parser
         return _parser
     except ImportError as exc:
         raise ParserUnavailable(
@@ -212,11 +212,11 @@ def _inproc_import_wheel():
 
 def _inproc_import_codegen():
     try:
-        from rules_packager_base.rules.v2_0_1.parser import codegen as _codegen
+        from rules_packager_base.rules.v2_0_2.parser import codegen as _codegen
         return _codegen
     except ImportError as exc:
         raise ParserUnavailable(
-            f"rules_packager_base.rules.v2_0_1.parser.codegen is not "
+            f"rules_packager_base.rules.v2_0_2.parser.codegen is not "
             f"importable: {exc}. Reinstall the rules_packager_base wheel "
             f"(>= 2.0.1) into the venv running the workflow editor. The "
             f"LLM fallback remains available."

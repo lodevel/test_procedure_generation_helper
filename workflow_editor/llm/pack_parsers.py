@@ -362,6 +362,57 @@ def validate(
     return _ValidateReport(_reconstruct_issues_from_dicts(result.get("findings", [])))
 
 
+def get_section_ownership(
+    project_root: Optional[Path] = None,
+) -> dict[str, str]:
+    """Return the bundle's canonical section→owner map (``parser``/``llm``)."""
+    if project_root is None:
+        return _inproc_import_wheel().section_ownership()
+
+    project_python = _resolve_project_python(project_root)
+    result = _subprocess_call(
+        project_python,
+        {"op": "section_ownership"},
+        timeout=_timeout(),
+    )
+    if not result.get("ok"):
+        raise ParserUnavailable(result.get("error", "subprocess error"))
+    return result["ownership"]
+
+
+def reconstruct_text(
+    fragment: str,
+    prior: Optional[str] = None,
+    owned_sections: Optional[set[str]] = None,
+    project_root: Optional[Path] = None,
+) -> "_ReconstructReport":
+    """Splice an LLM-authored fragment with a prior into a full procedure.
+
+    Returns a ``_ReconstructReport`` duck-typed against ``_ValidateReport``.
+    Raises :class:`ParserUnavailable` if the wheel isn't importable.
+    """
+    if project_root is None:
+        pr = _inproc_import_wheel().reconstruct(fragment, prior, owned_sections)
+        return _ReconstructReport.from_parse_result(pr)
+
+    project_python = _resolve_project_python(project_root)
+    result = _subprocess_call(
+        project_python,
+        {
+            "op": "reconstruct",
+            "fragment": fragment,
+            "prior": prior,
+            "owned_sections": (
+                sorted(owned_sections) if owned_sections is not None else None
+            ),
+        },
+        timeout=_timeout(),
+    )
+    if not result.get("ok"):
+        raise ParserUnavailable(result.get("error", "subprocess error"))
+    return _ReconstructReport.from_dict(result)
+
+
 # ---------------------------------------------------------------------------
 # In-process implementations (used when project_root=None)
 # ---------------------------------------------------------------------------
@@ -494,6 +545,51 @@ class _ValidateReport:
         self.ok = not any(i.severity == "error" for i in self._issues)
         self.errors = [i for i in self._issues if i.severity == "error"]
         self.warnings = [i for i in self._issues if i.severity == "warning"]
+
+
+class _ReconstructReport:
+    """Duck-typed report for :func:`reconstruct_text`.
+
+    Mirrors ``_ValidateReport``'s finding normalization while also carrying
+    the reconstructed ``.text``/``.json`` payload. Build via the
+    :meth:`from_parse_result` (in-process) / :meth:`from_dict` (subprocess)
+    classmethods rather than ``__init__`` directly.
+    """
+
+    def __init__(
+        self,
+        success: bool,
+        text: Optional[str],
+        json: Optional[dict],
+        findings: list[Any],
+    ) -> None:
+        self.success = success
+        self.text = text
+        self.json = json
+        self.findings = findings
+        self.ok = success
+        self.errors = [i for i in self.findings if i.severity == "error"]
+        self.warnings = [i for i in self.findings if i.severity == "warning"]
+
+    @classmethod
+    def from_parse_result(cls, pr: Any) -> "_ReconstructReport":
+        """Wrap an in-process wheel ``ParseResult``."""
+        return cls(
+            success=pr.success,
+            text=pr.text,
+            json=pr.json,
+            findings=[_Issue(f) for f in pr.findings],
+        )
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "_ReconstructReport":
+        """Wrap a subprocess JSON result dict."""
+        return cls(
+            success=d["success"],
+            text=d.get("text"),
+            json=d.get("json"),
+            findings=_reconstruct_issues_from_dicts(d.get("findings", [])),
+        )
 
 
 # ---------------------------------------------------------------------------

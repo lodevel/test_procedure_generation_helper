@@ -26,6 +26,9 @@ Ops:
   generate_code → {"ok": true, "code": str, "warnings": [str]}
   validate      → {"ok": true, "findings": [{code, message, severity, line,
                                               col, fix_hint, fixable_by}]}
+  section_ownership → {"ok": true, "ownership": {section: owner}}
+  reconstruct   → {"ok": true, "success": bool, "text": str|null,
+                   "json": dict|null, "findings": [{...}]}
 """
 from __future__ import annotations
 
@@ -144,12 +147,34 @@ def _op_validate(spec: dict) -> dict:
     return {"ok": True, "findings": [_finding_to_dict(f) for f in findings]}
 
 
+def _op_section_ownership(spec: dict) -> dict:
+    del spec  # no inputs
+    return {"ok": True, "ownership": _import_wheel().section_ownership()}
+
+
+def _op_reconstruct(spec: dict) -> dict:
+    fragment = spec["fragment"]
+    prior = spec.get("prior")
+    ow = spec.get("owned_sections")
+    owned = set(ow) if ow is not None else None
+    r = _import_wheel().reconstruct(fragment, prior, owned)
+    return {
+        "ok": True,
+        "success": r.success,
+        "text": r.text,
+        "json": r.json,
+        "findings": [_finding_to_dict(f) for f in r.findings],
+    }
+
+
 _OPS = {
     "is_available": _op_is_available,
     "parse_text": _op_parse_text,
     "render_text": _op_render_text,
     "generate_code": _op_generate_code,
     "validate": _op_validate,
+    "section_ownership": _op_section_ownership,
+    "reconstruct": _op_reconstruct,
 }
 
 

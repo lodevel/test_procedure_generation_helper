@@ -121,6 +121,62 @@ class GetContractOverrideTests(unittest.TestCase):
         self.assertIn("## Expected", self.do_not_emit_block)
 
 
+class RenderSectionEmitListCustomUniverseTests(unittest.TestCase):
+    """Emit-list iterates the bundle's declared section_order, labelling unknown
+    sections by their raw key (no SECTION_HEADINGS entry)."""
+
+    CUSTOM = {"intro": "parser", "body": "llm", "outro": "llm"}
+
+    def setUp(self) -> None:
+        self.rendered = render_section_emit_list(resolve(self.CUSTOM))
+
+    def test_lists_custom_owned_in_order(self) -> None:
+        # Authored owned sections are the custom llm keys, in declared order.
+        body = self.rendered.index("body")
+        outro = self.rendered.index("outro")
+        self.assertLess(body, outro)
+        self.assertIn("Author ONLY these sections", self.rendered)
+
+    def test_labels_are_raw_keys(self) -> None:
+        # No SECTION_HEADINGS entry → raw key used verbatim.
+        for key in ("intro", "body", "outro"):
+            self.assertNotIn(key, SECTION_HEADINGS)
+            self.assertIn(key, self.rendered)
+
+    def test_no_canonical_sections_leak(self) -> None:
+        self.assertNotIn("## Equipment", self.rendered)
+        self.assertNotIn("## Steps", self.rendered)
+        self.assertNotIn("# <TEST_ID> (title line)", self.rendered)
+
+    def test_parser_section_in_do_not_emit(self) -> None:
+        marker = "Do NOT emit these"
+        do_not_emit = self.rendered[self.rendered.index(marker):]
+        self.assertIn("intro", do_not_emit)
+
+
+class RenderSectionEmitListEmptyOrderFallbackTests(unittest.TestCase):
+    """An old/blank SectionOwnership (empty section_order) falls back to the
+    canonical order so nothing breaks."""
+
+    def setUp(self) -> None:
+        # Default frozenset construction with no section_order: equipment owned.
+        from workflow_editor.llm.section_ownership import SectionOwnership
+        self.rendered = render_section_emit_list(
+            SectionOwnership(
+                llm_sections=frozenset({"equipment", "steps", "expected"}),
+                parser_sections=frozenset({"test_id", "description", "meta"}),
+            )
+        )
+
+    def test_uses_canonical_order_headings(self) -> None:
+        self.assertIn("## Equipment", self.rendered)
+        self.assertIn("## Meta", self.rendered)
+        # Owned order preserved from CANONICAL_SECTION_ORDER fallback.
+        self.assertLess(
+            self.rendered.index("## Equipment"), self.rendered.index("## Steps")
+        )
+
+
 class CanonicalSectionConstantsTests(unittest.TestCase):
     """Guard against drift between the three section constants."""
 

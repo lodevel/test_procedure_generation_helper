@@ -24,12 +24,18 @@ log = logging.getLogger(__name__)
 OWNER_PARSER: str = "parser"
 OWNER_LLM: str = "llm"
 
-#: Full set of recognised section names (lowercase).
+# NOTE: the section universe (which sections exist + their order) is driven by
+# the bundle's ownership map keys (see ``resolve``). The constants below are no
+# longer the universe authority — they are the standalone fallback (the default
+# map) plus the friendly-label lookup, and describe the v2.0.2 default ruleset.
+
+#: Full set of recognised section names (lowercase) for the default ruleset.
 CANONICAL_SECTIONS: frozenset[str] = frozenset(
     {"test_id", "description", "meta", "equipment", "steps", "expected"}
 )
 
-#: Canonical emit order of procedure sections (matches the DSL).
+#: Default emit order of procedure sections (matches the DSL); fallback when a
+#: SectionOwnership has no declared ``section_order``.
 CANONICAL_SECTION_ORDER: tuple[str, ...] = (
     "test_id", "description", "meta", "equipment", "steps", "expected",
 )
@@ -74,6 +80,9 @@ class SectionOwnership:
 
     llm_sections: frozenset[str]
     parser_sections: frozenset[str]
+    #: Full section universe (llm ∪ parser) in declared order. Default ``()``
+    #: so any pre-existing construction without this field still works.
+    section_order: tuple[str, ...] = ()
 
     def owner_of(self, section: str) -> str:
         """Return ``"llm"`` or ``"parser"`` for *section*.
@@ -107,34 +116,59 @@ def resolve(
 ) -> SectionOwnership:
     """Derive a :class:`SectionOwnership` from *ownership_map* or *task_override*.
 
+    The section **universe** (which sections exist + their order) comes from the
+    keys of *ownership_map*, NOT from :data:`CANONICAL_SECTIONS`.  This lets a
+    bundle with a different/renamed ruleset declare its own sections.
+
     Args:
         ownership_map: Flat ``{section: owner}`` dict (e.g. from bundle JSON
-            or :data:`DEFAULT_OWNERSHIP`).  Unknown sections are ignored with
-            a debug log; unrecognised owner values are treated as
-            ``"parser"`` with a warning.
+            or :data:`DEFAULT_OWNERSHIP`).  Its keys (normalised, deduped) are
+            the section universe and define the emit order; unrecognised owner
+            values are treated as ``"parser"`` with a warning.
         task_override: When provided, this is the **authoritative** set of
-            LLM-owned sections — everything else becomes parser-owned.
-            *ownership_map* is not consulted when *task_override* is given.
+            LLM-owned sections — everything else in the universe becomes
+            parser-owned.  The override still partitions over the bundle's
+            universe (the map's keys): a section named in the override but
+            absent from the universe is dropped with a debug log.
 
     Returns:
-        Frozen :class:`SectionOwnership` with both partition sets populated.
-        The union always equals :data:`CANONICAL_SECTIONS`.
+        Frozen :class:`SectionOwnership` with both partition sets populated and
+        ``section_order`` set to the declared universe.  The union always
+        equals the bundle's declared universe (the map's keys), not
+        :data:`CANONICAL_SECTIONS`.
     """
+    # Build the ordered universe from the map keys (dedup, preserve first-seen).
+    order: list[str] = []
+    seen: set[str] = set()
+    for raw_key in ownership_map:
+        section = str(raw_key).strip().lower()
+        if section in seen:
+            continue
+        seen.add(section)
+        order.append(section)
+    universe = set(order)
+
     if task_override is not None:
-        llm_sections = _normalise_set(task_override, context="task_override")
+        override = _normalise_set(task_override, context="task_override")
+        llm_sections = {s for s in override if s in universe}
+        dropped = override - llm_sections
+        if dropped:
+            log.debug(
+                "section_ownership.resolve: override sections not in bundle "
+                "universe, dropped: %s",
+                sorted(dropped),
+            )
         return SectionOwnership(
-            llm_sections=llm_sections,
-            parser_sections=CANONICAL_SECTIONS - llm_sections,
+            llm_sections=frozenset(llm_sections),
+            parser_sections=frozenset(universe - llm_sections),
+            section_order=tuple(order),
         )
 
     llm_sections: set[str] = set()
     parser_sections: set[str] = set()
 
     for raw_key, raw_owner in ownership_map.items():
-        section = raw_key.strip().lower()
-        if section not in CANONICAL_SECTIONS:
-            log.debug("section_ownership.resolve: ignoring unknown key %r", raw_key)
-            continue
+        section = str(raw_key).strip().lower()
         owner = str(raw_owner).strip().lower()
         if owner == OWNER_LLM:
             llm_sections.add(section)
@@ -148,18 +182,10 @@ def resolve(
             )
             parser_sections.add(section)
 
-    # Sections absent from the map fall back to parser ownership (conservative).
-    unmentioned = CANONICAL_SECTIONS - llm_sections - parser_sections
-    if unmentioned:
-        log.debug(
-            "section_ownership.resolve: sections not in map, defaulting to parser: %s",
-            sorted(unmentioned),
-        )
-    parser_sections.update(unmentioned)
-
     return SectionOwnership(
         llm_sections=frozenset(llm_sections),
         parser_sections=frozenset(parser_sections),
+        section_order=tuple(order),
     )
 
 
@@ -204,6 +230,16 @@ def load_bundle_ownership(bundle_dir: Path) -> dict[str, str] | None:
     return raw
 
 
+def supports_section_ownership(bundle_dir: Path) -> bool:
+    """True when *bundle_dir* declares a section-ownership map.
+
+    A bundle that ships ``rules/section_ownership.json`` supports per-task
+    section control; the GUI calls this with ``<project>/bundle`` to show/hide
+    the control.
+    """
+    return load_bundle_ownership(bundle_dir) is not None
+
+
 # ---------------------------------------------------------------------------
 # Convenience
 # ---------------------------------------------------------------------------
@@ -228,17 +264,10 @@ def for_bundle(
 
 
 def _normalise_set(sections: Iterable[str], context: str) -> frozenset[str]:
-    """Lowercase, strip, and filter to :data:`CANONICAL_SECTIONS`.
+    """Lowercase + strip each entry.
 
-    Unknown entries are dropped with a debug log.
+    Filtering to the bundle's universe is the caller's job (:func:`resolve`
+    intersects with the declared section keys); *context* is kept for symmetry
+    with future per-call logging.
     """
-    result: set[str] = set()
-    for raw in sections:
-        s = str(raw).strip().lower()
-        if s in CANONICAL_SECTIONS:
-            result.add(s)
-        else:
-            log.debug(
-                "section_ownership.%s: ignoring unrecognised section %r", context, raw
-            )
-    return frozenset(result)
+    return frozenset(str(raw).strip().lower() for raw in sections)

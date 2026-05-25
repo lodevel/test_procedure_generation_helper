@@ -32,6 +32,7 @@ from workflow_editor.llm.section_ownership import (  # noqa: E402
     for_bundle,
     load_bundle_ownership,
     resolve,
+    supports_section_ownership,
 )
 
 
@@ -64,6 +65,14 @@ class ResolveDefaultMapTests(unittest.TestCase):
             CANONICAL_SECTIONS,
         )
 
+    def test_section_order_is_canonical_six(self) -> None:
+        # Backward-compat: the default map's universe == the canonical six in
+        # the declared (insertion) order.
+        self.assertEqual(
+            self.ownership.section_order,
+            ("test_id", "description", "meta", "equipment", "steps", "expected"),
+        )
+
     def test_owner_of_llm_section(self) -> None:
         self.assertEqual(self.ownership.owner_of("steps"), OWNER_LLM)
 
@@ -90,14 +99,13 @@ class ResolveCustomMapTests(unittest.TestCase):
         self.assertEqual(o.parser_sections, CANONICAL_SECTIONS)
         self.assertEqual(o.llm_sections, frozenset())
 
-    def test_partial_map_defaults_missing_to_parser(self) -> None:
-        # Only "steps" and "expected" in the map as llm; rest unmentioned.
+    def test_partial_map_universe_is_just_its_keys(self) -> None:
+        # Universe now comes from the map's keys, NOT the canonical six:
+        # a partial map declares a 2-section universe.
         o = resolve({"steps": OWNER_LLM, "expected": OWNER_LLM})
-        self.assertIn("steps", o.llm_sections)
-        self.assertIn("expected", o.llm_sections)
-        # All other canonical sections fall back to parser.
-        for s in CANONICAL_SECTIONS - {"steps", "expected"}:
-            self.assertIn(s, o.parser_sections)
+        self.assertEqual(o.llm_sections, frozenset({"steps", "expected"}))
+        self.assertEqual(o.parser_sections, frozenset())
+        self.assertEqual(o.section_order, ("steps", "expected"))
 
 
 class ResolveTaskOverrideTests(unittest.TestCase):
@@ -123,25 +131,83 @@ class ResolveTaskOverrideTests(unittest.TestCase):
         o = resolve(DEFAULT_OWNERSHIP, task_override=["steps", "expected"])
         self.assertEqual(o.llm_sections | o.parser_sections, CANONICAL_SECTIONS)
 
+    def test_default_override_steps_backward_compat(self) -> None:
+        # Spec backward-compat case: universe = the six, llm = {steps},
+        # parser = the other five.
+        o = resolve(DEFAULT_OWNERSHIP, {"steps"})
+        self.assertEqual(o.llm_sections, frozenset({"steps"}))
+        self.assertEqual(o.parser_sections, CANONICAL_SECTIONS - {"steps"})
+        self.assertEqual(
+            o.section_order,
+            ("test_id", "description", "meta", "equipment", "steps", "expected"),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Custom-universe tests — the universe comes from the map keys, not canonical
+# ---------------------------------------------------------------------------
+
+
+class ResolveCustomUniverseTests(unittest.TestCase):
+    """A bundle with a different/renamed ruleset drives the whole partition."""
+
+    CUSTOM = {"intro": OWNER_PARSER, "body": OWNER_LLM, "outro": OWNER_LLM}
+
+    def test_section_order_is_custom_keys(self) -> None:
+        o = resolve(self.CUSTOM)
+        self.assertEqual(o.section_order, ("intro", "body", "outro"))
+
+    def test_llm_sections_from_custom_map(self) -> None:
+        o = resolve(self.CUSTOM)
+        self.assertEqual(o.llm_sections, frozenset({"body", "outro"}))
+
+    def test_partition_covers_only_custom_universe(self) -> None:
+        o = resolve(self.CUSTOM)
+        self.assertEqual(
+            o.llm_sections | o.parser_sections, frozenset({"intro", "body", "outro"})
+        )
+        # NOT the canonical six.
+        self.assertEqual(o.parser_sections, frozenset({"intro"}))
+
+    def test_override_partitions_over_custom_universe(self) -> None:
+        o = resolve(self.CUSTOM, task_override={"body"})
+        self.assertEqual(o.section_order, ("intro", "body", "outro"))
+        self.assertEqual(o.llm_sections, frozenset({"body"}))
+        self.assertEqual(o.parser_sections, frozenset({"intro", "outro"}))
+
+    def test_override_section_absent_from_universe_dropped(self) -> None:
+        # "steps" is canonical but NOT in the custom universe → dropped.
+        o = resolve(self.CUSTOM, task_override={"body", "steps"})
+        self.assertEqual(o.llm_sections, frozenset({"body"}))
+        self.assertNotIn("steps", o.llm_sections)
+        self.assertNotIn("steps", o.parser_sections)
+
 
 class ResolveEdgeCaseTests(unittest.TestCase):
     """Unknown/dirty keys in the map are silently dropped."""
 
-    def test_unknown_key_ignored(self) -> None:
+    def test_extra_key_extends_universe(self) -> None:
+        # A bundle may declare sections beyond the canonical six; the universe
+        # is the map's keys, so an extra key becomes part of the partition.
         m = dict(DEFAULT_OWNERSHIP)
         m["totally_unknown"] = OWNER_LLM  # type: ignore[index]
         o = resolve(m)
-        # All canonical sections still resolved; unknown key doesn't pollute.
-        self.assertEqual(o.llm_sections | o.parser_sections, CANONICAL_SECTIONS)
+        self.assertEqual(
+            o.llm_sections | o.parser_sections,
+            CANONICAL_SECTIONS | {"totally_unknown"},
+        )
+        self.assertIn("totally_unknown", o.llm_sections)
 
     def test_unrecognised_owner_value_defaults_to_parser(self) -> None:
         o = resolve({"steps": "robot"})  # "robot" is not a known owner
         self.assertIn("steps", o.parser_sections)
 
-    def test_empty_map_all_canonical_to_parser(self) -> None:
+    def test_empty_map_empty_universe(self) -> None:
+        # An empty map declares an empty universe (no sections at all).
         o = resolve({})
-        self.assertEqual(o.parser_sections, CANONICAL_SECTIONS)
+        self.assertEqual(o.parser_sections, frozenset())
         self.assertEqual(o.llm_sections, frozenset())
+        self.assertEqual(o.section_order, ())
 
     def test_case_insensitivity_key(self) -> None:
         # "STEPS" should normalise to "steps".
@@ -247,6 +313,30 @@ class LoadBundleOwnershipTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# supports_section_ownership() tests
+# ---------------------------------------------------------------------------
+
+
+class SupportsSectionOwnershipTests(unittest.TestCase):
+    """Capability probe: True iff the bundle declares a map."""
+
+    def test_present_map_returns_true(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            rules_dir = Path(td) / "rules"
+            rules_dir.mkdir()
+            (rules_dir / "section_ownership.json").write_text(
+                json.dumps({"steps": "llm"}), encoding="utf-8"
+            )
+            self.assertTrue(supports_section_ownership(Path(td)))
+
+    def test_missing_map_returns_false(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            self.assertFalse(supports_section_ownership(Path(td)))
+
+
+# ---------------------------------------------------------------------------
 # for_bundle() tests
 # ---------------------------------------------------------------------------
 
@@ -281,17 +371,18 @@ class ForBundleTests(unittest.TestCase):
         self.assertIn("steps", o.llm_sections)
         self.assertNotIn("steps", o.parser_sections)
 
-    def test_empty_object_file_all_parser_owned(self) -> None:
-        """A valid ``{}`` file is respected — no LLM sections, NOT default."""
+    def test_empty_object_file_empty_universe(self) -> None:
+        """A valid ``{}`` file is respected — empty universe, NOT default."""
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             rules_dir = Path(td) / "rules"
             rules_dir.mkdir()
             (rules_dir / "section_ownership.json").write_text("{}", encoding="utf-8")
             o = for_bundle(Path(td))
-        # With an empty map every canonical section falls back to parser.
+        # With an empty map the universe is empty: no sections on either side.
         self.assertEqual(o.llm_sections, frozenset())
-        self.assertEqual(o.parser_sections, CANONICAL_SECTIONS)
+        self.assertEqual(o.parser_sections, frozenset())
+        self.assertEqual(o.section_order, ())
 
     def test_non_string_value_falls_back_to_default(self) -> None:
         """A file with a non-string value is malformed → for_bundle yields DEFAULT."""

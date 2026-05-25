@@ -87,13 +87,19 @@ This contract ensures you stay focused on JSON and code artifacts only.
 
 def render_section_emit_list(ownership: SectionOwnership) -> str:
     """Render the procedure_text section-ownership instruction block from a
-    resolved SectionOwnership. Lists the LLM-owned sections in canonical order
-    (with headings) as the ONLY things to author, and the parser-owned ones as
-    must-not-emit / auto-preserved."""
+    resolved SectionOwnership. Lists the LLM-owned sections in the bundle's
+    declared order (with headings) as the ONLY things to author, and the
+    parser-owned ones as must-not-emit / auto-preserved.
+
+    Iterates ``ownership.section_order`` (the bundle's declared universe);
+    labels each section via :data:`SECTION_HEADINGS` falling back to the raw
+    key for sections with no canonical heading. An old/blank SectionOwnership
+    with an empty ``section_order`` falls back to ``CANONICAL_SECTION_ORDER``."""
+    order = ownership.section_order or section_ownership.CANONICAL_SECTION_ORDER
     owned: list[str] = []
     parser_owned: list[str] = []
-    for section in section_ownership.CANONICAL_SECTION_ORDER:
-        heading = section_ownership.SECTION_HEADINGS[section]
+    for section in order:
+        heading = section_ownership.SECTION_HEADINGS.get(section, section)
         if section in ownership.llm_sections:
             owned.append(heading)
         else:
@@ -109,12 +115,13 @@ def render_section_emit_list(ownership: SectionOwnership) -> str:
             "All sections are operator-owned for this task — do not author any "
             "procedure_text section; return no procedure_text proposal."
         )
-    lines.append(
-        "Do NOT emit these — they are operator-owned and reconstructed "
-        "automatically (emitting them has no effect):"
-    )
-    for heading in parser_owned:
-        lines.append(f"- {heading}")
+    if parser_owned:
+        lines.append(
+            "Do NOT emit these — they are operator-owned and reconstructed "
+            "automatically (emitting them has no effect):"
+        )
+        for heading in parser_owned:
+            lines.append(f"- {heading}")
     if owned:
         lines.append("Start your output at the first owned section.")
     return "\n".join(lines)

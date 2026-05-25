@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Optional, TYPE_CHECKING
 from pathlib import Path
 
+from . import reconstruction
 from .backend_base import LLMBackend, LLMRequest, LLMResponse, LLMTask
 from .output_contracts import get_contract_for_tab, get_allowed_artifacts, get_task_expected_artifacts
 from .prompt_builder import PromptBuilder
@@ -680,8 +681,11 @@ class TabContext:
             rules_content = None  # Rules sent once, LLM remembers via conversation history
             log.debug(f"TabContext {self.tab_id}: Skipping rules (already sent, unchanged)")
         
-        # Get tab-specific output contract
-        output_contract = get_contract_for_tab(self.tab_id)
+        # Get tab-specific output contract. Resolve section ownership from the
+        # bundle map (same source reconstruction enforces) so the prompt's
+        # emit-list and reconstruction never diverge.
+        ownership = reconstruction.pipeline_ownership(self.project_manager.project_root)
+        output_contract = get_contract_for_tab(self.tab_id, ownership=ownership)
         
         # Safety check: session_state might not be initialized yet
         if not self.session_state:

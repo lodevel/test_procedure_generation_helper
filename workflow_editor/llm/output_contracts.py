@@ -11,7 +11,7 @@ proposes unexpected artifacts (e.g., proposing procedure_text when
 the task is DERIVE_JSON_FROM_TEXT).
 """
 
-from typing import Iterable, Optional
+from typing import Optional
 from . import section_ownership
 from .backend_base import LLMTask
 from .section_ownership import SectionOwnership
@@ -121,15 +121,18 @@ def render_section_emit_list(ownership: SectionOwnership) -> str:
 
 
 def get_contract_for_tab(
-    tab_id: str, *, llm_owned_sections: Optional[Iterable[str]] = None
+    tab_id: str, *, ownership: "SectionOwnership | None" = None
 ) -> str:
     """
     Get the output contract for a specific tab.
 
     Args:
         tab_id: Tab identifier ("text_only", "text_json", "json_code")
-        llm_owned_sections: Optional override of the LLM-owned section set,
-            threaded into the section emit-list for text-producing tabs.
+        ownership: Resolved section ownership threaded into the emit-list for
+            text-producing tabs. When omitted, falls back to the baked-in
+            DEFAULT_OWNERSHIP so a caller without project context still works.
+            Stays pure: the bundle-resolved ownership is built at the call
+            sites (see ``reconstruction.pipeline_ownership``), not here.
 
     Returns:
         The output contract string for the specified tab. Text-producing tabs
@@ -149,9 +152,8 @@ def get_contract_for_tab(
 
     base_contract = contracts[tab_id]
     if tab_id in ("text_only", "text_json"):
-        ownership = section_ownership.resolve(
-            section_ownership.DEFAULT_OWNERSHIP, llm_owned_sections
-        )
+        if ownership is None:
+            ownership = section_ownership.resolve(section_ownership.DEFAULT_OWNERSHIP)
         return base_contract + "\n" + render_section_emit_list(ownership)
     return base_contract
 

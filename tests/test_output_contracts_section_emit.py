@@ -99,11 +99,11 @@ class GetContractEmitListTests(unittest.TestCase):
 
 
 class GetContractOverrideTests(unittest.TestCase):
-    """llm_owned_sections override changes which sections are authored."""
+    """A resolved ownership override changes which sections are authored."""
 
     def setUp(self) -> None:
         self.contract = get_contract_for_tab(
-            "text_json", llm_owned_sections={"steps"}
+            "text_json", ownership=resolve(DEFAULT_OWNERSHIP, {"steps"})
         )
         # Split into the authored block vs the do-not-emit block.
         marker = "Do NOT emit these"

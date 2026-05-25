@@ -21,6 +21,28 @@ from typing import Iterable, Optional
 from . import pack_parsers, section_ownership
 
 
+def pipeline_ownership(
+    project_root: Optional[Path] = None,
+    task_override: Optional[Iterable[str]] = None,
+) -> "section_ownership.SectionOwnership":
+    """The single place the pipeline resolves section ownership: the bundle's
+    declared map (``pack_parsers.get_section_ownership``) as the base, with an
+    optional per-task override. Both the prompt emit-list and reconstruction
+    derive from this.
+
+    Degrades gracefully: if the deterministic parser is unavailable (no wheel /
+    no project venv / subprocess error), fall back to the baked-in
+    ``DEFAULT_OWNERSHIP`` rather than raising. This keeps the prompt-build path
+    non-fatal — the LLM fallback must remain available without the wheel. The
+    reconstruction caller still fails loudly later (``reconstruct_text`` itself
+    raises ``ParserUnavailable``, caught by ``reconstructed_or_error``)."""
+    try:
+        base = pack_parsers.get_section_ownership(project_root)
+    except pack_parsers.ParserUnavailable:
+        base = section_ownership.DEFAULT_OWNERSHIP
+    return section_ownership.resolve(base, task_override)
+
+
 def reconstruct_for_pipeline(
     proposed_text: str,
     prior_text: Optional[str],
@@ -33,10 +55,12 @@ def reconstruct_for_pipeline(
     (.success/.text/.json/.findings/.ok/.errors/.warnings).
 
     When *task_override* is None the wheel's declared default ownership is
-    used (equipment/steps/expected = LLM); this avoids an extra subprocess
-    ``get_section_ownership`` round-trip in the common case. When provided,
-    *task_override* is the authoritative LLM-owned section set: it is resolved
-    against the bundle's base map and threaded into ``reconstruct_text`` so
+    used (``owned_sections=None`` → the wheel's own default set). That set is
+    the SAME bundle map :func:`pipeline_ownership` resolves with no override;
+    the no-override branch is kept separate only to skip the extra subprocess
+    ``get_section_ownership`` round-trip on the reconstruction hot path. When
+    provided, *task_override* is resolved via :func:`pipeline_ownership`
+    (bundle base + override) and threaded into ``reconstruct_text`` so
     everything else becomes parser-owned.
     """
     if task_override is None:
@@ -47,8 +71,7 @@ def reconstruct_for_pipeline(
             project_root=project_root,
         )
 
-    base = pack_parsers.get_section_ownership(project_root)
-    owned = set(section_ownership.resolve(base, task_override).llm_sections)
+    owned = set(pipeline_ownership(project_root, task_override).llm_sections)
     return pack_parsers.reconstruct_text(
         proposed_text,
         prior_text,

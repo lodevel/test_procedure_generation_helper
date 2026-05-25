@@ -21,6 +21,7 @@ from datetime import datetime
 from ..llm import LLMTask, ChatMessage
 from ..llm.prompt_builder import PromptBuilder
 from ..llm.output_contracts import get_contract_for_tab
+from ..llm.reconstruction import pipeline_ownership
 from ..core.task_config import DEFAULT_MAX_VALIDATOR_ATTEMPTS
 from ..llm.backend_base import ValidationIssue
 from ..llm.run_state import LLMRunState, RunStateKind
@@ -235,7 +236,8 @@ class LLMTabMixin:
             task_config_manager=self.task_config_manager,
             tab_id=self.tab_id,
         )
-        contract = get_contract_for_tab(self.tab_context.tab_id)
+        ownership = pipeline_ownership(self.tab_context.project_manager.project_root)
+        contract = get_contract_for_tab(self.tab_context.tab_id, ownership=ownership)
         full_prompt = prompt_builder.build(request, output_contract_override=contract)
 
         # Cancel any running worker before starting a new one.

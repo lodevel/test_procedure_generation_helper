@@ -221,9 +221,11 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
             ArtifactType.PROCEDURE_TEXT, self.text_editor.toPlainText()
         )
 
-    def _apply_proposals(self, response):
+    def _apply_proposals(self, response, task=None):
+        # ``task`` carries the per-task section-ownership override into the
+        # text-proposal reconstruction (None → bundle default).
         if response.procedure_text and response.procedure_text.mode:
-            self._handle_text_proposal(response.procedure_text)
+            self._handle_text_proposal(response.procedure_text, task)
 
     def _get_expected_artifact_fields(self) -> list[str]:
         return ["text_procedure"]
@@ -239,7 +241,7 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
             parsed["text_procedure"] = response.procedure_text.content
         return parsed
 
-    def _handle_text_proposal(self, proposal):
+    def _handle_text_proposal(self, proposal, task=None):
         # Accept "create" alongside "replace" — see text_json_tab for
         # rationale. "patch" stays excluded.
         if proposal.mode not in ("replace", "create"):
@@ -255,8 +257,10 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         # from the prior before showing the diff — the LLM authors only the
         # body sections; identity is parser-owned.
         project_root = getattr(self.project_manager, "project_root", None)
+        override = self._task_section_override(task)
         reconstructed, err = reconstructed_or_error(
-            content_str, current_content, project_root=project_root
+            content_str, current_content,
+            task_override=override, project_root=project_root,
         )
         if err:
             self.main_window.dock.chat_panel.add_system_message(

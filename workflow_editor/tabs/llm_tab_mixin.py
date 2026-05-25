@@ -5,7 +5,8 @@ in a single mixin consumed by JsonCodeTab and TextJsonTab.
 
 Tabs that use this mixin must implement:
   - _sync_editors_for_llm()              — sync editor widgets → artifact manager
-  - _apply_proposals(response)           — dispatch per-artifact proposals
+  - _apply_proposals(response, task)     — dispatch per-artifact proposals
+                                           (task drives the per-task section override)
   - _get_expected_artifact_fields()      — list of artifact field names for contract check
   - _parse_response_to_dict(response)    — map LLMResponse → validated dict
   - _get_task_description(task, user_message, custom_task_id) -> str
@@ -17,6 +18,7 @@ Instance attributes expected on ``self`` (provided by BaseTab / __init__):
 import json
 import logging
 from datetime import datetime
+from typing import Optional
 
 from ..llm import LLMTask, ChatMessage
 from ..llm.prompt_builder import PromptBuilder
@@ -228,15 +230,24 @@ class LLMTabMixin:
         # the latest unsaved state, not just the last saved version.
         self._sync_editors_for_llm()
 
+        # Resolve the per-task section-ownership override once and thread the
+        # SAME value into both prompt-build paths so the emit-list (here) and
+        # _build_request's contract resolution never diverge.
+        override = self._task_section_override(task)
+
         force_mode = self.main_window.dock.chat_panel.get_force_mode()
-        request = self.tab_context._build_request(task, force=force_mode, **kwargs)
+        request = self.tab_context._build_request(
+            task, force=force_mode, section_override=override, **kwargs
+        )
         self._pending_request = request
 
         prompt_builder = PromptBuilder(
             task_config_manager=self.task_config_manager,
             tab_id=self.tab_id,
         )
-        ownership = pipeline_ownership(self.tab_context.project_manager.project_root)
+        ownership = pipeline_ownership(
+            self.tab_context.project_manager.project_root, override
+        )
         contract = get_contract_for_tab(self.tab_context.tab_id, ownership=ownership)
         full_prompt = prompt_builder.build(request, output_contract_override=contract)
 
@@ -348,8 +359,10 @@ class LLMTabMixin:
             # surface findings to the operator without applying.
             return
 
-        # 7. Apply proposals and finish.
-        self._apply_proposals(response)
+        # 7. Apply proposals and finish. Thread the task so the apply-path
+        # reconstruction uses the same per-task section override as the
+        # prompt emit-list and the before-validate reconstruction.
+        self._apply_proposals(response, task=run_state.task)
         self.status_message.emit(f"LLM task completed ({response.total_tokens} tokens)")
 
     # ------------------------------------------------------------------ #
@@ -549,6 +562,21 @@ class LLMTabMixin:
             self._run_state = LLMRunState()
         return self._run_state
 
+    def _task_section_override(self, task) -> Optional[list[str]]:
+        """The task's per-button section-ownership override
+        (``TaskConfig.llm_owned_sections``), or None to use the bundle
+        default. None task → None.
+
+        The ONLY place the TaskConfig lookup happens (DRY); the prompt
+        emit-list, before-validate reconstruction, and at-apply
+        reconstruction all resolve the override through here so a given
+        task/button stays consistent across the pipeline.
+        """
+        if task is None or self.task_config_manager is None:
+            return None
+        cfg = self.task_config_manager.get_task_config(self.tab_id, task.value)
+        return cfg.llm_owned_sections if cfg is not None else None
+
     def _resolve_max_attempts(self, task: LLMTask) -> int:
         """Determine the retry budget for this run.
 
@@ -719,6 +747,7 @@ class LLMTabMixin:
         independent of the artifact-manager layout."""
         project_root = getattr(self.tab_context.project_manager, "project_root", None)
         artifacts = self.tab_context.artifact_manager
+        run_state = self._ensure_run_state()
         current = {
             "text": getattr(artifacts.procedure_text, "content", "") or "",
             "json": getattr(artifacts.procedure_json, "content", "") or "",
@@ -726,8 +755,13 @@ class LLMTabMixin:
         }
         # Phase 3 (2026-04-27): dispatch is artifact-shape, not LLMTask.
         # The validator follows whatever the LLM proposed; covers buttons,
-        # custom tasks, and ad-hoc chat uniformly.
-        return validate_response(response, current, project_root)
+        # custom tasks, and ad-hoc chat uniformly. The per-task section
+        # override threads through so before-validate reconstruction uses the
+        # same LLM-owned set as the prompt emit-list and at-apply path.
+        override = self._task_section_override(run_state.task)
+        return validate_response(
+            response, current, project_root, task_override=override
+        )
 
     def _spawn_retry_worker(self, outcome: ValidationOutcome) -> None:
         """Spawn a new LLM worker carrying the validator feedback as the

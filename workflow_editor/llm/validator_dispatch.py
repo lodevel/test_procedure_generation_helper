@@ -46,7 +46,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 from . import reconstruction
 from .backend_base import LLMResponse
@@ -490,6 +490,7 @@ def _validate_proposed_text(
     current: CurrentArtifacts,
     project_root: Path,
     validate_fn: Callable[..., Any],
+    task_override: Optional[Iterable[str]] = None,
 ) -> Optional[ValidationOutcome]:
     """The LLM proposed a ``procedure_text`` update. Reconstruct the body
     fragment against the prior procedure (so operator-owned identity comes
@@ -513,7 +514,8 @@ def _validate_proposed_text(
     # validating, so the validator sees the full document the operator
     # will actually apply (identity + Meta from prior, body from the LLM).
     recon = reconstruction.reconstruct_for_pipeline(
-        str(proposed_text), original_text, project_root=project_root,
+        str(proposed_text), original_text,
+        task_override=task_override, project_root=project_root,
     )
     # recon.text is set even on failure (half-built doc); compute the shift so we
     # can translate full-doc line numbers back to fragment coords per-issue below.
@@ -578,6 +580,7 @@ def _validate_proposed_json(
     current: CurrentArtifacts,
     project_root: Path,
     validate_fn: Callable[..., Any],
+    task_override: Optional[Iterable[str]] = None,
 ) -> Optional[ValidationOutcome]:
     """The LLM proposed a ``procedure_json`` update. Always runs
     R3 (schema) + R4 (topology) + R5 (semantic) on the proposed JSON;
@@ -585,6 +588,10 @@ def _validate_proposed_json(
 
     Phase 9.4: R2 (JSON↔code) is no longer dispatched; ``code``/``inventory``
     are accepted but unused.
+
+    ``task_override`` is accepted for a uniform handler signature but
+    ignored — JSON proposals don't go through section-ownership
+    reconstruction (only the text path does).
     """
     proposed_json = _proposal_content(response, "procedure_json")
     if proposed_json is None:
@@ -613,8 +620,13 @@ def _validate_proposed_code(
     current: CurrentArtifacts,
     project_root: Path,
     validate_fn: Callable[..., Any],
+    task_override: Optional[Iterable[str]] = None,
 ) -> Optional[ValidationOutcome]:
     """The LLM proposed a ``test_code`` update.
+
+    ``task_override`` is accepted for a uniform handler signature but
+    ignored — code proposals don't go through section-ownership
+    reconstruction (only the text path does).
 
     Phase 9.4: R2 (JSON↔code) bijection was removed when the deterministic
     code inspector was deleted. Codegen is forward-only; code edits flow
@@ -837,6 +849,7 @@ def validate_response(
     response: LLMResponse,
     current_artifacts: CurrentArtifacts,
     project_root: Optional[Path],
+    task_override: Optional[Iterable[str]] = None,
 ) -> ValidationOutcome:
     """Run the deterministic validator on an LLM response.
 
@@ -845,6 +858,12 @@ def validate_response(
     fired. Always returns a :class:`ValidationOutcome` — never raises.
     Validator crashes are caught and surfaced as ``skipped=True`` so GUI
     bugs in the validator can never block the LLM workflow.
+
+    ``task_override`` is the per-task section-ownership override
+    (``TaskConfig.llm_owned_sections``; ``None`` → bundle default). It is
+    threaded into the text handler's before-validate reconstruction so the
+    validated document uses the same LLM-owned set as the prompt emit-list
+    and the at-apply reconstruction.
     """
     if project_root is None:
         return _skipped("no active project")
@@ -867,7 +886,10 @@ def validate_response(
     outcomes: list[ValidationOutcome] = []
     for handler in _ARTIFACT_HANDLERS:
         try:
-            outcome = handler(response, current_artifacts, project_root, validate_fn)
+            outcome = handler(
+                response, current_artifacts, project_root, validate_fn,
+                task_override,
+            )
         except Exception as exc:  # noqa: BLE001 — never let validator bugs block LLM flow
             log.exception(
                 "validator handler %s crashed; falling back to operator review.",

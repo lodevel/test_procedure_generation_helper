@@ -409,8 +409,13 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         self.artifact_manager.set_content(ArtifactType.PROCEDURE_JSON, self.json_editor.toPlainText())
         self.artifact_manager.set_content(ArtifactType.TEST_CODE, self.code_editor.toPlainText())
 
-    def _apply_proposals(self, response):
-        """Dispatch per-artifact proposals from LLM response."""
+    def _apply_proposals(self, response, task=None):
+        """Dispatch per-artifact proposals from LLM response.
+
+        ``task`` is accepted for a uniform mixin call signature but
+        ignored — this tab proposes only JSON and code, neither of which
+        goes through section-ownership reconstruction.
+        """
         if response.procedure_json and response.procedure_json.mode:
             self._handle_json_proposal(response.procedure_json)
         if response.test_code and response.test_code.mode:

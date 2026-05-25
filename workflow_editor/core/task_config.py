@@ -80,6 +80,12 @@ class TaskConfig:
     enabled: bool = True
     max_validator_attempts: Optional[int] = None
     selected_rules: SelectedRules = None
+    # Per-task section-ownership override: the section names the LLM may
+    # author for this task. ``None`` → use the bundle/wheel default
+    # (current behavior). A list (incl. ``[]`` = LLM authors nothing) is
+    # the authoritative LLM-owned set. Threaded into both the prompt
+    # emit-list and reconstruction so they stay consistent.
+    llm_owned_sections: Optional[list[str]] = None
 
     def to_dict(self) -> dict:
         return asdict(self)

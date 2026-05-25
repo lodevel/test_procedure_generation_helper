@@ -638,6 +638,7 @@ class TabContext:
         user_message: Optional[str] = None,
         strict_mode: bool = False,
         force: bool = False,
+        section_override: Optional[list[str]] = None,
         **kwargs
     ) -> LLMRequest:
         """
@@ -683,8 +684,11 @@ class TabContext:
         
         # Get tab-specific output contract. Resolve section ownership from the
         # bundle map (same source reconstruction enforces) so the prompt's
-        # emit-list and reconstruction never diverge.
-        ownership = reconstruction.pipeline_ownership(self.project_manager.project_root)
+        # emit-list and reconstruction never diverge. ``section_override`` is
+        # the per-task TaskConfig.llm_owned_sections (None → bundle default).
+        ownership = reconstruction.pipeline_ownership(
+            self.project_manager.project_root, section_override
+        )
         output_contract = get_contract_for_tab(self.tab_id, ownership=ownership)
         
         # Safety check: session_state might not be initialized yet

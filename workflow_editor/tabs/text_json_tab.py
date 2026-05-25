@@ -559,10 +559,15 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         self.artifact_manager.set_content(ArtifactType.PROCEDURE_TEXT, self.text_editor.toPlainText())
         self.artifact_manager.set_content(ArtifactType.PROCEDURE_JSON, self.json_editor.toPlainText())
 
-    def _apply_proposals(self, response):
-        """Dispatch per-artifact proposals from LLM response."""
+    def _apply_proposals(self, response, task=None):
+        """Dispatch per-artifact proposals from LLM response.
+
+        ``task`` carries the per-task section-ownership override into the
+        text-proposal reconstruction (None → bundle default). JSON
+        proposals don't reconstruct, so the task isn't threaded there.
+        """
         if response.procedure_text and response.procedure_text.mode:
-            self._handle_text_proposal(response.procedure_text)
+            self._handle_text_proposal(response.procedure_text, task)
         if response.procedure_json and response.procedure_json.mode:
             self._handle_json_proposal(response.procedure_json)
 
@@ -585,7 +590,7 @@ class TextJsonTab(LLMTabMixin, BaseTab):
             parsed["procedure_json"] = response.procedure_json.content
         return parsed
 
-    def _handle_text_proposal(self, proposal):
+    def _handle_text_proposal(self, proposal, task=None):
         """Handle procedure_text proposal."""
         # Accept "create" alongside "replace" — semantically identical
         # (full content for the artifact). The LLM emits "create" for
@@ -606,8 +611,10 @@ class TextJsonTab(LLMTabMixin, BaseTab):
             # from the prior before showing the diff — the LLM authors only the
             # body sections; identity is parser-owned.
             project_root = getattr(self.project_manager, "project_root", None)
+            override = self._task_section_override(task)
             reconstructed, err = reconstructed_or_error(
-                content_str, current_content, project_root=project_root
+                content_str, current_content,
+                task_override=override, project_root=project_root,
             )
             if err:
                 self.main_window.dock.chat_panel.add_system_message(

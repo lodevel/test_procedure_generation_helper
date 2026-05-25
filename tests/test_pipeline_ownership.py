@@ -14,7 +14,10 @@ Runs without PySide6:
 """
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from tests._qt_stub import ensure_workflow_editor_importable
 
@@ -88,6 +91,27 @@ class PipelineOwnershipTracksAccessorTests(unittest.TestCase):
 
     def test_tracks_custom_bundle_map(self) -> None:
         own = pipeline_ownership(project_root=None)
+        self.assertEqual(own.llm_sections, frozenset({"steps"}))
+
+
+class PipelineOwnershipSideCarTests(unittest.TestCase):
+    """With a project root carrying a CUSTOM bundle side-car, the resolved
+    ownership reflects the side-car map (proves the side-car flows all the way
+    through ``get_section_ownership`` → ``resolve``)."""
+
+    def test_resolves_custom_sidecar_map(self) -> None:
+        custom = {
+            "test_id": "parser", "description": "parser", "meta": "parser",
+            "equipment": "parser", "steps": "llm", "expected": "parser",
+        }
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            rules_dir = root / "bundle" / "rules"
+            rules_dir.mkdir(parents=True)
+            (rules_dir / "section_ownership.json").write_text(
+                json.dumps(custom), encoding="utf-8"
+            )
+            own = pipeline_ownership(project_root=root)
         self.assertEqual(own.llm_sections, frozenset({"steps"}))
 
 

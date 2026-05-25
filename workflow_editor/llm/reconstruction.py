@@ -54,23 +54,17 @@ def reconstruct_for_pipeline(
     resolved section ownership. Returns the pack_parsers reconstruct report
     (.success/.text/.json/.findings/.ok/.errors/.warnings).
 
-    When *task_override* is None the wheel's declared default ownership is
-    used (``owned_sections=None`` → the wheel's own default set). That set is
-    the SAME bundle map :func:`pipeline_ownership` resolves with no override;
-    the no-override branch is kept separate only to skip the extra subprocess
-    ``get_section_ownership`` round-trip on the reconstruction hot path. When
-    provided, *task_override* is resolved via :func:`pipeline_ownership`
-    (bundle base + override) and threaded into ``reconstruct_text`` so
-    everything else becomes parser-owned.
+    Ownership always resolves through :func:`pipeline_ownership` (bundle
+    side-car / wheel default as base, plus any *task_override*), so the
+    bundle's editable ``section_ownership.json`` side-car is respected on the
+    no-override path too. The resolved LLM set is threaded into
+    ``reconstruct_text`` as an explicit ``owned_sections``; for the DEFAULT
+    case this is equivalent to the old ``owned_sections=None`` (the wheel's
+    reconstruct treats an explicit set equal to its default the same as None —
+    see ``ReconstructOverrideEquivalenceTests`` in tests/test_reconstruction.py).
+    The side-car read is a cheap file read, so the former no-override fast-path
+    (kept only to skip a subprocess round-trip) is no longer needed.
     """
-    if task_override is None:
-        return pack_parsers.reconstruct_text(
-            proposed_text,
-            prior_text,
-            owned_sections=None,
-            project_root=project_root,
-        )
-
     owned = set(pipeline_ownership(project_root, task_override).llm_sections)
     return pack_parsers.reconstruct_text(
         proposed_text,

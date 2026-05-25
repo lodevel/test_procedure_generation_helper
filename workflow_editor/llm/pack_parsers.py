@@ -44,6 +44,8 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
+from . import section_ownership
+
 log = logging.getLogger(__name__)
 
 # Wheel version we expect (used in error messages only; the subprocess
@@ -365,9 +367,25 @@ def validate(
 def get_section_ownership(
     project_root: Optional[Path] = None,
 ) -> dict[str, str]:
-    """Return the bundle's canonical section→owner map (``parser``/``llm``)."""
+    """Return the bundle's declared default section→owner map (``parser``/``llm``).
+
+    The editable ``<project_root>/bundle/rules/section_ownership.json`` side-car
+    is authoritative when present; the wheel's baked-in map is the FALLBACK.
+
+    - ``project_root`` given: read the side-car first
+      (:func:`section_ownership.load_bundle_ownership`). A loaded dict (including
+      an explicit ``{}`` "LLM owns nothing") is returned as-is. Only when the
+      side-car is absent or invalid (``None``) do we fall through to the wheel
+      subprocess, which raises :class:`ParserUnavailable` on failure.
+    - ``project_root`` is None (editor / no project): the in-process wheel
+      default, unchanged.
+    """
     if project_root is None:
         return _inproc_import_wheel().section_ownership()
+
+    loaded = section_ownership.load_bundle_ownership(project_root / "bundle")
+    if loaded is not None:
+        return loaded
 
     project_python = _resolve_project_python(project_root)
     result = _subprocess_call(

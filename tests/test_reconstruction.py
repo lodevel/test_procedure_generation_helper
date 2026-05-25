@@ -15,6 +15,7 @@ from tests._qt_stub import ensure_workflow_editor_importable
 
 ensure_workflow_editor_importable()
 
+from workflow_editor.llm import pack_parsers  # noqa: E402
 from workflow_editor.llm.reconstruction import (  # noqa: E402
     reconstruct_for_pipeline,
     reconstructed_or_error,
@@ -134,6 +135,41 @@ class ReconstructOverrideEquivalenceTests(unittest.TestCase):
         self.assertIs(default.success, True)
         self.assertIs(explicit.success, True)
         self.assertEqual(default.text, explicit.text)
+
+
+class ReconstructNoOverridePassesResolvedSetTests(unittest.TestCase):
+    """The ``task_override is None`` fast-path is gone: reconstruction now always
+    resolves ownership (side-car / wheel default) and threads an explicit
+    ``owned_sections`` set into ``reconstruct_text`` — never ``None``."""
+
+    def setUp(self) -> None:
+        self._orig = pack_parsers.reconstruct_text
+        self.calls: list[dict] = []
+
+        def _spy(fragment, prior=None, owned_sections=None, project_root=None):
+            self.calls.append({
+                "owned_sections": owned_sections,
+                "project_root": project_root,
+            })
+            return self._orig(
+                fragment, prior,
+                owned_sections=owned_sections,
+                project_root=project_root,
+            )
+
+        pack_parsers.reconstruct_text = _spy
+
+    def tearDown(self) -> None:
+        pack_parsers.reconstruct_text = self._orig
+
+    def test_no_override_calls_with_a_set_not_none(self) -> None:
+        reconstruct_for_pipeline(FRAGMENT, PRIOR, project_root=None)
+        self.assertEqual(len(self.calls), 1)
+        owned = self.calls[0]["owned_sections"]
+        self.assertIsInstance(owned, set)
+        self.assertIsNotNone(owned)
+        # The DEFAULT bundle map → equipment/steps/expected are LLM-owned.
+        self.assertEqual(owned, {"equipment", "steps", "expected"})
 
 
 class ReconstructedOrErrorTests(unittest.TestCase):

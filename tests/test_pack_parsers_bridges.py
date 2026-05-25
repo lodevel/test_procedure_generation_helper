@@ -9,7 +9,10 @@ Runs without PySide6:
 """
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from tests._qt_stub import ensure_workflow_editor_importable
 
@@ -54,7 +57,7 @@ not valid expected syntax
 
 
 class GetSectionOwnershipTests(unittest.TestCase):
-    """In-process section ownership map."""
+    """In-process section ownership map (``project_root=None`` → wheel default)."""
 
     def test_returns_expected_six_key_map(self) -> None:
         ownership = pp.get_section_ownership()
@@ -69,6 +72,48 @@ class GetSectionOwnershipTests(unittest.TestCase):
                 "expected": "llm",
             },
         )
+
+
+class GetSectionOwnershipSideCarTests(unittest.TestCase):
+    """The bundle side-car ``<project_root>/bundle/rules/section_ownership.json``
+    is the authoritative default when present; the wheel is only the fallback."""
+
+    @staticmethod
+    def _write_sidecar(project_root: Path, content: str) -> None:
+        rules_dir = project_root / "bundle" / "rules"
+        rules_dir.mkdir(parents=True, exist_ok=True)
+        (rules_dir / "section_ownership.json").write_text(content, encoding="utf-8")
+
+    def test_custom_sidecar_is_read_and_authoritative(self) -> None:
+        custom = {
+            "test_id": "parser",
+            "description": "parser",
+            "meta": "parser",
+            "equipment": "parser",
+            "steps": "llm",
+            "expected": "parser",
+        }
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write_sidecar(root, json.dumps(custom))
+            result = pp.get_section_ownership(project_root=root)
+        self.assertEqual(result, custom)
+
+    def test_empty_sidecar_returns_empty_dict(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write_sidecar(root, "{}")
+            result = pp.get_section_ownership(project_root=root)
+        self.assertEqual(result, {})
+
+    def test_no_sidecar_falls_through_to_wheel_path(self) -> None:
+        # No side-car + a project root with no venv → the wheel subprocess
+        # fallback runs and (lacking a project venv here) raises
+        # ParserUnavailable. This proves we fall THROUGH (not return None/{}).
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)  # no bundle/rules/section_ownership.json
+            with self.assertRaises(pp.ParserUnavailable):
+                pp.get_section_ownership(project_root=root)
 
 
 class ReconstructTextSuccessTests(unittest.TestCase):

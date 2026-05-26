@@ -305,9 +305,15 @@ class TaskConfigManager:
             self._migrate_project_tab_contexts()
 
             pack_defaults = self._load_pack_workflow_defaults()
-            # Index pack tasks for the stamp filter (Codex Q1).
+            # Pack defines the runtime task universe. Editor provides
+            # per-field fallback ONLY for tasks pack declares (so sparse
+            # {id, prompt_template} bundle entries inherit name/button_label
+            # from the editor's baked-in defaults). Editor-only tasks are
+            # NOT pulled into the runtime — pack omitting a task means it
+            # doesn't exist at runtime.
+            editor_plus_pack = _apply_editor_field_fallback(pack_defaults)
             self._pack_task_dicts_by_tab = {}
-            for tab_id, tab_cfg in pack_defaults.items():
+            for tab_id, tab_cfg in editor_plus_pack.items():
                 if not isinstance(tab_cfg, dict):
                     continue
                 pack_tasks = tab_cfg.get("tasks", [])
@@ -335,7 +341,12 @@ class TaskConfigManager:
             self._project_workflow_snapshot = deepcopy(project_workflows)
 
             if pack_defaults or project_workflows:
-                merged = _merge_workflows(pack_defaults, project_workflows)
+                # Three-layer merge mirroring the parent app's
+                # ``workflow_defaults.merged_layered_view``:
+                # editor_baked_in < pack < project. Reuses ``editor_plus_pack``
+                # (built above for the stamp filter) so both paths see the
+                # same baseline.
+                merged = _merge_workflows(editor_plus_pack, project_workflows)
                 # Run button-label migration on the merged dict so older
                 # per-project configs upgrade cleanly. Also migrate the
                 # snapshot so future saves persist the upgraded labels.
@@ -1112,6 +1123,43 @@ def _task_dicts_equal(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
     """
     keys = {f.name for f in fields(TaskConfig)}
     return all(a.get(k) == b.get(k) for k in keys)
+
+
+def _apply_editor_field_fallback(pack: Dict[str, Any]) -> Dict[str, Any]:
+    """Fill None fields in pack-declared tasks from the editor's same-id
+    task. Pack still defines the task universe — editor-only tasks/tabs
+    are not pulled in. Returns a deep copy; ``pack`` is left untouched.
+
+    Lets the bundle ship sparse ``{id, prompt_template}`` tasks while
+    still satisfying ``TaskConfig.__init__`` (which needs ``name`` and
+    ``button_label``).
+    """
+    enriched = deepcopy(pack) if isinstance(pack, dict) else {}
+    for tab_id, tab_cfg in enriched.items():
+        if not isinstance(tab_cfg, dict):
+            continue
+        pack_tasks = tab_cfg.get("tasks")
+        if not isinstance(pack_tasks, list):
+            continue
+        editor_tab = _DEFAULT_WORKFLOWS_RAW.get(tab_id, {})
+        editor_tasks = (
+            editor_tab.get("tasks", [])
+            if isinstance(editor_tab, dict) else []
+        )
+        editor_by_id: Dict[str, Dict[str, Any]] = {}
+        for et in editor_tasks:
+            if isinstance(et, dict) and isinstance(et.get("id"), str):
+                editor_by_id[et["id"]] = et
+        for i, t in enumerate(pack_tasks):
+            if not isinstance(t, dict):
+                continue
+            editor_t = editor_by_id.get(t.get("id"), {})
+            merged = dict(editor_t)
+            for k, v in t.items():
+                if v is not None:
+                    merged[k] = v
+            pack_tasks[i] = merged
+    return enriched
 
 
 def _merge_workflows(base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:

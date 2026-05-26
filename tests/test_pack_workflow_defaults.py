@@ -158,6 +158,26 @@ def test_sparse_pack_tasks_inherit_name_from_editor_defaults(monkeypatch, tmp_pa
     assert derive.enabled is True
 
 
+def test_editor_default_workflows_ship_no_prompts():
+    """Locks the post-migration architecture: prompts are bundle-owned;
+    the editor's ``default_workflows.json`` is field fallback for
+    ``name`` / ``button_label`` / ``enabled`` only. If someone
+    re-introduces a prompt here, bundle vs editor origin attribution
+    will lie (the GUI shows a row as 'editor default' when in fact
+    the user is reading text the bundle would have replaced)."""
+    from workflow_editor.core.task_config import _DEFAULT_WORKFLOWS_RAW
+
+    for tab_id, tab_cfg in _DEFAULT_WORKFLOWS_RAW.items():
+        if not isinstance(tab_cfg, dict):
+            continue
+        for task in tab_cfg.get("tasks", []):
+            assert task.get("prompt_template") is None, (
+                f"editor's {tab_id}/{task.get('id')} carries a "
+                "prompt_template; post-migration only the bundle "
+                "is supposed to ship prompts"
+            )
+
+
 def test_sparse_pack_does_not_leak_inherited_fields_on_save(monkeypatch, tmp_path):
     """A user who touches NOTHING must not get pack/editor-inherited
     ``name`` / ``button_label`` / ``enabled`` stamped into their

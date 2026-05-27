@@ -114,6 +114,12 @@ def _op_render_text(spec: dict) -> dict:
     return {"ok": True, "text": text}
 
 
+def _op_renumber_steps(spec: dict) -> dict:
+    text = spec["text"]
+    wheel = _import_wheel()
+    return {"ok": True, "text": wheel.renumber_steps(text)}
+
+
 def _op_generate_code(spec: dict) -> dict:
     procedure = spec["procedure"]
     codegen = _import_codegen()
@@ -171,6 +177,7 @@ _OPS = {
     "is_available": _op_is_available,
     "parse_text": _op_parse_text,
     "render_text": _op_render_text,
+    "renumber_steps": _op_renumber_steps,
     "generate_code": _op_generate_code,
     "validate": _op_validate,
     "section_ownership": _op_section_ownership,

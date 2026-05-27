@@ -301,6 +301,30 @@ def render_text(
     return result["text"]
 
 
+def renumber_steps_text(
+    text: str,
+    project_root: Optional[Path] = None,
+) -> str:
+    """Rewrite the leading ``N.`` prefix on every step line inside the
+    ``## Steps`` block to be sequential 1..N. Pure text transform — no
+    parse, no validation. Wraps the bundle's
+    ``parser.renumber_steps``. Returns the new text (or the original
+    when nothing changed). Raises :class:`ParserUnavailable` if the
+    wheel isn't importable."""
+    if project_root is None:
+        return _inproc_renumber_steps(text)
+
+    project_python = _resolve_project_python(project_root)
+    result = _subprocess_call(
+        project_python,
+        {"op": "renumber_steps", "text": text},
+        timeout=_timeout(),
+    )
+    if not result.get("ok"):
+        raise ParserUnavailable(result.get("error", "subprocess error"))
+    return result["text"]
+
+
 def generate_code(
     procedure: dict[str, Any],
     project_root: Optional[Path] = None,
@@ -453,6 +477,11 @@ def _inproc_parse_text(text: str) -> tuple[dict[str, Any], list[str]]:
 def _inproc_render_text(procedure_json: dict[str, Any]) -> str:
     wheel = _inproc_import_wheel()
     return wheel.render(procedure_json)
+
+
+def _inproc_renumber_steps(text: str) -> str:
+    wheel = _inproc_import_wheel()
+    return wheel.renumber_steps(text)
 
 
 def _inproc_generate_code(procedure: dict[str, Any]) -> tuple[str, list[str]]:

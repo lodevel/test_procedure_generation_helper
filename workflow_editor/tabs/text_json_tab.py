@@ -170,6 +170,11 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         save_row.addWidget(self.save_text_btn)
         save_row.addWidget(self.save_json_btn)
         save_row.addWidget(self.save_both_btn)
+        self.renumber_steps_btn = self.create_button(
+            "Renumber steps", self._on_renumber_steps,
+            tooltip="Rewrite the leading N. on every step in ## Steps to be sequential 1..N — useful after inserting a step in the middle",
+        )
+        save_row.addWidget(self.renumber_steps_btn)
         save_row.addStretch()
         file_layout.addLayout(save_row)
         
@@ -252,6 +257,28 @@ class TextJsonTab(LLMTabMixin, BaseTab):
             self.artifact_saved.emit()
         except Exception as e:
             self.show_error("Save Failed", str(e))
+
+    def _on_renumber_steps(self) -> None:
+        """Rewrite the leading ``N.`` on every step in ``## Steps`` to be
+        sequential 1..N. Routed through the bundle's parser so the
+        numbering convention stays bundle-defined."""
+        from ..llm import pack_parsers
+        original = self.text_editor.toPlainText()
+        if not original:
+            return
+        try:
+            project_root = getattr(self.project_manager, "project_root", None)
+            renumbered = pack_parsers.renumber_steps_text(
+                original, project_root=project_root,
+            )
+        except pack_parsers.ParserUnavailable as exc:
+            self.show_error("Renumber failed", str(exc))
+            return
+        if renumbered == original:
+            self.status_message.emit("Steps already sequential")
+            return
+        self.text_editor.setPlainText(renumbered)
+        self.status_message.emit("Steps renumbered")
     
     def _on_save_json(self):
         """Save JSON artifact."""

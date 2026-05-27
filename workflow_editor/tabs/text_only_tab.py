@@ -104,6 +104,11 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
             "Save Text", self._on_save_text, tooltip="Save procedure text to disk"
         )
         save_row.addWidget(self.save_text_btn)
+        self.renumber_steps_btn = self.create_button(
+            "Renumber steps", self._on_renumber_steps,
+            tooltip="Rewrite the leading N. on every step in ## Steps to be sequential 1..N — useful after inserting a step in the middle",
+        )
+        save_row.addWidget(self.renumber_steps_btn)
         self.parse_and_generate_btn = self.create_button(
             "⚡ Parse + Generate", self._on_parse_and_generate,
             tooltip="One click: Text → JSON → test.py (strict; aborts on any warning)",
@@ -151,6 +156,30 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
             self.artifact_saved.emit()
         except Exception as e:
             self.show_error("Save Failed", str(e))
+
+    def _on_renumber_steps(self) -> None:
+        """Rewrite the leading ``N.`` on every step in the ``## Steps``
+        block to be sequential 1..N. Pure text transform routed
+        through the bundle's parser so the convention stays
+        bundle-defined. Skips setPlainText when nothing changed so
+        the dirty flag doesn't flip needlessly."""
+        from ..llm import pack_parsers
+        original = self.text_editor.toPlainText()
+        if not original:
+            return
+        try:
+            project_root = getattr(self.project_manager, "project_root", None)
+            renumbered = pack_parsers.renumber_steps_text(
+                original, project_root=project_root,
+            )
+        except pack_parsers.ParserUnavailable as exc:
+            self.show_error("Renumber failed", str(exc))
+            return
+        if renumbered == original:
+            self.status_message.emit("Steps already sequential")
+            return
+        self.text_editor.setPlainText(renumbered)
+        self.status_message.emit("Steps renumbered")
 
     def sync_editors_to_artifacts(self):
         if not self.artifact_manager:

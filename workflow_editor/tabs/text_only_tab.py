@@ -30,6 +30,26 @@ from ..widgets.find_replace_bar import FindReplaceBar, install_find_shortcuts
 log = logging.getLogger(__name__)
 
 
+def _post_to_chat(main_window, content: str) -> None:
+    """Post a system-styled message to the chat panel. Silent no-op
+    when the dock or chat panel isn't available (e.g. headless tests)."""
+    dock = getattr(main_window, "dock", None)
+    chat = getattr(dock, "chat_panel", None) if dock else None
+    if chat is None or not hasattr(chat, "add_system_message"):
+        return
+    try:
+        chat.add_system_message(content)
+    except Exception:
+        log.exception("chat notification failed; ignoring")
+
+
+def _format_chat_warnings(warnings: list[str]) -> str:
+    """Append a warning block to a chat message, or empty string if none."""
+    if not warnings:
+        return ""
+    return "\n\n⚠ Warnings:\n" + "\n".join(f"• {w}" for w in warnings)
+
+
 class TextOnlyTab(LLMTabMixin, BaseTab):
     """
     Text-only tab — single editor on procedure_text.md.
@@ -173,9 +193,10 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
 
     def _on_sync_equipment(self) -> None:
         """Synthesize / merge a ``## Equipment`` block from device
-        references in ``## Steps``. Existing entries kept verbatim;
-        new ones appended. Warnings (e.g. measure-only channels) are
-        surfaced via status_message + show_info."""
+        references in ``## Steps``. Existing entries are kept verbatim
+        unless step evidence requires a higher rating (bump-up only).
+        Confirmation + any warnings posted to the chat panel for an
+        easy-to-review trail."""
         from ..llm import pack_parsers
         original = self.text_editor.toPlainText()
         if not original:
@@ -192,22 +213,27 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
             self.status_message.emit(
                 "Sync Equipment: no changes (everything already declared)"
             )
-            if warnings:
-                self.show_info("Sync Equipment", "\n".join(warnings))
+            _post_to_chat(
+                self.main_window,
+                "🔧 Sync Equipment: no changes (## Equipment already matches "
+                "every device referenced in steps)."
+                + _format_chat_warnings(warnings),
+            )
             return
         self.text_editor.setPlainText(new_text)
-        msg = "Equipment synced from steps"
-        if warnings:
-            msg += f" ({len(warnings)} warning(s) — see info)"
-            self.show_info("Sync Equipment warnings", "\n".join(warnings))
-        self.status_message.emit(msg)
+        self.status_message.emit("Equipment synced from steps")
+        _post_to_chat(
+            self.main_window,
+            "🔧 Sync Equipment applied — ## Equipment regenerated from steps."
+            + _format_chat_warnings(warnings),
+        )
 
     def _on_renumber_steps(self) -> None:
         """Rewrite the leading ``N.`` on every step in the ``## Steps``
         block to be sequential 1..N. Pure text transform routed
         through the bundle's parser so the convention stays
         bundle-defined. Skips setPlainText when nothing changed so
-        the dirty flag doesn't flip needlessly."""
+        the dirty flag doesn't flip needlessly. Confirmation in chat."""
         from ..llm import pack_parsers
         original = self.text_editor.toPlainText()
         if not original:
@@ -222,9 +248,18 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
             return
         if renumbered == original:
             self.status_message.emit("Steps already sequential")
+            _post_to_chat(
+                self.main_window,
+                "🔢 Renumber Steps: already sequential — no changes.",
+            )
             return
         self.text_editor.setPlainText(renumbered)
         self.status_message.emit("Steps renumbered")
+        _post_to_chat(
+            self.main_window,
+            "🔢 Renumber Steps applied — every step in ## Steps is now "
+            "sequential 1..N.",
+        )
 
     def sync_editors_to_artifacts(self):
         if not self.artifact_manager:

@@ -280,8 +280,11 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         """Synthesize / merge a ``## Equipment`` block from device
         references in ``## Steps``. Acts only on the LEFT (text) editor
         — the JSON editor's Equipment is downstream of the text via
-        parse, so syncing the text is the canonical move."""
+        parse. Existing entries are kept verbatim unless step evidence
+        requires a higher rating (bump-up only). Confirmation +
+        warnings posted to the chat panel."""
         from ..llm import pack_parsers
+        from .text_only_tab import _post_to_chat, _format_chat_warnings
         original = self.text_editor.toPlainText()
         if not original:
             return
@@ -297,21 +300,27 @@ class TextJsonTab(LLMTabMixin, BaseTab):
             self.status_message.emit(
                 "Sync Equipment: no changes (everything already declared)"
             )
-            if warnings:
-                self.show_info("Sync Equipment", "\n".join(warnings))
+            _post_to_chat(
+                self.main_window,
+                "🔧 Sync Equipment: no changes (## Equipment already matches "
+                "every device referenced in steps)."
+                + _format_chat_warnings(warnings),
+            )
             return
         self.text_editor.setPlainText(new_text)
-        msg = "Equipment synced from steps"
-        if warnings:
-            msg += f" ({len(warnings)} warning(s) — see info)"
-            self.show_info("Sync Equipment warnings", "\n".join(warnings))
-        self.status_message.emit(msg)
+        self.status_message.emit("Equipment synced from steps")
+        _post_to_chat(
+            self.main_window,
+            "🔧 Sync Equipment applied — ## Equipment regenerated from steps."
+            + _format_chat_warnings(warnings),
+        )
 
     def _on_renumber_steps(self) -> None:
         """Rewrite the leading ``N.`` on every step in ``## Steps`` to be
         sequential 1..N. Routed through the bundle's parser so the
-        numbering convention stays bundle-defined."""
+        numbering convention stays bundle-defined. Confirmation in chat."""
         from ..llm import pack_parsers
+        from .text_only_tab import _post_to_chat
         original = self.text_editor.toPlainText()
         if not original:
             return
@@ -325,9 +334,18 @@ class TextJsonTab(LLMTabMixin, BaseTab):
             return
         if renumbered == original:
             self.status_message.emit("Steps already sequential")
+            _post_to_chat(
+                self.main_window,
+                "🔢 Renumber Steps: already sequential — no changes.",
+            )
             return
         self.text_editor.setPlainText(renumbered)
         self.status_message.emit("Steps renumbered")
+        _post_to_chat(
+            self.main_window,
+            "🔢 Renumber Steps applied — every step in ## Steps is now "
+            "sequential 1..N.",
+        )
     
     def _on_save_json(self):
         """Save JSON artifact."""

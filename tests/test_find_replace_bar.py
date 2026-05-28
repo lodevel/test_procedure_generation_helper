@@ -259,6 +259,35 @@ def test_close_bar_hides_and_clears_status(bar_and_editor):
     assert bar.status_label.text() == ""
 
 
+def test_install_shortcuts_registers_editors_on_bar(qapp):
+    """install_find_shortcuts stores the editor list on the bar so
+    menu-driven invocations (Edit → Find) get focus-vs-leftmost
+    target picking too — not just the keyboard shortcut path."""
+    from workflow_editor.widgets.find_replace_bar import install_find_shortcuts
+    from PySide6.QtWidgets import QWidget
+
+    tab = QWidget()
+    left = QPlainTextEdit(tab)
+    right = QPlainTextEdit(tab)
+    bar = FindReplaceBar(tab)
+    install_find_shortcuts(tab, [left, right], bar)
+    assert bar._editors == [left, right]
+
+
+def test_show_find_picks_leftmost_when_focus_outside(qapp):
+    """No editor in the list has focus → leftmost (editors[0]) wins."""
+    from workflow_editor.widgets.find_replace_bar import install_find_shortcuts
+    from PySide6.QtWidgets import QWidget
+
+    tab = QWidget()
+    left = QPlainTextEdit(tab)
+    right = QPlainTextEdit(tab)
+    bar = FindReplaceBar(tab)
+    install_find_shortcuts(tab, [left, right], bar)
+    bar.show_find()  # no target arg — must pick from registered list
+    assert bar._target is left
+
+
 def test_show_find_prefills_find_field_from_selection(bar_and_editor):
     """Quality-of-life: if the user has a short word selected when
     they hit Ctrl+F, pre-fill the Find field with it."""

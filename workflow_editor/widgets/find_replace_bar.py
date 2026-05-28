@@ -35,6 +35,11 @@ class FindReplaceBar(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._target: Optional[QPlainTextEdit] = None
+        # Editors registered via install_find_shortcuts; used to re-pick
+        # the focused-or-leftmost target on every show_find/show_replace
+        # so the menu-driven path (Edit → Find) tracks focus the same
+        # way the keyboard shortcut does.
+        self._editors: list[QPlainTextEdit] = []
         self._setup_ui()
         self.hide()
 
@@ -129,18 +134,31 @@ class FindReplaceBar(QWidget):
         self._target = editor
 
     def show_find(self, target: Optional[QPlainTextEdit] = None) -> None:
-        """Show the bar in find-only mode (Ctrl+F)."""
+        """Show the bar in find-only mode (Ctrl+F). When called with
+        no target and an editor list is registered, re-pick the focused
+        editor (or leftmost) so the menu path tracks focus."""
+        if target is None and self._editors:
+            target = self._pick_target_from_editors()
         if target is not None:
             self.set_target(target)
         self._set_replace_visible(False)
         self._show_and_focus()
 
     def show_replace(self, target: Optional[QPlainTextEdit] = None) -> None:
-        """Show the bar with replace row expanded (Ctrl+H)."""
+        """Show the bar with replace row expanded (Ctrl+H). Same
+        focus-tracking behaviour as show_find."""
+        if target is None and self._editors:
+            target = self._pick_target_from_editors()
         if target is not None:
             self.set_target(target)
         self._set_replace_visible(True)
         self._show_and_focus()
+
+    def _pick_target_from_editors(self) -> QPlainTextEdit:
+        focused = QApplication.focusWidget()
+        if focused in self._editors:
+            return focused  # type: ignore[return-value]
+        return self._editors[0]
 
     def close_bar(self) -> None:
         self.hide()
@@ -345,22 +363,21 @@ def install_find_shortcuts(
     bar targeting the focused editor — or ``editors[0]`` (leftmost) when
     no editor in the list has focus.
 
+    Also registers the editor list on the bar so menu-driven invocations
+    (Edit → Find / Edit → Replace) get the same focus-tracking
+    behaviour as the keyboard shortcut.
+
     Shortcut context is ``Qt.WidgetWithChildrenShortcut`` so the binding
     only fires while the tab is active. Idempotent: calling twice
     registers two shortcuts; the GUI tabs only call it once during
     ``_setup_ui``.
     """
-
-    def _pick_target() -> QPlainTextEdit:
-        focused = QApplication.focusWidget()
-        if focused in editors:
-            return focused  # type: ignore[return-value]
-        return editors[0]
+    bar._editors = list(editors)
 
     find_sc = QShortcut(QKeySequence("Ctrl+F"), tab)
     find_sc.setContext(Qt.WidgetWithChildrenShortcut)
-    find_sc.activated.connect(lambda: bar.show_find(_pick_target()))
+    find_sc.activated.connect(bar.show_find)
 
     replace_sc = QShortcut(QKeySequence("Ctrl+H"), tab)
     replace_sc.setContext(Qt.WidgetWithChildrenShortcut)
-    replace_sc.activated.connect(lambda: bar.show_replace(_pick_target()))
+    replace_sc.activated.connect(bar.show_replace)

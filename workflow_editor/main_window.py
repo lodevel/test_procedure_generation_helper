@@ -37,7 +37,7 @@ from .tabs import (
     WorkspaceTab, TextOnlyTab, TextJsonTab, JsonCodeTab, TraceabilityTab
 )
 from .dock import DockWidget
-from .dialogs import SettingsDialog, CleanDialog, NewProjectDialog, load_settings
+from .dialogs import SettingsDialog, NewProjectDialog, load_settings
 
 log = logging.getLogger(__name__)
 
@@ -441,13 +441,26 @@ class MainWindow(QMainWindow):
         
         # Edit menu
         edit_menu = menubar.addMenu("&Edit")
-        
-        clean_action = QAction("&Clean Files...", self)
-        clean_action.triggered.connect(self._on_clean)
-        edit_menu.addAction(clean_action)
-        
+
+        find_action = QAction("&Find…", self)
+        find_action.setShortcut(QKeySequence.Find)  # Ctrl+F
+        find_action.setToolTip(
+            "Open the find bar on the active tab's text editor "
+            "(or the leftmost editor if focus is elsewhere)."
+        )
+        find_action.triggered.connect(self._on_find)
+        edit_menu.addAction(find_action)
+
+        replace_action = QAction("&Replace…", self)
+        replace_action.setShortcut(QKeySequence("Ctrl+H"))
+        replace_action.setToolTip(
+            "Open the find/replace bar on the active tab's text editor."
+        )
+        replace_action.triggered.connect(self._on_replace)
+        edit_menu.addAction(replace_action)
+
         edit_menu.addSeparator()
-        
+
         self.mark_sync_action = QAction("Mark Artifacts In &Sync", self)
         self.mark_sync_action.setToolTip("Acknowledge that procedure.json and test.py are coherent")
         self.mark_sync_action.triggered.connect(self._on_sync_indicator_clicked)
@@ -1567,26 +1580,27 @@ class MainWindow(QMainWindow):
         if msg.clickedButton() is open_btn and config_json.exists():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(config_json)))
 
-    def _on_clean(self):
-        """Open clean dialog."""
-        if not self.artifact_manager:
-            QMessageBox.warning(self, "No Test", "Please open a test first.")
+    def _on_find(self):
+        """Edit → Find. Delegates to the active tab's FindReplaceBar
+        if it has one. Each tab's bar already handles the
+        focused-editor-vs-leftmost target picking."""
+        self._show_find_bar(replace=False)
+
+    def _on_replace(self):
+        """Edit → Replace. Same delegation as Find, with the replace
+        row expanded."""
+        self._show_find_bar(replace=True)
+
+    def _show_find_bar(self, *, replace: bool) -> None:
+        current = self.tab_widget.currentWidget()
+        bar = getattr(current, "find_bar", None)
+        if bar is None:
+            # Active tab has no find bar (e.g. workspace placeholder); nothing to do.
             return
-        
-        deleted = CleanDialog.clean_test_folder(
-            self.artifact_manager.test_dir,
-            self
-        )
-        
-        if deleted:
-            # Reload artifacts
-            self.artifact_manager.load_all()
-            self.text_only_tab.load_content()
-            self.text_json_tab.load_content()
-            self.json_code_tab.load_content()
-            self._update_status_indicators()
-            # Refresh workspace test list to show updated artifact status
-            self.workspace_widget.refresh()
+        if replace:
+            bar.show_replace()
+        else:
+            bar.show_find()
     
     def _on_about(self):
         """Show about dialog."""

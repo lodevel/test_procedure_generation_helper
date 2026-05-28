@@ -221,13 +221,30 @@ def load_bundle_ownership(bundle_dir: Path) -> dict[str, str] | None:
             path, type(raw).__name__,
         )
         return None
-    if any(not isinstance(k, str) or not isinstance(v, str) for k, v in raw.items()):
-        log.info(
-            "section_ownership: %s contains non-string keys or values; will use default",
-            path,
-        )
-        return None
-    return raw
+    # Two entry shapes are accepted:
+    #   "meta": "parser"                          (legacy)
+    #   "meta": {"owner": "parser", ...}          (object-shape; Commit B)
+    # Object-shape may also carry required/required_keys consumed by the
+    # parser side (section_requirements) — they're ignored here so the
+    # flat owner-only return signature stays the same for legacy callers.
+    flat: dict[str, str] = {}
+    for k, v in raw.items():
+        if not isinstance(k, str):
+            log.info(
+                "section_ownership: non-string key in %s; will use default", path,
+            )
+            return None
+        if isinstance(v, str):
+            flat[k] = v
+        elif isinstance(v, dict) and isinstance(v.get("owner"), str):
+            flat[k] = v["owner"]
+        else:
+            log.info(
+                "section_ownership: section %r has invalid value shape in %s; "
+                "will use default", k, path,
+            )
+            return None
+    return flat
 
 
 def supports_section_ownership(bundle_dir: Path) -> bool:

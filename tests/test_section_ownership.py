@@ -311,6 +311,46 @@ class LoadBundleOwnershipTests(unittest.TestCase):
             result = load_bundle_ownership(bundle)
         self.assertEqual(result, {})
 
+    def test_object_shape_entry_extracts_owner_string(self) -> None:
+        """Commit B: ``{"meta": {"owner": "parser", "required": true,
+        "required_keys": ["format_version"]}}`` returns the flat
+        ``{"meta": "parser"}`` map. The extra object-shape keys are
+        consumed by the parser side (section_requirements), not here."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            bundle = self._make_bundle(Path(td), json.dumps({
+                "meta": {
+                    "owner": "parser",
+                    "required": True,
+                    "required_keys": ["format_version", "board"],
+                },
+                "steps": "llm",  # legacy str shape mixes freely
+            }))
+            result = load_bundle_ownership(bundle)
+        self.assertEqual(result, {"meta": "parser", "steps": "llm"})
+
+    def test_object_shape_missing_owner_returns_none(self) -> None:
+        """Object-shape entry without an ``owner`` string is malformed —
+        the whole file falls back to None (default) rather than silently
+        dropping the section."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            bundle = self._make_bundle(Path(td), json.dumps({
+                "meta": {"required": True},  # no "owner"
+            }))
+            result = load_bundle_ownership(bundle)
+        self.assertIsNone(result)
+
+    def test_object_shape_non_string_owner_returns_none(self) -> None:
+        """``owner`` must be a string. ``{"owner": 42}`` is malformed."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            bundle = self._make_bundle(Path(td), json.dumps({
+                "meta": {"owner": 42},
+            }))
+            result = load_bundle_ownership(bundle)
+        self.assertIsNone(result)
+
 
 # ---------------------------------------------------------------------------
 # supports_section_ownership() tests

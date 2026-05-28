@@ -269,7 +269,7 @@ def parse_text(
     project_python = _resolve_project_python(project_root)
     result = _subprocess_call(
         project_python,
-        {"op": "parse_text", "text": text},
+        {"op": "parse_text", "text": text, "project_root": str(project_root)},
         timeout=_timeout(),
     )
 
@@ -460,9 +460,19 @@ def reconstruct_text(
 # ---------------------------------------------------------------------------
 
 
-def _inproc_parse_text(text: str) -> tuple[dict[str, Any], list[str]]:
+def _inproc_parse_text(
+    text: str,
+    *,
+    project_root: Optional[Path] = None,
+) -> tuple[dict[str, Any], list[str]]:
     wheel = _inproc_import_wheel()
-    result = wheel.parse(text)
+    # Older wheels (< the Commit C bump) don't accept project_root yet.
+    # Fall back to the no-kwarg call so the test harness can keep using
+    # whatever wheel happens to be installed.
+    try:
+        result = wheel.parse(text, project_root=project_root)
+    except TypeError:
+        result = wheel.parse(text)
     if not result.success or result.json is None:
         errors = result.errors if hasattr(result, "errors") else [
             f for f in result.findings if f.severity == "error"

@@ -84,8 +84,18 @@ def _op_is_available(spec: dict) -> dict:
 
 def _op_parse_text(spec: dict) -> dict:
     text = spec["text"]
+    raw_root = spec.get("project_root")
     wheel = _import_wheel()
-    result = wheel.parse(text)
+    # Older wheels (< the Commit C bump) don't accept project_root yet.
+    # Fall back to the no-kwarg call so a stale project venv stays usable.
+    if raw_root is not None:
+        from pathlib import Path as _Path
+        try:
+            result = wheel.parse(text, project_root=_Path(raw_root))
+        except TypeError:
+            result = wheel.parse(text)
+    else:
+        result = wheel.parse(text)
     if not result.success or result.json is None:
         errors = result.errors if hasattr(result, "errors") else [
             f for f in result.findings if f.severity == "error"

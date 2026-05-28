@@ -130,6 +130,19 @@ def _op_renumber_steps(spec: dict) -> dict:
     return {"ok": True, "text": wheel.renumber_steps(text)}
 
 
+def _op_sync_equipment(spec: dict) -> dict:
+    text = spec["text"]
+    profiles = spec.get("controller_profiles", [])
+    wheel = _import_wheel()
+    new_text, findings = wheel.sync_equipment_text(
+        text, controller_profiles=profiles,
+    )
+    # Warnings come back as formatted strings (mirrors _op_parse_text)
+    # so the GUI can display them without knowing the Finding shape.
+    warnings = [_format_finding(f) for f in findings]
+    return {"ok": True, "text": new_text, "warnings": warnings}
+
+
 def _op_generate_code(spec: dict) -> dict:
     procedure = spec["procedure"]
     codegen = _import_codegen()
@@ -188,6 +201,7 @@ _OPS = {
     "parse_text": _op_parse_text,
     "render_text": _op_render_text,
     "renumber_steps": _op_renumber_steps,
+    "sync_equipment": _op_sync_equipment,
     "generate_code": _op_generate_code,
     "validate": _op_validate,
     "section_ownership": _op_section_ownership,

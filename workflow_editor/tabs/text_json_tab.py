@@ -184,6 +184,15 @@ class TextJsonTab(LLMTabMixin, BaseTab):
             tooltip="Rewrite the leading N. on every step in ## Steps to be sequential 1..N — useful after inserting a step in the middle",
         )
         save_row.addWidget(self.renumber_steps_btn)
+        self.sync_equipment_btn = self.create_button(
+            "Sync Equipment", self._on_sync_equipment,
+            tooltip=(
+                "Synthesize ## Equipment from device references in ## Steps. "
+                "Existing entries are kept verbatim (operator customizations "
+                "preserved); new equipment is appended."
+            ),
+        )
+        save_row.addWidget(self.sync_equipment_btn)
         save_row.addStretch()
         file_layout.addLayout(save_row)
         
@@ -266,6 +275,37 @@ class TextJsonTab(LLMTabMixin, BaseTab):
             self.artifact_saved.emit()
         except Exception as e:
             self.show_error("Save Failed", str(e))
+
+    def _on_sync_equipment(self) -> None:
+        """Synthesize / merge a ``## Equipment`` block from device
+        references in ``## Steps``. Acts only on the LEFT (text) editor
+        — the JSON editor's Equipment is downstream of the text via
+        parse, so syncing the text is the canonical move."""
+        from ..llm import pack_parsers
+        original = self.text_editor.toPlainText()
+        if not original:
+            return
+        try:
+            project_root = getattr(self.project_manager, "project_root", None)
+            new_text, warnings = pack_parsers.sync_equipment_from_steps(
+                original, project_root=project_root,
+            )
+        except pack_parsers.ParserUnavailable as exc:
+            self.show_error("Sync Equipment failed", str(exc))
+            return
+        if new_text == original:
+            self.status_message.emit(
+                "Sync Equipment: no changes (everything already declared)"
+            )
+            if warnings:
+                self.show_info("Sync Equipment", "\n".join(warnings))
+            return
+        self.text_editor.setPlainText(new_text)
+        msg = "Equipment synced from steps"
+        if warnings:
+            msg += f" ({len(warnings)} warning(s) — see info)"
+            self.show_info("Sync Equipment warnings", "\n".join(warnings))
+        self.status_message.emit(msg)
 
     def _on_renumber_steps(self) -> None:
         """Rewrite the leading ``N.`` on every step in ``## Steps`` to be

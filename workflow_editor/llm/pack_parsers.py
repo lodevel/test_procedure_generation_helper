@@ -325,6 +325,73 @@ def renumber_steps_text(
     return result["text"]
 
 
+def sync_equipment_from_steps(
+    text: str,
+    project_root: Optional[Path] = None,
+    controller_profiles: Optional[list[dict]] = None,
+) -> tuple[str, list[str]]:
+    """Synthesize / merge a ``## Equipment`` block from the device
+    references in ``## Steps``. Returns ``(new_text, warnings)`` where
+    warnings is a flat list of formatted strings (typically one per
+    measure-only channel).
+
+    When ``controller_profiles`` is None, falls back to reading the
+    bundle's ``defaults.json`` via the ``TPG_BUNDLE_DEFAULTS_PATH``
+    env var (same path the workflows editor uses for its bundle
+    defaults), so the GUI button can call this with just ``text`` and
+    still get controller subtype inference.
+
+    Raises :class:`ParserUnavailable` if the wheel isn't importable.
+    """
+    if controller_profiles is None:
+        controller_profiles = _load_bundle_controller_profiles()
+
+    if project_root is None:
+        return _inproc_sync_equipment(text, controller_profiles)
+
+    project_python = _resolve_project_python(project_root)
+    result = _subprocess_call(
+        project_python,
+        {
+            "op": "sync_equipment",
+            "text": text,
+            "controller_profiles": controller_profiles,
+        },
+        timeout=_timeout(),
+    )
+    if not result.get("ok"):
+        raise ParserUnavailable(result.get("error", "subprocess error"))
+    return result["text"], result.get("warnings", [])
+
+
+def _load_bundle_controller_profiles() -> list[dict]:
+    """Read ``controller_profiles`` from the bundle's defaults.json.
+
+    The parent app exposes the bundle path via ``TPG_BUNDLE_DEFAULTS_PATH``;
+    same convention as ``TaskConfigManager._load_pack_workflow_defaults``.
+    Returns ``[]`` when the env var is unset, the file is missing,
+    malformed, or lacks the ``controller_profiles`` key — equivalent
+    to "no controller inference available", which is safe (PSU/ELOAD/
+    SCOPE/DMM inference still works without it).
+    """
+    import json
+    import os
+    path_str = os.environ.get("TPG_BUNDLE_DEFAULTS_PATH")
+    if not path_str:
+        return []
+    p = Path(path_str)
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    profiles = data.get("controller_profiles")
+    if not isinstance(profiles, list):
+        return []
+    return [p for p in profiles if isinstance(p, dict)]
+
+
 def generate_code(
     procedure: dict[str, Any],
     project_root: Optional[Path] = None,
@@ -492,6 +559,17 @@ def _inproc_render_text(procedure_json: dict[str, Any]) -> str:
 def _inproc_renumber_steps(text: str) -> str:
     wheel = _inproc_import_wheel()
     return wheel.renumber_steps(text)
+
+
+def _inproc_sync_equipment(
+    text: str, controller_profiles: list[dict],
+) -> tuple[str, list[str]]:
+    wheel = _inproc_import_wheel()
+    new_text, findings = wheel.sync_equipment_text(
+        text, controller_profiles=controller_profiles,
+    )
+    warnings = [_format_finding(f) for f in findings]
+    return new_text, warnings
 
 
 def _inproc_generate_code(procedure: dict[str, Any]) -> tuple[str, list[str]]:

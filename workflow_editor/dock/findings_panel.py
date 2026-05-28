@@ -122,6 +122,9 @@ class FindingsPanel(QWidget):
         location = issue.get("location", "")
         if location:
             msg = f"{msg} ({location})"
+        fix = issue.get("suggested_fix", "")
+        if fix:
+            msg = f"{msg} \u2014 Fix: {fix}"
 
         severity = issue.get("severity", "info")
         if severity == "error":

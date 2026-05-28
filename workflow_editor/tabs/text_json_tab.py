@@ -25,6 +25,7 @@ from ..llm import TabContext, LLMTask
 from ..llm.reconstruction import reconstructed_or_error
 from ..dialogs import DiffViewer
 from ..theme import status_modified, status_saved
+from ..widgets.find_replace_bar import FindReplaceBar, install_find_shortcuts
 
 log = logging.getLogger(__name__)
 
@@ -75,11 +76,19 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         
         splitter.setSizes([400, 600])  # Favor JSON side slightly
         layout.addWidget(splitter, stretch=1)
-        
+
+        # Find/Replace bar — Ctrl+F / Ctrl+H target the focused editor
+        # (or the leftmost: text_editor) when invoked.
+        self.find_bar = FindReplaceBar(self)
+        layout.addWidget(self.find_bar)
+        install_find_shortcuts(
+            self, [self.text_editor, self.json_editor], self.find_bar,
+        )
+
         # Actions row
         actions_layout = self._create_actions()
         layout.addLayout(actions_layout)
-        
+
         # Initialize
         self._text_dirty = False
         self._json_dirty = False

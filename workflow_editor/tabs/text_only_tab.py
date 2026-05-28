@@ -25,6 +25,7 @@ from ..llm import TabContext, LLMTask
 from ..llm.reconstruction import reconstructed_or_error
 from ..dialogs import DiffViewer
 from ..theme import status_modified, status_saved
+from ..widgets.find_replace_bar import FindReplaceBar, install_find_shortcuts
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +77,10 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         text_layout.addWidget(self.text_status)
 
         layout.addWidget(text_group, stretch=1)
+
+        self.find_bar = FindReplaceBar(self)
+        layout.addWidget(self.find_bar)
+        install_find_shortcuts(self, [self.text_editor], self.find_bar)
 
         actions_layout = self._create_actions()
         layout.addLayout(actions_layout)

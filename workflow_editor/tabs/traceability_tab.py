@@ -16,6 +16,7 @@ import textwrap
 from .base_tab import BaseTab
 from ..core import ArtifactType, StepMarkerParser
 from ..theme import traceability_highlight, status_modified, status_saved
+from ..widgets.find_replace_bar import FindReplaceBar, install_find_shortcuts
 
 
 class TraceabilityTab(BaseTab):
@@ -85,9 +86,15 @@ class TraceabilityTab(BaseTab):
         
         splitter.addWidget(code_group)
         splitter.setSizes([300, 500])
-        
+
         layout.addWidget(splitter, stretch=1)
-        
+
+        # Find/Replace bar — only the code editor is searchable here;
+        # the step list is a QListWidget and uses its own native filtering.
+        self.find_bar = FindReplaceBar(self)
+        layout.addWidget(self.find_bar)
+        install_find_shortcuts(self, [self.code_editor], self.find_bar)
+
         # Mismatch summary
         self.mismatch_group = QGroupBox("Mapping Issues")
         mismatch_layout = QVBoxLayout(self.mismatch_group)

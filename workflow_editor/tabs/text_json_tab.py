@@ -187,9 +187,10 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         self.sync_equipment_btn = self.create_button(
             "Sync Equipment", self._on_sync_equipment,
             tooltip=(
-                "Synthesize ## Equipment from device references in ## Steps. "
-                "Existing entries are kept verbatim (operator customizations "
-                "preserved); new equipment is appended."
+                "Rescan ## Steps and REGENERATE ## Equipment from device "
+                "references. The existing block is replaced — operator "
+                "customizations are overwritten. Edit manually after Sync "
+                "if you want bench headroom."
             ),
         )
         save_row.addWidget(self.sync_equipment_btn)
@@ -277,12 +278,11 @@ class TextJsonTab(LLMTabMixin, BaseTab):
             self.show_error("Save Failed", str(e))
 
     def _on_sync_equipment(self) -> None:
-        """Synthesize / merge a ``## Equipment`` block from device
-        references in ``## Steps``. Acts only on the LEFT (text) editor
-        — the JSON editor's Equipment is downstream of the text via
-        parse. Existing entries are kept verbatim unless step evidence
-        requires a higher rating (bump-up only). Confirmation +
-        warnings posted to the chat panel."""
+        """Rescan ``## Steps`` and regenerate ``## Equipment`` from
+        scratch. Acts only on the LEFT (text) editor — the JSON
+        editor's Equipment is downstream of the text via parse.
+        Operator customizations on the existing block are
+        overwritten. Confirmation + warnings posted to the chat panel."""
         from ..llm import pack_parsers
         from .text_only_tab import _post_to_chat, _format_chat_warnings
         original = self.text_editor.toPlainText()
@@ -311,7 +311,9 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         self.status_message.emit("Equipment synced from steps")
         _post_to_chat(
             self.main_window,
-            "🔧 Sync Equipment applied — ## Equipment regenerated from steps."
+            "🔧 Sync Equipment applied — ## Equipment regenerated from steps. "
+            "Operator customizations were overwritten; re-add bench headroom "
+            "manually if needed."
             + _format_chat_warnings(warnings),
         )
 

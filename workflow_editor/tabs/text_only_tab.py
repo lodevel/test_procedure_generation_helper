@@ -137,9 +137,11 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         self.sync_equipment_btn = self.create_button(
             "Sync Equipment", self._on_sync_equipment,
             tooltip=(
-                "Synthesize ## Equipment from device references in ## Steps. "
-                "Existing entries are kept verbatim (operator customizations "
-                "preserved); new equipment is appended."
+                "Rescan ## Steps and REGENERATE ## Equipment from device "
+                "references. The existing block is replaced — operator "
+                "customizations (controller subtype, extra headroom on "
+                "max_current, etc.) are overwritten. Edit manually after "
+                "Sync if you want bench headroom."
             ),
         )
         save_row.addWidget(self.sync_equipment_btn)
@@ -192,11 +194,11 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
             self.show_error("Save Failed", str(e))
 
     def _on_sync_equipment(self) -> None:
-        """Synthesize / merge a ``## Equipment`` block from device
-        references in ``## Steps``. Existing entries are kept verbatim
-        unless step evidence requires a higher rating (bump-up only).
-        Confirmation + any warnings posted to the chat panel for an
-        easy-to-review trail."""
+        """Rescan ``## Steps`` and regenerate ``## Equipment`` from
+        scratch. Operator customizations on the existing block are
+        overwritten — Sync makes Equipment reflect the steps
+        as-written. Confirmation + any warnings posted to the chat
+        panel."""
         from ..llm import pack_parsers
         original = self.text_editor.toPlainText()
         if not original:
@@ -224,7 +226,9 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         self.status_message.emit("Equipment synced from steps")
         _post_to_chat(
             self.main_window,
-            "🔧 Sync Equipment applied — ## Equipment regenerated from steps."
+            "🔧 Sync Equipment applied — ## Equipment regenerated from steps. "
+            "Operator customizations were overwritten; re-add bench headroom "
+            "manually if needed."
             + _format_chat_warnings(warnings),
         )
 

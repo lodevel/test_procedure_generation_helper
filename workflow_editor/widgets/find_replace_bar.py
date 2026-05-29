@@ -359,25 +359,18 @@ class FindReplaceBar(QWidget):
 def install_find_shortcuts(
     tab: QWidget, editors: list[QPlainTextEdit], bar: FindReplaceBar,
 ) -> None:
-    """Bind Ctrl+F (find) and Ctrl+H (replace) on *tab* so they open the
-    bar targeting the focused editor — or ``editors[0]`` (leftmost) when
-    no editor in the list has focus.
+    """Register *editors* on *bar* so menu-driven invocations
+    (Edit → Find / Edit → Replace) pick the focused editor — or
+    ``editors[0]`` (leftmost) when no editor in the list has focus.
 
-    Also registers the editor list on the bar so menu-driven invocations
-    (Edit → Find / Edit → Replace) get the same focus-tracking
-    behaviour as the keyboard shortcut.
+    Keyboard shortcuts (Ctrl+F / Ctrl+H) are owned by the main
+    window's Edit menu actions, NOT by per-tab QShortcuts. Having
+    both registered caused Qt's "ambiguous shortcut overload"
+    behaviour — neither binding fired. The menu action's window-level
+    context fires from anywhere (including inside a tab editor) and
+    delegates to the active tab via ``MainWindow._show_find_bar``.
 
-    Shortcut context is ``Qt.WidgetWithChildrenShortcut`` so the binding
-    only fires while the tab is active. Idempotent: calling twice
-    registers two shortcuts; the GUI tabs only call it once during
-    ``_setup_ui``.
+    The function's name is kept for back-compat with existing call
+    sites in each tab's ``_setup_ui``.
     """
     bar._editors = list(editors)
-
-    find_sc = QShortcut(QKeySequence("Ctrl+F"), tab)
-    find_sc.setContext(Qt.WidgetWithChildrenShortcut)
-    find_sc.activated.connect(bar.show_find)
-
-    replace_sc = QShortcut(QKeySequence("Ctrl+H"), tab)
-    replace_sc.setContext(Qt.WidgetWithChildrenShortcut)
-    replace_sc.activated.connect(bar.show_replace)

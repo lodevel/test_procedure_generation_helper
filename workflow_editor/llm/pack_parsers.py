@@ -468,6 +468,36 @@ def pack_capabilities(project_root: Optional[Path] = None) -> dict[str, dict]:
     return caps if isinstance(caps, dict) else {}
 
 
+def bench_fields(project_root: Optional[Path] = None) -> dict[str, list]:
+    """Return the bundle's per-equipment-type config-field descriptor
+    ``{etype: [{name, type, label, default, required?, choices?}]}`` — the single
+    source the equipment-config editor renders from (packs declare it in
+    rules_index.json; codegen derives its ``{field: default}`` from the same
+    data). Empty dict when no bundle / pre-bench_fields bundle (caller falls back
+    to the project-config regex)."""
+    path = _bundle_defaults_path(project_root)
+    if path is None:
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    bf = (data.get("pack_dispatch") or {}).get("bench_fields")
+    return bf if isinstance(bf, dict) else {}
+
+
+def bench_constant_names(etype: str, eid: str, project_root: Optional[Path] = None) -> list[str]:
+    """Generated-code constant names for one equipment instance, e.g.
+    ``["PSU1_VISA", "PSU1_REMOTE", ...]`` — derived from the declared bench_fields
+    as ``<sanitized-upper eid>_<FIELD.upper()>``. Lets the GUI identify
+    operator-editable bench constants from pack declarations instead of regex.
+    Empty when the etype has no declared fields."""
+    import re as _re
+    prefix = _re.sub(r"\W", "_", str(eid)).upper()
+    return [f"{prefix}_{f['name'].upper()}" for f in bench_fields(project_root).get(etype, [])
+            if isinstance(f, dict) and isinstance(f.get("name"), str)]
+
+
 def equipment_types_in(procedure_text: str) -> list[str]:
     """Extract the declared equipment types from a procedure's ``## Equipment``
     block (lines ``<ID> : <type> [params]``). Order-preserving, de-duplicated.

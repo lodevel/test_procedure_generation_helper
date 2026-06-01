@@ -143,6 +143,12 @@ def _subprocess_call(
     """
     runner_path = Path(__file__).resolve().parent / "_pack_parsers_subprocess.py"
 
+    # Tell the child where the project bundle lives so it can populate the pack
+    # registry before running the op. project_python is <project>/.venv/<bin>/python,
+    # so the project root is parents[2] and the bundle is <project>/bundle.
+    # Injected once here rather than in every op-spec builder.
+    spec = {**spec, "_bundle_dir": str(project_python.parents[2] / "bundle")}
+
     try:
         proc = subprocess.run(
             [str(project_python), str(runner_path)],
@@ -199,9 +205,40 @@ def _resolve_project_python(project_root: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
+_REGISTRY_POPULATED = False
+
+
+def _ensure_inproc_registry_populated() -> None:
+    """Populate the process-global pack registry once for the in-process path.
+
+    Post pack-pluggable cutover the base engine resolves pack verbs/schema/
+    equipment from a process-global registry; nothing parses psu/eload/scope/
+    controller until it is populated. Source the bundle dir from
+    ``TPG_BUNDLE_DEFAULTS_PATH`` (a defaults.json file → its parent dir). No-op
+    when unset (no-project editor mode), when the wheel predates the registry
+    (old project), or on any load error — the parser then degrades to the
+    monolithic-free 'unknown pack' findings rather than crashing the editor.
+    """
+    global _REGISTRY_POPULATED
+    if _REGISTRY_POPULATED:
+        return
+    _REGISTRY_POPULATED = True  # set before work so a failure isn't retried per call
+    defaults_path = os.environ.get("TPG_BUNDLE_DEFAULTS_PATH")
+    if not defaults_path:
+        return
+    try:
+        from rules_packager_base.rules.v2_0_2.parser._pack_registry import (
+            load_packs_into_registry,
+        )
+        load_packs_into_registry(Path(defaults_path).parent)
+    except Exception as exc:  # noqa: BLE001 — old wheel / bad bundle: degrade, don't crash
+        log.debug("in-proc pack registry population skipped: %s", exc)
+
+
 def _inproc_import_wheel():
     try:
         import rules_packager_base.rules.v2_0_2.parser as _parser
+        _ensure_inproc_registry_populated()
         return _parser
     except ImportError as exc:
         raise ParserUnavailable(
@@ -215,6 +252,7 @@ def _inproc_import_wheel():
 def _inproc_import_codegen():
     try:
         from rules_packager_base.rules.v2_0_2.parser import codegen as _codegen
+        _ensure_inproc_registry_populated()
         return _codegen
     except ImportError as exc:
         raise ParserUnavailable(

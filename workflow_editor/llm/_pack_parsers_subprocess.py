@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import sys
 import traceback
+from pathlib import Path
 
 
 def _finding_to_dict(f) -> dict:
@@ -213,6 +214,19 @@ def main() -> None:
     try:
         raw = sys.stdin.read()
         spec = json.loads(raw)
+        # Populate the process-global pack registry from the project bundle
+        # before running the op (fresh process per op). Best-effort: an old
+        # wheel without _pack_registry, or a bundle without pack_dispatch,
+        # degrades to 'unknown pack' findings rather than failing the runner.
+        _bundle_dir = spec.get("_bundle_dir")
+        if _bundle_dir:
+            try:
+                from rules_packager_base.rules.v2_0_2.parser._pack_registry import (
+                    load_packs_into_registry,
+                )
+                load_packs_into_registry(Path(_bundle_dir))
+            except Exception:  # noqa: BLE001
+                pass
         op = spec.get("op")
         if op not in _OPS:
             result = {

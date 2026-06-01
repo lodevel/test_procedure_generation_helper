@@ -6,8 +6,48 @@ from workflow_editor.llm import (
     ExternalAPIBackend, OpenCodeConfig
 )
 
+def _populate_pack_registry() -> None:
+    """Populate the process-global pack registry for in-process parser tests.
+
+    Post pack-pluggable cutover the bare wheel parse/render/reconstruct path
+    resolves pack verbs/schema/equipment from a process-global registry. In
+    production the consumer wires it from the project bundle; in this test
+    suite there is no bundle, so register the in-repo packs directly from their
+    self-describing attributes (PACK_PARSER / EQUIPMENT_CLAIMS / SCHEMA_FRAGMENT),
+    mirroring the base pack's conftest. Best-effort: a no-op if the wheel or a
+    pack is not importable, so it can never break a currently-passing test.
+    """
+    try:
+        import importlib
+        from rules_packager_base.rules.v2_0_2.parser._default_registry import (
+            set_default_pack_parsers, register_schema_fragment,
+            register_equipment_claims, clear_registry,
+        )
+    except Exception:
+        return
+    clear_registry()
+    parsers = {}
+    for module_path in ("labscpi.rules.v2_0_1.parser",
+                        "fncore_mockup_driver.rules.v2_0_1.parser"):
+        try:
+            mod = importlib.import_module(module_path)
+        except Exception:
+            continue
+        claims = getattr(mod, "EQUIPMENT_CLAIMS", {}) or {}
+        for etype in claims:
+            parsers[etype] = mod.PACK_PARSER
+        if claims:
+            register_equipment_claims(claims)
+        fragment = getattr(mod, "SCHEMA_FRAGMENT", None)
+        if isinstance(fragment, dict):
+            register_schema_fragment(fragment)
+    if parsers:
+        set_default_pack_parsers(parsers)
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "integration: requires real LLM backend")
+    _populate_pack_registry()
 
 @pytest.fixture
 def sample_llm_request_minimal():

@@ -430,6 +430,115 @@ def _load_bundle_controller_profiles() -> list[dict]:
     return [p for p in profiles if isinstance(p, dict)]
 
 
+# ---------------------------------------------------------------------------
+# Per-capability gating (parse / emit / schema / codegen) — read from the
+# bundle's pack_dispatch.capabilities, so the editor can enable/disable actions
+# per the equipment a procedure actually uses, without importing any pack.
+# ---------------------------------------------------------------------------
+
+# All four concerns a pack may provide for an equipment type.
+CAPABILITIES = ("parse", "emit", "schema", "codegen")
+
+_EQUIP_LINE_RE = None  # lazily compiled
+
+
+def _bundle_defaults_path(project_root: Optional[Path]) -> Optional[Path]:
+    """Resolve the bundle defaults.json: a project's ``<root>/bundle/defaults.json``
+    when a project is open, else ``TPG_BUNDLE_DEFAULTS_PATH`` (editor mode)."""
+    if project_root is not None:
+        p = Path(project_root) / "bundle" / "defaults.json"
+        return p if p.exists() else None
+    env = os.environ.get("TPG_BUNDLE_DEFAULTS_PATH")
+    return Path(env) if env else None
+
+
+def pack_capabilities(project_root: Optional[Path] = None) -> dict[str, dict]:
+    """Return the bundle's per-equipment-type capability map
+    ``{etype: {parse, schema, emit, codegen, pack}}``. Empty dict when no bundle
+    / no capabilities block (pre-capability bundle) — callers treat 'absent' as
+    'unknown', see :func:`can`."""
+    path = _bundle_defaults_path(project_root)
+    if path is None:
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    caps = (data.get("pack_dispatch") or {}).get("capabilities")
+    return caps if isinstance(caps, dict) else {}
+
+
+def equipment_types_in(procedure_text: str) -> list[str]:
+    """Extract the declared equipment types from a procedure's ``## Equipment``
+    block (lines ``<ID> : <type> [params]``). Order-preserving, de-duplicated.
+    Used to decide which packs an action needs."""
+    global _EQUIP_LINE_RE
+    if _EQUIP_LINE_RE is None:
+        import re
+        _EQUIP_LINE_RE = re.compile(r"^[A-Z][A-Z0-9_]*\s*:\s*(\S+)")
+    types: list[str] = []
+    in_block = False
+    for raw in (procedure_text or "").splitlines():
+        line = raw.strip()
+        if line.startswith("## "):
+            in_block = line[3:].strip().lower() == "equipment"
+            continue
+        if in_block:
+            m = _EQUIP_LINE_RE.match(line)
+            if m and m.group(1) not in types:
+                types.append(m.group(1))
+    return types
+
+
+# Equipment types the base engine handles natively (no pack needed).
+_BASE_NATIVE_TYPES = {"dmm"}
+
+
+def can(
+    capability: str,
+    procedure_text: str,
+    project_root: Optional[Path] = None,
+) -> tuple[bool, list[tuple[str, str]]]:
+    """Whether *capability* is available for EVERY equipment type the procedure
+    uses. Returns ``(ok, missing)`` where ``missing`` is a list of
+    ``(equipment_type, pack_or_reason)`` pairs lacking it.
+
+    Rules:
+    - Base-native types (dmm) always satisfy every capability.
+    - When the bundle declares NO capabilities block (pre-capability bundle),
+      assume everything is available (back-compat — preserves today's behavior).
+    - An equipment type absent from the capabilities map → no pack provides it
+      → missing as ``(etype, "no pack")``.
+    - A type present but with the capability flag false → missing as
+      ``(etype, pack_name)``.
+    """
+    return can_for_types(capability, equipment_types_in(procedure_text), project_root)
+
+
+def can_for_types(
+    capability: str,
+    equipment_types,
+    project_root: Optional[Path] = None,
+) -> tuple[bool, list[tuple[str, str]]]:
+    """Like :func:`can` but takes equipment types directly (e.g. from a JSON
+    procedure's ``equipment[*].type``) instead of parsing canonical text."""
+    if capability not in CAPABILITIES:
+        raise ValueError(f"unknown capability {capability!r}; expected one of {CAPABILITIES}")
+    caps = pack_capabilities(project_root)
+    if not caps:
+        return True, []  # pre-capability bundle: don't gate
+    missing: list[tuple[str, str]] = []
+    for etype in equipment_types:
+        if etype in _BASE_NATIVE_TYPES:
+            continue
+        entry = caps.get(etype)
+        if entry is None:
+            missing.append((etype, "no pack"))
+        elif not entry.get(capability, False):
+            missing.append((etype, entry.get("pack", "?")))
+    return (not missing), missing
+
+
 def generate_code(
     procedure: dict[str, Any],
     project_root: Optional[Path] = None,

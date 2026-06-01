@@ -242,6 +242,11 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         self._update_json_status()
         self.tab_context.mark_artifact_modified("procedure_json")
         self.content_changed.emit()
+        # Re-gate Quick Code: the equipment set (hence codegen capability
+        # needed) can change as the operator edits the JSON.
+        if getattr(self, "quick_code_btn", None) is not None and self.quick_code_btn.isVisible():
+            project_root = getattr(self.project_manager, "project_root", None)
+            self._apply_codegen_gating(project_root)
 
     def _on_code_changed(self):
         """Handle code editor changes."""
@@ -537,12 +542,38 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
                 self.main_window.dock.chat_panel.add_system_message("✗ Rejected changes to test.py")
 
     def refresh_code_parser_button(self):
-        """Show or hide the Quick Code button based on whether the
-        rules_packager_base wheel imports cleanly in the project venv."""
+        """Gate the Quick Code button in two tiers: visible iff the wheel
+        imports (else LLM-only), and enabled iff every equipment type in the
+        current JSON has a pack providing the ``codegen`` capability — else
+        disabled with a tooltip naming the missing pack."""
         from ..llm import pack_parsers
         project_root = getattr(self.project_manager, "project_root", None)
         available, _ = pack_parsers.is_available(project_root)
         self.quick_code_btn.setVisible(available)
+        if available:
+            self._apply_codegen_gating(project_root)
+
+    def _apply_codegen_gating(self, project_root):
+        """Enable Quick Code only if every equipment type in the JSON has a
+        codegen-capable pack. Best-effort: any failure leaves it enabled."""
+        from ..llm import pack_parsers
+        try:
+            import json as _json
+            doc = _json.loads(self.json_editor.toPlainText() or "{}")
+            etypes = [e.get("type") for e in (doc.get("equipment") or [])
+                      if isinstance(e, dict) and e.get("type")]
+            ok, missing = pack_parsers.can_for_types("codegen", etypes, project_root)
+            if ok:
+                self.quick_code_btn.setEnabled(True)
+                self.quick_code_btn.setToolTip("Deterministic JSON → Code")
+            else:
+                names = ", ".join(f"{e} ({p})" for e, p in dict(missing).items())
+                self.quick_code_btn.setEnabled(False)
+                self.quick_code_btn.setToolTip(
+                    f"No code generator for {names}. Use the LLM workflow."
+                )
+        except Exception:
+            self.quick_code_btn.setEnabled(True)  # never break the editor over gating
 
     def _on_quick_code(self):
         """Deterministic JSON → Code without LLM (rule-based, instant)."""

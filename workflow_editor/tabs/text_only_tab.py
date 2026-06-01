@@ -179,6 +179,12 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         self._update_text_status()
         self.tab_context.mark_artifact_modified("procedure_text")
         self.content_changed.emit()
+        # Re-gate ⚡ Parse + Generate: the equipment set (hence pack
+        # capabilities needed) can change as the operator edits the text.
+        btn = getattr(self, "parse_and_generate_btn", None)
+        if btn is not None and btn.isVisible():
+            project_root = getattr(self.project_manager, "project_root", None)
+            self._apply_capability_gating(project_root)
 
     def _on_save_text(self):
         try:
@@ -296,14 +302,43 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         self._run_task_async(LLMTask.REVIEW_TEXT_PROCEDURE)
 
     def refresh_parser_button(self):
-        """Show ⚡ Parse + Generate when the rules_packager_base wheel is
-        importable in the project venv. Mirrors text_json_tab so the
-        button hides cleanly on bench setups without the wheel.
+        """Gate ⚡ Parse + Generate in two tiers (mirrors text_json_tab):
+        visible iff the rules_packager_base wheel imports, and — when visible —
+        enabled iff every equipment type in the current procedure has a pack
+        providing parse + codegen; else disabled with a tooltip naming the
+        missing pack so an unsupported-equipment procedure can't dump a cryptic
+        EQP_TYPE_UNKNOWN / ValueError.
         """
         from ..llm import pack_parsers
         project_root = getattr(self.project_manager, "project_root", None)
         available, _ = pack_parsers.is_available(project_root)
         self.parse_and_generate_btn.setVisible(available)
+        if available:
+            self._apply_capability_gating(project_root)
+
+    def _apply_capability_gating(self, project_root):
+        """Enable ⚡ Parse + Generate only if every equipment type the procedure
+        uses has a parse+codegen-capable pack. Best-effort: any failure leaves
+        the button enabled (gating is UX, never a correctness gate)."""
+        from ..llm import pack_parsers
+        try:
+            text = self.text_editor.toPlainText()
+            missing = []
+            for cap in ("parse", "codegen"):
+                ok, miss = pack_parsers.can(cap, text, project_root)
+                if not ok:
+                    missing.extend(miss)
+            if missing:
+                names = ", ".join(f"{e} ({p})" for e, p in dict(missing).items())
+                self.parse_and_generate_btn.setEnabled(False)
+                self.parse_and_generate_btn.setToolTip(
+                    f"No deterministic support for {names}. Use the LLM workflow."
+                )
+            else:
+                self.parse_and_generate_btn.setEnabled(True)
+                self.parse_and_generate_btn.setToolTip("Parse + generate code")
+        except Exception:
+            self.parse_and_generate_btn.setEnabled(True)
 
     def _on_parse_and_generate(self):
         """Strict one-click: Text → JSON → test.py with diff review.

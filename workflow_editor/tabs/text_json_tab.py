@@ -252,6 +252,11 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         self._update_text_status()
         self.tab_context.mark_artifact_modified("procedure_text")
         self.content_changed.emit()
+        # Re-gate the ⚡ buttons: the equipment set (hence pack capabilities
+        # needed) can change as the operator edits the ## Equipment block.
+        if getattr(self, "quick_parse_btn", None) is not None and self.quick_parse_btn.isVisible():
+            project_root = getattr(self.project_manager, "project_root", None)
+            self._apply_capability_gating(project_root)
 
     def _on_json_changed(self):
         """Handle JSON editor changes."""
@@ -411,10 +416,16 @@ class TextJsonTab(LLMTabMixin, BaseTab):
 
 
     def refresh_parser_button(self):
-        """Show or hide both deterministic ⚡ buttons (Text→JSON and
-        JSON→Text) based on whether the rules_packager_base wheel
-        imports cleanly in the project venv. Single toggle because
-        both buttons share the same wheel dependency.
+        """Gate the deterministic ⚡ buttons in two tiers:
+
+        - install-tier (visibility): hidden unless the rules_packager_base
+          wheel imports cleanly — then the LLM workflow is the only path.
+        - capability-tier (enable + tooltip): when visible, each button is
+          enabled only if every equipment type the current procedure uses has
+          a pack providing that button's capability (parse / emit / codegen).
+          Otherwise it is disabled with a tooltip naming the missing pack, so
+          an unsupported-equipment procedure cannot dump a cryptic
+          EQP_TYPE_UNKNOWN / ValueError — the operator is told to use the LLM.
         """
         from ..llm import pack_parsers
         project_root = getattr(self.project_manager, "project_root", None)
@@ -422,6 +433,41 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         self.quick_parse_btn.setVisible(available)
         self.quick_render_btn.setVisible(available)
         self.parse_and_generate_btn.setVisible(available)
+        if available:
+            self._apply_capability_gating(project_root)
+
+    def _apply_capability_gating(self, project_root):
+        """Enable/disable the ⚡ buttons per the current procedure's equipment
+        capabilities. Best-effort: any failure leaves buttons enabled (gating
+        is UX, never a correctness gate)."""
+        from ..llm import pack_parsers
+        try:
+            text = self.text_editor.toPlainText()
+        except Exception:
+            return
+
+        def gate(btn, default_label, *caps):
+            try:
+                missing = []
+                for cap in caps:
+                    ok, miss = pack_parsers.can(cap, text, project_root)
+                    if not ok:
+                        missing.extend(miss)
+                if missing:
+                    names = ", ".join(f"{e} ({p})" for e, p in dict(missing).items())
+                    btn.setEnabled(False)
+                    btn.setToolTip(
+                        f"No deterministic support for {names}. Use the LLM workflow."
+                    )
+                else:
+                    btn.setEnabled(True)
+                    btn.setToolTip(default_label)
+            except Exception:
+                btn.setEnabled(True)  # never break the editor over gating
+
+        gate(self.quick_parse_btn, "Deterministic Text → JSON", "parse")
+        gate(self.quick_render_btn, "Deterministic JSON → Text", "parse", "emit")
+        gate(self.parse_and_generate_btn, "Parse + generate code", "parse", "codegen")
 
     def _on_quick_parse(self):
         """Deterministic Text → JSON without LLM (rule-based, instant)."""

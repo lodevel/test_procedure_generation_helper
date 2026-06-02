@@ -144,6 +144,14 @@ def _op_sync_equipment(spec: dict) -> dict:
     return {"ok": True, "text": new_text, "warnings": warnings}
 
 
+def _op_sync_meta(spec: dict) -> dict:
+    text = spec["text"]
+    wheel = _import_wheel()
+    new_text, findings = wheel.sync_meta_text(text)
+    warnings = [_format_finding(f) for f in findings]
+    return {"ok": True, "text": new_text, "warnings": warnings}
+
+
 def _op_generate_code(spec: dict) -> dict:
     procedure = spec["procedure"]
     codegen = _import_codegen()
@@ -203,6 +211,7 @@ _OPS = {
     "render_text": _op_render_text,
     "renumber_steps": _op_renumber_steps,
     "sync_equipment": _op_sync_equipment,
+    "sync_meta": _op_sync_meta,
     "generate_code": _op_generate_code,
     "validate": _op_validate,
     "section_ownership": _op_section_ownership,

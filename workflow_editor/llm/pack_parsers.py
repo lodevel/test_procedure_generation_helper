@@ -402,6 +402,29 @@ def sync_equipment_from_steps(
     return result["text"], result.get("warnings", [])
 
 
+def sync_meta_text(
+    text: str,
+    project_root: Optional[Path] = None,
+) -> tuple[str, list[str]]:
+    """Regenerate the ``## Meta`` block (format_version / board + the per-pack
+    ``rules_pack`` / ``labscpi_pack`` / ``fncore_pack`` version pins) from the
+    active bundle, with no LLM — the deterministic counterpart to the LLM. Board
+    / format_version / extra keys are preserved. Returns ``(new_text, warnings)``.
+    Raises :class:`ParserUnavailable` if the wheel isn't importable."""
+    if project_root is None:
+        return _inproc_sync_meta(text)
+
+    project_python = _resolve_project_python(project_root)
+    result = _subprocess_call(
+        project_python,
+        {"op": "sync_meta", "text": text},
+        timeout=_timeout(),
+    )
+    if not result.get("ok"):
+        raise ParserUnavailable(result.get("error", "subprocess error"))
+    return result["text"], result.get("warnings", [])
+
+
 def _load_bundle_controller_profiles() -> list[dict]:
     """Read ``controller_profiles`` from the bundle's defaults.json.
 
@@ -745,6 +768,13 @@ def _inproc_sync_equipment(
     new_text, findings = wheel.sync_equipment_text(
         text, controller_profiles=controller_profiles,
     )
+    warnings = [_format_finding(f) for f in findings]
+    return new_text, warnings
+
+
+def _inproc_sync_meta(text: str) -> tuple[str, list[str]]:
+    wheel = _inproc_import_wheel()
+    new_text, findings = wheel.sync_meta_text(text)
     warnings = [_format_finding(f) for f in findings]
     return new_text, warnings
 

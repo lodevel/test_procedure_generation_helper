@@ -194,6 +194,15 @@ class TextJsonTab(LLMTabMixin, BaseTab):
             ),
         )
         save_row.addWidget(self.sync_equipment_btn)
+        self.sync_meta_btn = self.create_button(
+            "Sync Meta", self._on_sync_meta,
+            tooltip=(
+                "Regenerate ## Meta (format_version / board / rules_pack / "
+                "labscpi_pack / fncore_pack) from the active bundle — no LLM. "
+                "board and format_version are preserved; pack versions re-pinned."
+            ),
+        )
+        save_row.addWidget(self.sync_meta_btn)
         save_row.addStretch()
         file_layout.addLayout(save_row)
         
@@ -319,6 +328,42 @@ class TextJsonTab(LLMTabMixin, BaseTab):
             "🔧 Sync Equipment applied — ## Equipment regenerated from steps. "
             "Operator customizations were overwritten; re-add bench headroom "
             "manually if needed."
+            + _format_chat_warnings(warnings),
+        )
+
+    def _on_sync_meta(self) -> None:
+        """Regenerate the ``## Meta`` block (format_version / board + pack pins)
+        from the active bundle, deterministically (no LLM). Acts only on the
+        LEFT (text) editor; board / format_version are preserved."""
+        from ..llm import pack_parsers
+        from .text_only_tab import _post_to_chat, _format_chat_warnings
+        original = self.text_editor.toPlainText()
+        if not original:
+            return
+        try:
+            project_root = getattr(self.project_manager, "project_root", None)
+            new_text, warnings = pack_parsers.sync_meta_text(
+                original, project_root=project_root,
+            )
+        except pack_parsers.ParserUnavailable as exc:
+            self.show_error("Sync Meta failed", str(exc))
+            return
+        if new_text == original:
+            self.status_message.emit(
+                "Sync Meta: no changes (## Meta already matches the bundle)"
+            )
+            _post_to_chat(
+                self.main_window,
+                "🏷️ Sync Meta: no changes (## Meta already matches the active bundle)."
+                + _format_chat_warnings(warnings),
+            )
+            return
+        self.text_editor.setPlainText(new_text)
+        self.status_message.emit("Meta synced from bundle")
+        _post_to_chat(
+            self.main_window,
+            "🏷️ Sync Meta applied — ## Meta regenerated from the active bundle "
+            "(pack versions re-pinned; board / format_version preserved)."
             + _format_chat_warnings(warnings),
         )
 

@@ -261,25 +261,50 @@ Test procedure project created with Workflow Editor.
     # folder is left in place for legacy projects but inert.
 
     def load_equipment_patterns(self) -> list[re.Pattern[str]]:
-        """Load equipment-configuration patterns from the project config.
+        """Compiled patterns matching operator-editable bench-config constants
+        (``<EID>_VISA = ...``, ``<EID>_BAUD = ...``), used by
+        ``sync_utils.normalize_for_hash`` so editing a bench value doesn't trip
+        the procedure.json/test.py out-of-sync check.
 
-        Reads ``config/config.json`` → ``patterns`` section (visa, remote,
-        baud regexes) and ``profiles.controllers[].override_suffix``.
-        Returns compiled patterns suitable for ``sync_utils.normalize_for_hash``.
+        SINGLE SOURCE = the pack-declared ``bench_fields`` (read from the bundle
+        via ``pack_parsers.bench_fields``): one pattern per declared field name,
+        so a new pack/field is covered with zero project config. The project
+        ``config/config.json`` ``patterns`` / ``profiles.controllers[].override_suffix``
+        are still honoured as an optional per-project OVERRIDE (back-compat for
+        pre-bench_fields bundles or operator-added custom fields).
         """
+        compiled: list[re.Pattern[str]] = []
+
+        # 1. Pack-declared bench fields (single source) → one constant-matching
+        #    pattern per declared field name (VISA, BAUD, MANUAL_OVERRIDE, ...).
+        try:
+            from workflow_editor.llm.pack_parsers import bench_fields as _bench_fields
+            declared = _bench_fields(self.project_root)
+        except Exception:
+            declared = {}
+        field_names = sorted({
+            f["name"].upper()
+            for fields in declared.values()
+            for f in fields
+            if isinstance(f, dict) and isinstance(f.get("name"), str)
+        })
+        for fname in field_names:
+            compiled.append(
+                re.compile(rf"^[_A-Za-z][_A-Za-z0-9]*_{re.escape(fname)}\s*=.*", re.MULTILINE)
+            )
+
+        # 2. Project config.json patterns / override_suffix — optional override.
         config_dir = self.get_config_dir()
         if config_dir is None:
-            return []
+            return compiled
         config_file = config_dir / "config.json"
         if not config_file.exists():
-            return []
+            return compiled
         try:
             data = json.loads(config_file.read_text(encoding="utf-8"))
         except Exception:
             log.warning("Failed to read project config for equipment patterns")
-            return []
-
-        compiled: list[re.Pattern[str]] = []
+            return compiled
 
         # Patterns section (visa, remote, baud, etc.)
         patterns = data.get("patterns", {})

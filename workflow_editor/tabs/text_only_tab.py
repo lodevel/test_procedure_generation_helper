@@ -154,6 +154,9 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
                 "re-pinned to the bundle."
             ),
         )
+        # Package-delivered feature: hidden until refresh_parser_button confirms
+        # the installed wheel provides sync_meta_text (old wheel → no button).
+        self.sync_meta_btn.setVisible(False)
         save_row.addWidget(self.sync_meta_btn)
         self.parse_and_generate_btn = self.create_button(
             "⚡ Parse + Generate", self._on_parse_and_generate,
@@ -359,6 +362,9 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         project_root = getattr(self.project_manager, "project_root", None)
         available, _ = pack_parsers.is_available(project_root)
         self.parse_and_generate_btn.setVisible(available)
+        # Sync Meta gates on the function itself, not just wheel-imports: an old
+        # wheel imports (available=True) yet lacks sync_meta_text.
+        self.sync_meta_btn.setVisible(pack_parsers.supports_sync_meta(project_root))
         if available:
             self._apply_capability_gating(project_root)
 

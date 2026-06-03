@@ -425,6 +425,53 @@ def sync_meta_text(
     return result["text"], result.get("warnings", [])
 
 
+def supports_sync_meta(project_root: Optional[Path] = None) -> bool:
+    """Whether the ACTIVE wheel provides ``sync_meta_text``.
+
+    The "Sync Meta" button is gated on this: the feature is delivered by the
+    package, so if the installed wheel predates it (imports fine but lacks the
+    function) the button is hidden rather than shown-then-erroring on click.
+    Mirrors :func:`is_available`'s in-proc/subprocess split. Best-effort — any
+    probe failure returns ``False`` (hide the button)."""
+    if project_root is None:
+        try:
+            return hasattr(_inproc_import_wheel(), "sync_meta_text")
+        except ParserUnavailable:
+            return False
+    try:
+        project_python = _resolve_project_python(project_root)
+    except ParserUnavailable:
+        return False
+    result = _subprocess_call(
+        project_python,
+        {"op": "supports", "attr": "sync_meta_text"},
+        timeout=_timeout(),
+    )
+    return bool(result.get("ok") and result.get("supported"))
+
+
+def sync_meta_json(
+    procedure_json: dict[str, Any],
+    project_root: Optional[Path] = None,
+) -> dict[str, Any]:
+    """Return the parser-owned ``meta`` block for ``procedure_json``, re-derived
+    from the ACTIVE BUNDLE.
+
+    JSON-side counterpart to :func:`sync_meta_text`. Composes the existing
+    bridges render_text (JSON->text) -> sync_meta_text (rewrites ``## Meta`` from
+    the active bundle, PRESERVING operator-owned keys like ``board``) ->
+    parse_text (text->JSON), so the pin-derivation lives in exactly one place
+    (the wheel) rather than being re-implemented in the consumer. Raises
+    :class:`ParserUnavailable` / :class:`ParseFailure` on any failure; callers
+    treat that as 'leave meta as the LLM authored it'.
+    """
+    rendered = render_text(procedure_json, project_root=project_root)
+    synced, _ = sync_meta_text(rendered, project_root=project_root)
+    reparsed, _ = parse_text(synced, project_root=project_root)
+    meta = reparsed.get("meta")
+    return meta if isinstance(meta, dict) else {}
+
+
 def _load_bundle_controller_profiles() -> list[dict]:
     """Read ``controller_profiles`` from the bundle's defaults.json.
 

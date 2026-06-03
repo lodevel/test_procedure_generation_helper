@@ -83,6 +83,21 @@ def _op_is_available(spec: dict) -> dict:
         }
 
 
+def _op_supports(spec: dict) -> dict:
+    """Whether the installed wheel exposes a named top-level function.
+
+    Gates UI buttons on optional/newer parser features (e.g. ``sync_meta_text``):
+    an older wheel that imports fine but predates the function reports
+    ``supported=False`` so the button is hidden rather than raising
+    AttributeError on click.
+    """
+    try:
+        wheel = _import_wheel()
+    except ImportError:
+        return {"ok": True, "supported": False}
+    return {"ok": True, "supported": hasattr(wheel, spec["attr"])}
+
+
 def _op_parse_text(spec: dict) -> dict:
     text = spec["text"]
     raw_root = spec.get("project_root")
@@ -207,6 +222,7 @@ def _op_reconstruct(spec: dict) -> dict:
 
 _OPS = {
     "is_available": _op_is_available,
+    "supports": _op_supports,
     "parse_text": _op_parse_text,
     "render_text": _op_render_text,
     "renumber_steps": _op_renumber_steps,

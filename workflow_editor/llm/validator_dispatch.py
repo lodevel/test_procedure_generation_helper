@@ -603,6 +603,12 @@ def _validate_proposed_json(
             return _outcome_from_parse_error(
                 _FauxParseError("JS_BODY_INVALID", str(exc))
             )
+    # Mirror the text path's reconstruct step, JSON-side: re-derive the
+    # parser-owned Meta pins (format_version / rules_pack and the conditional
+    # labscpi_pack / fncore_pack) from the ACTIVE BUNDLE so the LLM may OMIT
+    # meta and never supplies a wrong-but-valid pin. Best-effort: any failure
+    # leaves the JSON untouched and the validator reports the genuine error.
+    _fill_parser_owned_meta(proposed_json, project_root)
     # Cross-check sides: prefer proposed text when the LLM proposed it in
     # the same turn — otherwise the validator compares the new json
     # against the operator's stale (likely legacy) editor state and the
@@ -613,6 +619,38 @@ def _validate_proposed_json(
         kwargs["text"] = text
     report = validate_fn(**kwargs)
     return _outcome_from_report(report)
+
+
+def _fill_parser_owned_meta(
+    json_obj: Any, project_root: Optional[Path],
+) -> None:
+    """Graft bundle-derived parser-owned meta onto ``json_obj['meta']`` in place.
+
+    JSON-side analogue of the text path's reconstruct step
+    (``_validate_proposed_text`` -> ``reconstruct_for_pipeline``). Re-derives the
+    parser-owned Meta (format_version / rules_pack + conditional labscpi_pack /
+    fncore_pack pins) from the active bundle via ``pack_parsers.sync_meta_json``,
+    which PRESERVES operator-owned keys (board, requirement, revision,
+    authored_by). So the LLM may OMIT meta — or supply a wrong-but-valid pin —
+    and the validated meta always reflects the active bundle. Best-effort and
+    non-fatal: if the deterministic path is unavailable or the proposal is too
+    broken to render/parse, the JSON is left exactly as the LLM authored it and
+    the validator reports the real finding.
+    """
+    if not isinstance(json_obj, dict):
+        return
+    from . import pack_parsers
+
+    try:
+        derived = pack_parsers.sync_meta_json(json_obj, project_root=project_root)
+    except (pack_parsers.ParserUnavailable, pack_parsers.ParseFailure) as exc:
+        log.debug("meta fill skipped (parser path unavailable): %s", exc)
+        return
+    except Exception as exc:  # noqa: BLE001 - never break the gate on a fill error
+        log.debug("meta fill skipped (unexpected): %s", exc)
+        return
+    if derived:
+        json_obj["meta"] = derived
 
 
 def _validate_proposed_code(

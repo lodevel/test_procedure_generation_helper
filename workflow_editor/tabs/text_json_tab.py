@@ -202,6 +202,9 @@ class TextJsonTab(LLMTabMixin, BaseTab):
                 "board and format_version are preserved; pack versions re-pinned."
             ),
         )
+        # Package-delivered feature: hidden until the availability refresh confirms
+        # the installed wheel provides sync_meta_text (old wheel → no button).
+        self.sync_meta_btn.setVisible(False)
         save_row.addWidget(self.sync_meta_btn)
         save_row.addStretch()
         file_layout.addLayout(save_row)
@@ -478,6 +481,9 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         self.quick_parse_btn.setVisible(available)
         self.quick_render_btn.setVisible(available)
         self.parse_and_generate_btn.setVisible(available)
+        # Sync Meta gates on the function itself, not just wheel-imports: an old
+        # wheel imports (available=True) yet lacks sync_meta_text.
+        self.sync_meta_btn.setVisible(pack_parsers.supports_sync_meta(project_root))
         if available:
             self._apply_capability_gating(project_root)
 

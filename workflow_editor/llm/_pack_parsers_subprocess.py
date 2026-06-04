@@ -1,9 +1,14 @@
 """Subprocess CLI runner for rules_packager_base wheel operations.
 
-Invoked as ``python -m workflow_editor.llm._pack_parsers_subprocess`` with
-PYTHONPATH set to the editor package's parent dir.  Reads a JSON op spec
-from stdin, executes the requested operation via direct in-process import
-of ``rules_packager_base``, writes a JSON result to stdout.
+Invoked by FILE PATH (NOT ``-m``)::
+
+    <project>/.venv/<bin>/python <abs>/_pack_parsers_subprocess.py
+
+Running via ``-m`` would trigger ``workflow_editor/__init__.py`` (which imports
+PySide6, absent from the project venv); invoking by path keeps
+``__name__ == "__main__"`` and skips the package init.  Reads a JSON op spec
+from stdin, executes the requested operation via direct in-process import of
+``rules_packager_base``, writes a JSON result to stdout.
 
 Wire format (stdin → stdout):
 
@@ -18,23 +23,31 @@ Wire format (stdin → stdout):
 
 Ops:
   is_available  → {"ok": true, "available": bool, "reason": str}
+  supports      → {"ok": true, "supported": bool}   (input: {"attr": str})
   parse_text    → {"ok": true, "json": dict, "warnings": [str]}
                   or {"ok": false, "kind": "ParseFailure", "error": str,
                       "code": str, "line": int|null, "column": int|null,
                       "fix_hint": str, "findings": [{...}]}
   render_text   → {"ok": true, "text": str}
+  renumber_steps → {"ok": true, "text": str}
+  sync_equipment → {"ok": true, "text": str, "warnings": [str]}
+  sync_meta     → {"ok": true, "text": str, "warnings": [str]}
   generate_code → {"ok": true, "code": str, "warnings": [str]}
   validate      → {"ok": true, "findings": [{code, message, severity, line,
                                               col, fix_hint, fixable_by}]}
   section_ownership → {"ok": true, "ownership": {section: owner}}
   reconstruct   → {"ok": true, "success": bool, "text": str|null,
                    "json": dict|null, "findings": [{...}]}
+  build_manual_run → {"ok": true, "test_name": str, "aborted": bool,
+                      "steps": [{...StepDescriptor...}],
+                      "skipped": [{...StepDescriptor...}]}
 """
 from __future__ import annotations
 
 import json
 import sys
 import traceback
+from dataclasses import asdict
 from pathlib import Path
 
 
@@ -220,6 +233,37 @@ def _op_reconstruct(spec: dict) -> dict:
     }
 
 
+def _int_keyed(d) -> dict:
+    """Restore integer measurement-ref keys lost crossing the JSON boundary.
+
+    The wheel keys ``measurements`` by the integer ``{N}`` ref, but JSON object
+    keys are strings, so a dict sent over stdin arrives string-keyed. Convert
+    back to int, leaving any non-integer key untouched (defensive)."""
+    if not isinstance(d, dict):
+        return {}
+    out: dict = {}
+    for k, v in d.items():
+        try:
+            out[int(k)] = v
+        except (TypeError, ValueError):
+            out[k] = v
+    return out
+
+
+def _op_build_manual_run(spec: dict) -> dict:
+    procedure_json = spec["procedure_json"]
+    measurements = _int_keyed(spec.get("measurements") or {})
+    controls = spec.get("controls") or {}      # loop-sentinel node_path keys stay strings
+    run = _import_wheel().build_manual_run(procedure_json, measurements, controls)
+    return {
+        "ok": True,
+        "test_name": run.test_name,
+        "steps": [asdict(s) for s in run.steps],
+        "skipped": [asdict(s) for s in run.skipped],
+        "aborted": run.aborted,
+    }
+
+
 _OPS = {
     "is_available": _op_is_available,
     "supports": _op_supports,
@@ -232,6 +276,7 @@ _OPS = {
     "validate": _op_validate,
     "section_ownership": _op_section_ownership,
     "reconstruct": _op_reconstruct,
+    "build_manual_run": _op_build_manual_run,
 }
 
 

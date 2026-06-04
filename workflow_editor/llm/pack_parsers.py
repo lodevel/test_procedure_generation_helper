@@ -530,6 +530,66 @@ def supports_build_manual_run(project_root: Optional[Path] = None) -> bool:
     return bool(result.get("ok") and result.get("supported"))
 
 
+# Every wheel function the guided-manual mode needs to operate end-to-end
+# (walk the plan AND Finish/Save). The launch button gates on ALL of them so it
+# never enables a mode the operator couldn't complete.
+_GUIDED_MANUAL_FNS = ("build_manual_run", "build_manual_result")
+
+
+def supports_guided_manual(project_root: Optional[Path] = None) -> bool:
+    """Whether the wheel exposes EVERY function guided-manual needs
+    (:data:`_GUIDED_MANUAL_FNS`). Mirrors :func:`supports_sync_meta`'s in-proc /
+    subprocess split; any probe failure returns ``False``."""
+    if project_root is None:
+        try:
+            wheel = _inproc_import_wheel()
+            return all(hasattr(wheel, fn) for fn in _GUIDED_MANUAL_FNS)
+        except ParserUnavailable:
+            return False
+    try:
+        project_python = _resolve_project_python(project_root)
+    except ParserUnavailable:
+        return False
+    result = _subprocess_call(
+        project_python,
+        {"op": "supports", "attrs": list(_GUIDED_MANUAL_FNS)},
+        timeout=_timeout(),
+    )
+    return bool(result.get("ok") and result.get("supported"))
+
+
+def build_manual_result(
+    procedure_json: dict[str, Any],
+    measurements: Optional[dict] = None,
+    controls: Optional[dict] = None,
+    project_root: Optional[Path] = None,
+) -> dict:
+    """Evaluate a guided-manual run into a ``results.json``-compatible dict —
+    byte-compatible with the automated test.py output (same Result schema, same
+    build_criteria/eval_verdicts), so the GUI's status badges + report generation
+    consume it unchanged. Dispatches into the PROJECT venv (subprocess) when
+    ``project_root`` is set — the same wheel that runs the test. Raises
+    :class:`ParserUnavailable` if the wheel isn't importable."""
+    if project_root is None:
+        return _inproc_build_manual_result(procedure_json, measurements, controls)
+
+    project_python = _resolve_project_python(project_root)
+    result = _subprocess_call(
+        project_python,
+        {
+            "op": "build_manual_result",
+            "procedure_json": procedure_json,
+            "measurements": measurements,
+            "controls": controls,
+        },
+        timeout=_timeout(),
+    )
+    if not result.get("ok"):
+        raise ParserUnavailable(result.get("error", "subprocess error"))
+    out = result.get("result")
+    return out if isinstance(out, dict) else {}
+
+
 def _load_bundle_controller_profiles() -> list[dict]:
     """Read ``controller_profiles`` from the bundle's defaults.json.
 
@@ -907,6 +967,20 @@ def _inproc_build_manual_run(
     # then hand the wheel the same shapes).
     run = wheel.build_manual_run(procedure_json, measurements or {}, controls or {})
     return ManualRunResult.from_wheel(run)
+
+
+def _inproc_build_manual_result(
+    procedure_json: dict[str, Any],
+    measurements: Optional[dict],
+    controls: Optional[dict],
+) -> dict:
+    wheel = _inproc_import_wheel()
+    if not hasattr(wheel, "build_manual_result"):
+        raise ParserUnavailable(
+            f"{_REQUIRED_WHEEL} predates build_manual_result; reinstall a newer "
+            f"rules_packager_base wheel. The LLM fallback remains available."
+        )
+    return wheel.build_manual_result(procedure_json, measurements or {}, controls or {})
 
 
 def _inproc_validate(

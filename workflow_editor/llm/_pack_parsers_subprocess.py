@@ -41,6 +41,7 @@ Ops:
   build_manual_run → {"ok": true, "test_name": str, "aborted": bool,
                       "steps": [{...StepDescriptor...}],
                       "skipped": [{...StepDescriptor...}]}
+  build_manual_result → {"ok": true, "result": {...results.json schema...}}
 """
 from __future__ import annotations
 
@@ -108,6 +109,9 @@ def _op_supports(spec: dict) -> dict:
         wheel = _import_wheel()
     except ImportError:
         return {"ok": True, "supported": False}
+    attrs = spec.get("attrs")  # list -> True only if ALL present (multi-fn gate)
+    if attrs is not None:
+        return {"ok": True, "supported": all(hasattr(wheel, a) for a in attrs)}
     return {"ok": True, "supported": hasattr(wheel, spec["attr"])}
 
 
@@ -264,6 +268,14 @@ def _op_build_manual_run(spec: dict) -> dict:
     }
 
 
+def _op_build_manual_result(spec: dict) -> dict:
+    procedure_json = spec["procedure_json"]
+    measurements = _int_keyed(spec.get("measurements") or {})
+    controls = spec.get("controls") or {}
+    result = _import_wheel().build_manual_result(procedure_json, measurements, controls)
+    return {"ok": True, "result": result}
+
+
 _OPS = {
     "is_available": _op_is_available,
     "supports": _op_supports,
@@ -277,6 +289,7 @@ _OPS = {
     "section_ownership": _op_section_ownership,
     "reconstruct": _op_reconstruct,
     "build_manual_run": _op_build_manual_run,
+    "build_manual_result": _op_build_manual_result,
 }
 
 

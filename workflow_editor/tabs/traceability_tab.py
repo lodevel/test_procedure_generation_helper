@@ -19,6 +19,31 @@ from ..theme import traceability_highlight, status_modified, status_saved
 from ..widgets.find_replace_bar import FindReplaceBar, install_find_shortcuts
 
 
+def _flatten_numbered(steps):
+    """Flatten procedure steps[] to the real numbered steps in source order.
+
+    Macro blocks are array entries but not numbered steps: ``block_for`` /
+    ``block_if`` bodies hold the actual ``<n>.`` steps (which codegen emits),
+    while ``block_alloc`` / ``block_table`` carry no ``n``. Recurse into block
+    bodies and keep only nodes with an integer ``n`` so the count, numbering,
+    and code cross-check match the generated test.py instead of the raw
+    top-level array length.
+    """
+    out = []
+    for s in steps or []:
+        if not isinstance(s, dict):
+            continue
+        op = s.get("op")
+        if op in ("block_for", "block_do"):
+            out += _flatten_numbered(s.get("body"))
+        elif op == "block_if":
+            for br in s.get("branches", []):
+                out += _flatten_numbered(br.get("body") if isinstance(br, dict) else None)
+        elif isinstance(s.get("n"), int):
+            out.append(s)
+    return out
+
+
 class TraceabilityTab(BaseTab):
     """
     Traceability tab for viewing step to code mapping.
@@ -117,7 +142,10 @@ class TraceabilityTab(BaseTab):
         # Get JSON steps
         json_data = self.artifact_manager.get_json_parsed()
         if json_data and "steps" in json_data:
-            self._json_steps = json_data["steps"]
+            # Flatten macro blocks → real numbered steps so the count and
+            # numbering match the generated code (a @FOR body's steps are the
+            # real steps; @ALLOC/@FOR headers are not numbered steps).
+            self._json_steps = _flatten_numbered(json_data["steps"])
         else:
             self._json_steps = []
         
@@ -158,7 +186,10 @@ class TraceabilityTab(BaseTab):
         # Use JSON steps as primary source
         if self._json_steps:
             for i, step in enumerate(self._json_steps):
-                step_num = i + 1
+                # Use the real step number n (matches the code's markers),
+                # not the array position — they diverge once macro blocks
+                # are present.
+                step_num = step.get("n", i + 1) if isinstance(step, dict) else i + 1
 
                 # Resolve display text: procedure_text.md wins; fall back
                 # to JSON step's "text" field (operator-prose steps);
@@ -204,7 +235,12 @@ class TraceabilityTab(BaseTab):
             self.mismatch_group.setVisible(False)
             return
         
-        expected_steps = list(range(1, len(self._json_steps) + 1))
+        # Expected = the real step numbers (n), not 1..len — macro-block
+        # bodies make n run past the top-level array length.
+        expected_steps = sorted(
+            s["n"] for s in self._json_steps
+            if isinstance(s, dict) and isinstance(s.get("n"), int)
+        )
         code_content = self.artifact_manager.get_content(ArtifactType.TEST_CODE)
         
         if not code_content:
@@ -250,12 +286,14 @@ class TraceabilityTab(BaseTab):
             proc_text = self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT)
             canonical_lookup = step_texts_from_canonical(proc_text or "")
             step_text = canonical_lookup.get(step_num, "")
-            if not step_text and self._json_steps and step_num <= len(self._json_steps):
-                step_data = self._json_steps[step_num - 1]
+            if not step_text and self._json_steps:
+                step_data = next(
+                    (s for s in self._json_steps
+                     if isinstance(s, dict) and s.get("n") == step_num),
+                    None,
+                )
                 if isinstance(step_data, dict):
                     step_text = step_data.get("text", "") or ""
-                else:
-                    step_text = str(step_data)
             if step_text:
                 wrapped_text = '\n'.join(textwrap.wrap(step_text, width=80))
                 self.code_header.setText(f"STEP {step_num}: {wrapped_text}")

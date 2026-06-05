@@ -258,7 +258,9 @@ def _op_build_manual_run(spec: dict) -> dict:
     procedure_json = spec["procedure_json"]
     measurements = _int_keyed(spec.get("measurements") or {})
     controls = spec.get("controls") or {}      # loop-sentinel node_path keys stay strings
-    run = _import_wheel().build_manual_run(procedure_json, measurements, controls)
+    operator_verdicts = _int_keyed(spec.get("operator_verdicts") or {})
+    run = _import_wheel().build_manual_run(
+        procedure_json, measurements, controls, operator_verdicts)
     return {
         "ok": True,
         "test_name": run.test_name,
@@ -272,7 +274,9 @@ def _op_build_manual_result(spec: dict) -> dict:
     procedure_json = spec["procedure_json"]
     measurements = _int_keyed(spec.get("measurements") or {})
     controls = spec.get("controls") or {}
-    result = _import_wheel().build_manual_result(procedure_json, measurements, controls)
+    operator_verdicts = _int_keyed(spec.get("operator_verdicts") or {})
+    result = _import_wheel().build_manual_result(
+        procedure_json, measurements, controls, operator_verdicts)
     return {"ok": True, "result": result}
 
 

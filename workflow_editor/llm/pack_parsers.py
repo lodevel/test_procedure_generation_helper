@@ -478,6 +478,7 @@ def build_manual_run(
     measurements: Optional[dict] = None,
     controls: Optional[dict] = None,
     project_root: Optional[Path] = None,
+    operator_verdicts: Optional[dict] = None,
 ) -> "ManualRunResult":
     """Materialize a guided-manual run plan from procedure JSON — the wheel-side
     StepperSession surfaced to the GUI's guided-manual execution mode.
@@ -490,7 +491,8 @@ def build_manual_run(
     Raises :class:`ParserUnavailable` if the wheel isn't importable.
     """
     if project_root is None:
-        return _inproc_build_manual_run(procedure_json, measurements, controls)
+        return _inproc_build_manual_run(
+            procedure_json, measurements, controls, operator_verdicts)
 
     project_python = _resolve_project_python(project_root)
     result = _subprocess_call(
@@ -500,6 +502,7 @@ def build_manual_run(
             "procedure_json": procedure_json,
             "measurements": measurements,
             "controls": controls,
+            "operator_verdicts": operator_verdicts,
         },
         timeout=_timeout(),
     )
@@ -563,6 +566,7 @@ def build_manual_result(
     measurements: Optional[dict] = None,
     controls: Optional[dict] = None,
     project_root: Optional[Path] = None,
+    operator_verdicts: Optional[dict] = None,
 ) -> dict:
     """Evaluate a guided-manual run into a ``results.json``-compatible dict —
     byte-compatible with the automated test.py output (same Result schema, same
@@ -571,7 +575,8 @@ def build_manual_result(
     ``project_root`` is set — the same wheel that runs the test. Raises
     :class:`ParserUnavailable` if the wheel isn't importable."""
     if project_root is None:
-        return _inproc_build_manual_result(procedure_json, measurements, controls)
+        return _inproc_build_manual_result(
+            procedure_json, measurements, controls, operator_verdicts)
 
     project_python = _resolve_project_python(project_root)
     result = _subprocess_call(
@@ -581,6 +586,7 @@ def build_manual_result(
             "procedure_json": procedure_json,
             "measurements": measurements,
             "controls": controls,
+            "operator_verdicts": operator_verdicts,
         },
         timeout=_timeout(),
     )
@@ -954,6 +960,7 @@ def _inproc_build_manual_run(
     procedure_json: dict[str, Any],
     measurements: Optional[dict],
     controls: Optional[dict],
+    operator_verdicts: Optional[dict] = None,
 ) -> "ManualRunResult":
     wheel = _inproc_import_wheel()
     if not hasattr(wheel, "build_manual_run"):
@@ -965,7 +972,8 @@ def _inproc_build_manual_run(
         )
     # Normalize None -> {} to match the subprocess worker exactly (both paths
     # then hand the wheel the same shapes).
-    run = wheel.build_manual_run(procedure_json, measurements or {}, controls or {})
+    run = wheel.build_manual_run(
+        procedure_json, measurements or {}, controls or {}, operator_verdicts or {})
     return ManualRunResult.from_wheel(run)
 
 
@@ -973,6 +981,7 @@ def _inproc_build_manual_result(
     procedure_json: dict[str, Any],
     measurements: Optional[dict],
     controls: Optional[dict],
+    operator_verdicts: Optional[dict] = None,
 ) -> dict:
     wheel = _inproc_import_wheel()
     if not hasattr(wheel, "build_manual_result"):
@@ -980,7 +989,8 @@ def _inproc_build_manual_result(
             f"{_REQUIRED_WHEEL} predates build_manual_result; reinstall a newer "
             f"rules_packager_base wheel. The LLM fallback remains available."
         )
-    return wheel.build_manual_result(procedure_json, measurements or {}, controls or {})
+    return wheel.build_manual_result(
+        procedure_json, measurements or {}, controls or {}, operator_verdicts or {})
 
 
 def _inproc_validate(

@@ -56,6 +56,10 @@ _REQUIRED_WHEEL = "rules_packager_base.rules.v2_0_2.parser"
 # Default timeouts (seconds).
 _TIMEOUT_IS_AVAILABLE = 5
 _TIMEOUT_DEFAULT = 30
+# Live single-op remote execution: connect + one driver call + close. Generous
+# margin over a device's own VISA/serial timeout so a slow bench doesn't trip
+# the transport before the instrument answers.
+_TIMEOUT_REMOTE_EXEC = 45
 
 # env-var overrides
 _ENV_TIMEOUT = "TPG_PACK_PARSER_TIMEOUT"
@@ -129,6 +133,7 @@ def _subprocess_call(
     project_python: Path,
     spec: dict[str, Any],
     timeout: int,
+    runner_name: str = "_pack_parsers_subprocess.py",
 ) -> dict[str, Any]:
     """Invoke the subprocess runner and return its parsed JSON output.
 
@@ -141,8 +146,11 @@ def _subprocess_call(
     bundle wheels but NOT PySide6 — and shouldn't, since the project
     venv is for test execution, not the editor UI. Invoking by path
     sets ``__name__ == "__main__"`` and skips the package init.
+
+    ``runner_name`` selects the sibling runner script — the default parser
+    runner, or ``_execute_op_subprocess.py`` for live single-op execution.
     """
-    runner_path = Path(__file__).resolve().parent / "_pack_parsers_subprocess.py"
+    runner_path = Path(__file__).resolve().parent / runner_name
 
     # Tell the child where the project bundle lives so it can populate the pack
     # registry before running the op. project_python is <project>/.venv/<bin>/python,
@@ -692,6 +700,106 @@ def bench_constant_names(etype: str, eid: str, project_root: Optional[Path] = No
             if isinstance(f, dict) and isinstance(f.get("name"), str)]
 
 
+def execute_ops_remote(
+    ops: list[dict[str, Any]],
+    procedure_json: dict[str, Any],
+    bench_map: dict[str, dict[str, Any]],
+    project_root: Path,
+    timeout: Optional[int] = None,
+) -> dict[str, Any]:
+    """Execute a CONTIGUOUS batch of remote ops in one connect-once session per
+    device (never ``reset()``).
+
+    ``ops`` is ``[{"node_path": str, "op": <resolved op dict>}]`` in procedure
+    order; ``bench_map`` is ``{device_id: bench}`` for every device the batch
+    touches (``bench`` = ``{"visa","timeout_ms",…}`` or ``{"port","baud",…}``).
+    Devices open lazily once; ops run in order in a shared namespace; on a
+    mid-batch FAILURE energized PSU/ELOAD outputs are driven OFF (ELOAD before
+    PSU) before close (a clean batch leaves outputs as set).
+
+    Never raises. Returns ``{"ok": True, "results": [...], "aborted": bool,
+    "log": [...]}`` where each result is
+    ``{"node_path", "ok": True, "has_value", "value", "unit", "ref"}`` or
+    ``{"node_path", "ok": False, "error"}`` (results stop at the first failure),
+    or ``{"ok": False, "kind", "error"}`` on a transport failure.
+    """
+    try:
+        py = _resolve_project_python(project_root)
+    except ParserUnavailable as exc:
+        return {"ok": False, "kind": "ParserUnavailable", "error": str(exc)}
+    spec = {
+        "op": "execute_ops_remote",
+        "procedure_json": procedure_json,
+        "ops": ops,
+        "bench_map": bench_map,
+    }
+    return _subprocess_call(
+        py, spec,
+        timeout=timeout or (_TIMEOUT_REMOTE_EXEC + 5 * len(ops)),
+        runner_name="_execute_op_subprocess.py",
+    )
+
+
+def execute_op_remote(
+    target_op: dict[str, Any],
+    procedure_json: dict[str, Any],
+    bench: dict[str, Any],
+    project_root: Path,
+    timeout: Optional[int] = None,
+) -> dict[str, Any]:
+    """Execute ONE op remotely — a batch of one over :func:`execute_ops_remote`.
+
+    Connect WITHOUT reset → run the op → close, returning the FLAT single-op
+    shape the guided-manual ⚡ handler consumes:
+    ``{"ok": True, "has_value", "value", "unit", "ref", "log"}`` or
+    ``{"ok": False, "kind", "error"}``. ``bench`` is the caller-resolved
+    connection params for ``target_op['device']``. Never raises.
+    """
+    device = target_op.get("device")
+    res = execute_ops_remote(
+        [{"node_path": "", "op": target_op}], procedure_json,
+        {device: bench}, project_root, timeout)
+    if not res.get("ok"):
+        return res
+    r0 = (res.get("results") or [{}])[0]
+    if not r0.get("ok"):
+        return {"ok": False, "kind": "ExecError",
+                "error": r0.get("error", "remote execution failed"),
+                "log": res.get("log", [])}
+    return {"ok": True, "has_value": r0.get("has_value", False),
+            "value": r0.get("value"), "unit": r0.get("unit", ""),
+            "ref": r0.get("ref"), "log": res.get("log", [])}
+
+
+def safe_off_remote(
+    targets: list[dict[str, Any]],
+    procedure_json: dict[str, Any],
+    bench_map: dict[str, dict[str, Any]],
+    project_root: Path,
+    timeout: Optional[int] = None,
+) -> dict[str, Any]:
+    """Drive the given devices' outputs to a safe OFF state (ELOAD before PSU),
+    without reset. ``targets`` = ``[{"device","etype","channels":[...]}]``. Used
+    by the auto-run controller on Stop / window-close while energized. Never
+    raises — returns ``{"ok": True, "log": [...]}`` or ``{"ok": False, ...}``.
+    """
+    try:
+        py = _resolve_project_python(project_root)
+    except ParserUnavailable as exc:
+        return {"ok": False, "kind": "ParserUnavailable", "error": str(exc)}
+    spec = {
+        "op": "safe_off_remote",
+        "procedure_json": procedure_json,
+        "safe_off": targets,
+        "bench_map": bench_map,
+    }
+    return _subprocess_call(
+        py, spec,
+        timeout=timeout or _TIMEOUT_REMOTE_EXEC,
+        runner_name="_execute_op_subprocess.py",
+    )
+
+
 def equipment_types_in(procedure_text: str) -> list[str]:
     """Extract the declared equipment types from a procedure's ``## Equipment``
     block (lines ``<ID> : <type> [params]``). Order-preserving, de-duplicated.
@@ -1177,6 +1285,9 @@ class ManualStep:
     control_deciding: bool = False  # blocks forward skip/jump until answered
     iteration: int = 0
     index: int = 0
+    # op with per-iteration substitution applied (mirrors StepDescriptor.resolved_op);
+    # excluded from eq/hash so a dict field keeps the frozen step hashable.
+    resolved_op: Optional[dict] = field(default=None, compare=False)
 
     @classmethod
     def from_dict(cls, d: dict) -> "ManualStep":

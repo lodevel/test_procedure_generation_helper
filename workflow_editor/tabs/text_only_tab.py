@@ -13,12 +13,13 @@ import json
 
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGroupBox,
-    QLabel, QPlainTextEdit
+    QLabel, QPlainTextEdit, QSplitter
 )
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QFont
 
 from .base_tab import BaseTab
+from ..widgets.netlist_panel import NetlistPanel
 from .llm_tab_mixin import LLMTabMixin
 from ..core import ArtifactType
 from ..llm import TabContext, LLMTask
@@ -96,7 +97,18 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         self.text_status = QLabel("")
         text_layout.addWidget(self.text_status)
 
-        layout.addWidget(text_group, stretch=1)
+        # Editor on the left, a read-only board-netlist reference on the right
+        # (double-click a component / pin / net to insert its name at the cursor).
+        split = QSplitter(Qt.Orientation.Horizontal)
+        split.addWidget(text_group)
+        self._netlist_panel = NetlistPanel()
+        self._netlist_panel.insert_text.connect(self._insert_netlist_text)
+        split.addWidget(self._netlist_panel)
+        split.setStretchFactor(0, 1)
+        split.setStretchFactor(1, 0)
+        split.setSizes([720, 300])
+        layout.addWidget(split, stretch=1)
+        self._netlist_loaded_root = object()   # sentinel — first show triggers a load
 
         self.find_bar = FindReplaceBar(self)
         layout.addWidget(self.find_bar)
@@ -106,6 +118,29 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         layout.addLayout(actions_layout)
 
         self._text_dirty = False
+
+    def showEvent(self, event):  # noqa: N802 — Qt override
+        super().showEvent(event)
+        self._maybe_load_netlist()
+
+    def _maybe_load_netlist(self) -> None:
+        """Load the board netlist for the current project (once per project)."""
+        pm = getattr(self.main_window, "project_manager", None)
+        root = getattr(pm, "project_root", None) if pm is not None else None
+        if root != self._netlist_loaded_root:
+            self._netlist_loaded_root = root
+            self._netlist_panel.load(root)
+
+    def reload_netlist(self) -> None:
+        """Force a netlist reload (e.g. after the project changes)."""
+        self._netlist_loaded_root = object()
+        self._maybe_load_netlist()
+
+    def _insert_netlist_text(self, text: str) -> None:
+        cur = self.text_editor.textCursor()
+        cur.insertText(text)
+        self.text_editor.setTextCursor(cur)
+        self.text_editor.setFocus()
 
     def _get_task_callback_map(self) -> dict:
         return {

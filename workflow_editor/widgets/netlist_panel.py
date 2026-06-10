@@ -14,11 +14,95 @@ archive (never an error).
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal, QThread, QTimer
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QTransform
 from PySide6.QtWidgets import (
     QGroupBox, QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTabWidget,
     QTreeWidget, QTreeWidgetItem, QLabel, QCheckBox, QScrollArea, QSplitter,
+    QDialog, QPushButton,
 )
+
+
+class _BoardImagePopup(QDialog):
+    """Full board image: wide (context) + zoomed (detail) side by side; click
+    either image to close. Mirrors the main GUI's interactive-execution popup."""
+
+    _MAX = 560
+
+    def __init__(self, zoomed, wide, caption="", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(caption or "Board image")
+        self._zoomed, self._wide, self._angle = zoomed, wide, 0
+
+        layout = QVBoxLayout(self)
+        row = QHBoxLayout()
+        row.setSpacing(20)
+
+        self._wide_lbl = None
+        if wide is not None and not wide.isNull():
+            col = QVBoxLayout()
+            h = QLabel("Wide view")
+            h.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            h.setStyleSheet("font-weight:bold; color:#777;")
+            col.addWidget(h)
+            self._wide_lbl = QLabel()
+            self._wide_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._wide_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._wide_lbl.mousePressEvent = lambda e: self.close()
+            col.addWidget(self._wide_lbl)
+            row.addLayout(col)
+
+        col = QVBoxLayout()
+        h = QLabel("Zoomed view")
+        h.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        h.setStyleSheet("font-weight:bold; color:#777;")
+        col.addWidget(h)
+        self._zoom_lbl = QLabel()
+        self._zoom_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._zoom_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._zoom_lbl.mousePressEvent = lambda e: self.close()
+        col.addWidget(self._zoom_lbl)
+        row.addLayout(col)
+        layout.addLayout(row)
+
+        if caption:
+            c = QLabel(caption)
+            c.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            c.setStyleSheet("font-weight:bold; padding:8px; font-size:13px;")
+            layout.addWidget(c)
+
+        rot = QHBoxLayout()
+        lb = QPushButton("↶ Rotate left")
+        lb.clicked.connect(lambda: self._rotate(-90))
+        rb = QPushButton("Rotate right ↷")
+        rb.clicked.connect(lambda: self._rotate(90))
+        rot.addWidget(lb)
+        rot.addWidget(rb)
+        layout.addLayout(rot)
+
+        self._update()
+        self.adjustSize()
+
+    def _rotate(self, delta: int) -> None:
+        self._angle = (self._angle + delta) % 360
+        self._update()
+
+    def _scaled(self, pm: QPixmap) -> QPixmap:
+        if self._angle:
+            pm = pm.transformed(QTransform().rotate(self._angle),
+                                Qt.TransformationMode.SmoothTransformation)
+        if pm.width() > self._MAX or pm.height() > self._MAX:
+            pm = pm.scaled(self._MAX, self._MAX,
+                           Qt.AspectRatioMode.KeepAspectRatio,
+                           Qt.TransformationMode.SmoothTransformation)
+        return pm
+
+    def _update(self) -> None:
+        if self._zoomed is not None and not self._zoomed.isNull():
+            self._zoom_lbl.setPixmap(self._scaled(self._zoomed))
+        if (self._wide_lbl is not None and self._wide is not None
+                and not self._wide.isNull()):
+            self._wide_lbl.setPixmap(self._scaled(self._wide))
+        self.adjustSize()
 
 from ..core import odb_inspect
 
@@ -198,6 +282,7 @@ class NetlistPanel(QGroupBox):
         self._viewer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._viewer_label.setWordWrap(True)
         self._viewer_label.setStyleSheet("color:#999;")
+        self._viewer_label.mousePressEvent = self._on_viewer_click  # click -> full view
         self._viewer_scroll.setWidget(self._viewer_label)
         bl.addWidget(self._viewer_scroll, 1)
         split.addWidget(bottom)
@@ -379,6 +464,7 @@ class NetlistPanel(QGroupBox):
         self._viewer_caption.setText("")
         self._viewer_label.setPixmap(QPixmap())
         self._viewer_label.setText(text or "")
+        self._viewer_label.setCursor(Qt.CursorShape.ArrowCursor)
 
     def show_image(self, zpix, wpix, caption: str) -> None:
         self._cur_zoom, self._cur_wide, self._cur_cap = zpix, wpix, caption
@@ -387,8 +473,17 @@ class NetlistPanel(QGroupBox):
         if pm is not None and not pm.isNull():
             self._viewer_label.setText("")
             self._render_scaled(pm)
+            self._viewer_label.setCursor(Qt.CursorShape.PointingHandCursor)
         else:
             self._viewer_label.setText("Image unavailable.")
+            self._viewer_label.setCursor(Qt.CursorShape.ArrowCursor)
+
+    def _on_viewer_click(self, event) -> None:
+        """Click the inline image → full wide+zoomed view (like the interactive
+        execution explorer)."""
+        if self._cur_zoom is not None or self._cur_wide is not None:
+            _BoardImagePopup(self._cur_zoom, self._cur_wide,
+                             self._cur_cap, self).exec()
 
     def _render_scaled(self, pm: QPixmap) -> None:
         width = max(120, self._viewer_scroll.viewport().width() - 8)

@@ -98,11 +98,10 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         text_layout.addWidget(self.text_status)
 
         # Editor on the left, a read-only board-netlist reference on the right
-        # (double-click a component / pin / net to insert its name at the cursor).
+        # (browse components/pins/nets and view their board image).
         split = QSplitter(Qt.Orientation.Horizontal)
         split.addWidget(text_group)
         self._netlist_panel = NetlistPanel()
-        self._netlist_panel.insert_text.connect(self._insert_netlist_text)
         split.addWidget(self._netlist_panel)
         split.setStretchFactor(0, 1)
         split.setStretchFactor(1, 0)
@@ -135,12 +134,6 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         """Force a netlist reload (e.g. after the project changes)."""
         self._netlist_loaded_root = object()
         self._maybe_load_netlist()
-
-    def _insert_netlist_text(self, text: str) -> None:
-        cur = self.text_editor.textCursor()
-        cur.insertText(text)
-        self.text_editor.setTextCursor(cur)
-        self.text_editor.setFocus()
 
     def _get_task_callback_map(self) -> dict:
         return {

@@ -1,10 +1,9 @@
 """Board netlist reference panel for the Text tab.
 
 Split vertically: a tabbed **browser** on top (Components | Nets) and an inline
-**board-image viewer** below. It helps author tests two ways:
-- **Double-click** a row to insert its name (refdes / net) at the editor cursor.
-- **Select** a component or pin to render its board image into the viewer
-  (cached or generated on demand; nets are names-only, no image).
+**board-image viewer** below — a read-only reference while authoring. **Select**
+a component or pin to render its board image into the viewer (cached or generated
+on demand; nets are names-only, no image); click the image for a full view.
 
 Auto-generated net names (default ``Net*``, per-project configurable) are hidden
 unless the *Show auto nets* toggle is on. Empty-and-friendly with no ODB++
@@ -110,7 +109,6 @@ from ..core import odb_inspect
 # destroy a running QThread. Connections to the panel auto-disconnect if it dies.
 _LIVE_WORKERS: set = set()
 
-_ROLE_INSERT = Qt.ItemDataRole.UserRole         # text to insert on double-click
 _ROLE_REFDES = Qt.ItemDataRole.UserRole + 1     # render target refdes ("" = none)
 _ROLE_PAD = Qt.ItemDataRole.UserRole + 2        # render target pad ("" = whole part)
 
@@ -196,8 +194,6 @@ class _RenderWorker(QThread):
 class NetlistPanel(QGroupBox):
     """Components | Nets browser over an inline board-image viewer."""
 
-    insert_text = Signal(str)               # name to insert into the editor
-
     def __init__(self, parent=None) -> None:
         super().__init__("Board netlist", parent)
         self._components: list = []
@@ -236,13 +232,11 @@ class NetlistPanel(QGroupBox):
         self._comp_tree.setColumnWidth(0, 140)
         self._comp_tree.setUniformRowHeights(True)
         self._comp_tree.itemSelectionChanged.connect(self._on_sel_changed)
-        self._comp_tree.itemDoubleClicked.connect(self._on_double_click)
         self._net_tree = QTreeWidget()
         self._net_tree.setHeaderLabels(["Net / node", ""])
         self._net_tree.setColumnWidth(0, 190)
         self._net_tree.setUniformRowHeights(True)
         self._net_tree.itemSelectionChanged.connect(self._on_sel_changed)
-        self._net_tree.itemDoubleClicked.connect(self._on_double_click)
         self._tabs.addTab(self._comp_tree, "Components")
         self._tabs.addTab(self._net_tree, "Nets")
         self._tabs.currentChanged.connect(self._on_sel_changed)
@@ -263,8 +257,8 @@ class NetlistPanel(QGroupBox):
         self._status.setStyleSheet("color:#777; font-size:9pt;")
         tl.addWidget(self._status)
 
-        hint = QLabel("Double-click → insert name · select a component/pin → "
-                      "view its board image.")
+        hint = QLabel("Select a component or pin to view its board image; "
+                      "click the image for a full view.")
         hint.setStyleSheet("color:#999; font-size:9pt;")
         hint.setWordWrap(True)
         tl.addWidget(hint)
@@ -345,13 +339,11 @@ class NetlistPanel(QGroupBox):
             side = c.get("side", "")
             top = QTreeWidgetItem(
                 [f"{refdes}  ({side.lower()})" if side else refdes, ""])
-            top.setData(0, _ROLE_INSERT, refdes)
             top.setData(0, _ROLE_REFDES, refdes)
             top.setData(0, _ROLE_PAD, "")
             for p in c.get("pins", []) or ():
                 name, net = _pin_name(p), _pin_net(p)
                 child = QTreeWidgetItem([f"pin {name}", net])
-                child.setData(0, _ROLE_INSERT, net or name)
                 child.setData(0, _ROLE_REFDES, refdes)
                 child.setData(0, _ROLE_PAD, name)
                 top.addChild(child)
@@ -365,24 +357,15 @@ class NetlistPanel(QGroupBox):
             net = n.get("net", "")
             nodes = n.get("nodes", []) or ()
             top = QTreeWidgetItem([net, f"{len(nodes)} pin(s)"])
-            top.setData(0, _ROLE_INSERT, net)
             top.setData(0, _ROLE_REFDES, "")        # a net name has no image
             top.setData(0, _ROLE_PAD, "")
             for nd in nodes:
                 rd, pin = nd.get("refdes", ""), str(nd.get("pin", ""))
                 child = QTreeWidgetItem([f"{rd} pin {pin}", ""])
-                child.setData(0, _ROLE_INSERT, rd)
                 child.setData(0, _ROLE_REFDES, rd)  # a node IS a pin -> renderable
                 child.setData(0, _ROLE_PAD, pin)
                 top.addChild(child)
             self._net_tree.addTopLevelItem(top)
-
-    # -- insert (double-click) ------------------------------------------------
-
-    def _on_double_click(self, item, _col=0) -> None:
-        text = item.data(0, _ROLE_INSERT)
-        if text:
-            self.insert_text.emit(str(text))
 
     # -- selection -> render --------------------------------------------------
 

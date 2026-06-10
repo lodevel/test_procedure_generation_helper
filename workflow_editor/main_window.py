@@ -680,6 +680,13 @@ class MainWindow(QMainWindow):
         # Live-refresh the syntax reference if it's open (project/bundle changed).
         from .dialogs.syntax_reference import SyntaxReferenceDialog
         SyntaxReferenceDialog.refresh_if_open(rules_root)
+
+        # Reload the Text tab's board-netlist for the current project — the panel
+        # loads on tab-show, which can precede project setup (e.g. Text is now the
+        # default tab), so re-trigger it once project_root is known.
+        text_tab = getattr(self, "text_only_tab", None)
+        if text_tab is not None and hasattr(text_tab, "_maybe_load_netlist"):
+            text_tab._maybe_load_netlist()
     
     def _on_project_indicator_clicked(self):
         """Handle click on project indicator."""

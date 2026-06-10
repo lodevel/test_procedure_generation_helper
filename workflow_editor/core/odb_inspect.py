@@ -37,32 +37,45 @@ def find_odb_tgz(project_root: Optional[Path]) -> Optional[Path]:
 
 
 def load_board(project_root: Optional[Path]) -> dict:
-    """``{components, nets}`` for the project's ODB++ archive (via the CLI
-    ``--list-nets``). Returns ``{"components": [], "nets": []}`` when there is no
-    archive, no CLI, or the CLI fails — never raises. Synchronous; run it off the
-    UI thread."""
-    empty = {"components": [], "nets": []}
+    """``{components, nets, error}`` for the project's ODB++ archive (via the CLI
+    ``--list-nets``). The ODB tgz is auto-detected as the first ``*.tgz`` in the
+    project root. ``error`` is ``""`` on success, else a human-readable reason
+    (no project / no archive at <path> / CLI not found / CLI failed: …) so the
+    panel can surface WHY rather than a blanket 'no archive'. Never raises;
+    synchronous — run it off the UI thread."""
+    empty = {"components": [], "nets": [], "error": ""}
+    if project_root is None:
+        return {**empty, "error": "No project is open in the editor."}
     tgz = find_odb_tgz(project_root)
+    if tgz is None:
+        return {**empty, "error":
+                f"No ODB++ .tgz archive in the project folder:\n{project_root}"}
     cli = odb_cli_path()
-    if tgz is None or cli is None:
-        return empty
+    if cli is None:
+        return {**empty,
+                "error": "ODB image-generator CLI not found next to the editor."}
     try:
         proc = subprocess.run(
             [sys.executable, str(cli), "--odb-tgz", str(tgz), "--list-nets"],
             capture_output=True, text=True, timeout=120,
         )
-    except (OSError, subprocess.SubprocessError):
-        return empty
-    if proc.returncode != 0 or not proc.stdout.strip():
-        return empty
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {**empty, "error": f"Could not run the ODB CLI: {exc}"}
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        why = tail[-1] if tail else f"exit code {proc.returncode}"
+        return {**empty, "error": f"ODB CLI failed (exit {proc.returncode}): {why}"}
+    if not proc.stdout.strip():
+        return {**empty, "error": "ODB CLI returned no data."}
     try:
         data = json.loads(proc.stdout)
     except ValueError:
-        return empty
+        return {**empty, "error": "ODB CLI output was not valid JSON."}
     if not isinstance(data, dict):
-        return empty
+        return {**empty, "error": "ODB CLI output had an unexpected shape."}
     data.setdefault("components", [])
     data.setdefault("nets", [])
+    data.setdefault("error", "")
     return data
 
 

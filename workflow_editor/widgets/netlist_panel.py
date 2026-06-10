@@ -17,7 +17,7 @@ from PySide6.QtGui import QPixmap, QTransform
 from PySide6.QtWidgets import (
     QGroupBox, QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTabWidget,
     QTreeWidget, QTreeWidgetItem, QLabel, QCheckBox, QScrollArea, QSplitter,
-    QDialog, QPushButton,
+    QDialog, QPushButton, QApplication,
 )
 
 
@@ -111,6 +111,7 @@ _LIVE_WORKERS: set = set()
 
 _ROLE_REFDES = Qt.ItemDataRole.UserRole + 1     # render target refdes ("" = none)
 _ROLE_PAD = Qt.ItemDataRole.UserRole + 2        # render target pad ("" = whole part)
+_ROLE_COPY = Qt.ItemDataRole.UserRole + 3       # text copied to clipboard on dbl-click
 
 
 def _pin_name(pin) -> str:
@@ -232,11 +233,13 @@ class NetlistPanel(QGroupBox):
         self._comp_tree.setColumnWidth(0, 140)
         self._comp_tree.setUniformRowHeights(True)
         self._comp_tree.itemSelectionChanged.connect(self._on_sel_changed)
+        self._comp_tree.itemDoubleClicked.connect(self._on_double_click)
         self._net_tree = QTreeWidget()
         self._net_tree.setHeaderLabels(["Net / node", ""])
         self._net_tree.setColumnWidth(0, 190)
         self._net_tree.setUniformRowHeights(True)
         self._net_tree.itemSelectionChanged.connect(self._on_sel_changed)
+        self._net_tree.itemDoubleClicked.connect(self._on_double_click)
         self._tabs.addTab(self._comp_tree, "Components")
         self._tabs.addTab(self._net_tree, "Nets")
         self._tabs.currentChanged.connect(self._on_sel_changed)
@@ -257,8 +260,8 @@ class NetlistPanel(QGroupBox):
         self._status.setStyleSheet("color:#777; font-size:9pt;")
         tl.addWidget(self._status)
 
-        hint = QLabel("Select a component or pin to view its board image; "
-                      "click the image for a full view.")
+        hint = QLabel("Double-click a row to copy its name · select to view the "
+                      "board image (click it for a full view).")
         hint.setStyleSheet("color:#999; font-size:9pt;")
         hint.setWordWrap(True)
         tl.addWidget(hint)
@@ -272,7 +275,7 @@ class NetlistPanel(QGroupBox):
         bl.addWidget(self._viewer_caption)
         self._viewer_scroll = QScrollArea()
         self._viewer_scroll.setWidgetResizable(True)
-        self._viewer_label = QLabel("Select a component or pin to view its image.")
+        self._viewer_label = QLabel("")
         self._viewer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._viewer_label.setWordWrap(True)
         self._viewer_label.setStyleSheet("color:#999;")
@@ -309,7 +312,9 @@ class NetlistPanel(QGroupBox):
             self.set_board(comps, nets)
         else:
             self.set_board([], [])
-            self.set_status("No ODB++ archive for this project.")
+            self.set_status(
+                data.get("error") if isinstance(data, dict) and data.get("error")
+                else "No ODB++ archive for this project.")
 
     def set_board(self, components: list, nets: list) -> None:
         self._components = list(components or [])
@@ -341,11 +346,13 @@ class NetlistPanel(QGroupBox):
                 [f"{refdes}  ({side.lower()})" if side else refdes, ""])
             top.setData(0, _ROLE_REFDES, refdes)
             top.setData(0, _ROLE_PAD, "")
+            top.setData(0, _ROLE_COPY, refdes)
             for p in c.get("pins", []) or ():
                 name, net = _pin_name(p), _pin_net(p)
                 child = QTreeWidgetItem([f"pin {name}", net])
                 child.setData(0, _ROLE_REFDES, refdes)
                 child.setData(0, _ROLE_PAD, name)
+                child.setData(0, _ROLE_COPY, f"{refdes}.{name}")
                 top.addChild(child)
             self._comp_tree.addTopLevelItem(top)
 
@@ -359,13 +366,23 @@ class NetlistPanel(QGroupBox):
             top = QTreeWidgetItem([net, f"{len(nodes)} pin(s)"])
             top.setData(0, _ROLE_REFDES, "")        # a net name has no image
             top.setData(0, _ROLE_PAD, "")
+            top.setData(0, _ROLE_COPY, net)
             for nd in nodes:
                 rd, pin = nd.get("refdes", ""), str(nd.get("pin", ""))
                 child = QTreeWidgetItem([f"{rd} pin {pin}", ""])
                 child.setData(0, _ROLE_REFDES, rd)  # a node IS a pin -> renderable
                 child.setData(0, _ROLE_PAD, pin)
+                child.setData(0, _ROLE_COPY, f"{rd}.{pin}")
                 top.addChild(child)
             self._net_tree.addTopLevelItem(top)
+
+    def _on_double_click(self, item, _col=0) -> None:
+        """Copy the row's identifier (refdes / refdes.pin / net) to the clipboard
+        for easy paste into the procedure text."""
+        text = item.data(0, _ROLE_COPY)
+        if text:
+            QApplication.clipboard().setText(str(text))
+            self.set_status(f"\U0001F4CB  Copied '{text}' to clipboard")
 
     # -- selection -> render --------------------------------------------------
 

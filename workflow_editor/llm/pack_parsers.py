@@ -41,6 +41,8 @@ import logging
 import os
 import subprocess
 import sys
+import threading
+from collections import deque
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Optional
@@ -700,75 +702,193 @@ def bench_constant_names(etype: str, eid: str, project_root: Optional[Path] = No
             if isinstance(f, dict) and isinstance(f.get("name"), str)]
 
 
-def execute_ops_remote(
-    ops: list[dict[str, Any]],
-    procedure_json: dict[str, Any],
-    bench_map: dict[str, dict[str, Any]],
-    project_root: Path,
-    timeout: Optional[int] = None,
-) -> dict[str, Any]:
-    """Execute a CONTIGUOUS batch of remote ops in one connect-once session per
-    device (never ``reset()``).
+class RemoteSession:
+    """Persistent daemon channel for ONE guided-manual run.
 
-    ``ops`` is ``[{"node_path": str, "op": <resolved op dict>}]`` in procedure
-    order; ``bench_map`` is ``{device_id: bench}`` for every device the batch
-    touches (``bench`` = ``{"visa","timeout_ms",…}`` or ``{"port","baud",…}``).
-    Devices open lazily once; ops run in order in a shared namespace; on a
-    mid-batch FAILURE energized PSU/ELOAD outputs are driven OFF (ELOAD before
-    PSU) before close (a clean batch leaves outputs as set).
+    Holds a long-lived subprocess (``_execute_op_subprocess.py`` in the project
+    venv) that keeps ``per_session`` devices OPEN across steps, so a held PSU
+    output survives between ops — the whole reason the daemon exists.  The dialog
+    creates ONE per run, routes ⚡/auto-run through it, and sends ``shutdown``
+    (or, on a wedge, ``kill`` + a fresh :func:`safe_off_remote`) at the end.
 
-    Never raises. Returns ``{"ok": True, "results": [...], "aborted": bool,
-    "log": [...]}`` where each result is
-    ``{"node_path", "ok": True, "has_value", "value", "unit", "ref"}`` or
-    ``{"node_path", "ok": False, "error"}`` (results stop at the first failure),
-    or ``{"ok": False, "kind", "error"}`` on a transport failure.
+    Thread-safe: a lock serialises requests (one in-flight at a time, matching
+    the daemon's single-threaded loop).  Requests NEVER raise — they return
+    ``{"ok": False, "kind": "SessionDead"|"SessionTimeout"|"ParserUnavailable",
+    "error": ..., "stderr": [...]}`` so the dialog can trigger recovery (fresh
+    safe-off) and surface "session lost".  ``_bundle_dir`` is injected per frame.
     """
-    try:
-        py = _resolve_project_python(project_root)
-    except ParserUnavailable as exc:
-        return {"ok": False, "kind": "ParserUnavailable", "error": str(exc)}
-    spec = {
-        "op": "execute_ops_remote",
-        "procedure_json": procedure_json,
-        "ops": ops,
-        "bench_map": bench_map,
-    }
-    return _subprocess_call(
-        py, spec,
-        timeout=timeout or (_TIMEOUT_REMOTE_EXEC + 5 * len(ops)),
-        runner_name="_execute_op_subprocess.py",
-    )
 
+    def __init__(self, procedure_json: dict[str, Any], project_root: Path) -> None:
+        self._procedure_json = procedure_json
+        self._project_root = Path(project_root)
+        self._proc: Optional[subprocess.Popen] = None
+        self._stderr_tail: deque = deque(maxlen=80)
+        self._lock = threading.Lock()
+        self._dead = False
+        self._bundle_dir: Optional[str] = None
 
-def execute_op_remote(
-    target_op: dict[str, Any],
-    procedure_json: dict[str, Any],
-    bench: dict[str, Any],
-    project_root: Path,
-    timeout: Optional[int] = None,
-) -> dict[str, Any]:
-    """Execute ONE op remotely — a batch of one over :func:`execute_ops_remote`.
+    # -- lifecycle ---------------------------------------------------------
+    def _start(self) -> None:
+        py = _resolve_project_python(self._project_root)   # may raise ParserUnavailable
+        self._bundle_dir = str(py.parents[2] / "bundle")
+        runner = Path(__file__).resolve().parent / "_execute_op_subprocess.py"
+        self._proc = subprocess.Popen(
+            [str(py), str(runner)],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, bufsize=1,
+        )
+        self._dead = False
+        self._stderr_tail.clear()
+        threading.Thread(target=self._drain_stderr, args=(self._proc,),
+                         daemon=True).start()
 
-    Connect WITHOUT reset → run the op → close, returning the FLAT single-op
-    shape the guided-manual ⚡ handler consumes:
-    ``{"ok": True, "has_value", "value", "unit", "ref", "log"}`` or
-    ``{"ok": False, "kind", "error"}``. ``bench`` is the caller-resolved
-    connection params for ``target_op['device']``. Never raises.
-    """
-    device = target_op.get("device")
-    res = execute_ops_remote(
-        [{"node_path": "", "op": target_op}], procedure_json,
-        {device: bench}, project_root, timeout)
-    if not res.get("ok"):
+    def _drain_stderr(self, proc: subprocess.Popen) -> None:
+        try:
+            for line in iter(proc.stderr.readline, ""):
+                self._stderr_tail.append(line.rstrip("\n"))
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _alive(self) -> bool:
+        return (self._proc is not None and self._proc.poll() is None
+                and not self._dead)
+
+    def _terminate(self) -> None:
+        """Terminate AND reap the daemon, so its serial/VISA handle is released
+        before any fresh recovery daemon re-opens the same port."""
+        if self._proc is None:
+            return
+        try:
+            self._proc.terminate()
+            try:
+                self._proc.wait(timeout=3)
+            except Exception:  # noqa: BLE001
+                self._proc.kill()
+                try:
+                    self._proc.wait(timeout=5)   # reap -> device handle freed
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _dead_resp(self, kind: str, error: str) -> dict[str, Any]:
+        # dead == True is a HARD guarantee the proc is GONE (and its device handle
+        # released) — so _session()'s lazy-recreate and the dialog's recovery
+        # safe-off never open a 2nd process on a device the old daemon still holds.
+        self._dead = True
+        self._terminate()
+        return {"ok": False, "kind": kind, "error": error,
+                "stderr": list(self._stderr_tail)}
+
+    # -- transport ---------------------------------------------------------
+    def _request(self, frame: dict[str, Any], timeout: float) -> dict[str, Any]:
+        with self._lock:
+            if self._dead:
+                return {"ok": False, "kind": "SessionDead",
+                        "error": "remote session already dead",
+                        "stderr": list(self._stderr_tail)}
+            try:
+                if not self._alive():
+                    self._start()
+            except ParserUnavailable as exc:
+                return self._dead_resp("ParserUnavailable", str(exc))
+            except Exception as exc:  # noqa: BLE001
+                return self._dead_resp("SessionDead", f"failed to start daemon: {exc}")
+            frame = {**frame, "_bundle_dir": self._bundle_dir}
+            try:
+                self._proc.stdin.write(json.dumps(frame) + "\n")
+                self._proc.stdin.flush()
+            except (BrokenPipeError, OSError, ValueError) as exc:
+                return self._dead_resp("SessionDead", f"write failed: {exc}")
+            box: dict = {}
+
+            def _read() -> None:
+                try:
+                    box["line"] = self._proc.stdout.readline()
+                except Exception as exc:  # noqa: BLE001
+                    box["err"] = exc
+
+            reader = threading.Thread(target=_read, daemon=True)
+            reader.start()
+            reader.join(timeout)
+            if reader.is_alive():                     # wedged synchronous VISA read
+                return self._dead_resp(               # _dead_resp terminates+reaps
+                    "SessionTimeout", f"daemon unresponsive after {timeout}s")
+            if "err" in box or not box.get("line"):
+                rc = self._proc.poll()
+                return self._dead_resp("SessionDead", f"daemon closed pipe (exit={rc})")
+            try:
+                return json.loads(box["line"])
+            except json.JSONDecodeError as exc:
+                return self._dead_resp("SessionDead", f"corrupt frame: {exc}")
+
+    # -- API ---------------------------------------------------------------
+    def exec_ops(self, ops: list[dict[str, Any]], bench_map: dict[str, Any],
+                 timeout: Optional[int] = None) -> dict[str, Any]:
+        """Run a contiguous batch; per_session devices stay HELD afterward."""
+        return self._request(
+            {"cmd": "exec_ops", "procedure_json": self._procedure_json,
+             "ops": ops, "bench_map": bench_map},
+            timeout or (_TIMEOUT_REMOTE_EXEC + 5 * len(ops)))
+
+    def exec_op(self, target_op: dict[str, Any], bench: dict[str, Any],
+                timeout: Optional[int] = None) -> dict[str, Any]:
+        """⚡ single op — batch of one, unwrapped to the flat shape the dialog
+        consumes: ``{"ok", "has_value", "value", "unit", "ref", "log"}``."""
+        device = target_op.get("device")
+        res = self.exec_ops([{"node_path": "", "op": target_op}],
+                            {device: bench}, timeout)
+        if not res.get("ok"):
+            return res
+        r0 = (res.get("results") or [{}])[0]
+        if not r0.get("ok"):
+            out = {"ok": False, "kind": "ExecError",
+                   "error": r0.get("error", "remote execution failed"),
+                   "log": res.get("log", [])}
+            if res.get("unsafe"):
+                out["unsafe"] = res["unsafe"]
+            return out
+        out = {"ok": True, "has_value": r0.get("has_value", False),
+               "value": r0.get("value"), "unit": r0.get("unit", ""),
+               "ref": r0.get("ref"), "log": res.get("log", [])}
+        if res.get("unsafe"):
+            out["unsafe"] = res["unsafe"]
+        return out
+
+    def safe_off(self, targets: list[dict[str, Any]], bench_map: dict[str, Any],
+                 timeout: Optional[int] = None) -> dict[str, Any]:
+        """Turn the given outputs OFF (ELOAD before PSU), keeping devices held."""
+        return self._request(
+            {"cmd": "safe_off", "procedure_json": self._procedure_json,
+             "safe_off": targets, "bench_map": bench_map},
+            timeout or _TIMEOUT_REMOTE_EXEC)
+
+    def ping(self, timeout: float = 5) -> dict[str, Any]:
+        return self._request({"cmd": "ping"}, timeout)
+
+    def shutdown(self, timeout: Optional[int] = None) -> dict[str, Any]:
+        """Safe-off all held + close (unlock) + exit. Idempotent / safe to call
+        on an already-dead session."""
+        if self._proc is None or self._dead:
+            return {"ok": True, "log": []}
+        res = self._request(
+            {"cmd": "shutdown", "procedure_json": self._procedure_json},
+            timeout or (_TIMEOUT_REMOTE_EXEC + 30))
+        try:
+            self._proc.wait(timeout=5)
+        except Exception:  # noqa: BLE001
+            self._terminate()
+        self._dead = True
         return res
-    r0 = (res.get("results") or [{}])[0]
-    if not r0.get("ok"):
-        return {"ok": False, "kind": "ExecError",
-                "error": r0.get("error", "remote execution failed"),
-                "log": res.get("log", [])}
-    return {"ok": True, "has_value": r0.get("has_value", False),
-            "value": r0.get("value"), "unit": r0.get("unit", ""),
-            "ref": r0.get("ref"), "log": res.get("log", [])}
+
+    def kill(self) -> None:
+        """Hard-stop a wedged daemon (the parent's last-resort)."""
+        self._dead = True
+        self._terminate()
+
+    @property
+    def dead(self) -> bool:
+        return self._dead
 
 
 def safe_off_remote(
@@ -778,26 +898,20 @@ def safe_off_remote(
     project_root: Path,
     timeout: Optional[int] = None,
 ) -> dict[str, Any]:
-    """Drive the given devices' outputs to a safe OFF state (ELOAD before PSU),
-    without reset. ``targets`` = ``[{"device","etype","channels":[...]}]``. Used
-    by the auto-run controller on Stop / window-close while energized. Never
-    raises — returns ``{"ok": True, "log": [...]}`` or ``{"ok": False, ...}``.
+    """One-shot RECOVERY safe-off: spawn a FRESH daemon, drive the given devices'
+    outputs OFF (ELOAD before PSU), then shut it down (close + unlock).  Used by
+    the dialog when the live :class:`RemoteSession` died/wedged, and on Stop /
+    window-close as a standalone.  ``targets`` = ``[{"device","etype",
+    "channels":[...]}]``.  Never raises — returns ``{"ok": True, "log": [...],
+    "unsafe": [...]?}`` or ``{"ok": False, "kind", "error"}``.
     """
+    sess = RemoteSession(procedure_json, project_root)
     try:
-        py = _resolve_project_python(project_root)
-    except ParserUnavailable as exc:
-        return {"ok": False, "kind": "ParserUnavailable", "error": str(exc)}
-    spec = {
-        "op": "safe_off_remote",
-        "procedure_json": procedure_json,
-        "safe_off": targets,
-        "bench_map": bench_map,
-    }
-    return _subprocess_call(
-        py, spec,
-        timeout=timeout or _TIMEOUT_REMOTE_EXEC,
-        runner_name="_execute_op_subprocess.py",
-    )
+        res = sess.safe_off(targets, bench_map, timeout)
+        sess.shutdown()              # close + unlock the just-opened devices
+        return res
+    finally:
+        sess.kill()
 
 
 def equipment_types_in(procedure_text: str) -> list[str]:

@@ -213,25 +213,27 @@ def render_target(project_root: Optional[Path], refdes: str,
     p = load_render_params(project_root)
     cache = Path(project_root) / ".media_cache"
     target = f"{refdes}:{pad}" if pad else refdes
-    common = [
-        "--img-size", str(p["img_size"]), "--render-size", str(p["render_size"]),
-        "--max-workers", str(p["max_workers"]), "--batch-size", str(p["batch_size"]),
-        "--parallel-render" if p["parallel_render"] else "--no-parallel-render",
-        "--parallel-export" if p["parallel_export"] else "--no-parallel-export",
-    ]
-    for view in ("zoomed", "wide"):
-        out = cache / view
-        try:
-            out.mkdir(parents=True, exist_ok=True)
-            subprocess.run(
-                [sys.executable, str(cli), "--odb-tgz", str(tgz),
-                 "--out-dir", str(out), "--target", target,
-                 "--window-mm", str(p[f"window_mm_{view}"]),
-                 "--cross-arm-mm", str(p[f"cross_arm_mm_{view}"]),
-                 "--cross-thickness-px", str(p[f"cross_thickness_px_{view}"])]
-                + common,
-                capture_output=True, text=True, timeout=180,
-            )
-        except (OSError, subprocess.SubprocessError):
-            pass
+    # ONE invocation: both views crop from a single board render; the face
+    # render is disk-cached (wiped with the GUI's .odb_checksum mechanism).
+    try:
+        subprocess.run(
+            [sys.executable, str(cli), "--odb-tgz", str(tgz),
+             "--view", str(cache / "zoomed"),
+             str(p["window_mm_zoomed"]), str(p["cross_arm_mm_zoomed"]),
+             str(p["cross_thickness_px_zoomed"]),
+             "--view", str(cache / "wide"),
+             str(p["window_mm_wide"]), str(p["cross_arm_mm_wide"]),
+             str(p["cross_thickness_px_wide"]),
+             "--render-cache", str(cache / "base_renders"),
+             "--target", target,
+             "--img-size", str(p["img_size"]),
+             "--render-size", str(p["render_size"]),
+             "--max-workers", str(p["max_workers"]),
+             "--batch-size", str(p["batch_size"]),
+             "--parallel-render" if p["parallel_render"] else "--no-parallel-render",
+             "--parallel-export" if p["parallel_export"] else "--no-parallel-export"],
+            capture_output=True, text=True, timeout=240,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
     return cached_image_paths(project_root, refdes, pad)

@@ -486,6 +486,11 @@ class MainWindow(QMainWindow):
         # Help menu
         help_menu = menubar.addMenu("&Help")
         
+        syntax_action = QAction("&DSL Syntax Reference", self)
+        syntax_action.setShortcut("F1")
+        syntax_action.triggered.connect(self._on_syntax_reference)
+        help_menu.addAction(syntax_action)
+
         about_action = QAction("&About", self)
         about_action.triggered.connect(self._on_about)
         help_menu.addAction(about_action)
@@ -671,6 +676,10 @@ class MainWindow(QMainWindow):
             self.rules_indicator.setText(f"Rules: ✅ {rules_root}")
         else:
             self.rules_indicator.setText("Rules: ❌ None")
+
+        # Live-refresh the syntax reference if it's open (project/bundle changed).
+        from .dialogs.syntax_reference import SyntaxReferenceDialog
+        SyntaxReferenceDialog.refresh_if_open(rules_root)
     
     def _on_project_indicator_clicked(self):
         """Handle click on project indicator."""
@@ -1606,6 +1615,13 @@ class MainWindow(QMainWindow):
         else:
             bar.show_find()
     
+    def _on_syntax_reference(self):
+        """Open the DSL Syntax Reference (cheat-sheet + full bundle rule docs)."""
+        from .dialogs.syntax_reference import SyntaxReferenceDialog
+        rules_root = (self.project_manager.rules_root
+                      if self.project_manager is not None else None)
+        SyntaxReferenceDialog.show_reference(rules_root, self)
+
     def _on_about(self):
         """Show about dialog."""
         QMessageBox.about(

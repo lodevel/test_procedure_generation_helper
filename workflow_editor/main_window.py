@@ -1012,12 +1012,8 @@ class MainWindow(QMainWindow):
         # When switching between tests, preserve the user's current tab.
         if not hasattr(self, '_has_opened_test'):
             self._has_opened_test = True
-            if self.artifact_manager.procedure_json.exists_on_disk:
-                self.tab_widget.setCurrentWidget(self.json_code_tab)
-            elif self.artifact_manager.procedure_text.exists_on_disk:
-                self.tab_widget.setCurrentWidget(self.text_json_tab)
-            else:
-                self.tab_widget.setCurrentWidget(self.text_json_tab)
+            # Default to the Text tab (text-only authoring view).
+            self.tab_widget.setCurrentWidget(self.text_only_tab)
         
         # The _on_tab_changed handler will call switch_context automatically
         # So we don't need to explicitly call it here - it's handled by the tab change event

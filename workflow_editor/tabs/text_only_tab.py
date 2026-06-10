@@ -106,7 +106,7 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         split.addWidget(self._netlist_panel)
         split.setStretchFactor(0, 1)
         split.setStretchFactor(1, 0)
-        split.setSizes([720, 300])
+        split.setSizes([600, 460])
         layout.addWidget(split, stretch=1)
         self._netlist_loaded_root = object()   # sentinel — first show triggers a load
 

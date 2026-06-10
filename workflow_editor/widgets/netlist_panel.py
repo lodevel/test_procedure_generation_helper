@@ -1,28 +1,34 @@
 """Board netlist reference panel for the Text tab.
 
-A read-only ODB++ browser (Components | Nets) shown beside the procedure-text
-editor to help author tests: search components/pins/nets, **double-click to
-insert** the name at the editor cursor. Auto-generated net names (default
-``Net*``, configurable per project) are hidden unless the *Show Net\\** toggle
-is on. No image rendering — this is a names reference. Empty-and-friendly when
-there is no ODB++ archive (never an error).
+Split vertically: a tabbed **browser** on top (Components | Nets) and an inline
+**board-image viewer** below. It helps author tests two ways:
+- **Double-click** a row to insert its name (refdes / net) at the editor cursor.
+- **Select** a component or pin to render its board image into the viewer
+  (cached or generated on demand; nets are names-only, no image).
+
+Auto-generated net names (default ``Net*``, per-project configurable) are hidden
+unless the *Show auto nets* toggle is on. Empty-and-friendly with no ODB++
+archive (never an error).
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal, QThread
+from PySide6.QtCore import Qt, Signal, QThread, QTimer
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QGroupBox, QVBoxLayout, QHBoxLayout, QLineEdit, QTabWidget, QTreeWidget,
-    QTreeWidgetItem, QLabel, QCheckBox,
+    QGroupBox, QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTabWidget,
+    QTreeWidget, QTreeWidgetItem, QLabel, QCheckBox, QScrollArea, QSplitter,
 )
 
 from ..core import odb_inspect
 
-# Keep loader threads referenced until they finish, so a fast close doesn't
+# Keep worker threads referenced until they finish, so a fast close doesn't
 # destroy a running QThread. Connections to the panel auto-disconnect if it dies.
-_LIVE_LOADERS: set = set()
+_LIVE_WORKERS: set = set()
 
-_ROLE_INSERT = Qt.ItemDataRole.UserRole
+_ROLE_INSERT = Qt.ItemDataRole.UserRole         # text to insert on double-click
+_ROLE_REFDES = Qt.ItemDataRole.UserRole + 1     # render target refdes ("" = none)
+_ROLE_PAD = Qt.ItemDataRole.UserRole + 2        # render target pad ("" = whole part)
 
 
 def _pin_name(pin) -> str:
@@ -50,18 +56,13 @@ def filter_components(components: list, query: str) -> list:
 
 
 def visible_nets(nets: list, query: str, hide_prefixes, show_hidden: bool) -> list:
-    """Nets matching *query*, with auto-named nets (hide_prefixes) dropped unless
-    *show_hidden*."""
     q = (query or "").strip().lower()
     out = []
     for n in nets:
         name = n.get("net", "") or ""
         if not show_hidden and odb_inspect.is_hidden_net(name, hide_prefixes):
             continue
-        if not q:
-            out.append(n)
-            continue
-        if q in name.lower():
+        if not q or q in name.lower():
             out.append(n)
             continue
         for nd in n.get("nodes", []) or ():
@@ -78,7 +79,7 @@ class _LoadWorker(QThread):
     done = Signal(dict)
 
     def __init__(self, project_root):
-        super().__init__()                  # no parent -> kept alive via _LIVE_LOADERS
+        super().__init__()
         self._root = project_root
 
     def run(self) -> None:  # noqa: D401
@@ -89,8 +90,27 @@ class _LoadWorker(QThread):
         self.done.emit(data)
 
 
+class _RenderWorker(QThread):
+    """Renders one component/pin image off the UI thread; never raises. Emits
+    (zoomed_path, wide_path, refdes, pad) — empty strings when not rendered."""
+
+    done = Signal(str, str, str, str)
+
+    def __init__(self, project_root, refdes, pad):
+        super().__init__()
+        self._root, self._refdes, self._pad = project_root, refdes, pad
+
+    def run(self) -> None:  # noqa: D401
+        try:
+            z, w = odb_inspect.render_target(self._root, self._refdes, self._pad)
+        except Exception:  # noqa: BLE001
+            z, w = None, None
+        self.done.emit(str(z) if z else "", str(w) if w else "",
+                       self._refdes, self._pad or "")
+
+
 class NetlistPanel(QGroupBox):
-    """Components | Nets browser; double-click inserts a name at the cursor."""
+    """Components | Nets browser over an inline board-image viewer."""
 
     insert_text = Signal(str)               # name to insert into the editor
 
@@ -99,65 +119,106 @@ class NetlistPanel(QGroupBox):
         self._components: list = []
         self._nets: list = []
         self._hide_prefixes: list = ["Net"]
+        self._project_root = None
+        self._cur_zoom: QPixmap | None = None
+        self._cur_wide: QPixmap | None = None
+        self._cur_cap: str = ""
+        self._rendering = False
+        self._render_pending = None         # (refdes, pad) to render after current
+        self._sel_timer = QTimer(self)
+        self._sel_timer.setSingleShot(True)
+        self._sel_timer.timeout.connect(self._render_selection)
         self._build_ui()
         self.set_board([], [])
 
     # -- UI -------------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        lay = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        split = QSplitter(Qt.Orientation.Vertical)
+
+        top = QWidget()
+        tl = QVBoxLayout(top)
+        tl.setContentsMargins(0, 0, 0, 0)
         self._search = QLineEdit()
         self._search.setPlaceholderText("Filter components / pins / nets…")
         self._search.setClearButtonEnabled(True)
         self._search.textChanged.connect(self._refilter)
-        lay.addWidget(self._search)
+        tl.addWidget(self._search)
 
         self._tabs = QTabWidget()
         self._comp_tree = QTreeWidget()
         self._comp_tree.setHeaderLabels(["Component / pin", "Net"])
-        self._comp_tree.setColumnWidth(0, 130)
+        self._comp_tree.setColumnWidth(0, 140)
         self._comp_tree.setUniformRowHeights(True)
+        self._comp_tree.itemSelectionChanged.connect(self._on_sel_changed)
         self._comp_tree.itemDoubleClicked.connect(self._on_double_click)
         self._net_tree = QTreeWidget()
         self._net_tree.setHeaderLabels(["Net / node", ""])
-        self._net_tree.setColumnWidth(0, 180)
+        self._net_tree.setColumnWidth(0, 190)
         self._net_tree.setUniformRowHeights(True)
+        self._net_tree.itemSelectionChanged.connect(self._on_sel_changed)
         self._net_tree.itemDoubleClicked.connect(self._on_double_click)
         self._tabs.addTab(self._comp_tree, "Components")
         self._tabs.addTab(self._net_tree, "Nets")
-        lay.addWidget(self._tabs, 1)
+        self._tabs.currentChanged.connect(self._on_sel_changed)
+        tl.addWidget(self._tabs, 1)
 
         row = QHBoxLayout()
         self._show_hidden = QCheckBox("Show auto nets (Net*)")
         self._show_hidden.setToolTip(
-            "Show auto-generated net names (e.g. NetD16_A) that are hidden by "
-            "default. Configure the hidden prefixes in the project settings.")
+            "Show auto-generated net names (e.g. NetD16_A) hidden by default. "
+            "Configure the hidden prefixes in the project settings.")
         self._show_hidden.toggled.connect(self._refilter)
         row.addWidget(self._show_hidden)
         row.addStretch(1)
-        lay.addLayout(row)
+        tl.addLayout(row)
 
         self._status = QLabel()
         self._status.setWordWrap(True)
         self._status.setStyleSheet("color:#777; font-size:9pt;")
-        lay.addWidget(self._status)
+        tl.addWidget(self._status)
 
-        hint = QLabel("Double-click a row to insert its name at the cursor.")
+        hint = QLabel("Double-click → insert name · select a component/pin → "
+                      "view its board image.")
         hint.setStyleSheet("color:#999; font-size:9pt;")
         hint.setWordWrap(True)
-        lay.addWidget(hint)
+        tl.addWidget(hint)
+        split.addWidget(top)
+
+        bottom = QGroupBox("Board image")
+        bl = QVBoxLayout(bottom)
+        self._viewer_caption = QLabel()
+        self._viewer_caption.setStyleSheet("font-weight:bold;")
+        self._viewer_caption.setWordWrap(True)
+        bl.addWidget(self._viewer_caption)
+        self._viewer_scroll = QScrollArea()
+        self._viewer_scroll.setWidgetResizable(True)
+        self._viewer_label = QLabel("Select a component or pin to view its image.")
+        self._viewer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._viewer_label.setWordWrap(True)
+        self._viewer_label.setStyleSheet("color:#999;")
+        self._viewer_scroll.setWidget(self._viewer_label)
+        bl.addWidget(self._viewer_scroll, 1)
+        split.addWidget(bottom)
+
+        split.setStretchFactor(0, 1)
+        split.setStretchFactor(1, 1)
+        split.setSizes([360, 320])
+        outer.addWidget(split)
 
     # -- data -----------------------------------------------------------------
 
     def load(self, project_root) -> None:
         """Load the project's netlist off-thread and populate. Safe to call on
         every project change."""
+        self._project_root = project_root
         self._hide_prefixes = odb_inspect.load_hide_prefixes(project_root)
         self.set_status("Loading board…")
         worker = _LoadWorker(project_root)
-        _LIVE_LOADERS.add(worker)
-        worker.done.connect(self._on_loaded)                # auto-dropped if we die
-        worker.finished.connect(lambda w=worker: _LIVE_LOADERS.discard(w))
+        _LIVE_WORKERS.add(worker)
+        worker.done.connect(self._on_loaded)            # auto-dropped if we die
+        worker.finished.connect(lambda w=worker: _LIVE_WORKERS.discard(w))
         worker.finished.connect(worker.deleteLater)
         worker.start()
 
@@ -199,11 +260,15 @@ class NetlistPanel(QGroupBox):
             side = c.get("side", "")
             top = QTreeWidgetItem(
                 [f"{refdes}  ({side.lower()})" if side else refdes, ""])
-            top.setData(0, _ROLE_INSERT, refdes)        # insert refdes
+            top.setData(0, _ROLE_INSERT, refdes)
+            top.setData(0, _ROLE_REFDES, refdes)
+            top.setData(0, _ROLE_PAD, "")
             for p in c.get("pins", []) or ():
                 name, net = _pin_name(p), _pin_net(p)
                 child = QTreeWidgetItem([f"pin {name}", net])
-                child.setData(0, _ROLE_INSERT, net or name)  # pin -> its net (signal)
+                child.setData(0, _ROLE_INSERT, net or name)
+                child.setData(0, _ROLE_REFDES, refdes)
+                child.setData(0, _ROLE_PAD, name)
                 top.addChild(child)
             self._comp_tree.addTopLevelItem(top)
 
@@ -215,15 +280,124 @@ class NetlistPanel(QGroupBox):
             net = n.get("net", "")
             nodes = n.get("nodes", []) or ()
             top = QTreeWidgetItem([net, f"{len(nodes)} pin(s)"])
-            top.setData(0, _ROLE_INSERT, net)           # insert net name
+            top.setData(0, _ROLE_INSERT, net)
+            top.setData(0, _ROLE_REFDES, "")        # a net name has no image
+            top.setData(0, _ROLE_PAD, "")
             for nd in nodes:
                 rd, pin = nd.get("refdes", ""), str(nd.get("pin", ""))
                 child = QTreeWidgetItem([f"{rd} pin {pin}", ""])
-                child.setData(0, _ROLE_INSERT, rd)      # node -> refdes
+                child.setData(0, _ROLE_INSERT, rd)
+                child.setData(0, _ROLE_REFDES, rd)  # a node IS a pin -> renderable
+                child.setData(0, _ROLE_PAD, pin)
                 top.addChild(child)
             self._net_tree.addTopLevelItem(top)
+
+    # -- insert (double-click) ------------------------------------------------
 
     def _on_double_click(self, item, _col=0) -> None:
         text = item.data(0, _ROLE_INSERT)
         if text:
             self.insert_text.emit(str(text))
+
+    # -- selection -> render --------------------------------------------------
+
+    def _on_sel_changed(self, *_) -> None:
+        self._sel_timer.start(250)                  # debounce
+
+    def _selection_target(self):
+        tree = self._tabs.currentWidget()
+        items = tree.selectedItems() if tree is not None else []
+        if not items:
+            return None
+        it = items[0]
+        refdes = it.data(0, _ROLE_REFDES) or ""
+        pad = it.data(0, _ROLE_PAD) or ""
+        return (refdes, pad) if refdes else None
+
+    def _render_selection(self) -> None:
+        sel = self._selection_target()
+        if sel is None or self._project_root is None:
+            return
+        refdes, pad = sel
+        pin = pad or None
+        cap = refdes + (f" pin {pad}" if pad else "")
+        z, w = odb_inspect.cached_image_paths(self._project_root, refdes, pin)
+        if z or w:
+            self._render_pending = None
+            self.show_image(QPixmap(str(z)) if z else None,
+                            QPixmap(str(w)) if w else None, cap)
+            return
+        if self._rendering:
+            self._render_pending = (refdes, pad)    # latest wins
+            self.set_viewer_status(f"Generating {cap}…")
+            return
+        self._rendering = True
+        self.set_viewer_status(f"Generating {cap}…")
+        worker = _RenderWorker(self._project_root, refdes, pin)
+        _LIVE_WORKERS.add(worker)
+        worker.done.connect(self._on_rendered)
+        worker.finished.connect(lambda w=worker: _LIVE_WORKERS.discard(w))
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_rendered(self, z: str, w: str, refdes: str, pad: str) -> None:
+        self._rendering = False
+        cap = refdes + (f" pin {pad}" if pad else "")
+        zpix = QPixmap(z) if z else None
+        wpix = QPixmap(w) if w else None
+        if (zpix is not None and not zpix.isNull()) or (wpix is not None and not wpix.isNull()):
+            self.show_image(zpix, wpix, cap)
+        else:
+            self.set_viewer_status(f"Could not render {cap}.")
+        pend = self._render_pending
+        self._render_pending = None
+        if pend is not None and pend != (refdes, pad):
+            # re-select-driven render of the latest target
+            self._render_one(*pend)
+
+    def _render_one(self, refdes: str, pad: str) -> None:
+        pin = pad or None
+        cap = refdes + (f" pin {pad}" if pad else "")
+        z, w = odb_inspect.cached_image_paths(self._project_root, refdes, pin)
+        if z or w:
+            self.show_image(QPixmap(str(z)) if z else None,
+                            QPixmap(str(w)) if w else None, cap)
+            return
+        self._rendering = True
+        self.set_viewer_status(f"Generating {cap}…")
+        worker = _RenderWorker(self._project_root, refdes, pin)
+        _LIVE_WORKERS.add(worker)
+        worker.done.connect(self._on_rendered)
+        worker.finished.connect(lambda w=worker: _LIVE_WORKERS.discard(w))
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    # -- viewer ---------------------------------------------------------------
+
+    def set_viewer_status(self, text: str) -> None:
+        self._cur_zoom = self._cur_wide = None
+        self._viewer_caption.setText("")
+        self._viewer_label.setPixmap(QPixmap())
+        self._viewer_label.setText(text or "")
+
+    def show_image(self, zpix, wpix, caption: str) -> None:
+        self._cur_zoom, self._cur_wide, self._cur_cap = zpix, wpix, caption
+        self._viewer_caption.setText(caption)
+        pm = zpix if (zpix is not None and not zpix.isNull()) else wpix
+        if pm is not None and not pm.isNull():
+            self._viewer_label.setText("")
+            self._render_scaled(pm)
+        else:
+            self._viewer_label.setText("Image unavailable.")
+
+    def _render_scaled(self, pm: QPixmap) -> None:
+        width = max(120, self._viewer_scroll.viewport().width() - 8)
+        self._viewer_label.setPixmap(pm.scaledToWidth(
+            min(width, pm.width()), Qt.TransformationMode.SmoothTransformation))
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
+        super().resizeEvent(event)
+        pm = self._cur_zoom if (self._cur_zoom is not None
+                                and not self._cur_zoom.isNull()) else self._cur_wide
+        if pm is not None and not pm.isNull():
+            self._render_scaled(pm)

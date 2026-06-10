@@ -21,6 +21,7 @@ from .. import theme
 from ..core.task_config import TaskConfig, TaskConfigManager, ChatConfig
 from ..llm.backend_base import LLMTask
 from ..theme import muted_text
+from ..core.odb_inspect import load_hide_prefixes, save_hide_prefixes
 
 log = logging.getLogger(__name__)
 
@@ -490,6 +491,19 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(retry_group)
 
+        # Board-netlist (Text-tab panel) hidden net-name prefixes — per project.
+        netlist_group = QGroupBox("Board netlist")
+        netlist_form = QFormLayout(netlist_group)
+        self.net_hide_prefixes = QLineEdit()
+        self.net_hide_prefixes.setPlaceholderText("Net")
+        self.net_hide_prefixes.setToolTip(
+            "Comma-separated net-name prefixes hidden by default in the Text "
+            "tab's netlist panel (case-insensitive). Default 'Net' hides Altium "
+            "autogen names like NetD16_A."
+        )
+        netlist_form.addRow("Hidden net prefixes:", self.net_hide_prefixes)
+        layout.addWidget(netlist_group)
+
         # Helper note + project-scope explanation.
         note = QLabel(
             "Settings on this tab are stored per-project in "
@@ -505,6 +519,7 @@ class SettingsDialog(QDialog):
         if self._project_root is None:
             self.validator_enabled.setEnabled(False)
             self.validator_max_attempts.setEnabled(False)
+            self.net_hide_prefixes.setEnabled(False)
             disabled_note = QLabel(
                 "<i>No project open — open a project to edit these settings.</i>"
             )
@@ -552,6 +567,9 @@ class SettingsDialog(QDialog):
                 "max_attempts",
                 int(self.validator_max_attempts.value()),
             )
+            prefixes = [p.strip() for p in self.net_hide_prefixes.text().split(",")
+                        if p.strip()]
+            save_hide_prefixes(self._project_root, prefixes)
         except Exception:
             log.exception("Failed to persist validator_loop settings")
 
@@ -597,7 +615,12 @@ class SettingsDialog(QDialog):
 
         # Validator tab — populate from project's validator_loop section.
         self._load_validator_values()
-    
+        try:
+            self.net_hide_prefixes.setText(
+                ", ".join(load_hide_prefixes(self._project_root)))
+        except Exception:
+            log.exception("Failed to load net_explorer.hide_prefixes")
+
     def _on_save(self):
         """Save settings.
 

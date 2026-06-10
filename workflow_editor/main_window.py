@@ -1527,6 +1527,10 @@ class MainWindow(QMainWindow):
             self._settings = dialog.get_settings()
             self._init_llm_backend()
             self._apply_settings()
+            try:
+                self.text_only_tab.reload_netlist()
+            except Exception:
+                pass
             # Refresh button labels + validator buttons after settings change
             self.refresh_all_button_labels()
             # Also refresh the chat panel's validator-status indicator

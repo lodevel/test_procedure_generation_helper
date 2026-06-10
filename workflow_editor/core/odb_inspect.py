@@ -117,3 +117,92 @@ def save_hide_prefixes(project_root: Optional[Path], prefixes: list) -> bool:
         return True
     except OSError:
         return False
+
+
+def cached_image_paths(project_root: Optional[Path], refdes: str,
+                       pad: Optional[str]) -> tuple:
+    """(zoomed, wide) cached PNG paths for a target under
+    ``<project>/.media_cache`` (shared layout with the main GUI), or
+    ``(None, None)`` when not present."""
+    if project_root is None or not refdes:
+        return (None, None)
+    cache = Path(project_root) / ".media_cache"
+    fname = f"{refdes}_pad{pad}.png" if pad else f"{refdes}.png"
+    z = cache / "zoomed" / "images" / fname
+    w = cache / "wide" / "images" / fname
+    return (z if z.exists() else None, w if w.exists() else None)
+
+
+# Image-generator render params. These defaults mirror the main GUI's
+# image-generator settings, so absent a project override the editor renders
+# byte-identical images into the shared cache. A project may override any of
+# these via <project>/config/config.json:image_generator (the planned
+# template / Project-Configuration field).
+_DEFAULT_RENDER = {
+    "img_size": 1024, "render_size": 4096, "max_workers": 0, "batch_size": 50,
+    "parallel_render": False, "parallel_export": True,
+    "window_mm_zoomed": 40.0, "cross_arm_mm_zoomed": 3.0, "cross_thickness_px_zoomed": 6,
+    "window_mm_wide": 200.0, "cross_arm_mm_wide": 6.0, "cross_thickness_px_wide": 12,
+}
+
+
+def load_render_params(project_root: Optional[Path]) -> dict:
+    """Image-generator render params for the project, from
+    ``<project>/config/config.json:image_generator``, falling back to the main
+    GUI defaults for any unset key."""
+    params = dict(_DEFAULT_RENDER)
+    if project_root is None:
+        return params
+    cfg = Path(project_root) / "config" / "config.json"
+    try:
+        data = json.loads(cfg.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return params
+    ig = data.get("image_generator")
+    if isinstance(ig, dict):
+        for k in params:
+            if k in ig:
+                params[k] = ig[k]
+    return params
+
+
+def render_target(project_root: Optional[Path], refdes: str,
+                  pad: Optional[str]) -> tuple:
+    """Render ONE component/pin board image into the SHARED
+    ``<project>/.media_cache`` (zoomed + wide passes via the ODB CLI) and return
+    its ``(zoomed, wide)`` cached paths. Cache-first. **Graceful** ``(None, None)``
+    when there is no archive / CLI, or on failure. Only ``mkdir``s the view dirs —
+    never touches the GUI's ``.odb_checksum`` (so it can't wipe the shared cache).
+    Synchronous; run it OFF the UI thread."""
+    z, w = cached_image_paths(project_root, refdes, pad)
+    if z or w:
+        return (z, w)
+    tgz = find_odb_tgz(project_root)
+    cli = odb_cli_path()
+    if tgz is None or cli is None or not refdes:
+        return (None, None)
+    p = load_render_params(project_root)
+    cache = Path(project_root) / ".media_cache"
+    target = f"{refdes}:{pad}" if pad else refdes
+    common = [
+        "--img-size", str(p["img_size"]), "--render-size", str(p["render_size"]),
+        "--max-workers", str(p["max_workers"]), "--batch-size", str(p["batch_size"]),
+        "--parallel-render" if p["parallel_render"] else "--no-parallel-render",
+        "--parallel-export" if p["parallel_export"] else "--no-parallel-export",
+    ]
+    for view in ("zoomed", "wide"):
+        out = cache / view
+        try:
+            out.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                [sys.executable, str(cli), "--odb-tgz", str(tgz),
+                 "--out-dir", str(out), "--target", target,
+                 "--window-mm", str(p[f"window_mm_{view}"]),
+                 "--cross-arm-mm", str(p[f"cross_arm_mm_{view}"]),
+                 "--cross-thickness-px", str(p[f"cross_thickness_px_{view}"])]
+                + common,
+                capture_output=True, text=True, timeout=180,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return cached_image_paths(project_root, refdes, pad)

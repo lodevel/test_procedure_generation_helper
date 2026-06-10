@@ -26,11 +26,27 @@ def odb_cli_path() -> Optional[Path]:
 
 
 def find_odb_tgz(project_root: Optional[Path]) -> Optional[Path]:
-    """First ``*.tgz`` in the project root (alphabetical), or ``None``."""
+    """The project's ODB archive: a configured override in
+    ``config.json:odb_archive`` (relative to the project root, or absolute) when
+    it exists, else the first ``*.tgz`` in the project root. ``None`` if neither.
+    Matches the main GUI's resolution so both read the same archive."""
     if project_root is None:
         return None
+    root = Path(project_root)
     try:
-        tgz = sorted(Path(project_root).glob("*.tgz"))
+        data = json.loads((root / "config" / "config.json").read_text(
+            encoding="utf-8"))
+        raw = data.get("odb_archive")
+        if isinstance(raw, str) and raw:
+            p = Path(raw)
+            if not p.is_absolute():
+                p = root / raw
+            if p.exists():
+                return p
+    except (OSError, ValueError):
+        pass
+    try:
+        tgz = sorted(root.glob("*.tgz"))
     except OSError:
         return None
     return tgz[0] if tgz else None

@@ -9,9 +9,11 @@ just shows a friendly empty state, never an error.
 
 from __future__ import annotations
 
+import atexit
 import json
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -23,6 +25,83 @@ def odb_cli_path() -> Optional[Path]:
     # parents: [core, workflow_editor, test_procedure_generation_helper, external]
     cli = Path(__file__).resolve().parents[3] / "odb_image_generator" / "cli.py"
     return cli if cli.exists() else None
+
+
+class _RenderDaemonClient:
+    """Managed long-lived render daemon (NDJSON over stdio) — keeps the parsed
+    board + decoded faces in RAM so warm renders cost ~0.3-0.4s instead of
+    ~1.7s per one-shot CLI run. Any failure returns None and the caller falls
+    back to the CLI (the daemon is an accelerator, never a dependency)."""
+
+    def __init__(self) -> None:
+        self._proc = None
+        self._lock = threading.Lock()
+        self._next_id = 0
+
+    def _ensure(self) -> bool:
+        if self._proc is not None and self._proc.poll() is None:
+            return True
+        self._proc = None
+        cli = odb_cli_path()
+        daemon = cli.with_name("render_daemon.py") if cli else None
+        if daemon is None or not daemon.exists():
+            return False
+        try:
+            self._proc = subprocess.Popen(
+                [sys.executable, str(daemon)],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, text=True, bufsize=1,
+            )
+        except OSError:
+            self._proc = None
+            return False
+        return True
+
+    def request(self, obj: dict, timeout: float):
+        with self._lock:
+            if not self._ensure():
+                return None
+            self._next_id += 1
+            obj = {**obj, "id": self._next_id}
+            try:
+                self._proc.stdin.write(json.dumps(obj) + "\n")
+                self._proc.stdin.flush()
+            except OSError:
+                self.kill()
+                return None
+            holder: dict = {}
+
+            def _read() -> None:
+                try:
+                    holder["line"] = self._proc.stdout.readline()
+                except Exception:  # noqa: BLE001
+                    holder["line"] = ""
+
+            t = threading.Thread(target=_read, daemon=True)
+            t.start()
+            t.join(timeout)
+            line = holder.get("line", "")
+            if t.is_alive() or not line:
+                self.kill()
+                return None
+            try:
+                return json.loads(line)
+            except ValueError:
+                self.kill()
+                return None
+
+    def kill(self) -> None:
+        proc, self._proc = self._proc, None
+        if proc is not None:
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except Exception:  # noqa: BLE001
+                pass
+
+
+_render_daemon = _RenderDaemonClient()
+atexit.register(_render_daemon.kill)
 
 
 def find_odb_tgz(project_root: Optional[Path]) -> Optional[Path]:
@@ -213,6 +292,29 @@ def render_target(project_root: Optional[Path], refdes: str,
     p = load_render_params(project_root)
     cache = Path(project_root) / ".media_cache"
     target = f"{refdes}:{pad}" if pad else refdes
+
+    # Persistent daemon first: warm renders ~0.3-0.4s (board + decoded faces
+    # held in RAM). Falls back to a one-shot CLI run on any failure.
+    resp = _render_daemon.request({
+        "cmd": "render", "odb": str(tgz),
+        "img_size": p["img_size"], "render_size": p["render_size"],
+        "png_compress_level": 1,
+        "render_cache": str(cache / "base_renders"),
+        "views": [
+            {"out_dir": str(cache / "zoomed"),
+             "window_mm": p["window_mm_zoomed"],
+             "cross_arm_mm": p["cross_arm_mm_zoomed"],
+             "cross_thickness_px": p["cross_thickness_px_zoomed"]},
+            {"out_dir": str(cache / "wide"),
+             "window_mm": p["window_mm_wide"],
+             "cross_arm_mm": p["cross_arm_mm_wide"],
+             "cross_thickness_px": p["cross_thickness_px_wide"]},
+        ],
+        "targets": [target],
+    }, timeout=120)
+    if resp and resp.get("ok"):
+        return cached_image_paths(project_root, refdes, pad)
+
     # ONE invocation: both views crop from a single board render; the face
     # render is disk-cached (wiped with the GUI's .odb_checksum mechanism).
     try:

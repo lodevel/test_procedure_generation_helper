@@ -19,8 +19,8 @@ DROPS the output.  A one-shot connect->op->close therefore zeroes the bench
 between every step.  So this runner stays alive for the whole guided-manual
 session and holds a SINGLE session per "per_session" device, closing (and
 unlocking) only at ``shutdown`` / interpreter exit.  Devices whose policy is
-"per_step" (controllers, by default) keep the cheap connect->op->close-per-op
-model — they can go down safely between steps.
+"per_step" (serial packs — lifecycle ``remote: False`` — by default) keep the
+cheap connect->op->close-per-op model — they can go down safely between steps.
 
 NOTE: the matching persistent PARENT transport (pack_parsers) is the Phase-2
 seam.  Until it speaks this framed protocol, this runner is unreachable — do NOT
@@ -29,9 +29,9 @@ drive any UI ⚡/run against it on real hardware yet.
 Connection-lifecycle policy (per device)
 -----------------------------------------
 ``bench_map[device]["session_policy"]`` in {"per_step","per_session"} selects
-the model.  The dialog resolves it (default-by-type: controller -> per_step,
-else per_session) and stamps it; this runner obeys, falling back to the same
-default when unset.  per_session devices live in ``Session.held`` (opened once,
+the model.  The dialog resolves and stamps it (authoritative); this runner
+obeys, falling back to lifecycle metadata when unset (namespace declares
+``remote: False`` -> per_step, else per_session).  per_session devices live in ``Session.held`` (opened once,
 closed only at teardown); per_step devices are opened + closed around the single
 op (``_exec_transient``) and never enter ``held``.  A device is consistently one
 policy for the whole run (enforced).
@@ -116,7 +116,7 @@ def _build_device(bench: dict, etype: str, lifecycle: dict, log: list):
     The driver CLASS and its import come from the pack's own LIFECYCLE
     ``prelude_import`` block + ``driver_class`` name — so a new pack's driver
     works with no change here.  Connection params follow the two transports we
-    support: VISA (psu/eload/scope) and serial (controller).
+    support: VISA (psu/eload/scope) and serial (fncore controller).
     """
     lc = lifecycle.get(etype) or {}
     class_name = lc.get("driver_class")
@@ -138,10 +138,10 @@ def _build_device(bench: dict, etype: str, lifecycle: dict, log: list):
             raise _NotRemote(f"{etype} has no VISA address set; cannot execute remotely.")
         timeout_ms = int(bench.get("timeout_ms") or 3000)
         return cls(visa, timeout_ms=timeout_ms)
-    if "port" in bench:  # serial transport: controller
+    if "port" in bench:  # serial transport (fncore controller)
         port = bench.get("port")
         if not port:
-            raise _NotRemote("controller has no serial PORT set; cannot execute remotely.")
+            raise _NotRemote(f"{etype} has no serial PORT set; cannot execute remotely.")
         return cls(
             port=port,
             baud=int(bench.get("baud") or 115200),
@@ -245,7 +245,7 @@ def _is_state_changing(op: dict, lifecycle: dict) -> bool:
     default to state-changing (errs toward a redundant, harmless safe-off)."""
     etype, _, verb = (op.get("op") or "").partition(".")
     if not (lifecycle.get(etype) or {}).get("cleanup"):
-        return False        # scope/controller (no output) — never energizing
+        return False        # scope/fncore (no output) — never energizing
     return verb not in _READ_VERBS
 
 
@@ -328,7 +328,7 @@ def _safe_off(procedure_json, ns, energized, etype_of, lifecycle, res) -> list:
     for device, channels in energized.items():
         etype = etype_of.get(device, "")
         cleanup = (lifecycle.get(etype) or {}).get("cleanup")
-        if not cleanup:                # scope/controller: nothing to power down
+        if not cleanup:                # scope/fncore: nothing to power down
             continue
         off_verb = cleanup.get("off_op", "output")
         items.append((cleanup.get("priority", 100), etype, device, channels, off_verb))
@@ -354,14 +354,18 @@ def _safe_off(procedure_json, ns, energized, etype_of, lifecycle, res) -> list:
 # ---------------------------------------------------------------------------
 
 
-def _policy_for(bench: dict, etype: str) -> str:
-    """Resolved connection-lifecycle policy for a device.  The dialog stamps
-    ``session_policy``; this is the belt-and-suspenders default-by-type fallback
-    (controller -> per_step, every other equipment -> per_session)."""
+def _policy_for(bench: dict, namespace: str, lifecycle: dict) -> str:
+    """Resolved connection-lifecycle policy for a device.  The GUI-stamped
+    ``session_policy`` is authoritative; the fallback is lifecycle metadata, not
+    a hardcoded namespace list: a pack declaring ``remote: False`` (serial, e.g.
+    fncore) drops safely between steps -> per_step; every other (or unknown)
+    namespace may hold physical state -> per_session."""
     p = (bench or {}).get("session_policy")
     if p in ("per_step", "per_session"):
         return p
-    return "per_step" if etype == "controller" else "per_session"
+    if (lifecycle.get(namespace) or {}).get("remote") is False:
+        return "per_step"
+    return "per_session"
 
 
 class _Session:
@@ -521,7 +525,7 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
         node_path = entry.get("node_path", "")
         device = op.get("device")
         etype = (op.get("op") or "").split(".", 1)[0]
-        policy = _policy_for(bench_map.get(device, {}), etype)
+        policy = _policy_for(bench_map.get(device, {}), etype, session.lifecycle)
         try:
             if policy == "per_session":
                 _ensure_held(session, bench_map, device, etype)

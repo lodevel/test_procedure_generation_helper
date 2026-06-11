@@ -26,6 +26,9 @@ reg._DEFAULT_PACK_PARSERS.update({
     "scope": labpack.PACK_PARSER,
 })
 reg.register_lifecycle(labpack.LIFECYCLE)
+# C1: lifecycle is keyed by OP NAMESPACE — fncore ops live under "fncore"
+# (serial pack: remote False, no output cleanup).
+reg.register_lifecycle({"fncore": {"remote": False, "cleanup": None}})
 
 _RUNNER = (Path(__file__).resolve().parent.parent
            / "workflow_editor" / "llm" / "_execute_op_subprocess.py")
@@ -290,6 +293,15 @@ class DaemonRunnerTests(unittest.TestCase):
         self.assertEqual(len(self._devcalls("SCOPE1", "close")), 1)   # closed
         self.assertFalse(self._offs())                                # never powered down
 
+    # -- policy: GUI stamp authoritative, fallback by lifecycle remote flag -----
+    def test_policy_fallback_is_lifecycle_metadata_driven(self):
+        lc = reg.get_lifecycle()
+        self.assertEqual(er._policy_for({"session_policy": "per_session"},
+                                        "fncore", lc), "per_session")  # stamp wins
+        self.assertEqual(er._policy_for({}, "fncore", lc), "per_step")    # remote False
+        self.assertEqual(er._policy_for({}, "psu", lc), "per_session")    # remote True
+        self.assertEqual(er._policy_for({}, "nopack", lc), "per_session")  # unknown ns
+
     # -- a per_step op that fails mid-op still closes its transient device ------
     def test_per_step_failure_still_closes_transient(self):
         def _boom(*a, **k):
@@ -297,12 +309,14 @@ class DaemonRunnerTests(unittest.TestCase):
         orig = er._exec_op
         er._exec_op = _boom
         self.addCleanup(lambda: setattr(er, "_exec_op", orig))
-        bench = {"CTRL1": {"port": "COM1", "_dev": "CTRL1", "session_policy": "per_step"}}
+        # no session_policy stamp: the fncore lifecycle (remote False) fallback
+        # routes per_step; the DECLARED equipment type stays "controller".
+        bench = {"CTRL1": {"port": "COM1", "_dev": "CTRL1"}}
         proc = {"equipment": [{"id": "CTRL1", "type": "controller"}]}
         s = self._session(proc)
         r = er._cmd_exec_ops(s, {"bench_map": bench,
                                  "ops": [{"node_path": "a", "op": {
-                                     "op": "controller.write_digital", "device": "CTRL1"}}]})
+                                     "op": "fncore.write_digital", "device": "CTRL1"}}]})
         self.assertTrue(r["aborted"])
         self.assertEqual(len(self._devcalls("CTRL1", "connect")), 1)
         self.assertEqual(len(self._devcalls("CTRL1", "close")), 1)    # finally closed it

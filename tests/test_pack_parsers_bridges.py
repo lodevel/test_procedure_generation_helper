@@ -193,6 +193,16 @@ DMM_GENERIC : dmm
 """
 
 
+def _write_procedure_file(case: unittest.TestCase, procedure_json: dict) -> Path:
+    """Write ``procedure_json`` to a tmp ``procedure.json`` (the bridges are
+    path-based; the file outlives the test via addCleanup)."""
+    td = tempfile.TemporaryDirectory()
+    case.addCleanup(td.cleanup)
+    path = Path(td.name) / "procedure.json"
+    path.write_text(json.dumps(procedure_json), encoding="utf-8")
+    return path
+
+
 class BuildManualRunInProcTests(unittest.TestCase):
     """In-process guided-manual run plan (``project_root=None`` → wheel default).
 
@@ -200,13 +210,14 @@ class BuildManualRunInProcTests(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        self.procedure_json, _ = pp.parse_text(PROC_MANUAL)
+        procedure_json, _ = pp.parse_text(PROC_MANUAL)
+        self.procedure_path = _write_procedure_file(self, procedure_json)
 
     def test_supported(self) -> None:
         self.assertIs(pp.supports_build_manual_run(), True)
 
     def test_static_plan_pending_with_expected_joined(self) -> None:
-        run = pp.build_manual_run(self.procedure_json)
+        run = pp.build_manual_run(self.procedure_path)
         self.assertEqual(run.test_name, "T")
         self.assertIs(run.aborted, False)
         bindings = [s for s in run.steps if s.is_binding]
@@ -217,12 +228,16 @@ class BuildManualRunInProcTests(unittest.TestCase):
 
     def test_live_verdicts_from_measurements(self) -> None:
         # int ref keys must survive into the wheel (in-proc: passed straight through)
-        run = pp.build_manual_run(self.procedure_json, {1: 4.0, 2: 2.0})
+        run = pp.build_manual_run(self.procedure_path, {1: 4.0, 2: 2.0})
         by_ref = {s.ref: s.verdict for s in run.steps if s.is_binding}
         self.assertEqual(by_ref, {1: "PASS", 2: "FAIL"})
 
+    def test_unreadable_path_raises_parser_unavailable(self) -> None:
+        with self.assertRaises(pp.ParserUnavailable):
+            pp.build_manual_run(self.procedure_path.parent / "missing.json")
+
     def test_steps_are_frozen_manual_step_views(self) -> None:
-        run = pp.build_manual_run(self.procedure_json)
+        run = pp.build_manual_run(self.procedure_path)
         self.assertTrue(all(isinstance(s, pp.ManualStep) for s in run.steps))
         self.assertIsInstance(run, pp.ManualRunResult)
         # attribute access (frozen dataclass), not dict access
@@ -237,12 +252,13 @@ class BuildManualRunSubprocessMarshallingTests(unittest.TestCase):
     reconstruct the same verdicts. Guards the int-key serialization fix."""
 
     def setUp(self) -> None:
-        self.procedure_json, _ = pp.parse_text(PROC_MANUAL)
+        procedure_json, _ = pp.parse_text(PROC_MANUAL)
+        self.procedure_path = _write_procedure_file(self, procedure_json)
 
     def _round_trip(self, measurements: dict) -> "pp.ManualRunResult":
         spec = {
             "op": "build_manual_run",
-            "procedure_json": self.procedure_json,
+            "procedure_path": str(self.procedure_path),
             "measurements": measurements,
             "controls": None,
         }
@@ -260,6 +276,14 @@ class BuildManualRunSubprocessMarshallingTests(unittest.TestCase):
         self.assertEqual(worker._int_keyed({"1": 4.0, "2": 2.0}), {1: 4.0, 2: 2.0})
         self.assertEqual(worker._int_keyed(None), {})
         self.assertEqual(worker._int_keyed({"x": 1}), {"x": 1})  # non-int left as-is
+
+    def test_unreadable_path_returns_error_result(self) -> None:
+        out = worker._op_build_manual_run({
+            "op": "build_manual_run",
+            "procedure_path": str(self.procedure_path.parent / "missing.json"),
+        })
+        self.assertFalse(out["ok"])
+        self.assertIn("cannot read procedure file", out["error"])
 
 
 class ManualStepSchemaParityTests(unittest.TestCase):

@@ -483,33 +483,48 @@ def sync_meta_json(
     return meta if isinstance(meta, dict) else {}
 
 
+def _load_procedure_document(procedure_path: Path | str) -> dict[str, Any]:
+    """json.load the procedure document for the in-process bridge branch.
+    Raises :class:`ParserUnavailable` (the bridges' uniform failure type) with
+    a clear message when the file is missing/unreadable/not JSON."""
+    path = Path(procedure_path)
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ParserUnavailable(f"cannot read procedure file {str(path)!r}: {exc}")
+
+
 def build_manual_run(
-    procedure_json: dict[str, Any],
+    procedure_path: Path | str,
     measurements: Optional[dict] = None,
     controls: Optional[dict] = None,
     project_root: Optional[Path] = None,
     operator_verdicts: Optional[dict] = None,
 ) -> "ManualRunResult":
-    """Materialize a guided-manual run plan from procedure JSON — the wheel-side
-    StepperSession surfaced to the GUI's guided-manual execution mode.
+    """Materialize a guided-manual run plan from the procedure.json at
+    ``procedure_path`` — the wheel-side StepperSession surfaced to the GUI's
+    guided-manual execution mode.
 
     ``measurements`` maps each resolved ``{N}`` ref (int) to the operator's
     entered value (drives @IF branch selection and live PASS/FAIL verdicts);
     ``controls`` maps a loop-sentinel ``node_path`` to its decision. Both are
     optional — omit for the static (no-input) plan. Returns a
     :class:`ManualRunResult` (the GUI never imports the wheel's dataclasses).
-    Raises :class:`ParserUnavailable` if the wheel isn't importable.
+    Raises :class:`ParserUnavailable` if the wheel isn't importable or the
+    file is unreadable.
     """
+    procedure_path = str(Path(procedure_path).resolve())
     if project_root is None:
         return _inproc_build_manual_run(
-            procedure_json, measurements, controls, operator_verdicts)
+            _load_procedure_document(procedure_path),
+            measurements, controls, operator_verdicts)
 
     project_python = _resolve_project_python(project_root)
     result = _subprocess_call(
         project_python,
         {
             "op": "build_manual_run",
-            "procedure_json": procedure_json,
+            "procedure_path": procedure_path,
             "measurements": measurements,
             "controls": controls,
             "operator_verdicts": operator_verdicts,
@@ -572,28 +587,31 @@ def supports_guided_manual(project_root: Optional[Path] = None) -> bool:
 
 
 def build_manual_result(
-    procedure_json: dict[str, Any],
+    procedure_path: Path | str,
     measurements: Optional[dict] = None,
     controls: Optional[dict] = None,
     project_root: Optional[Path] = None,
     operator_verdicts: Optional[dict] = None,
 ) -> dict:
-    """Evaluate a guided-manual run into a ``results.json``-compatible dict —
-    byte-compatible with the automated test.py output (same Result schema, same
-    build_criteria/eval_verdicts), so the GUI's status badges + report generation
-    consume it unchanged. Dispatches into the PROJECT venv (subprocess) when
-    ``project_root`` is set — the same wheel that runs the test. Raises
-    :class:`ParserUnavailable` if the wheel isn't importable."""
+    """Evaluate a guided-manual run (procedure.json at ``procedure_path``) into
+    a ``results.json``-compatible dict — byte-compatible with the automated
+    test.py output (same Result schema, same build_criteria/eval_verdicts), so
+    the GUI's status badges + report generation consume it unchanged. Dispatches
+    into the PROJECT venv (subprocess) when ``project_root`` is set — the same
+    wheel that runs the test. Raises :class:`ParserUnavailable` if the wheel
+    isn't importable or the file is unreadable."""
+    procedure_path = str(Path(procedure_path).resolve())
     if project_root is None:
         return _inproc_build_manual_result(
-            procedure_json, measurements, controls, operator_verdicts)
+            _load_procedure_document(procedure_path),
+            measurements, controls, operator_verdicts)
 
     project_python = _resolve_project_python(project_root)
     result = _subprocess_call(
         project_python,
         {
             "op": "build_manual_result",
-            "procedure_json": procedure_json,
+            "procedure_path": procedure_path,
             "measurements": measurements,
             "controls": controls,
             "operator_verdicts": operator_verdicts,
@@ -715,11 +733,13 @@ class RemoteSession:
     the daemon's single-threaded loop).  Requests NEVER raise — they return
     ``{"ok": False, "kind": "SessionDead"|"SessionTimeout"|"ParserUnavailable",
     "error": ..., "stderr": [...]}`` so the dialog can trigger recovery (fresh
-    safe-off) and surface "session lost".  ``_bundle_dir`` is injected per frame.
+    safe-off) and surface "session lost".  ``_bundle_dir`` and
+    ``procedure_path`` are injected per frame; the daemon json.loads the
+    document ONCE per session from that path.
     """
 
-    def __init__(self, procedure_json: dict[str, Any], project_root: Path) -> None:
-        self._procedure_json = procedure_json
+    def __init__(self, procedure_path: Path | str, project_root: Path) -> None:
+        self._procedure_path = str(Path(procedure_path).resolve())
         self._project_root = Path(project_root)
         self._proc: Optional[subprocess.Popen] = None
         self._stderr_tail: deque = deque(maxlen=80)
@@ -794,7 +814,8 @@ class RemoteSession:
                 return self._dead_resp("ParserUnavailable", str(exc))
             except Exception as exc:  # noqa: BLE001
                 return self._dead_resp("SessionDead", f"failed to start daemon: {exc}")
-            frame = {**frame, "_bundle_dir": self._bundle_dir}
+            frame = {**frame, "_bundle_dir": self._bundle_dir,
+                     "procedure_path": self._procedure_path}
             try:
                 self._proc.stdin.write(json.dumps(frame) + "\n")
                 self._proc.stdin.flush()
@@ -827,8 +848,7 @@ class RemoteSession:
                  timeout: Optional[int] = None) -> dict[str, Any]:
         """Run a contiguous batch; per_session devices stay HELD afterward."""
         return self._request(
-            {"cmd": "exec_ops", "procedure_json": self._procedure_json,
-             "ops": ops, "bench_map": bench_map},
+            {"cmd": "exec_ops", "ops": ops, "bench_map": bench_map},
             timeout or (_TIMEOUT_REMOTE_EXEC + 5 * len(ops)))
 
     def exec_op(self, target_op: dict[str, Any], bench: dict[str, Any],
@@ -859,8 +879,7 @@ class RemoteSession:
                  timeout: Optional[int] = None) -> dict[str, Any]:
         """Turn the given outputs OFF (ELOAD before PSU), keeping devices held."""
         return self._request(
-            {"cmd": "safe_off", "procedure_json": self._procedure_json,
-             "safe_off": targets, "bench_map": bench_map},
+            {"cmd": "safe_off", "safe_off": targets, "bench_map": bench_map},
             timeout or _TIMEOUT_REMOTE_EXEC)
 
     def ping(self, timeout: float = 5) -> dict[str, Any]:
@@ -872,7 +891,7 @@ class RemoteSession:
         if self._proc is None or self._dead:
             return {"ok": True, "log": []}
         res = self._request(
-            {"cmd": "shutdown", "procedure_json": self._procedure_json},
+            {"cmd": "shutdown"},
             timeout or (_TIMEOUT_REMOTE_EXEC + 30))
         try:
             self._proc.wait(timeout=5)
@@ -893,7 +912,7 @@ class RemoteSession:
 
 def safe_off_remote(
     targets: list[dict[str, Any]],
-    procedure_json: dict[str, Any],
+    procedure_path: Path | str,
     bench_map: dict[str, dict[str, Any]],
     project_root: Path,
     timeout: Optional[int] = None,
@@ -905,7 +924,7 @@ def safe_off_remote(
     "channels":[...]}]``.  Never raises — returns ``{"ok": True, "log": [...],
     "unsafe": [...]?}`` or ``{"ok": False, "kind", "error"}``.
     """
-    sess = RemoteSession(procedure_json, project_root)
+    sess = RemoteSession(procedure_path, project_root)
     try:
         res = sess.safe_off(targets, bench_map, timeout)
         sess.shutdown()              # close + unlock the just-opened devices

@@ -41,7 +41,10 @@ Ops:
   build_manual_run → {"ok": true, "test_name": str, "aborted": bool,
                       "steps": [{...StepDescriptor...}],
                       "skipped": [{...StepDescriptor...}]}
+                     (input: {"procedure_path": "<abs procedure.json>"} —
+                      this runner json.loads the document itself)
   build_manual_result → {"ok": true, "result": {...results.json schema...}}
+                        (input: same "procedure_path" convention)
 """
 from __future__ import annotations
 
@@ -254,8 +257,28 @@ def _int_keyed(d) -> dict:
     return out
 
 
+def _read_procedure(spec: dict):
+    """Load the procedure document named by the spec's ``procedure_path``.
+
+    Returns ``(procedure_json, None)`` or ``(None, error_result)`` — the error
+    result is the runner's uniform ``{"ok": false, ...}`` shape so the op can
+    return it directly instead of dying with a bare traceback."""
+    path = spec["procedure_path"]
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, {"ok": False, "kind": "Other",
+                      "error": f"cannot read procedure file {path!r}: {exc}"}
+    if not isinstance(doc, dict):
+        return None, {"ok": False, "kind": "Other",
+                      "error": f"procedure file {path!r} is not a JSON object"}
+    return doc, None
+
+
 def _op_build_manual_run(spec: dict) -> dict:
-    procedure_json = spec["procedure_json"]
+    procedure_json, err = _read_procedure(spec)
+    if err:
+        return err
     measurements = _int_keyed(spec.get("measurements") or {})
     controls = spec.get("controls") or {}      # loop-sentinel node_path keys stay strings
     operator_verdicts = _int_keyed(spec.get("operator_verdicts") or {})
@@ -271,7 +294,9 @@ def _op_build_manual_run(spec: dict) -> dict:
 
 
 def _op_build_manual_result(spec: dict) -> dict:
-    procedure_json = spec["procedure_json"]
+    procedure_json, err = _read_procedure(spec)
+    if err:
+        return err
     measurements = _int_keyed(spec.get("measurements") or {})
     controls = spec.get("controls") or {}
     operator_verdicts = _int_keyed(spec.get("operator_verdicts") or {})

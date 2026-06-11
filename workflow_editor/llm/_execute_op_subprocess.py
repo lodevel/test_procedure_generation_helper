@@ -52,11 +52,14 @@ The protocol channel is a PRIVATE dup of the real stdout fd; fd 1 itself is then
 redirected to stderr so even C-level (VISA backend) writes to "stdout" cannot
 corrupt a frame.  Tracebacks travel inside the response JSON, never printed.
 
-  Request  (one line):
-    {"cmd": "exec_ops", "_bundle_dir": "<abs>", "procedure_json": {...},
+  Request  (one line) — every frame may carry "procedure_path" (abs path to
+  procedure.json; the parent injects it per frame).  The document is
+  json.load'ed ONCE per session from that path (latched like ``_bundle_dir``);
+  frames never embed the document itself:
+    {"cmd": "exec_ops", "_bundle_dir": "<abs>", "procedure_path": "<abs>",
      "ops": [{"node_path": str, "op": {...}}, ...],
      "bench_map": {device: {"visa"|"port"..., "session_policy": "..."}}}
-    {"cmd": "safe_off", "_bundle_dir": "<abs>", "procedure_json": {...},
+    {"cmd": "safe_off", "_bundle_dir": "<abs>", "procedure_path": "<abs>",
      "bench_map": {...}, "safe_off": [{"device","etype","channels":[...]}, ...]}
     {"cmd": "shutdown"}        # safe-off all held + close (unlock) + exit
     {"cmd": "ping"}            # liveness probe
@@ -66,8 +69,9 @@ corrupt a frame.  Tracebacks travel inside the response JSON, never printed.
                 "unsafe": [str]?}     # unsafe = devices that could NOT power down
     safe_off : {"ok": true, "log": [str], "unsafe": [str]?}
     shutdown : {"ok": true, "log": [str], "unsafe": [str]?}   (then exits)
-    error    : {"ok": false, "kind": "<NotRemote|NoCodegen|NoLifecycle|ExecError
-                |Protocol>", "error": str, "traceback": str?}
+    error    : {"ok": false, "kind": "<NotRemote|NoCodegen|NoLifecycle
+                |NoProcedure|ExecError|Protocol>", "error": str,
+                "traceback": str?}
 
 Crash safety: ``atexit`` + SIGTERM/SIGINT run the same teardown (safe-off ALL
 held psu/eload by DECLARED channels, ELOAD-before-PSU, then close()->unlock).
@@ -491,12 +495,22 @@ def _require_lifecycle(session: _Session):
     return None
 
 
+def _require_procedure(session: _Session):
+    """A hard, visible failure if no procedure document was ever latched —
+    exec must not run without it (channel resolution / safe-off would silently
+    degrade to guesses)."""
+    if session.procedure_json is None:
+        return {"ok": False, "kind": "NoProcedure",
+                "error": "no procedure document loaded (procedure_path missing "
+                         "or unreadable on every frame); refusing to execute ops."}
+    return None
+
+
 def _cmd_exec_ops(session: _Session, req: dict) -> dict:
-    guard = _require_lifecycle(session)
+    guard = _require_lifecycle(session) or _require_procedure(session)
     if guard:
         return guard
-    procedure_json = req.get("procedure_json") or {}
-    session.procedure_json = procedure_json
+    procedure_json = session.procedure_json
     ops = req.get("ops") or []
     bench_map = req.get("bench_map") or {}
     log_mark = len(session.res.log)
@@ -549,8 +563,10 @@ def _cmd_safe_off(session: _Session, req: dict) -> dict:
     guard = _require_lifecycle(session)
     if guard:
         return guard
-    procedure_json = req.get("procedure_json") or session.procedure_json or {}
-    session.procedure_json = procedure_json
+    # Tolerates a never-latched document ({}): recovery safe-off must not be
+    # blocked — targets carry explicit channels, the document is only the
+    # declared-channels fallback for channel-less state-changers.
+    procedure_json = session.procedure_json or {}
     bench_map = req.get("bench_map") or {}
     targets = req.get("safe_off") or []   # [{"device","etype","channels":[...]}]
     log_mark = len(session.res.log)
@@ -575,8 +591,7 @@ def _cmd_safe_off(session: _Session, req: dict) -> dict:
 
 
 def _cmd_shutdown(session: _Session, req: dict) -> dict:
-    if req.get("procedure_json"):
-        session.procedure_json = req["procedure_json"]
+    del req  # teardown uses the latched session.procedure_json (or none — fine)
     log_mark = len(session.res.log)
     unsafe = _teardown(session)
     resp = {"ok": True, "log": session.res.log[log_mark:]}
@@ -629,11 +644,43 @@ def _load_bundle(session: _Session, req: dict) -> None:
     session.bundle_loaded = True
 
 
+def _load_procedure(session: _Session, req: dict):
+    """Latch the procedure document ONCE per session from the frame's
+    ``procedure_path`` (sibling of :func:`_load_bundle`). The document is
+    frozen at the first frame that carries the key — a file regenerated
+    mid-session is deliberately NOT re-read. A frame without the key is
+    fine (ping/shutdown need no document); a path that cannot be read (or
+    holds a non-dict) returns an error response — fatal for exec_ops
+    ONLY (see _dispatch)."""
+    if session.procedure_json is not None:
+        return None
+    path = req.get("procedure_path")
+    if not path:
+        return None
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"ok": False, "kind": "NoProcedure",
+                "error": f"cannot read procedure file {path!r}: {exc}"}
+    if not isinstance(doc, dict):
+        return {"ok": False, "kind": "NoProcedure",
+                "error": f"procedure file {path!r} is not a JSON object"}
+    session.procedure_json = doc
+    return None
+
+
 def _dispatch(session: _Session, req: dict):
     """Return ``(response, stop)``.  ``stop`` ends the loop (shutdown)."""
     cmd = req.get("cmd")
     try:
         _load_bundle(session, req)
+        err = _load_procedure(session, req)
+        if err and cmd == "exec_ops":
+            # Only exec is gated on the document. safe_off/shutdown/ping
+            # proceed with the latched copy or {} — a recovery safe-off
+            # must run even when procedure.json vanished mid-session
+            # (its targets carry explicit channels).
+            return err, False
         if cmd == "ping":
             return {"ok": True, "pong": True}, False
         if cmd == "exec_ops":

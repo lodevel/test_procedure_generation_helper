@@ -385,15 +385,21 @@ def sync_equipment_from_steps(
     measure-only channel).
 
     When ``controller_profiles`` is None, falls back to reading the
-    bundle's ``defaults.json`` via the ``TPG_BUNDLE_DEFAULTS_PATH``
+    bundle's ``equipment_profiles`` via the ``TPG_BUNDLE_DEFAULTS_PATH``
     env var (same path the workflows editor uses for its bundle
-    defaults), so the GUI button can call this with just ``text`` and
-    still get controller subtype inference.
+    defaults), filtered to ``equipment_type == "controller"`` and shimmed
+    to the wheel's record shape (``pattern`` <- ``id_pattern``), so the
+    GUI button can call this with just ``text`` and still get controller
+    subtype inference.
 
     Raises :class:`ParserUnavailable` if the wheel isn't importable.
     """
     if controller_profiles is None:
-        controller_profiles = _load_bundle_controller_profiles()
+        controller_profiles = [
+            {**p, "pattern": p.get("id_pattern")}
+            for p in _load_bundle_equipment_profiles()
+            if p.get("equipment_type") == "controller"
+        ]
 
     if project_root is None:
         return _inproc_sync_equipment(text, controller_profiles)
@@ -624,15 +630,15 @@ def build_manual_result(
     return out if isinstance(out, dict) else {}
 
 
-def _load_bundle_controller_profiles() -> list[dict]:
-    """Read ``controller_profiles`` from the bundle's defaults.json.
+def _load_bundle_equipment_profiles() -> list[dict]:
+    """Read ``equipment_profiles`` from the bundle's defaults.json.
 
     The parent app exposes the bundle path via ``TPG_BUNDLE_DEFAULTS_PATH``;
     same convention as ``TaskConfigManager._load_pack_workflow_defaults``.
-    Returns ``[]`` when the env var is unset, the file is missing,
-    malformed, or lacks the ``controller_profiles`` key — equivalent
-    to "no controller inference available", which is safe (PSU/ELOAD/
-    SCOPE/DMM inference still works without it).
+    Returns ``[]`` when the env var is unset or the file is missing /
+    malformed (no bundle context). A readable bundle defaults.json
+    WITHOUT the ``equipment_profiles`` key is a pre-bundle/2 artifact —
+    that is a hard error (D4), never a silent ``[]``.
     """
     import json
     import os
@@ -646,9 +652,11 @@ def _load_bundle_controller_profiles() -> list[dict]:
         return []
     if not isinstance(data, dict):
         return []
-    profiles = data.get("controller_profiles")
+    profiles = data.get("equipment_profiles")
     if not isinstance(profiles, list):
-        return []
+        raise ParserUnavailable(
+            "bundle predates equipment_profiles (bundle/1) — rebuild the bundle"
+        )
     return [p for p in profiles if isinstance(p, dict)]
 
 

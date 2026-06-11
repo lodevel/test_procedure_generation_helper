@@ -295,11 +295,12 @@ class TextJsonTab(LLMTabMixin, BaseTab):
             self.show_error("Save Failed", str(e))
 
     def _on_sync_equipment(self) -> None:
-        """Rescan ``## Steps`` and regenerate ``## Equipment`` from
-        scratch. Acts only on the LEFT (text) editor — the JSON
-        editor's Equipment is downstream of the text via parse.
-        Operator customizations on the existing block are
-        overwritten. Confirmation + warnings posted to the chat panel."""
+        """Rescan ``## Steps`` and refresh ``## Equipment``. Acts only
+        on the LEFT (text) editor — the JSON editor's Equipment is
+        downstream of the text via parse. Declared types anchor
+        (conflicts are warned, never flipped) and ratings merge as
+        max(declared, observed). Refuses (text untouched) when
+        declared lines don't parse. Outcome + warnings → chat panel."""
         from ..llm import pack_parsers
         from .text_only_tab import _post_to_chat, _format_chat_warnings
         original = self.text_editor.toPlainText()
@@ -312,6 +313,20 @@ class TextJsonTab(LLMTabMixin, BaseTab):
             )
         except pack_parsers.ParserUnavailable as exc:
             self.show_error("Sync Equipment failed", str(exc))
+            return
+        if any("[SYNCEQP_BLOCKED]" in w for w in warnings):
+            self.status_message.emit(
+                "Sync Equipment: REFUSED — unparseable ## Equipment lines "
+                "(see chat)"
+            )
+            _post_to_chat(
+                self.main_window,
+                "🔧 Sync Equipment REFUSED — the existing ## Equipment block "
+                "has lines that don't parse (wrong syntax, or their pack "
+                "isn't in the active bundle); syncing would delete them. "
+                "Nothing was changed."
+                + _format_chat_warnings(warnings),
+            )
             return
         if new_text == original:
             self.status_message.emit(
@@ -328,9 +343,9 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         self.status_message.emit("Equipment synced from steps")
         _post_to_chat(
             self.main_window,
-            "🔧 Sync Equipment applied — ## Equipment regenerated from steps. "
-            "Operator customizations were overwritten; re-add bench headroom "
-            "manually if needed."
+            "🔧 Sync Equipment applied — ## Equipment refreshed from steps. "
+            "Declared types were kept (type conflicts are warned) and "
+            "ratings merged as max(declared, observed)."
             + _format_chat_warnings(warnings),
         )
 

@@ -241,11 +241,11 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
             self.show_error("Save Failed", str(e))
 
     def _on_sync_equipment(self) -> None:
-        """Rescan ``## Steps`` and regenerate ``## Equipment`` from
-        scratch. Operator customizations on the existing block are
-        overwritten — Sync makes Equipment reflect the steps
-        as-written. Confirmation + any warnings posted to the chat
-        panel."""
+        """Rescan ``## Steps`` and refresh ``## Equipment``. Declared
+        types anchor (conflicts are warned, never flipped) and ratings
+        merge as max(declared, observed) — bench headroom survives.
+        Refuses (text untouched) when declared lines don't parse.
+        Outcome + warnings posted to the chat panel."""
         from ..llm import pack_parsers
         original = self.text_editor.toPlainText()
         if not original:
@@ -257,6 +257,20 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
             )
         except pack_parsers.ParserUnavailable as exc:
             self.show_error("Sync Equipment failed", str(exc))
+            return
+        if any("[SYNCEQP_BLOCKED]" in w for w in warnings):
+            self.status_message.emit(
+                "Sync Equipment: REFUSED — unparseable ## Equipment lines "
+                "(see chat)"
+            )
+            _post_to_chat(
+                self.main_window,
+                "🔧 Sync Equipment REFUSED — the existing ## Equipment block "
+                "has lines that don't parse (wrong syntax, or their pack "
+                "isn't in the active bundle); syncing would delete them. "
+                "Nothing was changed."
+                + _format_chat_warnings(warnings),
+            )
             return
         if new_text == original:
             self.status_message.emit(
@@ -273,9 +287,9 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         self.status_message.emit("Equipment synced from steps")
         _post_to_chat(
             self.main_window,
-            "🔧 Sync Equipment applied — ## Equipment regenerated from steps. "
-            "Operator customizations were overwritten; re-add bench headroom "
-            "manually if needed."
+            "🔧 Sync Equipment applied — ## Equipment refreshed from steps. "
+            "Declared types were kept (type conflicts are warned) and "
+            "ratings merged as max(declared, observed)."
             + _format_chat_warnings(warnings),
         )
 

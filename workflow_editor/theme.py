@@ -10,6 +10,256 @@ from PySide6.QtGui import QPalette, QColor
 from PySide6.QtWidgets import QApplication
 
 
+# ── Application theme registry ───────────────────────────────────────
+
+ORIGINAL_THEME_ID = "original"
+NEUTRAL_DARK_THEME_ID = "dark"
+MODERN_DARK_THEME_ID = "modern_dark"
+
+_THEME_LABELS: dict[str, str] = {
+    ORIGINAL_THEME_ID: "Original / system",
+    NEUTRAL_DARK_THEME_ID: "Neutral dark",
+    MODERN_DARK_THEME_ID: "Modern dark",
+}
+
+_ORIGINAL_PALETTE: QPalette | None = None
+_THEME_ACTIVE = False
+
+
+def available_app_themes() -> tuple[tuple[str, str], ...]:
+    """Return selectable application themes as ``(id, label)`` pairs."""
+    return tuple(_THEME_LABELS.items())
+
+
+def normalize_app_theme_name(name: str | None) -> str:
+    """Return a known theme id, falling back to the native/system look."""
+    if name in _THEME_LABELS:
+        return str(name)
+    return ORIGINAL_THEME_ID
+
+
+def app_theme_label(name: str | None) -> str:
+    """Return the display label for a theme id."""
+    return _THEME_LABELS[normalize_app_theme_name(name)]
+
+
+def apply_app_theme(theme_name: str | None, app: QApplication | None = None) -> str:
+    """Apply the selected app theme and return the normalized theme id."""
+    global _THEME_ACTIVE
+
+    app = app or QApplication.instance()
+    theme_id = normalize_app_theme_name(theme_name)
+    if app is None:
+        return theme_id
+
+    if theme_id == ORIGINAL_THEME_ID:
+        if _ORIGINAL_PALETTE is not None:
+            app.setPalette(_ORIGINAL_PALETTE)
+        if _THEME_ACTIVE:
+            app.setStyleSheet("")
+        _THEME_ACTIVE = False
+        return theme_id
+
+    if theme_id in (NEUTRAL_DARK_THEME_ID, MODERN_DARK_THEME_ID):
+        _remember_original_palette(app)
+        app.setPalette(_neutral_dark_palette())
+        stylesheet = (
+            _modern_dark_stylesheet()
+            if theme_id == MODERN_DARK_THEME_ID
+            else _neutral_dark_stylesheet()
+        )
+        app.setStyleSheet(stylesheet)
+        _THEME_ACTIVE = True
+        return theme_id
+
+    if _ORIGINAL_PALETTE is not None:
+        app.setPalette(_ORIGINAL_PALETTE)
+    _THEME_ACTIVE = False
+    return ORIGINAL_THEME_ID
+
+
+def _remember_original_palette(app: QApplication) -> None:
+    """Capture the current native palette before applying an opt-in theme."""
+    global _ORIGINAL_PALETTE
+    if _ORIGINAL_PALETTE is None:
+        _ORIGINAL_PALETTE = QPalette(app.palette())
+
+
+def _neutral_dark_palette() -> QPalette:
+    """Build a conservative dark palette that still feels native Qt."""
+    palette = QPalette()
+
+    window = QColor("#24272e")
+    panel = QColor("#2d313a")
+    base = QColor("#1b1e24")
+    alt_base = QColor("#262a32")
+    text = QColor("#e8eaed")
+    muted = QColor("#b8c0cc")
+    disabled = QColor("#8f98a6")
+    accent = QColor("#4f9cf9")
+    border = QColor("#56606d")
+
+    palette.setColor(QPalette.ColorRole.Window, window)
+    palette.setColor(QPalette.ColorRole.WindowText, text)
+    palette.setColor(QPalette.ColorRole.Base, base)
+    palette.setColor(QPalette.ColorRole.AlternateBase, alt_base)
+    palette.setColor(QPalette.ColorRole.Light, QColor("#4a515e"))
+    palette.setColor(QPalette.ColorRole.Midlight, QColor("#3a404a"))
+    palette.setColor(QPalette.ColorRole.Dark, QColor("#151820"))
+    palette.setColor(QPalette.ColorRole.Mid, border)
+    palette.setColor(QPalette.ColorRole.Shadow, QColor("#0f1117"))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, panel)
+    palette.setColor(QPalette.ColorRole.ToolTipText, text)
+    palette.setColor(QPalette.ColorRole.Text, text)
+    palette.setColor(QPalette.ColorRole.Button, panel)
+    palette.setColor(QPalette.ColorRole.ButtonText, text)
+    palette.setColor(QPalette.ColorRole.BrightText, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.Link, accent)
+    palette.setColor(QPalette.ColorRole.LinkVisited, QColor("#c084fc"))
+    palette.setColor(QPalette.ColorRole.Highlight, accent)
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.PlaceholderText, muted)
+
+    for role in (
+        QPalette.ColorRole.WindowText,
+        QPalette.ColorRole.Text,
+        QPalette.ColorRole.ButtonText,
+    ):
+        palette.setColor(QPalette.ColorGroup.Disabled, role, disabled)
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Button, window)
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Highlight, QColor("#3a414c"))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.HighlightedText, disabled)
+    return palette
+
+
+def _neutral_dark_stylesheet() -> str:
+    """High-contrast defaults for widgets that do not fully honor palettes."""
+    return """
+        QWidget {
+            color: #e8eaed;
+            selection-background-color: #4f9cf9;
+            selection-color: #ffffff;
+        }
+        QMainWindow, QDialog, QWidget#centralwidget {
+            background-color: #24272e;
+        }
+        QLabel, QCheckBox, QRadioButton, QGroupBox {
+            color: #e8eaed;
+        }
+        QGroupBox {
+            border: 1px solid #56606d;
+            border-radius: 4px;
+            margin-top: 0.7em;
+            padding-top: 0.35em;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 8px;
+            padding: 0 3px;
+        }
+        QLineEdit, QTextEdit, QPlainTextEdit, QTextBrowser, QSpinBox,
+        QDoubleSpinBox, QComboBox, QListWidget, QTreeWidget, QTableWidget,
+        QListView, QTreeView, QTableView {
+            background-color: #1b1e24;
+            color: #f1f5f9;
+            border: 1px solid #56606d;
+            selection-background-color: #4f9cf9;
+            selection-color: #ffffff;
+        }
+        QLineEdit:disabled, QTextEdit:disabled, QPlainTextEdit:disabled,
+        QTextBrowser:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled,
+        QComboBox:disabled, QListWidget:disabled, QTreeWidget:disabled,
+        QTableWidget:disabled {
+            background-color: #20242b;
+            color: #8f98a6;
+        }
+        QHeaderView::section {
+            background-color: #2d313a;
+            color: #e8eaed;
+            border: 1px solid #56606d;
+            padding: 3px;
+        }
+        QTabWidget::pane {
+            border: 1px solid #56606d;
+        }
+        QTabBar::tab {
+            background-color: #2d313a;
+            color: #d7dce3;
+            border: 1px solid #56606d;
+            padding: 5px 10px;
+        }
+        QTabBar::tab:selected {
+            background-color: #3a404a;
+            color: #ffffff;
+        }
+        QPushButton {
+            background-color: #323741;
+            color: #f1f5f9;
+            border: 1px solid #667080;
+            border-radius: 4px;
+            padding: 4px 8px;
+        }
+        QPushButton:hover {
+            background-color: #3d4450;
+        }
+        QPushButton:pressed {
+            background-color: #252a32;
+        }
+        QPushButton:disabled {
+            background-color: #292d34;
+            color: #8f98a6;
+            border-color: #3a414c;
+        }
+        QMenuBar, QMenu, QToolBar, QStatusBar {
+            background-color: #24272e;
+            color: #e8eaed;
+        }
+        QMenu::item:selected, QMenuBar::item:selected {
+            background-color: #3a404a;
+        }
+        QToolTip {
+            background-color: #2d313a;
+            color: #f1f5f9;
+            border: 1px solid #667080;
+        }
+    """
+
+
+def _modern_dark_stylesheet() -> str:
+    """Dark theme with more explicit card-like surfaces."""
+    return _neutral_dark_stylesheet() + """
+        QWidget#mainCentral {
+            background-color: #171a21;
+        }
+        QSplitter::handle {
+            background-color: #171a21;
+        }
+        QGroupBox {
+            background-color: #20242c;
+            border: 1px solid #4a5362;
+            border-radius: 10px;
+            margin-top: 1.1em;
+            padding: 10px 8px 8px 8px;
+            font-weight: 600;
+        }
+        QGroupBox::title {
+            color: #f1f5f9;
+            subcontrol-origin: margin;
+            left: 12px;
+            padding: 0 6px;
+        }
+        QPushButton {
+            border-radius: 8px;
+            padding: 6px 10px;
+        }
+        QLineEdit, QTextEdit, QPlainTextEdit, QTextBrowser, QSpinBox,
+        QDoubleSpinBox, QComboBox, QListWidget, QTreeWidget, QTableWidget,
+        QListView, QTreeView, QTableView {
+            border-radius: 7px;
+        }
+    """
+
+
 # ── Palette introspection ────────────────────────────────────────────
 
 def _palette() -> QPalette:
@@ -34,12 +284,32 @@ INFO_COLOR = "#42a5f5"
 
 def muted_text() -> str:
     """Secondary / hint text colour."""
-    return "#aaa" if is_dark() else "#666"
+    return "#b8c0cc" if is_dark() else "#666"
+
+
+def text_color() -> str:
+    """Default foreground text colour."""
+    return _palette().color(QPalette.ColorRole.WindowText).name()
+
+
+def success_color() -> str:
+    """Readable success foreground colour."""
+    return "#81c784" if is_dark() else "#2e7d32"
+
+
+def error_color() -> str:
+    """Readable error foreground colour."""
+    return "#ff8a80" if is_dark() else "#c62828"
+
+
+def warning_color() -> str:
+    """Readable warning foreground colour."""
+    return "#ffcc80" if is_dark() else "#bf360c"
 
 
 def border_color() -> str:
     """Visible border colour for the current theme."""
-    return "#555" if is_dark() else "#ccc"
+    return "#667080" if is_dark() else "#ccc"
 
 
 # ── Chat panel colours ──────────────────────────────────────────────
@@ -86,12 +356,12 @@ def chat_input_border() -> str:
 
 def chat_role_color() -> str:
     """Color for the role label in chat messages."""
-    return "#bbb" if is_dark() else "#555"
+    return "#c5ccd6" if is_dark() else "#555"
 
 
 def chat_timestamp_color() -> str:
     """Color for timestamps in chat."""
-    return "#888" if is_dark() else "#777"
+    return "#b8c0cc" if is_dark() else "#777"
 
 
 def chat_content_color() -> str:
@@ -155,7 +425,7 @@ def message_border(role: str) -> str:
 
 def toggle_color() -> str:
     """Colour for collapsible-section toggle text."""
-    return "#999" if is_dark() else "#888"
+    return "#b8c0cc" if is_dark() else "#888"
 
 
 def toggle_hover_color() -> str:
@@ -165,7 +435,7 @@ def toggle_hover_color() -> str:
 
 def thinking_fg() -> str:
     """Foreground for thinking/reasoning text."""
-    return "#aaa" if is_dark() else "#777"
+    return "#b8c0cc" if is_dark() else "#777"
 
 
 def thinking_bg() -> str:
@@ -175,7 +445,7 @@ def thinking_bg() -> str:
 
 def thinking_border() -> str:
     """Left-border colour for thinking blocks."""
-    return "#555" if is_dark() else "#ccc"
+    return "#667080" if is_dark() else "#ccc"
 
 
 def response_fg() -> str:
@@ -217,12 +487,12 @@ def groupbox_border(style: str = "default") -> str:
     elif style == "llm":
         return "#5a3a7a" if is_dark() else "#d8c8e8"
     else:
-        return "#444" if is_dark() else "#cccccc"
+        return "#667080" if is_dark() else "#cccccc"
 
 
 def groupbox_text() -> str:
     """Text colour for QGroupBox title and content."""
-    return "#ddd" if is_dark() else "#333333"
+    return "#f1f5f9" if is_dark() else "#333333"
 
 
 # ── Workspace / test list colours ───────────────────────────────────
@@ -234,12 +504,12 @@ def sync_warning_color() -> QColor:
 
 def empty_test_color() -> QColor:
     """QColor for empty test folders."""
-    return QColor(150, 150, 150)  # Gray
+    return QColor(muted_color())
 
 
 def ready_test_color() -> QColor:
     """QColor for tests with JSON + code."""
-    return QColor(80, 180, 80) if is_dark() else QColor(0, 150, 0)
+    return QColor(success_color())
 
 
 def default_text_color() -> QColor:
@@ -343,12 +613,12 @@ def json_keyword() -> QColor:
 
 def finding_error() -> QColor:
     """Colour for error findings."""
-    return QColor("#ef5350") if is_dark() else QColor("#c62828")
+    return QColor(error_color())
 
 
 def finding_warning() -> QColor:
     """Colour for warning findings."""
-    return QColor("#ffa726") if is_dark() else QColor("#ef6c00")
+    return QColor(warning_color())
 
 
 def finding_info() -> QColor:
@@ -358,7 +628,7 @@ def finding_info() -> QColor:
 
 def finding_success() -> str:
     """CSS colour string for success status in findings."""
-    return "#66bb6a" if is_dark() else "green"
+    return success_color()
 
 
 # ── Traceability highlight ──────────────────────────────────────────
@@ -381,14 +651,14 @@ def danger_button_style() -> str:
 
 def disabled_text() -> str:
     """CSS colour for disabled/placeholder text."""
-    return "#777" if is_dark() else "gray"
+    return muted_color()
 
 
 # ── Project bar status ──────────────────────────────────────────────
 
 def status_connected() -> str:
     """CSS colour for 'connected' status."""
-    return "#66bb6a" if is_dark() else "green"
+    return success_color()
 
 
 def status_warning() -> str:
@@ -398,7 +668,7 @@ def status_warning() -> str:
 
 def status_error() -> str:
     """CSS colour for 'error' status."""
-    return "#ef5350" if is_dark() else "red"
+    return error_color()
 
 
 # ── Status label colours (modified / saved indicators) ──────────────
@@ -410,4 +680,4 @@ def status_modified() -> str:
 
 def status_saved() -> str:
     """CSS colour for saved/clean content indicator."""
-    return "#66bb6a" if is_dark() else "green"
+    return success_color()

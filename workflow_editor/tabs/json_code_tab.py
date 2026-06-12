@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QWidget
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QTextCursor
+from PySide6.QtGui import QColor, QFont, QTextCursor
 
 from .base_tab import BaseTab
 from .llm_tab_mixin import LLMTabMixin
@@ -25,7 +25,7 @@ from .code_tab import PythonSyntaxHighlighter
 from ..core import ArtifactType, StepMarkerParser
 from ..llm import TabContext, LLMTask
 from ..dialogs import DiffViewer
-from ..theme import status_modified, status_saved
+from ..theme import error_color, status_modified, status_saved
 from ..widgets.find_replace_bar import FindReplaceBar, install_find_shortcuts
 
 log = logging.getLogger(__name__)
@@ -781,7 +781,7 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
             item = QListWidgetItem(f"{prefix} {body}")
             item.setData(Qt.UserRole, n)
             if not block:
-                item.setForeground(Qt.red)
+                item.setForeground(QColor(error_color()))
             tooltip_parts: list[str] = []
             if step_text:
                 tooltip_parts.append(step_text)

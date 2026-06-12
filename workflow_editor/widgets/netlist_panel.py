@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
     QDialog, QPushButton, QApplication,
 )
 
+from .. import theme
+
 
 class _BoardImagePopup(QDialog):
     """Full board image: wide (context) + zoomed (detail) side by side; click
@@ -41,7 +43,7 @@ class _BoardImagePopup(QDialog):
             col = QVBoxLayout()
             h = QLabel("Wide view")
             h.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            h.setStyleSheet("font-weight:bold; color:#777;")
+            h.setStyleSheet(f"font-weight:bold; color:{theme.muted_color()};")
             col.addWidget(h)
             self._wide_lbl = QLabel()
             self._wide_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -53,7 +55,7 @@ class _BoardImagePopup(QDialog):
         col = QVBoxLayout()
         h = QLabel("Zoomed view")
         h.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        h.setStyleSheet("font-weight:bold; color:#777;")
+        h.setStyleSheet(f"font-weight:bold; color:{theme.muted_color()};")
         col.addWidget(h)
         self._zoom_lbl = QLabel()
         self._zoom_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -257,12 +259,12 @@ class NetlistPanel(QGroupBox):
 
         self._status = QLabel()
         self._status.setWordWrap(True)
-        self._status.setStyleSheet("color:#777; font-size:9pt;")
+        self._status.setStyleSheet(f"color:{theme.muted_color()}; font-size:9pt;")
         tl.addWidget(self._status)
 
         hint = QLabel("Double-click a row to copy its name · select to view the "
                       "board image (click it for a full view).")
-        hint.setStyleSheet("color:#999; font-size:9pt;")
+        hint.setStyleSheet(f"color:{theme.muted_color()}; font-size:9pt;")
         hint.setWordWrap(True)
         tl.addWidget(hint)
         split.addWidget(top)
@@ -278,7 +280,7 @@ class NetlistPanel(QGroupBox):
         self._viewer_label = QLabel("")
         self._viewer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._viewer_label.setWordWrap(True)
-        self._viewer_label.setStyleSheet("color:#999;")
+        self._viewer_label.setStyleSheet(f"color:{theme.muted_color()};")
         self._viewer_label.mousePressEvent = self._on_viewer_click  # click -> full view
         self._viewer_scroll.setWidget(self._viewer_label)
         bl.addWidget(self._viewer_scroll, 1)

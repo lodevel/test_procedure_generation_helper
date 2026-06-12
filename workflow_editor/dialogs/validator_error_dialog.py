@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import theme
 from ..llm.validator_dispatch import ValidationOutcome, ValidationIssueView
 from ..theme import ERROR_COLOR, WARNING_COLOR
 
@@ -196,7 +197,7 @@ class ValidatorErrorDialog(QDialog):
 
         if issue.location:
             loc_label = QLabel(issue.location)
-            loc_label.setStyleSheet("color: #888;")
+            loc_label.setStyleSheet(f"color: {theme.muted_color()};")
             loc_font = QFont()
             loc_font.setFamily("monospace")
             loc_label.setFont(loc_font)
@@ -213,7 +214,7 @@ class ValidatorErrorDialog(QDialog):
         if issue.fix_hint:
             fix = QLabel(f"<i>fix hint:</i> {issue.fix_hint}")
             fix.setWordWrap(True)
-            fix.setStyleSheet("color: #4a8;")
+            fix.setStyleSheet(f"color: {theme.success_color()};")
             host_layout.addWidget(fix)
 
         host.setStyleSheet(

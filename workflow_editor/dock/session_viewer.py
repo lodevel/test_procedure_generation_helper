@@ -10,7 +10,10 @@ from PySide6.QtWidgets import (
     QInputDialog, QMessageBox
 )
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from typing import TYPE_CHECKING, Optional
+
+from .. import theme
 
 if TYPE_CHECKING:
     from ..main_window import MainWindow
@@ -139,11 +142,11 @@ class SessionViewer(QWidget):
         all_questions = self.session_state.open_questions + self.session_state.resolved_questions
         for question in all_questions:
             status = "✓" if question.answer is not None else "?"
-            child = QTreeWidgetItem([f"{status} {question.question[:30]}...", 
+            child = QTreeWidgetItem([f"{status} {question.question[:30]}...",
                                      question.answer or ""])
             child.setData(0, Qt.UserRole, ("question", question))
             if question.answer is None:
-                child.setForeground(0, Qt.red)
+                child.setForeground(0, QColor(theme.error_color()))
                 pending_count += 1
             questions_item.addChild(child)
         if not all_questions:

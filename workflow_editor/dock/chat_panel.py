@@ -681,7 +681,9 @@ class ChatPanel(QWidget):
         """
         if available:
             self.validator_status_label.setText("● validator")
-            self.validator_status_label.setStyleSheet("font-size: 10px; color: #4a8;")
+            self.validator_status_label.setStyleSheet(
+                f"font-size: 10px; color: {theme.success_color()};"
+            )
             self.validator_status_label.setToolTip(_TOOLTIP_STATUS_AVAILABLE)
             self.auto_correct_checkbox.setEnabled(True)
             self.auto_correct_checkbox.setToolTip(_TOOLTIP_AUTO_CORRECT_AVAILABLE)

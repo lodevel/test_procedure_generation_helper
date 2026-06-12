@@ -90,6 +90,7 @@ class MainWindow(QMainWindow):
         self._cli_test_dir = test_dir
         self._cli_llm_backend = llm_backend
         self._cli_llm_profile = llm_profile
+        self._modern_workspace_layout = os.environ.get("TPG_APP_LAYOUT") == "modern_workspace"
 
         # Initialize managers
         log.debug("Initializing managers...")
@@ -499,6 +500,7 @@ class MainWindow(QMainWindow):
         """Setup central widget with tabs."""
         # Tab widget (no container needed)
         self.tab_widget = QTabWidget()
+        self.tab_widget.setObjectName("workflowTabs")
         self._previous_tab_index = 0
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
         
@@ -521,7 +523,16 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self.json_code_tab, "JSON-Code")
         self.tab_widget.addTab(self.traceability_tab, "Traceability")
         
-        self.setCentralWidget(self.tab_widget)
+        if self._modern_workspace_layout:
+            central = QWidget()
+            central.setObjectName("mainCentral")
+            layout = QVBoxLayout(central)
+            layout.setContentsMargins(10, 10, 10, 10)
+            layout.setSpacing(10)
+            layout.addWidget(self.tab_widget)
+            self.setCentralWidget(central)
+        else:
+            self.setCentralWidget(self.tab_widget)
     
     def _setup_workspace_dock(self):
         """Setup workspace as a left sidebar dock."""
@@ -539,6 +550,8 @@ class MainWindow(QMainWindow):
         # Create dock widget
         self.workspace_dock = QDockWidget("Workspace", self)
         self.workspace_dock.setWidget(self.workspace_widget)
+        if self._modern_workspace_layout:
+            self.workspace_dock.setMinimumWidth(280)
         
         # Dock configuration
         self.workspace_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
@@ -551,8 +564,8 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.LeftDockWidgetArea, self.workspace_dock)
         
         # Default size
-        self.workspace_dock.setMinimumWidth(200)
-        self.workspace_dock.resize(250, self.height())
+        self.workspace_dock.setMinimumWidth(280 if self._modern_workspace_layout else 200)
+        self.workspace_dock.resize(300 if self._modern_workspace_layout else 250, self.height())
         
         # Connect toggle action
         self.toggle_workspace_action.setChecked(self.workspace_dock.isVisible())
@@ -562,6 +575,8 @@ class MainWindow(QMainWindow):
     def _setup_dock(self):
         """Setup the dock widget."""
         self.dock = DockWidget(self)
+        if self._modern_workspace_layout:
+            self.dock.setMinimumWidth(320)
         self.addDockWidget(Qt.RightDockWidgetArea, self.dock)
         
         # Update context limit based on backend config

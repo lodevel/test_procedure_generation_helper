@@ -17,12 +17,14 @@ Options:
 import sys
 import argparse
 import logging
+import os
 from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 
 from .main_window import MainWindow
+from . import theme
 
 
 def parse_args() -> argparse.Namespace:
@@ -104,7 +106,9 @@ def main() -> int:
     
     # Enable high DPI scaling
     app.setAttribute(Qt.AA_UseHighDpiPixmaps)
-    
+    applied_theme = theme.apply_app_theme(os.environ.get("TPG_APP_THEME"), app)
+    log.debug("Applied application theme: %s", applied_theme)
+
     # Create and show main window
     log.info("Creating MainWindow...")
     window = MainWindow(

@@ -15,7 +15,13 @@ import textwrap
 
 from .base_tab import BaseTab
 from ..core import ArtifactType, StepMarkerParser
-from ..theme import traceability_highlight, status_modified, status_saved
+from ..theme import (
+    error_color,
+    status_modified,
+    status_saved,
+    success_color,
+    traceability_highlight,
+)
 from ..widgets.find_replace_bar import FindReplaceBar, install_find_shortcuts
 
 
@@ -207,10 +213,10 @@ class TraceabilityTab(BaseTab):
                 item = QListWidgetItem()
                 if has_code:
                     item.setText(f"Step {step_num} ✓ : {text}")
-                    item.setForeground(Qt.darkGreen)
+                    item.setForeground(QColor(success_color()))
                 else:
                     item.setText(f"Step {step_num} ✗ : {text}")
-                    item.setForeground(Qt.red)
+                    item.setForeground(QColor(error_color()))
                 
                 item.setData(Qt.UserRole, step_num)
                 self.step_list.addItem(item)

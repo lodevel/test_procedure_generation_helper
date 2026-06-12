@@ -8,12 +8,13 @@ from pathlib import Path
 import hashlib
 import json
 import logging
+import os
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QSplitter, QListWidget, QListWidgetItem,
     QPushButton, QLabel, QFileDialog, QGroupBox, QFrame, QInputDialog,
     QMenu, QMessageBox
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QColor, QBrush
 
 from .base_tab import BaseTab
@@ -23,6 +24,63 @@ from ..theme import (
     sync_warning_color, empty_test_color, ready_test_color,
     default_text_color, selected_test_bg, selected_test_fg,
 )
+from .. import theme
+
+
+def _modern_workspace_enabled() -> bool:
+    return os.environ.get("TPG_APP_LAYOUT") == "modern_workspace"
+
+
+def _badge_indicators_enabled() -> bool:
+    return os.environ.get("TPG_APP_INDICATORS") == "badges"
+
+
+def _badge(label: str) -> str:
+    return f"[{label}]"
+
+
+def _modern_card_list_stylesheet() -> str:
+    if theme.is_dark():
+        bg = "#1b1f27"
+        item_bg = "#252b35"
+        item_hover = "#2c3440"
+        selected_bg = "#314b6f"
+        border = "#465263"
+        selected_border = "#7ab8ff"
+        text = "#f1f5f9"
+    else:
+        bg = "#f5f7fb"
+        item_bg = "#ffffff"
+        item_hover = "#eef4ff"
+        selected_bg = "#dcecff"
+        border = "#d5dce8"
+        selected_border = "#2f7dd3"
+        text = "#1f2937"
+    return f"""
+        QListWidget {{
+            background-color: {bg};
+            border: 1px solid {border};
+            border-radius: 9px;
+            padding: 4px;
+            color: {text};
+        }}
+        QListWidget::item {{
+            background-color: {item_bg};
+            border: 1px solid {border};
+            border-radius: 8px;
+            margin: 3px 1px;
+            padding: 8px;
+            color: {text};
+        }}
+        QListWidget::item:hover {{
+            background-color: {item_hover};
+        }}
+        QListWidget::item:selected {{
+            background-color: {selected_bg};
+            border-color: {selected_border};
+            color: {text};
+        }}
+    """
 
 
 class WorkspaceTab(BaseTab):
@@ -54,6 +112,10 @@ class WorkspaceTab(BaseTab):
         list_layout = QVBoxLayout(list_group)
         
         self.test_list = QListWidget()
+        self.test_list.setObjectName("workflowTestCards")
+        if _modern_workspace_enabled():
+            self.test_list.setSpacing(4)
+            self.test_list.setStyleSheet(_modern_card_list_stylesheet())
         self.test_list.itemSelectionChanged.connect(self._on_test_selection_changed)
         self.test_list.itemDoubleClicked.connect(self._on_test_double_clicked)
         self.test_list.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -81,6 +143,8 @@ class WorkspaceTab(BaseTab):
             item = QListWidgetItem()
             item.setData(Qt.UserRole, info.path)
             item.setData(Qt.UserRole + 1, info)  # Store info for later
+            if _modern_workspace_enabled():
+                item.setSizeHint(QSize(0, 52))
             
             # Check sync status from session file
             out_of_sync = self._is_test_out_of_sync(info.path)
@@ -94,9 +158,23 @@ class WorkspaceTab(BaseTab):
             if info.has_code:
                 indicators.append("C")
             
-            indicator_str = f"[{'/'.join(indicators)}]" if indicators else "[empty]"
-            sync_flag = "\u26a0\ufe0f " if out_of_sync else ""
-            item.setText(f"{sync_flag}{info.name}  {indicator_str}")
+            if _badge_indicators_enabled():
+                badges = []
+                if out_of_sync:
+                    badges.append(_badge("OUT OF SYNC"))
+                if info.has_text:
+                    badges.append(_badge("TEXT"))
+                if info.has_json:
+                    badges.append(_badge("JSON"))
+                if info.has_code:
+                    badges.append(_badge("CODE"))
+                if not indicators:
+                    badges.append(_badge("EMPTY"))
+                item.setText(f"{info.name}  {' '.join(badges)}")
+            else:
+                indicator_str = f"[{'/'.join(indicators)}]" if indicators else "[empty]"
+                sync_flag = "\u26a0\ufe0f " if out_of_sync else ""
+                item.setText(f"{sync_flag}{info.name}  {indicator_str}")
             
             # Color based on state
             if out_of_sync:

@@ -18,6 +18,7 @@ from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QColor, QBrush
 
 from .base_tab import BaseTab
+from ..badge_delegate import BADGES_ROLE, BadgeDelegate
 from ..core import ArtifactType
 from ..core.sync_utils import normalize_for_hash
 from ..theme import (
@@ -33,10 +34,6 @@ def _modern_workspace_enabled() -> bool:
 
 def _badge_indicators_enabled() -> bool:
     return os.environ.get("TPG_APP_INDICATORS") == "badges"
-
-
-def _badge(label: str) -> str:
-    return f"[{label}]"
 
 
 def _modern_card_list_stylesheet() -> str:
@@ -113,6 +110,7 @@ class WorkspaceTab(BaseTab):
         
         self.test_list = QListWidget()
         self.test_list.setObjectName("workflowTestCards")
+        self.test_list.setItemDelegate(BadgeDelegate(self.test_list))
         if _modern_workspace_enabled():
             self.test_list.setSpacing(4)
             self.test_list.setStyleSheet(_modern_card_list_stylesheet())
@@ -161,20 +159,22 @@ class WorkspaceTab(BaseTab):
             if _badge_indicators_enabled():
                 badges = []
                 if out_of_sync:
-                    badges.append(_badge("OUT OF SYNC"))
+                    badges.append(("OUT OF SYNC", "warning"))
                 if info.has_text:
-                    badges.append(_badge("TEXT"))
+                    badges.append(("TEXT", "muted"))
                 if info.has_json:
-                    badges.append(_badge("JSON"))
+                    badges.append(("JSON", "purple"))
                 if info.has_code:
-                    badges.append(_badge("CODE"))
+                    badges.append(("CODE", "success"))
                 if not indicators:
-                    badges.append(_badge("EMPTY"))
-                item.setText(f"{info.name}  {' '.join(badges)}")
+                    badges.append(("EMPTY", "muted"))
+                item.setText(info.name)
+                item.setData(BADGES_ROLE, badges)
             else:
                 indicator_str = f"[{'/'.join(indicators)}]" if indicators else "[empty]"
                 sync_flag = "\u26a0\ufe0f " if out_of_sync else ""
                 item.setText(f"{sync_flag}{info.name}  {indicator_str}")
+                item.setData(BADGES_ROLE, [])
             
             # Color based on state
             if out_of_sync:

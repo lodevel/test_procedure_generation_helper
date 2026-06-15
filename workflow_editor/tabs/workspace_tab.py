@@ -15,10 +15,10 @@ from PySide6.QtWidgets import (
     QMenu, QMessageBox
 )
 from PySide6.QtCore import Qt, Signal, QSize
-from PySide6.QtGui import QColor, QBrush
+from PySide6.QtGui import QColor, QBrush, QPalette
 
 from .base_tab import BaseTab
-from ..badge_delegate import BADGES_ROLE, BadgeDelegate
+from ..badge_delegate import BADGES_ROLE, CURRENT_ROLE, BadgeDelegate
 from ..core import ArtifactType
 from ..core.sync_utils import normalize_for_hash
 from ..theme import (
@@ -111,6 +111,14 @@ class WorkspaceTab(BaseTab):
         self.test_list = QListWidget()
         self.test_list.setObjectName("workflowTestCards")
         self.test_list.setItemDelegate(BadgeDelegate(self.test_list))
+        # The custom item delegate draws selection from the palette Highlight
+        # role; under the modern card stylesheet the default highlight washes
+        # out, so set a clearly-visible one. Same #0078d4/white the main GUI
+        # test list uses — which is exactly why ITS selection is visible.
+        pal = self.test_list.palette()
+        pal.setColor(QPalette.ColorRole.Highlight, QColor("#0078d4"))
+        pal.setColor(QPalette.ColorRole.HighlightedText, QColor("white"))
+        self.test_list.setPalette(pal)
         if _modern_workspace_enabled():
             self.test_list.setSpacing(4)
             self.test_list.setStyleSheet(_modern_card_list_stylesheet())
@@ -259,11 +267,15 @@ class WorkspaceTab(BaseTab):
             
             # Check if this is the opened test
             if item_path == self._current_opened_test:
-                # Highlight opened test
+                # Highlight opened test. setBackground/Foreground only show in
+                # classic mode — the modern card stylesheet overrides them — so
+                # also flag CURRENT_ROLE for the delegate to frame the card.
                 item.setBackground(QBrush(selected_test_bg()))  # Steel blue
                 item.setForeground(selected_test_fg())  # White text
+                item.setData(CURRENT_ROLE, True)
             else:
                 # Restore original colors for non-opened tests
+                item.setData(CURRENT_ROLE, False)
                 item.setBackground(QBrush())
                 info = item.data(Qt.UserRole + 1)
                 out_of_sync = self._is_test_out_of_sync(item_path)

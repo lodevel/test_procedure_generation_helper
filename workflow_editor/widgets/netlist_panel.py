@@ -232,7 +232,7 @@ class NetlistPanel(QGroupBox):
         self._tabs = QTabWidget()
         self._comp_tree = QTreeWidget()
         self._comp_tree.setHeaderLabels(["Component / pin", "Net"])
-        self._comp_tree.setColumnWidth(0, 140)
+        self._comp_tree.setColumnWidth(0, 177)  # Component/pin wider; Net (stretch col) shrinks
         self._comp_tree.setUniformRowHeights(True)
         self._comp_tree.itemSelectionChanged.connect(self._on_sel_changed)
         self._comp_tree.itemDoubleClicked.connect(self._on_double_click)

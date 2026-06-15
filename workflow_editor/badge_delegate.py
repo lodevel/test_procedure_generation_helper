@@ -5,11 +5,14 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from PySide6.QtCore import QRect, QSize, Qt
-from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPalette
+from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPalette, QPen
 from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 
 
 BADGES_ROLE = Qt.ItemDataRole.UserRole + 500
+# Set True on the currently-open test. The per-item setBackground() highlight
+# is overridden by the modern card stylesheet, so the delegate frames it here.
+CURRENT_ROLE = Qt.ItemDataRole.UserRole + 502
 
 
 class BadgeDelegate(QStyledItemDelegate):
@@ -17,6 +20,17 @@ class BadgeDelegate(QStyledItemDelegate):
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
         super().paint(painter, option, index)
+        if index.data(CURRENT_ROLE):
+            # Bold frame so the open test is unmistakable even under the modern
+            # card stylesheet (which swallows the per-item background highlight).
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            pen = QPen(QColor("#0078d4"))
+            pen.setWidth(2)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(option.rect.adjusted(2, 2, -2, -2), 8, 8)
+            painter.restore()
         badges = _normalize_badges(index.data(BADGES_ROLE))
         if not badges:
             return

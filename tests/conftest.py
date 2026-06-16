@@ -28,7 +28,7 @@ def _populate_pack_registry() -> None:
     clear_registry()
     parsers = {}
     for module_path in ("labscpi_pack.rules.v2_0_1.parser",
-                        "fncore_mockup_driver.rules.v2_0_1.parser"):
+                        "fncore_pack.rules.v2_0_1.parser"):
         try:
             mod = importlib.import_module(module_path)
         except Exception:

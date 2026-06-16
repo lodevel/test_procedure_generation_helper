@@ -19,7 +19,7 @@ import unittest
 from pathlib import Path
 
 import rules_packager_base.rules.v2_0_2.parser._default_registry as reg
-import labscpi.rules.v2_0_1.parser as labpack
+import labscpi_pack.rules.v2_0_1.parser as labpack
 
 reg._DEFAULT_PACK_PARSERS.update({
     "psu": labpack.PACK_PARSER, "eload": labpack.PACK_PARSER,

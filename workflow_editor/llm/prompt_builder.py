@@ -103,14 +103,22 @@ Format as markdown with:
         LLMTask.REVIEW_TEXT_PROCEDURE: """
 Task: Review procedure text for correctness and completeness.
 
-Analyze the provided procedure text and identify:
+A review checks GRAMMAR, wording, and format — it does NOT rewrite the
+procedure's logic or structure. Identify:
 - Ambiguous or unclear steps
 - Missing equipment specifications
 - Missing measurement parameters
 - Rule violations (if rules provided)
 
 Report issues in validation.issues[] with severity, code, message, location, and suggested_fix.
-If you find issues, include a procedure_text proposal with the corrected version.
+If you find issues, include a procedure_text proposal that fixes ONLY grammar and wording — never the logic.
+
+PRESERVATION RULE — a review must never delete content, only fix wording or flag
+issues. Keep every numbered step and every line beginning with "@" exactly as in
+the input. If a step or directive looks wrong, leave it in place and add a
+validation.issues[] entry explaining the problem. Do not remove, merge, or reorder
+steps.
+
 You may ask clarifying questions if needed.
 
 IMPORTANT: In your response, ONLY include a 'procedure_text' proposal if needed.

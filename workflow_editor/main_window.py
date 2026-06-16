@@ -852,6 +852,11 @@ class MainWindow(QMainWindow):
         mark_sync_btn = msg.addButton("They are in sync \u2714", QMessageBox.AcceptRole)
         continue_btn = msg.addButton("Continue anyway", QMessageBox.DestructiveRole)
         go_back_btn = msg.addButton("Go back and review", QMessageBox.RejectRole)
+        # Qt under-sizes stylesheet-styled QMessageBox buttons for long
+        # labels (the text rect collapses to ~text width with no slack),
+        # clipping the last glyphs. Widen each from its own font metrics.
+        for _b in (mark_sync_btn, continue_btn, go_back_btn):
+            _b.setMinimumWidth(_b.fontMetrics().horizontalAdvance(_b.text()) + 56)
         msg.setDefaultButton(go_back_btn)
         
         msg.exec()

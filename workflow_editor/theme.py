@@ -152,7 +152,7 @@ def _neutral_dark_palette() -> QPalette:
 def _modern_light_palette() -> QPalette:
     """Build the Fluent light palette used by the modern workspace."""
     palette = QPalette()
-    window = QColor("#eef1f7")
+    window = QColor("#dde4ee")
     base = QColor("#ffffff")
     alt_base = QColor("#f5f7fb")
     text = QColor("#1f2937")
@@ -338,7 +338,7 @@ _FLUENT_APP_QSS_LIGHT = r'''/* =================================================
    Fluent / Windows 11. App-level: QApplication.setStyleSheet.
    Reaches the MAIN WINDOW *and every dialog/window*.
    CHROME (verbatim) + DIALOG-WIDGET coverage appended below.
-     page #eef1f7  panel #ffffff  surface-2 #f5f7fb
+     page #dde4ee  panel #ffffff  surface-2 #f5f7fb
      border #d5dce8  hairline #e2e7f0  text #1f2937  muted #5b6675
      accent #4f9cf9 / deep #2f7dd3  input-bottom #b9c3d4
      hover #eef4ff  pressed #e3ecfb  selected #dcecff
@@ -351,7 +351,7 @@ _FLUENT_APP_QSS_LIGHT = r'''/* =================================================
    ============================================================ */
 
 QWidget#mainCentral {
-    background-color: #eef1f7;
+    background-color: #dde4ee;
     color: #1f2937;
 }
 
@@ -360,20 +360,20 @@ QWidget#mainCentral {
    Object-name + concrete-class scoped (NEVER bare QWidget).
    ============================================================ */
 QMainWindow {
-    background-color: #eef1f7;
+    background-color: #dde4ee;
 }
 QDialog {
-    background-color: #eef1f7;
+    background-color: #dde4ee;
     color: #1f2937;
 }
 QMessageBox {
-    background-color: #eef1f7;
+    background-color: #dde4ee;
 }
 QMessageBox QLabel {
     color: #1f2937;
 }
 QInputDialog, QFileDialog, QColorDialog, QFontDialog, QWizard, QWizardPage {
-    background-color: #eef1f7;
+    background-color: #dde4ee;
     color: #1f2937;
 }
 QDialog QLabel, QMainWindow QLabel {
@@ -849,7 +849,7 @@ QTreeView::branch:selected, QTreeWidget::branch:selected {
 
 QListView, QListWidget {
     background-color: #ffffff;
-    border: 1px solid #d5dce8;
+    border: 1px solid #b9c3d4;
     border-radius: 6px;
     color: #1f2937;
     selection-background-color: #dcecff;
@@ -879,7 +879,13 @@ QCheckBox {
     spacing: 8px;
     background: transparent;
 }
-QCheckBox::indicator {
+QCheckBox::indicator,
+QListView::indicator,
+QListWidget::indicator,
+QTreeView::indicator,
+QTreeWidget::indicator,
+QTableView::indicator,
+QTableWidget::indicator {
     width: 16px;
     height: 16px;
     border: 1px solid #b9c3d4;
@@ -890,7 +896,13 @@ QCheckBox::indicator:hover {
     border-color: #4f9cf9;
     background-color: #eef4ff;
 }
-QCheckBox::indicator:checked {
+QCheckBox::indicator:checked,
+QListView::indicator:checked,
+QListWidget::indicator:checked,
+QTreeView::indicator:checked,
+QTreeWidget::indicator:checked,
+QTableView::indicator:checked,
+QTableWidget::indicator:checked {
     border-color: #2f7dd3;
     background-color: #2f7dd3;
     image: none;
@@ -899,15 +911,33 @@ QCheckBox::indicator:checked:hover {
     border-color: #2566b3;
     background-color: #2566b3;
 }
-QCheckBox::indicator:indeterminate {
+QCheckBox::indicator:indeterminate,
+QListView::indicator:indeterminate,
+QListWidget::indicator:indeterminate,
+QTreeView::indicator:indeterminate,
+QTreeWidget::indicator:indeterminate,
+QTableView::indicator:indeterminate,
+QTableWidget::indicator:indeterminate {
     border-color: #2f7dd3;
     background-color: #9bbfe8;
 }
-QCheckBox::indicator:disabled {
+QCheckBox::indicator:disabled,
+QListView::indicator:disabled,
+QListWidget::indicator:disabled,
+QTreeView::indicator:disabled,
+QTreeWidget::indicator:disabled,
+QTableView::indicator:disabled,
+QTableWidget::indicator:disabled {
     border-color: #e2e7f0;
     background-color: #f1f3f8;
 }
-QCheckBox::indicator:checked:disabled {
+QCheckBox::indicator:checked:disabled,
+QListView::indicator:checked:disabled,
+QListWidget::indicator:checked:disabled,
+QTreeView::indicator:checked:disabled,
+QTreeWidget::indicator:checked:disabled,
+QTableView::indicator:checked:disabled,
+QTableWidget::indicator:checked:disabled {
     border-color: #c9d6ea;
     background-color: #c9d6ea;
 }
@@ -1000,7 +1030,7 @@ QToolButton::menu-indicator {
    MENU BAR / MENU
    ============================================================ */
 QMenuBar {
-    background-color: #eef1f7;
+    background-color: #dde4ee;
     color: #1f2937;
     border-bottom: 1px solid #d5dce8;
 }
@@ -1179,7 +1209,7 @@ QScrollBar::add-page, QScrollBar::sub-page {
 
 /* ---- Splitter handle (gap between panes) ----------------- */
 QSplitter::handle {
-    background-color: #eef1f7;
+    background-color: #dde4ee;
 }
 QSplitter::handle:horizontal {
     width: 10px;
@@ -1668,8 +1698,8 @@ QHeaderView::up-arrow {
    TABLE VIEW / TABLE WIDGET — gridlines, selection, corner
    ============================================================ */
 QTableView, QTableWidget {
-    background-color: #20242c;
-    alternate-background-color: #252b35;
+    background-color: #252b35;
+    alternate-background-color: #2c3440;
     border: 1px solid #465263;
     border-radius: 6px;
     gridline-color: #3a4350;
@@ -1705,8 +1735,8 @@ QTableCornerButton::section {
    delegate-painted #procedureCards / #equipmentCards override.
    ============================================================ */
 QTreeView, QTreeWidget {
-    background-color: #20242c;
-    alternate-background-color: #252b35;
+    background-color: #252b35;
+    alternate-background-color: #2c3440;
     border: 1px solid #465263;
     border-radius: 6px;
     color: #f1f5f9;
@@ -1733,7 +1763,7 @@ QTreeView::branch:selected, QTreeWidget::branch:selected {
 }
 
 QListView, QListWidget {
-    background-color: #20242c;
+    background-color: #252b35;
     border: 1px solid #465263;
     border-radius: 6px;
     color: #f1f5f9;
@@ -1764,7 +1794,13 @@ QCheckBox {
     spacing: 8px;
     background: transparent;
 }
-QCheckBox::indicator {
+QCheckBox::indicator,
+QListView::indicator,
+QListWidget::indicator,
+QTreeView::indicator,
+QTreeWidget::indicator,
+QTableView::indicator,
+QTableWidget::indicator {
     width: 16px;
     height: 16px;
     border: 1px solid #5b6a80;
@@ -1775,7 +1811,13 @@ QCheckBox::indicator:hover {
     border-color: #7ab8ff;
     background-color: #2c3440;
 }
-QCheckBox::indicator:checked {
+QCheckBox::indicator:checked,
+QListView::indicator:checked,
+QListWidget::indicator:checked,
+QTreeView::indicator:checked,
+QTreeWidget::indicator:checked,
+QTableView::indicator:checked,
+QTableWidget::indicator:checked {
     border-color: #4f9cf9;
     background-color: #4f9cf9;
     image: none;
@@ -1784,15 +1826,33 @@ QCheckBox::indicator:checked:hover {
     border-color: #7ab8ff;
     background-color: #7ab8ff;
 }
-QCheckBox::indicator:indeterminate {
+QCheckBox::indicator:indeterminate,
+QListView::indicator:indeterminate,
+QListWidget::indicator:indeterminate,
+QTreeView::indicator:indeterminate,
+QTreeWidget::indicator:indeterminate,
+QTableView::indicator:indeterminate,
+QTableWidget::indicator:indeterminate {
     border-color: #4f9cf9;
     background-color: #3f86db;
 }
-QCheckBox::indicator:disabled {
+QCheckBox::indicator:disabled,
+QListView::indicator:disabled,
+QListWidget::indicator:disabled,
+QTreeView::indicator:disabled,
+QTreeWidget::indicator:disabled,
+QTableView::indicator:disabled,
+QTableWidget::indicator:disabled {
     border-color: #353d49;
     background-color: #1f242d;
 }
-QCheckBox::indicator:checked:disabled {
+QCheckBox::indicator:checked:disabled,
+QListView::indicator:checked:disabled,
+QListWidget::indicator:checked:disabled,
+QTreeView::indicator:checked:disabled,
+QTreeWidget::indicator:checked:disabled,
+QTableView::indicator:checked:disabled,
+QTableWidget::indicator:checked:disabled {
     border-color: #335073;
     background-color: #335073;
 }

@@ -185,7 +185,10 @@ def _capture_remote_lines(procedure_json: dict, target_op: dict):
     lines: list = []
     meta = {"ref": None, "unit": "", "has_result": False}
 
-    gen.emit = lambda line="": lines.append(line)
+    # Mirror _Generator.emit's indentation: a pack that emits a BLOCK via
+    # ctx.emit_block("try:")/end_block bumps gen.indent, and the body lines must
+    # be indented or the captured snippet won't compile (bodyless 'try:').
+    gen.emit = lambda line="": lines.append(("    " * gen.indent + line) if line else "")
 
     def _cap_action(eid, remote_line, manual_msg):
         lines.append(remote_line)
@@ -454,19 +457,26 @@ def _safe_off_all_held(session: _Session) -> list:
     return unsafe
 
 
-def _close_held(session: _Session) -> None:
-    """Close (and on EA, unlock via the driver's shutdown) every held device.
-    The ONLY place a held device is closed — the chokepoint."""
-    for device in list(session.held.keys()):
-        dev = session.held.pop(device)
+def _close_held_device(session: _Session, device) -> None:
+    """Close + forget ONE held device so a later op re-opens it fresh. The single
+    chokepoint where a held device is actually closed — used by the full teardown
+    AND after a per_session op error (a broken handle must not be reused)."""
+    dev = session.held.pop(device, None)
+    if dev is not None:
         try:
             if hasattr(dev, "close"):
                 dev.close()
         except Exception as exc:  # noqa: BLE001
             session.res.log.append(f"close() failed: {exc}")
-        session.ns.pop(_safe_name(device), None)
-        session.etype_of.pop(device, None)
-        session.energized.pop(device, None)
+    session.ns.pop(_safe_name(device), None)
+    session.etype_of.pop(device, None)
+    session.energized.pop(device, None)
+
+
+def _close_held(session: _Session) -> None:
+    """Close (and on EA, unlock via the driver's shutdown) every held device."""
+    for device in list(session.held.keys()):
+        _close_held_device(session, device)
 
 
 def _teardown(session: _Session | None) -> list:
@@ -553,6 +563,12 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
         unsafe = _safe_off(procedure_json, session.ns, session.energized,
                            session.etype_of, session.lifecycle, session.res)
         session.energized.clear()
+    if failed and policy == "per_session" and device in session.held:
+        # Drop ONLY the broken device (AFTER safe-off, so a failed energized PSU
+        # was still powered down). The next op on it re-opens fresh while every
+        # other held device stays up — this is what makes "retry on the next op"
+        # work instead of the session wedging until the window is reopened.
+        _close_held_device(session, device)
     resp = {"ok": True, "results": results, "aborted": failed,
             "log": session.res.log[log_mark:]}
     if unsafe:

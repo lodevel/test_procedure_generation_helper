@@ -890,6 +890,21 @@ class RemoteSession:
             {"cmd": "safe_off", "safe_off": targets, "bench_map": bench_map},
             timeout or _TIMEOUT_REMOTE_EXEC)
 
+    def exec_raw_command(self, device: str, etype: str, subtype: str, text: str,
+                         bench: dict[str, Any],
+                         timeout: Optional[int] = None) -> dict[str, Any]:
+        """Send ONE raw command line to ``device`` over the live session and
+        return ``{"ok", "response", "log"}`` (or a typed failure).  ``etype`` is
+        the DECLARED equipment type + ``subtype`` (the daemon resolves the pack
+        namespace from them — controller->fncore).  Reuses the device if a step
+        already armed it (held), else opens a transient link — the same connect
+        semantics as a per_step op.  ``"?"`` in ``text`` makes it a query (reply
+        returned); otherwise it is a write (empty reply)."""
+        return self._request(
+            {"cmd": "raw", "device": device, "etype": etype, "subtype": subtype,
+             "text": text, "bench_map": {device: bench}},
+            timeout or _TIMEOUT_REMOTE_EXEC)
+
     def ping(self, timeout: float = 5) -> dict[str, Any]:
         return self._request({"cmd": "ping"}, timeout)
 

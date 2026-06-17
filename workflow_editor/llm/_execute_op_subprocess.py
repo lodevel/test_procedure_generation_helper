@@ -61,6 +61,8 @@ corrupt a frame.  Tracebacks travel inside the response JSON, never printed.
      "bench_map": {device: {"visa"|"port"..., "session_policy": "..."}}}
     {"cmd": "safe_off", "_bundle_dir": "<abs>", "procedure_path": "<abs>",
      "bench_map": {...}, "safe_off": [{"device","etype","channels":[...]}, ...]}
+    {"cmd": "raw", "_bundle_dir": "<abs>", "device": str, "etype": str,
+     "subtype": str, "text": "<one raw command line>", "bench_map": {device: {...}}}
     {"cmd": "shutdown"}        # safe-off all held + close (unlock) + exit
     {"cmd": "ping"}            # liveness probe
 
@@ -68,6 +70,7 @@ corrupt a frame.  Tracebacks travel inside the response JSON, never printed.
     exec_ops : {"ok": true, "results": [...], "aborted": bool, "log": [str],
                 "unsafe": [str]?}     # unsafe = devices that could NOT power down
     safe_off : {"ok": true, "log": [str], "unsafe": [str]?}
+    raw      : {"ok": true, "response": str, "log": [str]}   # "" reply for a write
     shutdown : {"ok": true, "log": [str], "unsafe": [str]?}   (then exits)
     error    : {"ok": false, "kind": "<NotRemote|NoCodegen|NoLifecycle
                 |NoProcedure|ExecError|Protocol>", "error": str,
@@ -166,6 +169,62 @@ def _open_no_reset(dev) -> None:
     if hasattr(dev, "initialize"):
         dev.initialize()
     # NOTE: intentionally NO dev.reset() — leave device state as-is.
+
+
+def _raw_send(dev, text: str) -> str:
+    """Send ONE raw command line to an already-open device and return its reply.
+
+    A line containing ``?`` is a QUERY (returns the instrument's response); any
+    other line is a WRITE (returns ``""``).  This is the single raw-command
+    adapter seam, dispatching on the FIRST interface a driver exposes, in the
+    same order as the code below:
+
+    1. a public raw passthrough — ``query_raw`` / ``write_raw`` (psu/eload/scope
+       all expose these);
+    2. the fncore line protocol — the public ``raw_command`` (drains the full
+       multi-line reply), or the legacy single-line ``_write_readline`` on older
+       fncore wheels;
+    3. (defensive) an SCPI-session wrapper ``.s`` / ``._session``;
+    4. (defensive) a bare pyvisa ``_resource`` / ``resource``.
+
+    Tiers 3-4 are fallbacks for a driver exposing neither public surface; every
+    SHIPPED driver resolves at tier 1 or 2.  Dispatch is by attribute presence
+    only — no driver class or pack-namespace names — so a new pack's driver is
+    terminal-addressable by exposing the public ``query_raw``/``write_raw`` (or a
+    multi-line ``raw_command``), and the seam needs no per-driver branch here.
+    """
+    is_query = "?" in text
+    # 1. public raw passthrough (psu/eload/scope: query_raw / write_raw)
+    if is_query and hasattr(dev, "query_raw"):
+        return str(dev.query_raw(text))
+    if (not is_query) and hasattr(dev, "write_raw"):
+        dev.write_raw(text)
+        return ""
+    # 2. fncore line protocol: prefer the multi-line drain (a terminal command
+    #    like 'help'/'listPins' returns MANY lines); fall back to the single
+    #    echo+value read on older driver wheels that lack raw_command.
+    if hasattr(dev, "raw_command"):
+        return str(dev.raw_command(text))
+    if hasattr(dev, "_write_readline"):
+        return str(dev._write_readline(text))
+    # 3. SCPI-session wrapper (psu/eload: .s ; scope: ._session) — handles
+    #    read/write terminations + error checking the bare resource would not.
+    sess = getattr(dev, "s", None) or getattr(dev, "_session", None)
+    if sess is not None and hasattr(sess, "query") and hasattr(sess, "write"):
+        if is_query:
+            return str(sess.query(text))
+        sess.write(text)
+        return ""
+    # 4. last resort: the raw pyvisa resource
+    res = getattr(dev, "_resource", None) or getattr(dev, "resource", None)
+    if res is not None and hasattr(res, "query") and hasattr(res, "write"):
+        if is_query:
+            return str(res.query(text))
+        res.write(text)
+        return ""
+    raise RuntimeError(
+        f"{type(dev).__name__} exposes no raw-command interface "
+        f"(query_raw/write_raw, _write_readline, .s/._session, or a resource).")
 
 
 def _capture_remote_lines(procedure_json: dict, target_op: dict):
@@ -369,6 +428,22 @@ def _policy_for(bench: dict, namespace: str, lifecycle: dict) -> str:
     if (lifecycle.get(namespace) or {}).get("remote") is False:
         return "per_step"
     return "per_session"
+
+
+def _namespace_for(etype: str, subtype: str = "") -> str:
+    """Map a DECLARED equipment type to its pack op-NAMESPACE — the key the
+    lifecycle / driver_class is registered under (e.g. ``controller`` -> the
+    ``fncore`` namespace).  The exec path derives this from the op-const prefix;
+    a raw terminal command has no op, so resolve it via the equipment dispatch.
+    Falls back to the type itself, correct for packs where namespace == type
+    (psu/eload/scope)."""
+    try:
+        from rules_packager_base.rules.v2_0_2.parser._default_registry import (
+            get_namespace,
+        )
+        return get_namespace(etype, subtype) or etype
+    except Exception:  # noqa: BLE001 — pre-dispatch bundle / unclaimed type
+        return etype
 
 
 class _Session:
@@ -576,6 +651,94 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
     return resp
 
 
+def _cmd_raw(session: _Session, req: dict) -> dict:
+    """Send ONE raw command line to a device's live link and return its reply.
+
+    Connection lifecycle MIRRORS the run's, resolved by :func:`_policy_for` so a
+    terminal is coherent with how the run treats the same device:
+
+    * ``per_session`` (psu/eload) -> :func:`_ensure_held`: hold the link OPEN
+      (reuse it if a step already armed the device), so the terminal shares the
+      run's live session and the device joins the shutdown safe-off net.
+    * ``per_step`` (fncore controller) -> transient open-no-reset -> send ->
+      close, exactly like a per_step op, so the link is free between commands
+      (manual access preserved).
+
+    On a held-device failure the broken handle is dropped (like
+    :func:`_cmd_exec_ops`) so the next command/op re-opens fresh.  The reply is
+    appended to the run log (returned in ``log``) so manual terminal traffic
+    lands in the saved console naturally.  Needs the bundle (for driver_class)
+    but NOT the procedure document.
+    """
+    guard = _require_lifecycle(session)
+    if guard:
+        return guard
+    device = req.get("device")
+    etype = req.get("etype") or ""              # DECLARED type (e.g. "controller")
+    subtype = req.get("subtype") or ""
+    text = (req.get("text") or "").strip()
+    bench_map = req.get("bench_map") or {}
+    log_mark = len(session.res.log)
+    if not text:
+        return {"ok": False, "kind": "Protocol", "error": "empty command",
+                "log": session.res.log[log_mark:]}
+    # Driver construction + lifecycle are keyed by the pack NAMESPACE, not the
+    # declared type (they coincide only for psu/eload/scope; controller->fncore).
+    namespace = _namespace_for(etype, subtype)
+    policy = _policy_for(bench_map.get(device) or {}, namespace, session.lifecycle)
+    try:
+        if policy == "per_session":
+            _ensure_held(session, bench_map, device, namespace)  # hold, reuse if armed
+            reply = _raw_send(session.held[device], text)
+        else:                                                 # per_step: transient
+            bench = bench_map.get(device)
+            if bench is None:
+                raise _NotRemote(f"no connection parameters for {device!r}.")
+            # Build with a THROWAWAY log: a line-protocol driver (fncore) self-logs
+            # every "CMD: .. | RESP: .." + reconnect line into its log_list, which
+            # would DUPLICATE the single clean "<device> -> <reply>" line below.
+            # And cap the readline timeout so draining a finished multi-line reply
+            # returns promptly instead of waiting the full per-op timeout. Neither
+            # touches a VISA device (it ignores the log and uses timeout_ms).
+            term_bench = dict(bench)
+            term_bench["timeout_s"] = min(float(bench.get("timeout_s") or 2.0), 1.0)
+            dev = _build_device(term_bench, namespace, session.lifecycle, [])
+            _open_no_reset(dev)
+            try:
+                reply = _raw_send(dev, text)
+            finally:
+                try:
+                    if hasattr(dev, "close"):
+                        dev.close()
+                except Exception as exc:  # noqa: BLE001
+                    session.res.log.append(f"close() failed: {exc}")
+        reply = reply.strip() if isinstance(reply, str) else reply
+        if reply:
+            session.res.log.append(f"{device} -> {reply}")
+        return {"ok": True, "response": reply,
+                "log": session.res.log[log_mark:]}
+    except Exception as exc:  # noqa: BLE001
+        # Coherent with exec_ops: a broken per_session handle is dropped so the
+        # next command/op re-opens fresh (retry-on-next) instead of wedging.
+        # SAFETY SPLIT (deliberate, unlike _cmd_exec_ops): the daemon runs NO
+        # safe-off here. A raw command is arbitrary SCPI/ASCII, so the daemon
+        # cannot know it energized an output and does not track it in
+        # session.energized. Safe-off of a raw-energized device is the GUI's
+        # job: _on_raw_send adds the device to self._auto_energized BEFORE the
+        # send, and finish / dialog-close / session-lost drive _recovery_safe_off
+        # over that set (which re-opens the device fresh). NOTE the latent gap a
+        # future change must respect: after this drop the device leaves
+        # session.held, so the daemon's HELD-only shutdown safe-off will NOT
+        # power it down — only the GUI's _auto_energized path will.
+        if policy == "per_session" and device in session.held:
+            _close_held_device(session, device)
+        session.res.log.append(
+            f"raw {device} FAILED: {type(exc).__name__}: {exc}")
+        return {"ok": False, "kind": "ExecError",
+                "error": f"{type(exc).__name__}: {exc}",
+                "log": session.res.log[log_mark:]}
+
+
 def _cmd_safe_off(session: _Session, req: dict) -> dict:
     """Turn specified outputs OFF, keeping devices held (the session continues).
     Doubles as the fresh-recovery path: a brand-new daemon opens the targets
@@ -705,6 +868,8 @@ def _dispatch(session: _Session, req: dict):
             return {"ok": True, "pong": True}, False
         if cmd == "exec_ops":
             return _cmd_exec_ops(session, req), False
+        if cmd == "raw":
+            return _cmd_raw(session, req), False
         if cmd == "safe_off":
             return _cmd_safe_off(session, req), False
         if cmd == "shutdown":

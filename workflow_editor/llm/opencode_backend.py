@@ -359,7 +359,7 @@ class OpenCodeBackend(LLMBackend):
             body = {
                 "parts": [{"type": "text", "text": prompt}],
             }
-            if self.config.model:
+            if self.config.model and "/" in self.config.model:
                 provider, model = self.config.model.split("/", 1)
                 body["model"] = {
                     "providerID": provider,
@@ -719,7 +719,7 @@ class OpenCodeBackend(LLMBackend):
             }
             
             # Add model override if configured
-            if self.config.model:
+            if self.config.model and "/" in self.config.model:
                 provider, model = self.config.model.split("/", 1)
                 body["model"] = {
                     "providerID": provider,

@@ -1,145 +1,180 @@
-# LLM Workflow Editor
+# LLM Workflow Editor (`workflow_editor`)
 
-A PySide6 Qt desktop application for creating and managing structured test procedures with LLM assistance.
+A PySide6 Qt desktop application for authoring, editing, and reviewing structured
+test procedures with LLM assistance. It is the **AI-assisted authoring/editing GUI**
+that sits alongside the main Test Procedure GUI: where the main GUI authors and
+*runs* procedures, this editor uses an LLM to transform plain-language intent into
+the canonical `procedure.json` and generated `test.py`, keeping the natural-language
+text, JSON, and code in sync.
 
-## Features
+It lives in `external/test_procedure_generation_helper/` as a sibling package of the
+main GUI (`src/test_procedure_gui/`). It is **not** pip-installed: the main GUI adds
+this directory to `sys.path` at startup so it can import `workflow_editor` in-tree
+(see `src/test_procedure_gui/app.py::_bootstrap_editor_on_path`).
 
-- **Multi-tab Interface**: Workspace, JSON, Code, Text, and Traceability tabs
-- **LLM Integration**: OpenCode (WSL) or OpenAI-compatible API backends
-- **Intelligent Artifact Tracking**: Automatic detection of modifications with token-efficient conditional sending
-- **Async Execution**: Non-blocking UI with background LLM request processing
-- **Diff Viewer**: Review all proposed changes before applying
-- **Session State**: Persistent tracking of assumptions, decisions, and questions
-- **Robust Error Handling**: Graceful recovery from malformed LLM responses
-- **Token Optimization**: 50%+ token savings through smart artifact management
-- **Force Mode**: Override LLM concerns to get proposals when needed
-- **Traceability**: Visual mapping between JSON steps and code blocks
+## What it does
 
-## Quick Start
+- **Text → JSON → Code pipeline.** Three authoring tabs (`Text`, `Text-JSON`,
+  `JSON-Code`) drive the LLM to turn a natural-language procedure into structured
+  `procedure.json`, then into runnable `test.py`, plus a read-only `Traceability`
+  view mapping JSON steps to code blocks.
+- **Per-tab LLM conversations.** Each tab keeps its own conversation, context, and
+  open-question state — messages in one tab don't bleed into another.
+- **Diff-gated edits.** Every LLM-proposed change to an artifact is shown in a
+  side-by-side diff (`dialogs/diff_viewer.py`) and applied only on explicit accept.
+- **Pack-driven parsing/validation.** Parsing, codegen, and validation are dispatched
+  to the *project's* venv via `workflow_editor/llm/pack_parsers.py` (which spawns
+  `_pack_parsers_subprocess.py` against the `rules_packager_base` wheel), so the
+  rules/wheel used are the ones bundled with the active project — not the editor's
+  own interpreter.
+- **Per-op execution daemon.** `workflow_editor/llm/_execute_op_subprocess.py` is a
+  persistent runner that executes individual procedure ops against live equipment
+  (used by the main GUI's interactive/manual runner).
 
-### Installation
+## Project layout
 
-```bash
-# Clone repository
-git clone <repo-url>
-cd test_procedure_generation_helper
+Top-level package directory:
 
-# Create virtual environment
-python -m venv venv
-venv\Scripts\activate  # Windows
-# source venv/bin/activate  # Linux/Mac
-
-# Install dependencies
-pip install -r requirements.txt
+```
+test_procedure_generation_helper/
+├── README.md
+├── requirements.txt
+├── config/
+│   └── tab_contexts.json          # Fallback per-task rules/prompts
+├── tests/                         # pytest suite
+└── workflow_editor/
+    ├── __init__.py                # Package init, __version__ = "0.1.0"
+    ├── __main__.py                # CLI entry point (python -m workflow_editor)
+    ├── main_window.py             # Main application window
+    ├── theme.py                   # App theming (light/dark, modern workspace)
+    ├── logging_config.py
+    ├── core/                      # Non-LLM domain logic
+    │   ├── artifact_manager.py    # Shared artifact storage
+    │   ├── project_manager.py     # Project/test/rules discovery
+    │   ├── session_state.py       # Assumptions/decisions/questions
+    │   ├── task_config.py         # Per-task config (config.json:workflows)
+    │   ├── validators.py / validators_registry.py  # Artifact validators + registry
+    │   ├── cheatsheet.py          # Syntax cheatsheet (extracted from bundle rule docs at runtime)
+    │   ├── odb_inspect.py         # ODB++ board/netlist inspection
+    │   └── ...
+    ├── llm/                       # LLM integration + execution
+    │   ├── backend_base.py        # Abstract LLMBackend + NoneBackend
+    │   ├── backend_factory.py     # Per-tab backend instances (BackendConfig)
+    │   ├── opencode_backend.py    # OpenCode (WSL server) backend
+    │   ├── external_api_backend.py# OpenAI-compatible HTTP backend
+    │   ├── pack_parsers.py        # Façade: parse/codegen/validate in project venv
+    │   ├── _pack_parsers_subprocess.py   # Parser runner (imports the wheel only)
+    │   ├── _execute_op_subprocess.py     # Per-op execution daemon (imports drivers)
+    │   ├── prompt_builder.py / reconstruction.py / response_parser.py
+    │   ├── section_ownership.py / output_contracts.py / validator_dispatch.py
+    │   ├── server_manager.py      # OpenCode server lifecycle
+    │   └── worker.py              # Async LLM worker thread
+    ├── tabs/                      # Tab widgets
+    │   ├── text_only_tab.py       # "Text" tab
+    │   ├── text_json_tab.py       # "Text-JSON" tab
+    │   ├── json_code_tab.py       # "JSON-Code" tab
+    │   ├── traceability_tab.py    # "Traceability" tab (read-only)
+    │   └── workspace_tab.py       # Workspace (modern layout)
+    ├── dock/                      # Dock panels (chat, session, findings, raw response)
+    ├── dialogs/                   # settings, diff viewer, new-project, syntax reference
+    └── widgets/                   # project bar, find/replace, netlist panel, rule selector
 ```
 
-### Launch Application
+(The `__init__.py` reports `__version__ = "0.1.0"`. There are no `docs/` files in this
+package — the authoritative cross-package contracts live at the repo root, see below.)
+
+## Requirements
+
+From `requirements.txt`:
+
+- **Python:** 3.10+
+- **PySide6** ≥ 6.5.0 — Qt GUI framework
+- **requests** ≥ 2.28.0 — HTTP client for the External API backend
+
+The editor process itself needs only these. Hardware drivers (labscpi / fncore,
+VISA, BLE) and the rules/parser wheel are **not** dependencies of the editor — they
+live in each *project's* venv and are invoked there by the subprocess runners
+(`_pack_parsers_subprocess.py`, `_execute_op_subprocess.py`).
+
+## Launching
+
+### Standalone
 
 ```bash
-python -m workflow_editor
+python -m workflow_editor [options]
 ```
 
-## System Requirements
+Command-line options (see `workflow_editor/__main__.py`):
 
-- **Python:** 3.10 or higher
-- **Operating System:** Windows 10/11 (tested), Linux, macOS
-- **Memory:** 4 GB RAM minimum, 8 GB recommended
-- **LLM Backend:** OpenCode (WSL) or OpenAI-compatible API
+| Option | Meaning |
+|--------|---------|
+| `--project-root PATH` | Project root (contains `tests/` and/or `config/`) |
+| `--rules-root PATH`   | Folder of rule `*.md` files (usually the active bundle's `rules/`) |
+| `--test-name NAME`    | Open a test folder by name under `tests/` |
+| `--test-dir PATH`     | Direct path to a test folder (overrides `--test-name`) |
+| `--llm-backend {opencode,external,none}` | Backend hint (see note below) |
+| `--llm-profile NAME`  | LLM profile name |
+| `--debug`             | Enable debug logging |
+| `--log-file PATH`     | Write logs to a file |
 
-## Installation
+Examples:
 
 ```bash
-# Create virtual environment
-python -m venv venv
-venv\Scripts\activate  # Windows
-# source venv/bin/activate  # Linux/Mac
+# Open a project and a specific test
+python -m workflow_editor --project-root /path/to/Project --test-name voltage_test
 
-# Install dependencies
-pip install -r requirements.txt
+# Open a test folder directly
+python -m workflow_editor --test-dir /path/to/Project/tests/voltage_test
 ```
 
-## Usage
+Note: the active backend is resolved from the persisted `llm_backend` setting (see
+Configuration). The `--llm-backend` and `--llm-profile` flags are parsed and stored
+on the window (`_cli_llm_backend` / `_cli_llm_profile`) but are not currently
+re-read — the saved setting is what selects the backend on startup.
 
-### Launch the GUI
+### From the main GUI
 
-```bash
-python -m workflow_editor
-```
+The main Test Procedure GUI launches this editor for you — via the **Workflow** menu
+("Open Workflow Editor", "Edit Test in Workflow Editor") or the test-list context
+menu ("Edit in Workflow Editor"). `src/test_procedure_gui/main_window.py::_launch_workflow_editor`
+formats a configured command template (its `{python}` placeholder defaults to the
+GUI's `sys.executable`), launches it via `subprocess.Popen`, and appends
+`--project-root`, `--rules-root` (the active bundle's `rules/`), and `--test-name`.
+It also puts the editor on the child's `PYTHONPATH`. The editor path and command
+template are set in the main GUI's **Workflow Editor Settings** dialog.
+Project-specific parsing/validation then runs in the project's own venv via
+`pack_parsers.py`, so the editor does not itself need the project venv.
 
-### Command Line Options
+## LLM backend configuration
 
-```bash
-python -m workflow_editor --help
+Settings are stored in `~/.workflow_editor/settings.json` and edited in the
+in-app **Settings** dialog (`workflow_editor/dialogs/settings_dialog.py`). The
+`llm_backend` key selects one of `opencode`, `external_api`, or `none`.
 
-Options:
-  --project-root PATH    Path to the project root
-  --rules-root PATH      Path to rules/prompts folder
-  --test-name NAME       Open a specific test by name
-  --test-dir PATH        Open a specific test folder
-  --llm-backend TYPE     LLM backend: opencode, external_api, none
-```
+### Model-string format — important
 
-### Examples
+The two backends interpret the **Model** field differently:
 
-```bash
-# Open a project and test
-python -m workflow_editor --project-root C:\MyProject --test-name voltage_test
+- **OpenCode** (`opencode_backend.py`): the model is `providerID/modelID`, **split on
+  the FIRST `/`** (`opencode_backend.py:362-367`, `:722-727`). The text before the
+  first `/` is the OpenCode provider; everything after is the model id (which may
+  itself contain `/`).
+  - `anthropic/claude-3-5-sonnet` → provider `anthropic`, model `claude-3-5-sonnet`
+  - `my_vllm/cyankiwi/gemma-3-27b` → provider `my_vllm`, model `cyankiwi/gemma-3-27b`
+  - Leave **blank** to use the OpenCode server default. A bare name with no `/` is
+    ignored — the request omits the `model` field and the server default is used; it
+    is **not** treated as a provider.
+  - The provider (e.g. a custom `@ai-sdk/openai-compatible` provider named `my_vllm`)
+    must exist in your OpenCode config (`~/.config/opencode/` or a project
+    `opencode.json`).
+- **External API** (`external_api_backend.py:116`): the model is sent **verbatim** as
+  the `model` field — **no split, no provider prefix**. Use the plain model name your
+  endpoint expects (e.g. `gpt-4`, `qwen3:8b-16k`). Do **not** slash-prefix it.
 
-# Open a specific test folder
-python -m workflow_editor --test-dir C:\MyProject\tests\voltage_test
+### OpenCode backend
 
-# Use external API backend
-python -m workflow_editor --llm-backend external_api
-
-# Run without LLM (offline mode)
-python -m workflow_editor --llm-backend none
-```
-
-## Key Concepts
-
-### Per-Tab Conversations
-
-Each tab (Text-JSON, JSON-Code) maintains its own independent conversation with the LLM:
-- **Isolated History**: Messages in one tab don't affect others
-- **Tab-Specific Context**: Each tab has relevant rules and artifacts
-- **Independent Questions**: Open questions tracked per tab
-
-### Artifact Management
-
-The system intelligently manages test procedure artifacts:
-- **procedure_text**: Natural language procedure (Markdown)
-- **procedure_json**: Structured JSON procedure
-- **test_code**: Executable Python test code
-- **traceability**: Derived artifact (read-only)
-
-**Smart Sending:**
-- First interaction: All artifacts sent to establish context
-- Subsequent interactions: Only modified artifacts sent
-- Token savings: 50%+ reduction on typical workflows
-
-### Force Mode
-
-When enabled, instructs the LLM to propose updates even if concerns exist:
-- Toggle via checkbox in chat panel
-- Useful when you need concrete proposals to review
-- LLM will explain concerns but still provide update
-
-### Diff Workflow
-
-All artifact modifications require explicit approval:
-1. LLM proposes changes
-2. Diff viewer shows side-by-side comparison
-3. User accepts or rejects
-4. System message added to conversation
-5. Next LLM request automatically includes updated artifact
-
-## Configuration
-
-Settings are stored in `~/.workflow_editor/settings.json`.
-
-### OpenCode Backend (Default)
-
-Uses OpenCode running in WSL with a persistent server on port 4096:
+Runs against an OpenCode server (typically in WSL) on a configurable port (default
+4096). Example `settings.json` fragment:
 
 ```json
 {
@@ -147,14 +182,13 @@ Uses OpenCode running in WSL with a persistent server on port 4096:
   "opencode": {
     "port": 4096,
     "host": "127.0.0.1",
-    "model": ""
+    "model": "anthropic/claude-3-5-sonnet"
   }
 }
 ```
+`model` is `providerID/modelID`, split on the first `/`; leave it `""` for the server default.
 
-### External API Backend
-
-For OpenAI-compatible APIs:
+### External API backend (OpenAI-compatible)
 
 ```json
 {
@@ -166,216 +200,68 @@ For OpenAI-compatible APIs:
   }
 }
 ```
+`model` is sent verbatim — no provider prefix. Point `url` at any OpenAI-compatible
+endpoint (e.g. `http://127.0.0.1:11434/v1` for Ollama).
 
-## Project Structure
+### `none`
 
-```
-workflow_editor/
-├── __init__.py                # Package init
-├── __main__.py                # CLI entry point
-├── main_window.py             # Main application window
-├── artifact_manager.py        # Global artifact storage
-├── llm/                       # LLM integration
-│   ├── backend_base.py        # Abstract backend + validation
-│   ├── opencode_backend.py    # OpenCode WSL backend
-│   ├── external_api_backend.py # OpenAI-compatible API
-│   ├── tab_context.py         # Per-tab conversation state
-│   └── llm_worker.py          # Async worker threads
-├── tabs/                      # Main tab widgets
-│   ├── text_json_tab.py       # Text → JSON transformation
-│   ├── json_code_tab.py       # JSON → Code transformation
-│   └── ...                    # Other tabs
-├── dock/                      # Dock panel widgets
-│   ├── chat_panel.py          # Conversation UI
-│   ├── dock_widget.py         # Base dock widget
-│   └── ...                    # Other dock panels
-└── dialogs/                   # Dialog widgets
-    ├── diff_viewer.py         # Side-by-side diff display
-    └── ...                    # Other dialogs
+Disables the LLM. The editor still loads, parses, and lets you hand-edit artifacts;
+LLM-driven tabs return a disabled-backend error.
 
-tests/
-├── test_smoke_suite.py        # Comprehensive smoke tests (8 tests)
-├── test_phase3_task3_1.py     # Contract validation (12 tests)
-├── test_phase4_task4_1.py     # System messages (4 tests)
-├── test_phase6_validation.py  # Relaxed validation (5 tests)
-└── ...                        # Additional test files
+## Per-op execution daemon
 
-config/
-├── tab_contexts.json          # Tab-specific rules and prompts
-└── settings.json              # User preferences
+`workflow_editor/llm/_execute_op_subprocess.py` is a persistent NDJSON-framed daemon
+(one JSON object per line, both directions) that executes individual procedure ops
+against live instruments. It is the only runner that imports the hardware drivers,
+and it is driven by the main GUI's interactive/manual runner
+(`guided_manual_execution_dialog.py`). Key properties:
 
-docs/
-├── LLM_CHAT_ARCHITECTURE.md   # Complete system specification
-├── ARCHITECTURE.md            # System architecture overview
-├── TESTING.md                 # Test suite documentation
-└── PHASE8_INTEGRATION_VERIFICATION.md  # Final integration report
-```
+- **Invoked by file path** in the *project* venv (not `python -m`), so it skips the
+  PySide6 package init that the project venv lacks.
+- **No-reset guarantee:** it only `connect()`/`open()` + `initialize()`, never
+  `reset()`, so it never disturbs the bench state an operator set up.
+- **Per-device session policy** (`per_step` vs `per_session`): per-session devices are
+  opened once and closed (unlocked) only at shutdown — important for instruments whose
+  `close()` releases the remote lock and drops the output.
+- **One mapping seam:** it does not re-implement op→driver-call mapping; it drives each
+  pack's `emit_python(op, ctx)` through a capture-context and execs the captured remote
+  branch against the live device.
+- **Raw terminal seam:** a `raw` command dispatches on driver attributes by presence —
+  `query_raw`/`write_raw` (psu/eload/scope), then `raw_command` (fncore line protocol,
+  multi-line drain) or legacy `_write_readline`, with defensive `.s`/`._session` and
+  raw-resource fallbacks. This powers the main GUI's per-equipment raw-command
+  terminal; a new pack's driver becomes terminal-addressable just by exposing those
+  surfaces, with no per-driver branch (`_raw_send`, `_execute_op_subprocess.py:174-227`).
 
-## Documentation
+## How it ties into the main GUI
 
-- **[LLM_CHAT_ARCHITECTURE.md](LLM_CHAT_ARCHITECTURE.md)** - Complete system specification (1,183 lines)
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Architecture overview with data flow diagrams
-- **[TESTING.md](TESTING.md)** - Test suite guide and best practices
-- **[PHASE8_INTEGRATION_VERIFICATION.md](PHASE8_INTEGRATION_VERIFICATION.md)** - Final integration report
+- The main GUI puts this package on `sys.path` and imports it in-tree
+  (`app.py::_bootstrap_editor_on_path`).
+- Several main-GUI modules import from `workflow_editor` directly —
+  `llm.pack_parsers` (e.g. `bench_fields`, `bench_constant_names`,
+  `build_manual_run`/`build_manual_result`), `llm.section_ownership`, and
+  `core.task_config`.
+- The interactive/manual runner (`guided_manual_execution_dialog.py`) uses
+  `pack_parsers` and the per-op execution daemon to run ops against live equipment;
+  its bench Console (per-op output, reconnects, safe-off, and terminal traffic) is
+  mirrored into `_console_lines` (capped at `_CONSOLE_SAVE_CAP = 20000`) and persisted
+  into `result.json` as `console_log`.
+- The "Edit in Workflow Editor" / "Edit Test in Workflow Editor" actions launch this
+  editor as a separate process for full LLM-assisted authoring of the selected test.
 
 ## Testing
 
-### Run All Tests
+The `tests/` directory contains a pytest suite:
 
 ```bash
-pytest -v
+pytest -q
 ```
 
-### Run Specific Test Suites
+## Related documentation
 
-```bash
-# Smoke tests (8 tests covering all phases)
-pytest test_smoke_suite.py -v
+The authoritative cross-package contracts live at the repository root (not in this
+package):
 
-# Contract validation tests
-pytest test_phase3_task3_1.py -v
-
-# System message tests
-pytest test_phase4_task4_1.py -v
-
-# Relaxed validation tests
-pytest test_phase6_validation.py -v
-```
-
-### Test Coverage
-
-```bash
-pytest --cov=workflow_editor --cov-report=html
-```
-
-**Current Coverage:** ~80% (29 passing tests)
-
-## Performance
-
-### Token Efficiency
-
-The system achieves significant token savings through intelligent artifact tracking:
-
-| Scenario | Tokens Sent | Savings vs Baseline |
-|----------|-------------|---------------------|
-| First interaction | 2,500 | 0% (baseline) |
-| No modifications | 200 | 92% saved |
-| One artifact modified | 1,000 | 60% saved |
-| All artifacts modified | 2,500 | 0% (no savings possible) |
-
-**Typical 3-interaction workflow:**
-- Without optimization: ~7,500 tokens
-- With optimization: ~3,500 tokens
-- **Savings: 53% (4,000 tokens)**
-
-### UI Responsiveness
-
-All LLM requests execute asynchronously:
-- UI interactions: <16ms (60 FPS maintained)
-- Request initiation: <10ms
-- Response processing: <50ms
-- No blocking during LLM calls
-
-## Development
-
-### Code Quality
-
-**Quality Score: 9/10**
-
-Strengths:
-- ✅ Modular architecture with clear separation of concerns
-- ✅ Comprehensive type hints throughout
-- ✅ Robust error handling with user-friendly messages
-- ✅ 29 tests covering all critical functionality
-- ✅ Complete documentation suite
-- ✅ Async execution preventing UI blocking
-
-### Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature-name`
-3. Make changes and add tests
-4. Run test suite: `pytest -v`
-5. Commit changes: `git commit -m "Description"`
-6. Push to branch: `git push origin feature-name`
-7. Submit pull request
-
-### Adding New Features
-
-#### Adding a New Tab
-
-1. Create tab widget class in `workflow_editor/tabs/`
-2. Extend `QWidget` and implement `_run_task_async()`
-3. Register tab in `MainWindow`
-4. Add tab-specific rules to `config/tab_contexts.json`
-
-#### Adding a New LLM Backend
-
-1. Extend `LLMBackend` in `workflow_editor/llm/backend_base.py`
-2. Implement `send_task()` method for API communication
-3. Implement `parse_response()` for backend-specific format
-4. Register backend in settings dialog
-
-### Project Status
-
-**Version:** 1.0  
-**Status:** ✅ Production Ready  
-**Last Updated:** January 30, 2026
-
-**Recent Achievements:**
-- ✅ Phase 1-7 implementation complete
-- ✅ Phase 8 integration verification complete
-- ✅ All 29 tests passing
-- ✅ Performance targets met (50%+ token savings)
-- ✅ Complete documentation suite
-
-**Known Issues:**
-- Minor: Test functions use `return` instead of `assert` (cosmetic warnings)
-- Minor: One deprecated test file (`test_phase3_task3_4.py`)
-
-## Troubleshooting
-
-### Common Issues
-
-#### "ImportError: cannot import name 'X'"
-
-**Solution:** Ensure all dependencies are installed:
-```bash
-pip install -r requirements.txt
-```
-
-#### "Connection refused" when using OpenCode
-
-**Solution:** 
-1. Verify OpenCode server is running in WSL
-2. Check port 4096 is accessible
-3. Try: `curl http://localhost:4096/v1/models`
-
-#### UI freezes during LLM request
-
-**Solution:** This shouldn't happen (async execution). If it does:
-1. Check Python version (3.10+ required)
-2. Verify PySide6 is properly installed
-3. Report as a bug with reproduction steps
-
-### Getting Help
-
-- Check [LLM_CHAT_ARCHITECTURE.md](LLM_CHAT_ARCHITECTURE.md) for system details
-- Check [TESTING.md](TESTING.md) for test guidance
-- Review [ARCHITECTURE.md](ARCHITECTURE.md) for technical overview
-- Open an issue on GitHub with detailed description
-
-## License
-
-MIT License - See LICENSE file for details
-
-## Acknowledgments
-
-Built with:
-- **PySide6** - Qt for Python GUI framework
-- **pytest** - Python testing framework
-- **OpenCode** - Local LLM backend option
-
-## Contact
-
-For questions, suggestions, or bug reports, please open an issue on GitHub.
+- `../../docs/contract_a_gui_wheel_api.md` — Contract A: the GUI ↔ wheel `pack_parsers` façade
+- `../../docs/contract_b_bundle_engine_api.md` — Contract B: the bundle ↔ engine API
+- `../../TODO.md` — current status / task tracker

@@ -189,7 +189,13 @@ class SettingsDialog(QDialog):
         opencode_layout.addRow("Host:", self.opencode_host)
         
         self.opencode_model = QLineEdit()
-        self.opencode_model.setPlaceholderText("default")
+        self.opencode_model.setPlaceholderText(
+            "providerID/modelID  (e.g. my_vllm/cyankiwi/gemma-3-27b)")
+        self.opencode_model.setToolTip(
+            "providerID/modelID — split on the FIRST '/'. The text before the "
+            "first '/' is the OpenCode provider; everything after is the model "
+            "id (which may itself contain '/'). Leave blank for the server "
+            "default; a bare name with no '/' is ignored (default is used).")
         opencode_layout.addRow("Model:", self.opencode_model)
         
         self.opencode_wsl_path = QLineEdit()

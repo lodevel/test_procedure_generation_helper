@@ -477,6 +477,14 @@ class MainWindow(QMainWindow):
         bundle_library_action.triggered.connect(self._on_bundle_library)
         file_menu.addAction(bundle_library_action)
 
+        scenarios_action = QAction("&Scenarios...", self)
+        scenarios_action.setToolTip(
+            "Create / load / delete named test scenarios (subsets of this "
+            "project's tests). Scenarios are run from the main app."
+        )
+        scenarios_action.triggered.connect(self._on_scenarios)
+        file_menu.addAction(scenarios_action)
+
         file_menu.addSeparator()
 
         exit_action = QAction("E&xit", self)
@@ -1780,6 +1788,24 @@ class MainWindow(QMainWindow):
         self.text_json_tab.refresh_parser_button()
         self.text_only_tab.refresh_parser_button()
         self.json_code_tab.refresh_code_parser_button()
+
+    def _on_scenarios(self):
+        """File -> Scenarios: author named test scenarios via the shared
+        ScenarioManagerDialog. The author DEFINES scenarios here; the main app
+        RUNS them. Candidate tests are injected so the dialog stays cycle-safe.
+        """
+        root = getattr(self.project_manager, "project_root", None)
+        if not root:
+            QMessageBox.information(
+                self, "Scenarios", "Open or create a project first.")
+            return
+        candidates = [
+            (i.name, i.has_json and i.has_code)
+            for i in self.project_manager.enumerate_test_folders()
+            if i.has_json
+        ]
+        from project_services.scenario_dialog import ScenarioManagerDialog
+        ScenarioManagerDialog(self, project_root=root, candidates=candidates).exec()
 
     def _on_configure_workflows(self):
         """Point the user at the parent app's workflows editor.

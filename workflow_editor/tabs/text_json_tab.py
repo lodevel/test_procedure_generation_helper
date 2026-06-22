@@ -820,21 +820,34 @@ class TextJsonTab(LLMTabMixin, BaseTab):
             # body sections; identity is parser-owned.
             project_root = getattr(self.project_manager, "project_root", None)
             override = self._task_section_override(task)
-            reconstructed, err = reconstructed_or_error(
+            reconstructed, best_effort, err = reconstructed_or_error(
                 content_str, current_content,
                 task_override=override, project_root=project_root,
             )
+            banner = None
             if err:
-                self.main_window.dock.chat_panel.add_system_message(
-                    f"⚠ Could not reconstruct procedure_text.md: {err}"
+                if best_effort is None:
+                    # Nothing to show (e.g. parser/wheel unavailable) — warn only.
+                    self.main_window.dock.chat_panel.add_system_message(
+                        f"⚠ Could not reconstruct procedure_text.md: {err}"
+                    )
+                    return
+                # Invalid proposal, but a best-effort document exists: still
+                # offer a reviewable diff with a warning banner so the operator
+                # can fix / apply / reject it instead of it being silently dropped.
+                banner = (
+                    "Proposal failed validation — review and fix before "
+                    "applying:\n" + err
                 )
-                return
-            content_str = reconstructed
+                content_str = best_effort
+            else:
+                content_str = reconstructed
             accepted, final_content = DiffViewer.show_diff(
                 current_content,
                 content_str,
                 "Review Changes: procedure_text.md",
-                self
+                self,
+                banner=banner,
             )
             
             if accepted:

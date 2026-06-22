@@ -55,13 +55,15 @@ class DiffViewer(QDialog):
                  original: str, 
                  proposed: str, 
                  title: str = "Review Changes",
-                 parent=None):
+                 parent=None,
+                 banner=None):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumSize(800, 500)
         
         self._original = original
         self._proposed = proposed
+        self._banner = banner
         self._accepted = False
         
         self._setup_ui()
@@ -74,6 +76,17 @@ class DiffViewer(QDialog):
         header.addWidget(QLabel("<b>Review the proposed changes:</b>"))
         header.addStretch()
         layout.addLayout(header)
+
+        # Optional warning strip — used when an invalid proposal is shown for
+        # manual review (e.g. validation failed and auto-correct is off).
+        if self._banner:
+            banner_lbl = QLabel(self._banner)
+            banner_lbl.setWordWrap(True)
+            banner_lbl.setStyleSheet(
+                "background: #5a3a00; color: #ffcc80; border: 1px solid "
+                "#8a5a00; border-radius: 4px; padding: 6px; font-weight: bold;"
+            )
+            layout.addWidget(banner_lbl)
         
         # Splitter for side-by-side view
         h_splitter = QSplitter(Qt.Horizontal)
@@ -192,14 +205,14 @@ class DiffViewer(QDialog):
         return self._proposed
     
     @staticmethod
-    def show_diff(original: str, proposed: str, title: str = "Review Changes", parent=None) -> tuple:
+    def show_diff(original: str, proposed: str, title: str = "Review Changes", parent=None, banner=None) -> tuple:
         """
         Show diff dialog and return (accepted, proposed_content).
         
         Returns:
             Tuple of (accepted: bool, content: str)
         """
-        dialog = DiffViewer(original, proposed, title, parent)
+        dialog = DiffViewer(original, proposed, title, parent, banner)
         result = dialog.exec()
         
         if result == QDialog.Accepted and dialog.was_accepted():

@@ -173,27 +173,32 @@ class ReconstructNoOverridePassesResolvedSetTests(unittest.TestCase):
 
 
 class ReconstructedOrErrorTests(unittest.TestCase):
-    """The apply-path guard helper. Returns ``(text, None)`` on success and
-    ``(None, error_message)`` on any failure — the failure cases are exactly
-    what the unguarded ``recon.text if recon.text is not None else ...`` call
-    site at apply time let slip through (a half-built doc, or an unguarded
-    ``ParserUnavailable`` raised into a Qt slot)."""
+    """The apply-path guard helper. Returns ``(strict_text, best_effort_text,
+    error)``: ``(text, text, None)`` on success; ``(None, half_built_text,
+    findings)`` on an invalid proposal — strict_text is None so it is never
+    auto-applied, but the half-built doc is surfaced so the apply path can show
+    a reviewable diff (with a warning banner) instead of dropping it; and
+    ``(None, None, reason)`` when there is genuinely nothing to show (e.g. an
+    unguarded ``ParserUnavailable`` raised into a Qt slot)."""
 
     def test_success_returns_text_and_none(self) -> None:
-        text, err = reconstructed_or_error(FRAGMENT, PRIOR, project_root=None)
+        strict, best, err = reconstructed_or_error(FRAGMENT, PRIOR, project_root=None)
         self.assertIsNone(err)
-        self.assertIsInstance(text, str)
-        self.assertTrue(text.startswith("# PRIOR_TEST"))
+        self.assertIsInstance(strict, str)
+        self.assertTrue(strict.startswith("# PRIOR_TEST"))
+        self.assertEqual(best, strict)  # best_effort == strict on success
 
-    def test_failure_returns_none_and_message(self) -> None:
+    def test_failure_surfaces_best_effort_and_message(self) -> None:
         # task_override={"steps"} makes ## Equipment parser-owned; the
-        # fragment still carries it, so reconstruction fails. The wheel
-        # returns a non-None half-built .text, but the helper must surface
-        # the failure as (None, <non-empty error str>) — never the half doc.
-        text, err = reconstructed_or_error(
+        # fragment still carries it, so reconstruction fails. strict_text is
+        # None (never auto-applied), but the half-built best_effort_text IS
+        # surfaced so the operator can review/fix it, and the findings land in
+        # the error string.
+        strict, best, err = reconstructed_or_error(
             FRAGMENT, PRIOR, task_override={"steps"}, project_root=None
         )
-        self.assertIsNone(text)
+        self.assertIsNone(strict)
+        self.assertIsNotNone(best)  # half-built doc surfaced (the fix)
         self.assertIsInstance(err, str)
         self.assertTrue(err)  # non-empty
         self.assertIn("RECON_UNSUPPORTED_OWNER", err)

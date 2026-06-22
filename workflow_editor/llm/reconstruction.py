@@ -80,24 +80,30 @@ def reconstructed_or_error(
     *,
     task_override: Optional[Iterable[str]] = None,
     project_root: Optional[Path] = None,
-) -> tuple[Optional[str], Optional[str]]:
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """Guarded reconstruction for the apply (proposal → diff dialog) path.
 
-    Return ``(text_to_apply, error_message)``. On any failure
-    ``text_to_apply`` is None and ``error_message`` is a human-readable
-    reason; on success the reverse (``(reconstructed_text, None)``).
+    Return ``(strict_text, best_effort_text, error_message)``:
+      - **success**: ``(reconstructed_text, reconstructed_text, None)``.
+      - **invalid proposal** (``recon.success == False``): ``(None,
+        half_built_text, findings)`` — ``strict_text`` is None so it is never
+        auto-applied, but the half-built document is returned so the apply
+        path can still offer a *reviewable* diff (with a warning banner)
+        instead of silently dropping an invalid proposal. This is what makes
+        "auto-correct off" actually let the operator review/fix a bad draft.
+      - **nothing to show** (``ParserUnavailable`` — wheel missing / subprocess
+        error / timeout): ``(None, None, reason)``.
 
     Two failure modes the bare :func:`reconstruct_for_pipeline` call leaks:
-      - ``pack_parsers.ParserUnavailable`` (wheel missing / subprocess
-        error / timeout) — caught here so it never propagates into a Qt
-        slot and silently drops the proposal.
-      - ``recon.success == False`` — the wheel still returns a NON-None
-        half-built ``.text`` in this case, so an ``is not None`` guard at
-        the call site would let a broken document through. We summarise the
-        findings into the error message instead.
+      - ``pack_parsers.ParserUnavailable`` — caught here so it never propagates
+        into a Qt slot and silently drops the proposal.
+      - ``recon.success == False`` — the wheel still returns a (usually
+        NON-None) half-built ``.text``; we surface it as ``best_effort_text``
+        alongside the findings.
 
-    Pure (no Qt). Call sites turn ``error_message`` into a system chat
-    message and return without applying.
+    Pure (no Qt). Call sites show the diff when a text is available (with the
+    findings as a banner when ``strict_text`` is None), or post a chat warning
+    only when ``best_effort_text`` is None too.
     """
     try:
         recon = reconstruct_for_pipeline(
@@ -107,10 +113,10 @@ def reconstructed_or_error(
             project_root=project_root,
         )
     except pack_parsers.ParserUnavailable as exc:
-        return None, f"Could not reconstruct procedure_text.md: {exc}"
+        return None, None, f"Could not reconstruct procedure_text.md: {exc}"
     if not recon.success:
         details = "; ".join(
             f"[{i.code}] {i.message}" for i in recon.errors
         ) or "reconstruction failed (no details)"
-        return None, details
-    return recon.text, None
+        return None, recon.text, details
+    return recon.text, recon.text, None

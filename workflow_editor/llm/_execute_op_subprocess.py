@@ -605,7 +605,8 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
     log_mark = len(session.res.log)
     results: list = []
     failed = False
-    for entry in ops:
+    total = len(ops)
+    for _i, entry in enumerate(ops):
         op = entry.get("op") or {}
         node_path = entry.get("node_path", "")
         device = op.get("device")
@@ -629,6 +630,17 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
             failed = True
             results.append({"node_path": node_path, "ok": False,
                             "error": f"{type(exc).__name__}: {exc}"})
+        # Stream a per-op progress frame so the GUI advances the cursor live
+        # (fluid progression) instead of jumping when the whole batch returns.
+        if _PROTO_OUT is not None:
+            try:
+                _write_frame(_PROTO_OUT, {
+                    "kind": "progress", "node_path": node_path,
+                    "ok": results[-1].get("ok", False),
+                    "i": _i, "total": total})
+            except Exception:  # noqa: BLE001 — never let progress break the batch
+                pass
+        if failed:
             break
     unsafe: list = []
     if failed and session.energized:
@@ -788,6 +800,9 @@ def _cmd_shutdown(session: _Session, req: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 _SESSION: _Session | None = None
+# Protocol channel (set in main()). Used by _cmd_exec_ops to stream per-op
+# "progress" frames so the GUI advances the cursor live during a batch.
+_PROTO_OUT = None
 
 
 def _write_frame(out, obj: dict) -> None:
@@ -891,7 +906,7 @@ def _dispatch(session: _Session, req: dict):
 
 
 def main() -> None:
-    global _SESSION
+    global _SESSION, _PROTO_OUT
     # Isolate the protocol channel at the OS level: dup the real stdout to a
     # private fd for frames, then point fd 1 (what C-level VISA/driver code calls
     # "stdout") at stderr so stray bytes can't corrupt a frame.  Python-level
@@ -900,6 +915,7 @@ def main() -> None:
     os.dup2(2, 1)
     sys.stdout = sys.stderr
     proto_out = os.fdopen(frame_fd, "w", buffering=1)
+    _PROTO_OUT = proto_out
 
     _SESSION = _Session()
     atexit.register(_emergency_teardown)

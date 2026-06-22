@@ -821,7 +821,8 @@ class RemoteSession:
                 "stderr": list(self._stderr_tail)}
 
     # -- transport ---------------------------------------------------------
-    def _request(self, frame: dict[str, Any], timeout: float) -> dict[str, Any]:
+    def _request(self, frame: dict[str, Any], timeout: float,
+                 on_progress=None) -> dict[str, Any]:
         with self._lock:
             if self._dead:
                 return {"ok": False, "kind": "SessionDead",
@@ -841,35 +842,59 @@ class RemoteSession:
                 self._proc.stdin.flush()
             except (BrokenPipeError, OSError, ValueError) as exc:
                 return self._dead_resp("SessionDead", f"write failed: {exc}")
-            box: dict = {}
 
-            def _read() -> None:
+            # Read until the final result frame. The daemon may stream
+            # ``{"kind": "progress", ...}`` frames first (per-op, for live cursor
+            # advance); the timeout is per-frame, so a long batch with steady
+            # progress never wedges. ``on_progress`` runs on THIS (worker) thread.
+            while True:
+                box: dict = {}
+
+                def _read() -> None:
+                    try:
+                        box["line"] = self._proc.stdout.readline()
+                    except Exception as exc:  # noqa: BLE001
+                        box["err"] = exc
+
+                reader = threading.Thread(target=_read, daemon=True)
+                reader.start()
+                reader.join(timeout)
+                if reader.is_alive():                     # wedged synchronous VISA read
+                    return self._dead_resp(               # _dead_resp terminates+reaps
+                        "SessionTimeout", f"daemon unresponsive after {timeout}s")
+                if "err" in box or not box.get("line"):
+                    rc = self._proc.poll()
+                    return self._dead_resp("SessionDead", f"daemon closed pipe (exit={rc})")
                 try:
-                    box["line"] = self._proc.stdout.readline()
-                except Exception as exc:  # noqa: BLE001
-                    box["err"] = exc
-
-            reader = threading.Thread(target=_read, daemon=True)
-            reader.start()
-            reader.join(timeout)
-            if reader.is_alive():                     # wedged synchronous VISA read
-                return self._dead_resp(               # _dead_resp terminates+reaps
-                    "SessionTimeout", f"daemon unresponsive after {timeout}s")
-            if "err" in box or not box.get("line"):
-                rc = self._proc.poll()
-                return self._dead_resp("SessionDead", f"daemon closed pipe (exit={rc})")
-            try:
-                return json.loads(box["line"])
-            except json.JSONDecodeError as exc:
-                return self._dead_resp("SessionDead", f"corrupt frame: {exc}")
+                    msg = json.loads(box["line"])
+                except json.JSONDecodeError as exc:
+                    return self._dead_resp("SessionDead", f"corrupt frame: {exc}")
+                if isinstance(msg, dict) and msg.get("kind") == "progress":
+                    # The daemon streams a progress frame per op for EVERY
+                    # exec_ops batch — always consume them (read past to the
+                    # final result), whether or not a callback wants them, else a
+                    # caller with no on_progress would get a progress frame as its
+                    # result (e.g. the ⚡ single-op exec).
+                    if on_progress is not None:
+                        try:
+                            on_progress(msg)
+                        except Exception:  # noqa: BLE001 — never break the run
+                            pass
+                    continue
+                return msg
 
     # -- API ---------------------------------------------------------------
     def exec_ops(self, ops: list[dict[str, Any]], bench_map: dict[str, Any],
-                 timeout: Optional[int] = None) -> dict[str, Any]:
-        """Run a contiguous batch; per_session devices stay HELD afterward."""
+                 timeout: Optional[int] = None, on_progress=None) -> dict[str, Any]:
+        """Run a contiguous batch; per_session devices stay HELD afterward.
+
+        ``on_progress`` (optional): invoked on the CALLING thread with each
+        per-op ``{"kind": "progress", "node_path", "ok", "i", "total"}`` frame
+        the daemon streams, so the caller can advance a live cursor."""
         return self._request(
             {"cmd": "exec_ops", "ops": ops, "bench_map": bench_map},
-            timeout or (_TIMEOUT_REMOTE_EXEC + 5 * len(ops)))
+            timeout or (_TIMEOUT_REMOTE_EXEC + 5 * len(ops)),
+            on_progress=on_progress)
 
     def exec_op(self, target_op: dict[str, Any], bench: dict[str, Any],
                 timeout: Optional[int] = None) -> dict[str, Any]:

@@ -417,6 +417,23 @@ class MainWindow(QMainWindow):
         save_all_action.triggered.connect(self._on_save_all)
         file_menu.addAction(save_all_action)
         
+        export_menu = file_menu.addMenu("&Export")
+        export_menu.setToolTip("Export the current procedure to Markdown or Word.")
+
+        export_md_action = QAction("Procedure to &Markdown…", self)
+        export_md_action.setToolTip(
+            "Export the current procedure as a Markdown (.md) document."
+        )
+        export_md_action.triggered.connect(self._on_export_markdown)
+        export_menu.addAction(export_md_action)
+
+        export_word_action = QAction("Procedure to &Word…", self)
+        export_word_action.setToolTip(
+            "Export the current procedure as a Word (.docx) document."
+        )
+        export_word_action.triggered.connect(self._on_export_word)
+        export_menu.addAction(export_word_action)
+        
         file_menu.addSeparator()
         
         settings_action = QAction("Se&ttings...", self)
@@ -496,6 +513,91 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self._on_about)
         help_menu.addAction(about_action)
     
+    # ------------------------------------------------------------------
+    #  Export (File → Export → Markdown / Word)
+    # ------------------------------------------------------------------
+
+    def _current_procedure_text(self):
+        """Return the live procedure text from the active editor.
+
+        Reads ``text_editor.toPlainText()`` directly (never the artifact
+        cache) so unsaved edits are exported. Tries the active tab first,
+        then the text/json tab which always owns procedure_text.
+        """
+        candidates = [
+            self.tab_widget.currentWidget(),
+            getattr(self, "text_json_tab", None),
+            getattr(self, "text_only_tab", None),
+        ]
+        for tab in candidates:
+            editor = getattr(tab, "text_editor", None)
+            if editor is not None:
+                txt = editor.toPlainText()
+                if txt and txt.strip():
+                    return txt
+        return None
+
+    def _export_default_path(self, suffix: str) -> Path:
+        """Default save location/name for an export with *suffix* (e.g. '.md')."""
+        root = getattr(self.project_manager, "project_root", None)
+        if root is not None:
+            stem = Path(root).name or "procedure"
+            return Path(root) / f"{stem}{suffix}"
+        return Path.home() / f"procedure{suffix}"
+
+    def _on_export_markdown(self):
+        """File → Export → Markdown: write the procedure as a .md document."""
+        text = self._current_procedure_text()
+        if not text:
+            QMessageBox.information(
+                self, "Export to Markdown",
+                "There is no procedure text to export.\n"
+                "Open or author a procedure first.")
+            return
+        default = self._export_default_path(".md")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Procedure to Markdown", str(default),
+            "Markdown (*.md);;All Files (*)")
+        if not path:
+            return
+        try:
+            from .core.procedure_export import write_markdown
+            write_markdown(text, Path(path))
+        except Exception as e:
+            log.exception("Markdown export failed")
+            QMessageBox.critical(self, "Export Failed",
+                                 f"Could not write Markdown:\n{e}")
+            return
+        self.status_bar.showMessage(f"Exported Markdown \u2192 {path}", 5000)
+
+    def _on_export_word(self):
+        """File → Export → Word: write the procedure as a .docx document."""
+        text = self._current_procedure_text()
+        if not text:
+            QMessageBox.information(
+                self, "Export to Word",
+                "There is no procedure text to export.\n"
+                "Open or author a procedure first.")
+            return
+        default = self._export_default_path(".docx")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Procedure to Word", str(default),
+            "Word Document (*.docx);;All Files (*)")
+        if not path:
+            return
+        from .core.procedure_export import write_word, WordExportUnavailable
+        try:
+            write_word(text, Path(path), title=None)
+        except WordExportUnavailable as e:
+            QMessageBox.warning(self, "Word Export Unavailable", str(e))
+            return
+        except Exception as e:
+            log.exception("Word export failed")
+            QMessageBox.critical(self, "Export Failed",
+                                 f"Could not write Word document:\n{e}")
+            return
+        self.status_bar.showMessage(f"Exported Word \u2192 {path}", 5000)
+
     def _setup_central_widget(self):
         """Setup central widget with tabs."""
         # Tab widget (no container needed)

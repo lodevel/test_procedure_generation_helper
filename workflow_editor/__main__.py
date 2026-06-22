@@ -23,6 +23,22 @@ from pathlib import Path
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 
+# Make the shared `project_services` package importable in standalone runs that
+# lack the main app's editable install (embedded runs get it from the GUI venv).
+def _bootstrap_project_services() -> None:
+    import importlib.util
+    if importlib.util.find_spec("project_services") is not None:
+        return
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "src" / "project_services" / "__init__.py").is_file():
+            sys.path.insert(0, str(parent / "src"))
+            return
+
+
+_bootstrap_project_services()
+
+
 from .main_window import MainWindow
 from . import theme
 

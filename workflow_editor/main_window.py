@@ -37,7 +37,7 @@ from .tabs import (
     WorkspaceTab, TextOnlyTab, TextJsonTab, JsonCodeTab, TraceabilityTab
 )
 from .dock import DockWidget
-from .dialogs import SettingsDialog, NewProjectDialog, load_settings
+from .dialogs import SettingsDialog, load_settings
 
 log = logging.getLogger(__name__)
 
@@ -1273,34 +1273,36 @@ class MainWindow(QMainWindow):
     
     def _on_new_project(self):
         """Handle new project creation."""
+        # Shared, bundle-backed New Project — the SAME dialog the main app
+        # uses: creates dirs + venv + bundle ref + starter test, so
+        # editor-made projects are openable/runnable by the main app.
+        # project_services is reachable via the GUI venv's editable install
+        # (embedded) or the __main__ walk-up bootstrap (standalone).
+        from project_services.new_project_dialog import NewProjectDialog
+        from project_services import config_manager
+
         dialog = NewProjectDialog(self)
-        
         if dialog.exec() != QDialog.Accepted:
             return
-        
-        # Get project configuration from dialog
-        config = dialog.get_project_config()
-        project_path = config["path"]
-        create_config = config["create_config"]
-        create_readme = config["create_readme"]
-        
-        # Create project structure
-        success = self.project_manager.create_project_structure(
-            project_path,
-            create_config=create_config,
-            create_readme=create_readme
-        )
-        
-        if not success:
-            QMessageBox.critical(
-                self,
-                "Project Creation Failed",
-                f"Failed to create project at:\n{project_path}\n\n"
-                "Check the logs for more details."
-            )
-            return
-        
-        # Project was created and set as current root by create_project_structure
+
+        project_path = Path(dialog.project_location) / dialog.project_name
+
+        selected_cfg = dialog.selected_config
+        if selected_cfg:
+            config_manager.seed_project_from_config(selected_cfg, project_path)
+            config_manager.set_last_used_config(selected_cfg)
+
+        config_name = getattr(dialog, "config_name", "") or dialog.project_name
+        if config_name:
+            config_dir = project_path / "config"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            origin = config_manager.read_config_section(config_dir, "origin")
+            origin["config_name"] = config_name
+            config_manager.write_config_section(config_dir, "origin", origin)
+
+        # Point the editor's navigation model at the freshly-created project.
+        self.project_manager.set_project_root(project_path)
+
         # Now initialize the UI with the new project
         self.workspace_widget._load_test_list()
         self.workspace_widget.new_test_btn.setEnabled(True)

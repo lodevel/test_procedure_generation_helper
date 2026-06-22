@@ -466,6 +466,14 @@ class MainWindow(QMainWindow):
         template_manager_action.triggered.connect(self._on_template_manager)
         file_menu.addAction(template_manager_action)
 
+        bundle_library_action = QAction("Bundle &Library...", self)
+        bundle_library_action.setToolTip(
+            "Manage installed bundles; \"Import into Project\" targets the "
+            "open project."
+        )
+        bundle_library_action.triggered.connect(self._on_bundle_library)
+        file_menu.addAction(bundle_library_action)
+
         file_menu.addSeparator()
 
         exit_action = QAction("E&xit", self)
@@ -1728,6 +1736,20 @@ class MainWindow(QMainWindow):
         root = getattr(self.project_manager, "project_root", None)
         origin = ProjectModel.get_active_config_from_path(root) if root else None
         TemplateManagerDialog(self, project_path=root, project_config_origin=origin).exec()
+
+    def _on_bundle_library(self):
+        """File -> Bundle Library: manage installed bundles via the shared
+        BundleLibraryDialog. When a project is open, "Import into Project"
+        targets it.
+        """
+        from project_services.bundle_library_dialog import BundleLibraryDialog
+        root = getattr(self.project_manager, "project_root", None)
+        BundleLibraryDialog(self, project_path=root).exec()
+        # Library changes may alter which bundle resolves -> refresh gating.
+        self._update_project_rules_indicators()
+        self.text_json_tab.refresh_parser_button()
+        self.text_only_tab.refresh_parser_button()
+        self.json_code_tab.refresh_code_parser_button()
 
     def _on_configure_workflows(self):
         """Point the user at the parent app's workflows editor.

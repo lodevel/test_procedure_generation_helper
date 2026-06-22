@@ -41,6 +41,7 @@ import logging
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 from collections import deque
 from dataclasses import asdict, dataclass, field, fields
@@ -754,6 +755,16 @@ class RemoteSession:
         self._lock = threading.Lock()
         self._dead = False
         self._bundle_dir: Optional[str] = None
+        # The daemon runs with cwd here so a relative file write (e.g. a scope
+        # screenshot saved by ``save_screenshot(filename=...)``) lands in a known
+        # temp dir, not the GUI's cwd; the host harvests these into the result
+        # dir on Finish & Save.
+        self._screenshot_dir = Path(tempfile.mkdtemp(prefix="tpg_shots_"))
+
+    @property
+    def screenshot_dir(self) -> Path:
+        """Temp dir the daemon writes relative files (scope screenshots) into."""
+        return self._screenshot_dir
 
     # -- lifecycle ---------------------------------------------------------
     def _start(self) -> None:
@@ -764,6 +775,7 @@ class RemoteSession:
             [str(py), str(runner)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1,
+            cwd=str(self._screenshot_dir),   # relative file writes (screenshots) land here
         )
         self._dead = False
         self._stderr_tail.clear()

@@ -450,6 +450,22 @@ class MainWindow(QMainWindow):
         workflows_action.triggered.connect(self._on_configure_workflows)
         file_menu.addAction(workflows_action)
 
+        project_config_action = QAction("Project &Configuration...", self)
+        project_config_action.setToolTip(
+            "Edit this project's config.json: bundle, equipment profiles/"
+            "patterns, templates, imaging, workflows."
+        )
+        project_config_action.triggered.connect(self._on_project_configuration)
+        file_menu.addAction(project_config_action)
+
+        template_manager_action = QAction("&Template Manager...", self)
+        template_manager_action.setToolTip(
+            "Manage saved customer-configuration templates (reusable bundle + "
+            "equipment + workflow presets)."
+        )
+        template_manager_action.triggered.connect(self._on_template_manager)
+        file_menu.addAction(template_manager_action)
+
         file_menu.addSeparator()
 
         exit_action = QAction("E&xit", self)
@@ -1679,6 +1695,39 @@ class MainWindow(QMainWindow):
                     self.dock.chat_panel._refresh_validator_ui_for_context(ctx)
             except Exception:
                 log.debug("post-settings validator UI refresh failed", exc_info=True)
+
+    def _on_project_configuration(self):
+        """File -> Project Configuration: edit this project's config.json via the
+        shared ProjectConfigDialog (the same dialog the main app uses).
+        """
+        root = getattr(self.project_manager, "project_root", None)
+        if not root:
+            QMessageBox.information(
+                self, "Project Configuration",
+                "Open or create a project first.")
+            return
+        from project_services.config_manager_dialog import ProjectConfigDialog
+        from project_services.project_model import ProjectModel
+        origin = ProjectModel.get_active_config_from_path(root)
+        dlg = ProjectConfigDialog(self, project_path=root, project_config_origin=origin)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        # Config / bundle may have changed -> refresh capability gating + rules.
+        self.task_config_manager.reload(root)
+        self._update_project_rules_indicators()
+        self.text_json_tab.refresh_parser_button()
+        self.text_only_tab.refresh_parser_button()
+        self.json_code_tab.refresh_code_parser_button()
+
+    def _on_template_manager(self):
+        """File -> Template Manager: manage saved customer-config templates via
+        the shared TemplateManagerDialog.
+        """
+        from project_services.config_manager_dialog import TemplateManagerDialog
+        from project_services.project_model import ProjectModel
+        root = getattr(self.project_manager, "project_root", None)
+        origin = ProjectModel.get_active_config_from_path(root) if root else None
+        TemplateManagerDialog(self, project_path=root, project_config_origin=origin).exec()
 
     def _on_configure_workflows(self):
         """Point the user at the parent app's workflows editor.

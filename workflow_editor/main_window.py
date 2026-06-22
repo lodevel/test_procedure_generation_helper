@@ -403,6 +403,9 @@ class MainWindow(QMainWindow):
         open_action.setShortcut(QKeySequence.Open)
         open_action.triggered.connect(self._on_open_project)
         file_menu.addAction(open_action)
+        self._open_recent_menu = QMenu("Open &Recent", self)
+        self._open_recent_menu.aboutToShow.connect(self._rebuild_open_recent_menu)
+        file_menu.addMenu(self._open_recent_menu)
         
         file_menu.addSeparator()
         
@@ -1326,6 +1329,8 @@ class MainWindow(QMainWindow):
 
         # Point the editor's navigation model at the freshly-created project.
         self.project_manager.set_project_root(project_path)
+        from project_services.app_settings import add_recent_project
+        add_recent_project(str(project_path))
 
         # Now initialize the UI with the new project
         self.workspace_widget._load_test_list()
@@ -1358,6 +1363,49 @@ class MainWindow(QMainWindow):
             "You can now create test folders using the Workspace tab."
         )
     
+    def _refresh_after_open(self):
+        """Common UI refresh after a project root is set (open / recent)."""
+        self.workspace_widget._load_test_list()
+        self.workspace_widget.new_test_btn.setEnabled(True)
+        self.project_manager.detect_rules_root()
+        self.task_config_manager.reload(self.project_manager.project_root)
+        self._update_project_rules_indicators()
+        self.text_json_tab.refresh_parser_button()
+        self.text_only_tab.refresh_parser_button()
+        self.json_code_tab.refresh_code_parser_button()
+        self._watch_project_config()
+        if self.workspace_dock.isHidden():
+            self.workspace_dock.show()
+
+    def _rebuild_open_recent_menu(self):
+        # Repopulate from the SHARED recent list (same app_settings the main
+        # app writes), so recents are unified across both apps.
+        from project_services.app_settings import load_app_settings
+        self._open_recent_menu.clear()
+        recent = load_app_settings().get("recent_projects", [])
+        if not recent:
+            placeholder = self._open_recent_menu.addAction("No recent projects")
+            placeholder.setEnabled(False)
+            return
+        for path_str in recent:
+            action = self._open_recent_menu.addAction(path_str)
+            action.triggered.connect(
+                lambda checked=False, p=path_str: self._on_open_recent(p)
+            )
+
+    def _on_open_recent(self, path_str):
+        """Open a project from the recent list."""
+        from project_services.app_settings import add_recent_project
+        path = Path(path_str)
+        if not path.is_dir():
+            QMessageBox.warning(
+                self, "Project Not Found",
+                f"The project folder no longer exists:\n{path_str}")
+            return
+        if self.project_manager.set_project_root(path):
+            add_recent_project(str(path))
+            self._refresh_after_open()
+
     def _on_open_project(self):
         """Handle open project action."""
         path = QFileDialog.getExistingDirectory(
@@ -1373,27 +1421,9 @@ class MainWindow(QMainWindow):
         
         # Try to set as project root
         if self.project_manager.set_project_root(project_path):
-            self.workspace_widget._load_test_list()
-            self.workspace_widget.new_test_btn.setEnabled(True)
-
-            # Detect rules
-            self.project_manager.detect_rules_root()
-
-            # Switch task configurations to the newly-opened project — this
-            # clears the cache under lock, runs any legacy tab_contexts.json
-            # migration, and re-reads the workflows section.
-            self.task_config_manager.reload(self.project_manager.project_root)
-
-            # Update status bar indicators
-            self._update_project_rules_indicators()
-            self.text_json_tab.refresh_parser_button()
-            self.text_only_tab.refresh_parser_button()
-            self.json_code_tab.refresh_code_parser_button()
-            self._watch_project_config()
-            
-            # Show workspace dock if hidden
-            if self.workspace_dock.isHidden():
-                self.workspace_dock.show()
+            from project_services.app_settings import add_recent_project
+            add_recent_project(str(project_path))
+            self._refresh_after_open()
         else:
             # Maybe user selected a test folder directly?
             detected_root = self.project_manager.detect_project_from_test_folder(project_path)

@@ -1119,9 +1119,6 @@ QScrollArea {
 QScrollArea > QWidget > QWidget {
     background: transparent;
 }
-QAbstractScrollArea {
-    background: transparent;
-}
 
 /* ============================================================
    SLIDER (optional)
@@ -2032,9 +2029,6 @@ QScrollArea {
     border: none;
 }
 QScrollArea > QWidget > QWidget {
-    background: transparent;
-}
-QAbstractScrollArea {
     background: transparent;
 }
 

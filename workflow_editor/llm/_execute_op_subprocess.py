@@ -58,7 +58,9 @@ corrupt a frame.  Tracebacks travel inside the response JSON, never printed.
   frames never embed the document itself:
     {"cmd": "exec_ops", "_bundle_dir": "<abs>", "procedure_path": "<abs>",
      "ops": [{"node_path": str, "op": {...}}, ...],
-     "bench_map": {device: {"visa"|"port"..., "session_policy": "..."}}}
+     "bench_map": {device: {"visa"|"port"..., "session_policy": "..."}},
+     "measurements"?: {ref: value}, "controls"?: {node_path: decision},
+     "operator_verdicts"?: {ref: verdict}}   # prior run state -> live verdicts
     {"cmd": "safe_off", "_bundle_dir": "<abs>", "procedure_path": "<abs>",
      "bench_map": {...}, "safe_off": [{"device","etype","channels":[...]}, ...]}
     {"cmd": "raw", "_bundle_dir": "<abs>", "device": str, "etype": str,
@@ -595,6 +597,40 @@ def _require_procedure(session: _Session):
     return None
 
 
+def _int_keyed(d) -> dict:
+    """Restore integer measurement-ref keys lost crossing the JSON boundary
+    (JSON object keys are always strings; the wheel keys ``measurements`` by the
+    integer ``{N}`` ref). A non-integer key passes through untouched."""
+    if not isinstance(d, dict):
+        return {}
+    out: dict = {}
+    for k, v in d.items():
+        try:
+            out[int(k)] = v
+        except (TypeError, ValueError):
+            out[k] = v
+    return out
+
+
+def _live_verdict(procedure_json, measurements, controls, operator_verdicts,
+                  node_path: str) -> str:
+    """``PASS|FAIL|SKIP|''`` for the step at ``node_path``, materialized from the
+    measurements known SO FAR via the SAME ``build_manual_run`` the GUI calls at
+    batch end — so a streamed live verdict can never diverge from the
+    authoritative one. Best-effort: any failure yields ``''`` (a live verdict
+    must never break the batch)."""
+    try:
+        from rules_packager_base.rules.v2_0_2.parser import build_manual_run
+        run = build_manual_run(
+            procedure_json, measurements, controls, operator_verdicts)
+        for s in list(getattr(run, "steps", []) or []):
+            if getattr(s, "node_path", "") == node_path:
+                return getattr(s, "verdict", "") or ""
+    except Exception:  # noqa: BLE001 — verdict is a visual nicety, never fatal
+        return ""
+    return ""
+
+
 def _cmd_exec_ops(session: _Session, req: dict) -> dict:
     guard = _require_lifecycle(session) or _require_procedure(session)
     if guard:
@@ -602,6 +638,13 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
     procedure_json = session.procedure_json
     ops = req.get("ops") or []
     bench_map = req.get("bench_map") or {}
+    # Run state for LIVE verdicts: prior measurements (entered by hand or in
+    # earlier batches) seed the accumulator; each reading this batch produces is
+    # folded in as it executes, then materialized into the progress frame so a
+    # PASS/FAIL lands the instant the op completes — not at batch end.
+    acc_meas = _int_keyed(req.get("measurements") or {})
+    controls = req.get("controls") or {}      # node_path keys — stay strings
+    operator_verdicts = _int_keyed(req.get("operator_verdicts") or {})
     log_mark = len(session.res.log)
     results: list = []
     failed = False
@@ -630,13 +673,23 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
             failed = True
             results.append({"node_path": node_path, "ok": False,
                             "error": f"{type(exc).__name__}: {exc}"})
-        # Stream a per-op progress frame so the GUI advances the cursor live
-        # (fluid progression) instead of jumping when the whole batch returns.
+        # A reading that just landed changes this step's verdict (and only this
+        # step's — an auto segment never spans an @IF barrier, so no later
+        # node_path shifts). Fold it in and materialize the live PASS/FAIL.
+        last = results[-1]
+        verdict = ""
+        if last.get("ok") and last.get("has_value") and last.get("ref") is not None:
+            acc_meas[last["ref"]] = last.get("value")
+            verdict = _live_verdict(procedure_json, acc_meas, controls,
+                                    operator_verdicts, node_path)
+        # Stream a per-op progress frame so the GUI advances the cursor live AND
+        # paints the verdict on the fly, instead of jumping (and badging the
+        # whole segment at once) when the batch returns.
         if _PROTO_OUT is not None:
             try:
                 _write_frame(_PROTO_OUT, {
                     "kind": "progress", "node_path": node_path,
-                    "ok": results[-1].get("ok", False),
+                    "ok": last.get("ok", False), "verdict": verdict,
                     "i": _i, "total": total})
             except Exception:  # noqa: BLE001 — never let progress break the batch
                 pass

@@ -353,7 +353,9 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
     def _session(self, batch_result):
         pp = self._pp()
         s = pp.RemoteSession(_proc_file(self), Path("/nonexistent"))
-        s._request = lambda frame, timeout=None: batch_result   # mock the daemon
+        # mock the daemon; tolerate the streaming/verdict kwargs exec_ops now
+        # forwards (on_progress, and the run state rides inside `frame`).
+        s._request = lambda frame, timeout=None, on_progress=None: batch_result
         return s
 
     def test_unwrap_measure(self):

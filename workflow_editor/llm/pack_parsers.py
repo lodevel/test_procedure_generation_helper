@@ -885,14 +885,31 @@ class RemoteSession:
 
     # -- API ---------------------------------------------------------------
     def exec_ops(self, ops: list[dict[str, Any]], bench_map: dict[str, Any],
-                 timeout: Optional[int] = None, on_progress=None) -> dict[str, Any]:
+                 timeout: Optional[int] = None, on_progress=None,
+                 measurements: Optional[dict] = None,
+                 controls: Optional[dict] = None,
+                 operator_verdicts: Optional[dict] = None) -> dict[str, Any]:
         """Run a contiguous batch; per_session devices stay HELD afterward.
 
         ``on_progress`` (optional): invoked on the CALLING thread with each
-        per-op ``{"kind": "progress", "node_path", "ok", "i", "total"}`` frame
-        the daemon streams, so the caller can advance a live cursor."""
+        per-op ``{"kind": "progress", "node_path", "ok", "verdict", "i",
+        "total"}`` frame the daemon streams, so the caller can advance a live
+        cursor and paint the PASS/FAIL as the reading lands.
+
+        ``measurements``/``controls``/``operator_verdicts`` (optional): the run
+        state known BEFORE this batch. The daemon folds in each reading as it
+        executes and materializes the live ``verdict`` via the same
+        ``build_manual_run`` the caller uses at batch end (so they agree)."""
+        frame: dict[str, Any] = {
+            "cmd": "exec_ops", "ops": ops, "bench_map": bench_map}
+        if measurements is not None:
+            frame["measurements"] = measurements
+        if controls is not None:
+            frame["controls"] = controls
+        if operator_verdicts is not None:
+            frame["operator_verdicts"] = operator_verdicts
         return self._request(
-            {"cmd": "exec_ops", "ops": ops, "bench_map": bench_map},
+            frame,
             timeout or (_TIMEOUT_REMOTE_EXEC + 5 * len(ops)),
             on_progress=on_progress)
 

@@ -273,13 +273,23 @@ class OpenCodeServerManager:
             True if a server is responding at the configured URL.
         """
         try:
-            log.debug(f"Checking for running server at {self.server_url}...")
+            log.debug(f"Checking for an OpenCode server at {self.server_url}...")
+            # Verify it's GENUINELY OpenCode, not merely any HTTP 200. The web UI
+            # (and any stray server) answer 200 on /health with HTML; the /config
+            # API returns JSON — a reliable signature. Without this, the editor
+            # would falsely attach to a non-OpenCode server holding the port and
+            # then hang forever on the SSE stream.
             response = requests.get(
-                f"{self.server_url}/health",
-                timeout=1
+                f"{self.server_url}/config",
+                headers={"Accept": "application/json"},
+                timeout=2,
             )
-            return response.status_code == 200
-        except requests.exceptions.RequestException:
+            if response.status_code != 200:
+                return False
+            if "application/json" not in response.headers.get("Content-Type", ""):
+                return False
+            return isinstance(response.json(), dict)
+        except (requests.exceptions.RequestException, ValueError):
             return False
     
     def _diagnose_installation(self) -> ServerStatus:

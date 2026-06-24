@@ -1,7 +1,34 @@
 """Tests for the OpenCode server-health value objects + free-port selection."""
 import socket
+from unittest.mock import MagicMock, patch
 
 from workflow_editor.llm.backend_base import NoneBackend
+from workflow_editor.llm.server_manager import OpenCodeServerManager
+
+
+def _fake_resp(status, content_type, body=None):
+    r = MagicMock()
+    r.status_code = status
+    r.headers = {"Content-Type": content_type}
+    r.json.return_value = body
+    return r
+
+
+def test_external_check_rejects_html_200():
+    # The OpenCode web UI (or any stray server) answers 200 with HTML — must NOT
+    # be treated as the API server (that caused a chat hang).
+    mgr = OpenCodeServerManager()
+    with patch("workflow_editor.llm.server_manager.requests.get",
+               return_value=_fake_resp(200, "text/html", None)):
+        assert mgr._check_external_server() is False
+
+
+def test_external_check_accepts_opencode_json():
+    mgr = OpenCodeServerManager()
+    body = {"$schema": "https://opencode.ai/config.json", "model": "x"}
+    with patch("workflow_editor.llm.server_manager.requests.get",
+               return_value=_fake_resp(200, "application/json", body)):
+        assert mgr._check_external_server() is True
 from workflow_editor.llm.server_health import (
     ServerError,
     ServerStatus,

@@ -14,6 +14,13 @@ from enum import IntEnum
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
+# Default ``kind`` metadata for a chat skill (informational; may be shown in
+# the UI). Type discrimination is STRUCTURAL, not flag-based: chat skills live
+# in ``authoring_skills/`` and wizards in a parallel ``authoring_wizards/``
+# folder the chat scanner never reads — so a wizard's SKILL.md is never on the
+# chat-discovery path. The folder you drop into determines the type.
+SKILL_CHAT_KIND = "skill-chat"
+
 
 class SkillSource(IntEnum):
     """Where a skill was found. The integer value IS its precedence: when two

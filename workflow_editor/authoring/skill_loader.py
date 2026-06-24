@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-from .skill import Skill, SkillSource
+from .skill import SKILL_CHAT_KIND, Skill, SkillSource
 
 log = logging.getLogger(__name__)
 
@@ -88,7 +88,9 @@ def load_skill(folder: Path, source: SkillSource) -> Skill:
         when_to_use=str(meta.get("when-to-use", "")),
         target=str(meta.get("target", "")),
         version=str(meta.get("version", "")),
-        kind=str(meta.get("kind", "authoring")),
+        # Missing kind defaults to a chat skill (the common hand-authored case);
+        # a wizard must declare ``kind: wizard`` explicitly.
+        kind=str(meta.get("kind") or SKILL_CHAT_KIND),
         tools_path=tools if tools.is_file() else None,
         metadata=meta,
     )

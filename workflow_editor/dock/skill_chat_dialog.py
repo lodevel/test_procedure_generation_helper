@@ -167,7 +167,14 @@ class SkillChatDialog(QDialog):
         # Action row.
         btn_row = QHBoxLayout()
 
+        self._run_btn = QPushButton("Run skill")
+        self._run_btn.setToolTip(
+            "Start the skill using the checked context — no message needed.")
+        self._run_btn.clicked.connect(self._on_run)
+        btn_row.addWidget(self._run_btn)
+
         self._send_btn = QPushButton("Send")
+        self._send_btn.setToolTip("Send a message to refine the draft.")
         self._send_btn.clicked.connect(self._on_send)
         btn_row.addWidget(self._send_btn)
 
@@ -248,22 +255,32 @@ class SkillChatDialog(QDialog):
 
     # -- send path ------------------------------------------------------------
 
+    def _on_run(self) -> None:
+        """Run the skill with NO typed message — just the skill prompt + the
+        checked context. The clean kickoff (no throwaway message needed)."""
+        if self._worker is not None or self._session.started:
+            return
+        self._session.set_context(assemble(self._picker.selections()).text)
+        prompt = self._session.kickoff()
+        self._append_line(
+            "System", f"Running '{self._skill.title or self._skill.skill_id}'…")
+        self._dispatch(prompt)
+
     def _on_send(self) -> None:
         if self._worker is not None:
             return  # a request is already in flight
         message = self._input.toPlainText().strip()
         if not message:
             return
-
-        # Push the latest context selection (only the first turn actually
-        # carries it; harmless to refresh before the conversation starts).
-        bundle = assemble(self._picker.selections())
-        self._session.set_context(bundle.text)
-
+        # Refresh the pushed context (only the first turn carries it).
+        self._session.set_context(assemble(self._picker.selections()).text)
         prompt = self._session.start_user_turn(message)
         self._input.clear()
         self._append_line("You", message)
+        self._dispatch(prompt)
 
+    def _dispatch(self, prompt: str) -> None:
+        """Send a built prompt on a worker thread (shared by Run + Send)."""
         backend = self._ensure_backend()
         self._reset_backend_session()
 
@@ -353,19 +370,20 @@ class SkillChatDialog(QDialog):
         self._insert_btn.setEnabled(False)
         self._transcript.clear()
         self._header.setText(self._skill.when_to_use or "")
+        self._set_busy(False)  # fresh session → Run re-enabled
 
     def _on_trash(self) -> None:
         """Clear the conversation and start a fresh session (same skill)."""
         if self._worker is not None:
             self._worker.cancel()
             self._teardown_worker()
-            self._set_busy(False)
         self._session = SkillChatSession(self._skill)
         self._latest_draft = ""
         self._stream_buffer = ""
         self._insert_btn.setEnabled(False)
         self._transcript.clear()
         self._status.setText("")
+        self._set_busy(False)  # fresh session → Run re-enabled, controls live
 
     # -- insert ---------------------------------------------------------------
 
@@ -410,6 +428,8 @@ class SkillChatDialog(QDialog):
         self._stop_btn.setEnabled(busy)
         self._trash_btn.setEnabled(not busy)
         self._skill_combo.setEnabled(not busy)  # no skill-switch mid-request
+        # Run only kicks off a fresh conversation; once started, use Send.
+        self._run_btn.setEnabled(not busy and not self._session.started)
 
     def _teardown_worker(self) -> None:
         worker, self._worker = self._worker, None

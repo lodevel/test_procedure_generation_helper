@@ -85,7 +85,9 @@ def load_skill(folder: Path, source: SkillSource) -> Skill:
         system_prompt=body,
         path=folder,
         source=source,
-        when_to_use=str(meta.get("when-to-use", "")),
+        # ``description`` is the Anthropic Agent-Skills standard field; accept it
+        # as an alias for our ``when-to-use``.
+        when_to_use=str(meta.get("when-to-use") or meta.get("description") or ""),
         target=str(meta.get("target", "")),
         version=str(meta.get("version", "")),
         # Missing kind defaults to a chat skill (the common hand-authored case);

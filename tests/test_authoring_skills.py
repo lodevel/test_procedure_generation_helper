@@ -111,6 +111,18 @@ def test_load_skill_title_falls_back_to_folder_name(tmp_path):
     assert skill.title == "no_name"
 
 
+def test_load_skill_accepts_description_alias(tmp_path):
+    body = "---\nname: D\ndescription: Use for X.\n---\nbody text"
+    skill = load_skill(_make_skill(tmp_path / "d", body=body), SkillSource.LOCAL)
+    assert skill.when_to_use == "Use for X."
+
+
+def test_when_to_use_takes_precedence_over_description(tmp_path):
+    body = "---\nname: D\nwhen-to-use: WTU\ndescription: DESC\n---\nbody text"
+    skill = load_skill(_make_skill(tmp_path / "d2", body=body), SkillSource.LOCAL)
+    assert skill.when_to_use == "WTU"
+
+
 def test_load_skill_detects_tools(tmp_path):
     folder = _make_skill(tmp_path / "withtools", tools=True)
     skill = load_skill(folder, SkillSource.BUNDLED)

@@ -63,6 +63,16 @@ def test_started_false_before_any_turn():
     assert SkillChatSession(_skill()).started is False
 
 
+def test_kickoff_is_skill_plus_context_no_user_turn():
+    s = SkillChatSession(_skill("SYS"), context_text="CTX")
+    assert s.kickoff() == "SYS\n\nCTX"     # no "User:" line
+    assert s.started is False               # records no turn
+    s.record_assistant("draft")             # the kickoff reply
+    assert s.started is True
+    # follow-ups carry the whole transcript, kickoff context included
+    assert s.start_user_turn("more") == "SYS\n\nCTX\n\nAssistant: draft\n\nUser: more"
+
+
 def test_interpret_prefers_assistant_message():
     r = SimpleNamespace(assistant_message="  the draft  ", raw_response="raw stuff")
     assert SkillChatSession.interpret(r) == "the draft"

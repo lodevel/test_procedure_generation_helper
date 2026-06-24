@@ -58,6 +58,14 @@ class SkillChatSession:
         self.turns.append(SkillTurn("user", user_message))
         return self._render()
 
+    def kickoff(self) -> str:
+        """The RUN prompt with no user message — the skill system prompt + pushed
+        context only. Starts a self-contained skill without the user typing
+        anything; the model responds to the instructions directly. Records no
+        turn (the assistant reply is recorded via :meth:`record_assistant`)."""
+        parts = [self.skill.system_prompt, self.context_text]
+        return "\n\n".join(p.strip() for p in parts if p and p.strip())
+
     def _render(self) -> str:
         parts = [self.skill.system_prompt, self.context_text]
         parts += [

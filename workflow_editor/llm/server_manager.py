@@ -186,8 +186,14 @@ class OpenCodeServerManager:
                 )
                 self._config.server_port = port
 
-                # bash -lc loads the user's PATH so `opencode` resolves.
+                # bash -ic loads the user's PATH so `opencode` resolves.
+                # OPENCODE_ENABLE_EXA turns on the keyless Exa-backed websearch
+                # tool for non-OpenCode providers (set inline — wsl.exe does not
+                # forward Windows env without WSLENV). The tool is only EXPOSED
+                # per-request via the message body's `tools` override, so this is
+                # availability, not usage.
                 opencode_cmd = (
+                    f"OPENCODE_ENABLE_EXA=1 "
                     f"opencode serve --port {port} "
                     f"--hostname {self._config.server_hostname}"
                 )

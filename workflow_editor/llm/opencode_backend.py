@@ -145,7 +145,8 @@ class OpenCodeBackend(LLMBackend):
             log.debug("WSL is available")
 
             # Check OpenCode is installed in WSL
-            # Use bash -lc to load user profile/PATH
+            # Use bash -ic to load the user's PATH (opencode is added to
+            # ~/.bashrc by its installer, which a login shell -lc skips).
             result = subprocess.run(
                 [self.config.wsl_path, "bash", "-ic", "opencode --version"],
                 capture_output=True,
@@ -173,8 +174,10 @@ class OpenCodeBackend(LLMBackend):
             
             log.info("Starting OpenCode server...")
             try:
-                # Build server command - use bash -lc to load user's PATH
-                opencode_cmd = f"opencode serve --port {self.config.server_port} --hostname {self.config.server_hostname}"
+                # Build server command - use bash -ic to load user's PATH.
+                # OPENCODE_ENABLE_EXA enables the keyless Exa websearch tool for
+                # non-OpenCode providers (set inline; wsl.exe won't forward it).
+                opencode_cmd = f"OPENCODE_ENABLE_EXA=1 opencode serve --port {self.config.server_port} --hostname {self.config.server_hostname}"
                 cmd = [
                     self.config.wsl_path,
                     "bash", "-ic",
@@ -399,18 +402,8 @@ class OpenCodeBackend(LLMBackend):
                 )
             )
             
-            # Build request body
-            body = {
-                "parts": [{"type": "text", "text": prompt}],
-            }
-            # Optional per-request model override (blank = OpenCode auto-picks a
-            # supported model from its launch config — the reliable default).
-            if self.config.model and "/" in self.config.model:
-                provider, model = self.config.model.split("/", 1)
-                body["model"] = {
-                    "providerID": provider,
-                    "modelID": model,
-                }
+            # Build request body (shared with the sync path).
+            body = self._build_message_body(prompt, request)
 
             session_id = self._session_id
             
@@ -773,22 +766,34 @@ class OpenCodeBackend(LLMBackend):
                 error_message=f"Failed to fetch final response: {str(e)}",
             )
     
+    def _build_message_body(self, prompt: str, request: LLMRequest) -> dict:
+        """Build the POST body for ``/session/{id}/message``.
+
+        Single source for the per-request overrides (model + web tools) so the
+        streaming and sync send paths can never drift apart.
+        """
+        body = {"parts": [{"type": "text", "text": prompt}]}
+
+        # Optional per-request model override (blank = OpenCode auto-picks a
+        # supported model from its launch config — the reliable default).
+        if self.config.model and "/" in self.config.model:
+            provider, model = self.config.model.split("/", 1)
+            body["model"] = {"providerID": provider, "modelID": model}
+
+        # Per-request web-tool override (the skill chat's 🌐 toggle). Sent
+        # explicitly on AND off so the model gets NO web access unless the user
+        # opts in. webfetch is keyless; websearch uses Exa, made available at
+        # server launch via OPENCODE_ENABLE_EXA.
+        body["tools"] = {
+            "webfetch": request.web_enabled,
+            "websearch": request.web_enabled,
+        }
+        return body
+
     def _send_via_api(self, prompt: str, request: LLMRequest) -> LLMResponse:
         """Send request via HTTP API."""
         try:
-            # Build request body
-            body = {
-                "parts": [{"type": "text", "text": prompt}],
-            }
-            
-            # Optional per-request model override (blank = OpenCode auto-picks a
-            # supported model from its launch config — the reliable default).
-            if self.config.model and "/" in self.config.model:
-                provider, model = self.config.model.split("/", 1)
-                body["model"] = {
-                    "providerID": provider,
-                    "modelID": model,
-                }
+            body = self._build_message_body(prompt, request)
 
             # Send request
             response = requests.post(
@@ -871,7 +876,13 @@ class OpenCodeBackend(LLMBackend):
             )
     
     def _send_via_cli(self, prompt: str, request: LLMRequest) -> LLMResponse:
-        """Alternative: Send request via CLI (fallback method)."""
+        """Alternative: Send request via CLI (fallback method).
+
+        NOTE: dead path today — both send_request and send_request_streaming go
+        through _send_via_api. It does NOT honour request.web_enabled (the `opencode
+        run` CLI has no per-request tools override), so if it is ever re-wired the
+        web toggle would be silently bypassed.
+        """
         try:
             # Write prompt to temp file
             with tempfile.NamedTemporaryFile(

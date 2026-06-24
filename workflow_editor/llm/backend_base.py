@@ -158,6 +158,13 @@ class LLMRequest:
     # draft mode is plain-text — no JSON contract. ``None`` = normal build path.
     raw_prompt: Optional[str] = None
 
+    # When True, the OpenCode backend exposes the web tools (webfetch +
+    # websearch) for THIS request only — the skill chat's 🌐 toggle. Off by
+    # default so the model gets NO web access unless the user explicitly opts
+    # in (the exfiltration guard: with web on, even a no-code skill could be
+    # told to leak attached context via a crafted URL).
+    web_enabled: bool = False
+
     # Additional context
     extra_context: dict[str, Any] = field(default_factory=dict)
 

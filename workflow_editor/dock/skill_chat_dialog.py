@@ -147,14 +147,17 @@ class SkillChatDialog(QDialog):
         split.setSizes([560, 340])
         layout.addWidget(split, stretch=1)
 
-        # Web-search toggle — placeholder until the OpenCode web tools land;
-        # kept visible so the planned capability is discoverable.
-        self._web_checkbox = QCheckBox("🌐 Web search  (coming soon)")
+        # Web toggle — exposes OpenCode's webfetch + websearch tools for this
+        # chat only (per-request override). OFF by default: with web on, even a
+        # no-code skill could be steered into leaking the attached context via a
+        # crafted URL, so the user opts in explicitly.
+        self._web_checkbox = QCheckBox("🌐 Web access (search + fetch)")
         self._web_checkbox.setToolTip(
-            "Let the skill search the web. Not wired yet — needs the OpenCode "
-            "web-tool config (a later phase)."
+            "Let the skill search the web and fetch pages (e.g. to confirm a "
+            "power IC or find a datasheet).\n"
+            "Off by default — only enable it for skills you trust, since web "
+            "access can be used to leak the context you attached."
         )
-        self._web_checkbox.setEnabled(False)
         layout.addWidget(self._web_checkbox)
 
         # Input box (Enter sends, Shift+Enter newline — mirrors ChatPanel).
@@ -284,7 +287,11 @@ class SkillChatDialog(QDialog):
         backend = self._ensure_backend()
         self._reset_backend_session()
 
-        request = LLMRequest(task=LLMTask.AD_HOC_CHAT, raw_prompt=prompt)
+        request = LLMRequest(
+            task=LLMTask.AD_HOC_CHAT,
+            raw_prompt=prompt,
+            web_enabled=self._web_checkbox.isChecked(),
+        )
         self._worker = LLMWorker(backend, request, parent=self)
         self._worker.text_chunk.connect(self._on_text_chunk)
         self._worker.thinking_chunk.connect(self._on_thinking_chunk)

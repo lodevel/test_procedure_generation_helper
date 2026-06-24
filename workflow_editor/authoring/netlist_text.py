@@ -22,7 +22,15 @@ def _component_line(comp: Mapping[str, Any]) -> str:
         if isinstance(p, Mapping)
     ]
     head = f"- {refdes}" + (f" [{side}]" if side else "")
-    return f"{head}: {', '.join(pin_strs)}" if pin_strs else head
+    line = f"{head}: {', '.join(pin_strs)}" if pin_strs else head
+    # Append raw component properties (part number / value / description live
+    # here) so the LLM can identify ICs. Only when present, and AFTER the pins,
+    # so empty-property lines stay byte-identical to before.
+    props = comp.get("properties") or {}
+    if isinstance(props, Mapping) and props:
+        prop_strs = [f"{k}={v!r}" for k, v in props.items()]
+        line = f"{line}  {{props: {', '.join(prop_strs)}}}"
+    return line
 
 
 def _node_str(node: Mapping[str, Any]) -> str:

@@ -152,10 +152,21 @@ def _build_sources(main_window, root: Optional[Path]):
 
 
 def _make_insert_callback(main_window):
-    """Raw-append the draft to the procedure text editor (the live source of
-    truth) and surface the Text tab. The editor's own ``textChanged`` keeps the
-    artifact in sync."""
+    """Raw-append the draft to the OPEN TEST's procedure text editor (the live
+    source of truth) and surface the Text tab; the editor's own ``textChanged``
+    keeps the artifact in sync.
+
+    No test open → no procedure to insert into: warn and do nothing rather than
+    dump the draft into an unbound editor. ``artifact_manager`` is None until a
+    test is opened from the workspace/tests widget."""
     def insert(draft: str) -> None:
+        if getattr(main_window, "artifact_manager", None) is None:
+            QMessageBox.information(
+                main_window, "No test open",
+                "Open or create a test first — the draft is inserted into the "
+                "open test's procedure.",
+            )
+            return
         tab = getattr(main_window, "text_only_tab", None)
         editor = getattr(tab, "text_editor", None)
         if editor is None:

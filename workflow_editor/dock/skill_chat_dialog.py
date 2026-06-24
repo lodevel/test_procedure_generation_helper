@@ -184,8 +184,7 @@ class SkillChatDialog(QDialog):
 
         self._insert_btn = QPushButton("Insert into procedure")
         self._insert_btn.setToolTip(
-            "Append to the procedure: your highlighted selection, or the whole "
-            "latest draft if nothing is selected."
+            "Append the latest draft to the procedure text editor."
         )
         self._insert_btn.setEnabled(False)
         self._insert_btn.clicked.connect(self._on_insert)
@@ -371,17 +370,8 @@ class SkillChatDialog(QDialog):
     # -- insert ---------------------------------------------------------------
 
     def _on_insert(self) -> None:
-        """Append to the procedure: the transcript SELECTION if the operator
-        highlighted one (e.g. just the steps, dropping the chatter), otherwise
-        the whole latest draft."""
-        cursor = self._transcript.textCursor()
-        if cursor.hasSelection():
-            # QPlainTextEdit returns paragraph breaks as U+2029.
-            draft = cursor.selectedText().replace("\u2029", "\n").strip()
-            what = "selection"
-        else:
-            draft = (self._latest_draft or "").strip()
-            what = "latest draft"
+        """Raw-append the latest assistant draft to the procedure editor."""
+        draft = (self._latest_draft or "").strip()
         if not draft:
             return
         try:
@@ -390,9 +380,7 @@ class SkillChatDialog(QDialog):
             log.exception("skill-chat insert_callback failed")
             self._append_line("System", "Insert failed — see logs.")
             return
-        self._status.setText(f"Inserted {what} into the procedure.")
-
-    # -- transcript helpers ---------------------------------------------------
+        self._status.setText("Inserted latest draft into the procedure.")
 
     def _render_transcript(self) -> None:
         """Re-render the whole transcript from the session (source of truth)."""

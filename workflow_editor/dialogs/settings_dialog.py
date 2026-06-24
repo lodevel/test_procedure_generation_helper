@@ -68,20 +68,21 @@ def get_opencode_config_dir() -> Path:
 
 
 def ensure_opencode_config(seed_from: Optional[Path] = None) -> Path:
-    """GENERATE the editor's own ``opencode.json`` (in its dir) from the current
-    project's opencode.json (``seed_from``): keep its PROVIDERS but strip the
-    default ``model``/``small_model`` so OpenCode AUTO-PICKS a supported model
-    (the Default that works without VPN, and that a Codex/ChatGPT account
-    accepts). A specific model stays SELECTABLE via the Settings picker
-    (per-request override). REGENERATED on each project load so it tracks the
-    current project's providers — the editor owns this copy and launches
-    OpenCode from this dir, never the project (which is a relic). With no
-    source, the dir's config is left as-is → OpenCode falls back to the global
-    config.
+    """Return the editor's OpenCode config dir, GENERATING its ``opencode.json``
+    ONCE (if absent) from the project's opencode.json (``seed_from``): keep its
+    PROVIDERS but strip the default ``model``/``small_model`` so OpenCode
+    AUTO-PICKS a supported model (the reliable Default — the project's pinned
+    model may be unreachable/Codex-rejected). A specific model stays SELECTABLE
+    via the Settings picker (per-request override).
+
+    This file is the editor's MASTER config (``opencode serve`` is launched from
+    this dir). It is generated only once so the user can edit it; delete it to
+    regenerate from the current project. The project's own opencode.json is a
+    relic and is never used directly.
     """
     d = get_opencode_config_dir()
     cfg = d / "opencode.json"
-    if seed_from is not None:
+    if not cfg.exists() and seed_from is not None:
         try:
             src = Path(seed_from)
             if src.is_file():
@@ -90,7 +91,7 @@ def ensure_opencode_config(seed_from: Optional[Path] = None) -> Path:
                     data.pop("model", None)
                     data.pop("small_model", None)
                     cfg.write_text(json.dumps(data, indent=2), encoding="utf-8")
-                    log.info("Generated editor OpenCode config from %s", src)
+                    log.info("Generated editor OpenCode master config from %s", src)
         except Exception:
             log.exception("Failed to generate editor OpenCode config")
     return d
@@ -261,7 +262,28 @@ class SettingsDialog(QDialog):
         self.opencode_startup_timeout.setValue(60.0)
         self.opencode_startup_timeout.setToolTip("Timeout for backend startup")
         opencode_layout.addRow("Startup Timeout:", self.opencode_startup_timeout)
-        
+
+        # The editor's MASTER opencode.json (what `opencode serve` is launched
+        # with). Generated once from the project; the user owns/edits it here.
+        cfg_row = QHBoxLayout()
+        cfg_row.setContentsMargins(0, 0, 0, 0)
+        self.opencode_config_path = QLabel(str(get_opencode_config_dir() / "opencode.json"))
+        self.opencode_config_path.setWordWrap(True)
+        self.opencode_config_path.setTextInteractionFlags(
+            Qt.TextSelectableByMouse)
+        self.opencode_config_path.setStyleSheet(
+            f"color: {theme.muted_color()}; font-size: 11px;")
+        cfg_row.addWidget(self.opencode_config_path, 1)
+        self.open_opencode_config_btn = QPushButton("Open…")
+        self.open_opencode_config_btn.setToolTip(
+            "Open the editor's OpenCode config (opencode.json) — what the editor "
+            "launches `opencode serve` with. Generated once from your project's "
+            "providers (default model stripped so it auto-picks). Edit it to "
+            "change providers/models; delete it to regenerate from the project.")
+        self.open_opencode_config_btn.clicked.connect(self._on_open_opencode_config)
+        cfg_row.addWidget(self.open_opencode_config_btn)
+        opencode_layout.addRow("Config:", cfg_row)
+
         layout.addWidget(self.opencode_group)
         
         # Test Connection button
@@ -283,6 +305,16 @@ class SettingsDialog(QDialog):
         # (a /config round-trip; Refresh re-queries on demand).
         if backend == "opencode" and self.opencode_model.count() == 0:
             self._populate_opencode_models()
+
+    def _on_open_opencode_config(self):
+        """Open the editor's master opencode.json (or its folder if it hasn't
+        been generated yet) in the OS default application."""
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+        d = get_opencode_config_dir()
+        cfg = d / "opencode.json"
+        target = cfg if cfg.exists() else d
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
 
     def _opencode_model_value(self) -> str:
         """The model id the user typed/selected, or '' for Default (no override

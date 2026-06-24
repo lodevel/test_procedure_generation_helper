@@ -114,7 +114,10 @@ class SkillChatDialog(QDialog):
         sel_row.addWidget(QLabel("Skill:"))
         self._skill_combo = QComboBox()
         for s in self._skills:
-            self._skill_combo.addItem(s.title or s.skill_id, s.skill_id)
+            label = s.title or s.skill_id
+            if s.version:
+                label = f"{label}  (v{s.version})"
+            self._skill_combo.addItem(label, s.skill_id)
         self._skill_combo.currentIndexChanged.connect(self._on_skill_changed)
         sel_row.addWidget(self._skill_combo, 1)
         layout.addLayout(sel_row)

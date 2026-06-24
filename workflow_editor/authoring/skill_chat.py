@@ -70,6 +70,12 @@ class SkillChatSession:
         """Append the model's reply to the visible history."""
         self.turns.append(SkillTurn("assistant", text))
 
+    def drop_last_user_turn(self) -> None:
+        """Remove a trailing UNANSWERED user turn (after a failed/cancelled
+        send) so the next turn doesn't double-prompt with two user messages."""
+        if self.turns and self.turns[-1].role == "user":
+            self.turns.pop()
+
     @staticmethod
     def interpret(response) -> str:
         """Pull the plain-text reply from an ``LLMResponse``.

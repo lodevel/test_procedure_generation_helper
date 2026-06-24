@@ -248,6 +248,14 @@ class OpenCodeBackend(LLMBackend):
             log.info(f"Session reset complete: {self._session_id}")
             return self._session_id
         return None
+
+    def new_session(self) -> Optional[str]:
+        """Start a FRESH session (new conversation) WITHOUT restarting the
+        server — the cheap counterpart of :meth:`reset_session` (which stops +
+        starts the whole server). Used by the skill chat, which re-sends the full
+        transcript every turn and so wants the server holding no prior history."""
+        self._session_id = self._create_session()
+        return self._session_id
     
     def stop(self) -> None:
         """Stop the OpenCode server."""
@@ -698,7 +706,9 @@ class OpenCodeBackend(LLMBackend):
                     )
             
             # Parse through the standard response parser
-            llm_response = self._response_parser.parse(raw_response, request.task)
+            llm_response = self._response_parser.parse(
+                raw_response, request.task, plain_text=request.raw_prompt is not None
+            )
             
             # If the parser didn't find thinking content, use the
             # accumulated thinking from SSE streaming
@@ -791,7 +801,9 @@ class OpenCodeBackend(LLMBackend):
             log.debug(f"Raw response preview: {raw_response[:200]}")
             
             # Parse the response
-            llm_response = self._response_parser.parse(raw_response, request.task)
+            llm_response = self._response_parser.parse(
+                raw_response, request.task, plain_text=request.raw_prompt is not None
+            )
             
             # Extract and assign token usage using base class method
             try:
@@ -858,7 +870,9 @@ class OpenCodeBackend(LLMBackend):
                         raw_response=result.stdout,
                     )
                 
-                return self._response_parser.parse(result.stdout, request.task)
+                return self._response_parser.parse(
+                    result.stdout, request.task, plain_text=request.raw_prompt is not None
+                )
                 
             finally:
                 prompt_file.unlink()

@@ -7,7 +7,11 @@ build, no Qt.
 """
 import json
 
-from project_services.bundle_generator import copy_pack_skills, enabled_pack_roots
+from project_services.bundle_generator import (
+    bundle_skills_for_registry,
+    copy_pack_skills,
+    enabled_pack_roots,
+)
 from workflow_editor.authoring import SkillSource, load_skills
 
 _SKILL_MD = """\
@@ -47,6 +51,19 @@ def test_pack_skill_is_bundled_then_discovered_in_project(tmp_path):
     assert match, f"fake_skill not discovered as bundled; got {[s.skill_id for s in skills]}"
     assert match[0].title == "Fake Bundled Skill"
     assert match[0].target == "dcdc"
+
+
+def test_bundle_skills_for_registry_is_the_build_seam(tmp_path):
+    # The build seam the dialog calls: registry → enabled packs → copy skills.
+    _pack_with_skill(tmp_path / "fake_pack")
+    reg = tmp_path / "drivers_registry.json"
+    reg.write_text(json.dumps({"packs": [
+        {"id": "p1", "enabled": True, "wheel": {"project_root": "fake_pack"}},
+    ]}), encoding="utf-8")
+    out = tmp_path / "bundle" / "myid" / "1.0.0"
+    copied = bundle_skills_for_registry(reg, out)
+    assert [p.name for p in copied] == ["fake_skill"]
+    assert (out / "authoring_skills" / "fake_skill" / "SKILL.md").is_file()
 
 
 def test_copy_is_noop_for_pack_without_skills(tmp_path):

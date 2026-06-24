@@ -125,7 +125,9 @@ class ExternalAPIBackend(LLMBackend):
             }
             
             # Send with retry
-            response = self._send_with_retry(body)
+            response = self._send_with_retry(
+                body, plain_text=request.raw_prompt is not None
+            )
             
             if self._cancel_requested:
                 return LLMResponse(
@@ -141,7 +143,7 @@ class ExternalAPIBackend(LLMBackend):
                 error_message=f"Request failed: {str(e)}",
             )
     
-    def _send_with_retry(self, body: dict) -> LLMResponse:
+    def _send_with_retry(self, body: dict, plain_text: bool = False) -> LLMResponse:
         """Send request with retry logic."""
         last_error = None
         
@@ -166,7 +168,7 @@ class ExternalAPIBackend(LLMBackend):
                 )
                 
                 if response.status_code == 200:
-                    return self._parse_api_response(response.json())
+                    return self._parse_api_response(response.json(), plain_text=plain_text)
                 elif response.status_code == 429:
                     # Rate limited, wait and retry
                     import time
@@ -189,7 +191,7 @@ class ExternalAPIBackend(LLMBackend):
             error_message=last_error or "Unknown error",
         )
     
-    def _parse_api_response(self, api_response: dict) -> LLMResponse:
+    def _parse_api_response(self, api_response: dict, plain_text: bool = False) -> LLMResponse:
         """Parse the API response."""
         try:
             # Extract content from chat completion response
@@ -205,7 +207,9 @@ class ExternalAPIBackend(LLMBackend):
             content = message.get("content", "")
             
             # Parse the content as our response format
-            response = self._response_parser.parse(content, None)
+            response = self._response_parser.parse(
+                content, None, plain_text=request.raw_prompt is not None
+            )
             
             # Extract token usage using base class method
             prompt_tokens, completion_tokens, total_tokens = self._extract_token_usage(api_response)

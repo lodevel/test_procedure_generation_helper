@@ -76,3 +76,24 @@ def test_interpret_falls_back_to_raw():
 def test_interpret_empty_when_nothing():
     r = SimpleNamespace(assistant_message=None, raw_response=None)
     assert SkillChatSession.interpret(r) == ""
+
+
+def test_drop_last_user_turn():
+    s = SkillChatSession(_skill())
+    s.start_user_turn("q1")
+    s.drop_last_user_turn()                      # unanswered user turn removed
+    assert s.turns == []
+    s.start_user_turn("q2")
+    s.record_assistant("a2")
+    s.drop_last_user_turn()                      # last turn is assistant → no-op
+    assert [t.role for t in s.turns] == ["user", "assistant"]
+
+
+def test_parser_plain_text_is_success_and_untruncated():
+    from workflow_editor.llm.response_parser import ResponseParser
+    long = "x" * 1200
+    r = ResponseParser().parse(long, None, plain_text=True)
+    assert r.success is True
+    assert r.assistant_message == long          # full draft, not capped at 500
+    # without plain_text, a non-JSON reply is still a failure (unchanged).
+    assert ResponseParser().parse("just prose", None).success is False

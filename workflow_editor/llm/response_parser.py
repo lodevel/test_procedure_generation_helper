@@ -27,22 +27,36 @@ class ResponseParser:
     - Extract what we can, report errors for what we can't
     """
     
-    def parse(self, raw_response: str, expected_task: Optional[LLMTask]) -> LLMResponse:
+    def parse(
+        self,
+        raw_response: str,
+        expected_task: Optional[LLMTask],
+        plain_text: bool = False,
+    ) -> LLMResponse:
         """
         Parse a raw LLM response string.
-        
+
         Args:
             raw_response: The raw response from the LLM
             expected_task: The task we expected (for validation)
-        
+            plain_text: When True (the skill-chat ``raw_prompt`` path), the reply
+                IS prose, not a JSON envelope — return it as a SUCCESS with
+                ``assistant_message`` set, no contract and no length cap. The
+                symmetric counterpart of ``LLMRequest.raw_prompt``.
+
         Returns:
             Parsed LLMResponse object
         """
         response = LLMResponse(raw_response=raw_response)
-        
+
         # Extract thinking/reasoning content (if present in OpenCode parts)
         response.thinking_content = self._extract_thinking(raw_response)
-        
+
+        if plain_text:
+            response.success = True
+            response.assistant_message = self._extract_text_message(raw_response, limit=None)
+            return response
+
         # Try to extract JSON from response
         json_content = self._extract_json(raw_response)
         
@@ -210,8 +224,11 @@ class ResponseParser:
 
         return None
     
-    def _extract_text_message(self, raw: str) -> str:
-        """Extract any text content from response as fallback message."""
+    def _extract_text_message(self, raw: str, limit: Optional[int] = 500) -> str:
+        """Extract any text content from response as fallback message.
+
+        ``limit`` caps the fallback length (a short error preview); pass None for
+        the plain-text skill-chat path, where the whole reply is the payload."""
         # First try to extract from OpenCode's parts array
         try:
             opencode_data = json.loads(raw.strip())
@@ -239,8 +256,8 @@ class ResponseParser:
         text = text.strip()
         
         if text:
-            return text[:500]  # Limit length
-        
+            return text[:limit] if limit else text
+
         return "Received response but could not parse it."
     
     def _parse_response_data(

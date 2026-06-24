@@ -27,9 +27,15 @@ def _component_line(comp: Mapping[str, Any]) -> str:
     # here) so the LLM can identify ICs. Only when present, and AFTER the pins,
     # so empty-property lines stay byte-identical to before.
     props = comp.get("properties") or {}
-    if isinstance(props, Mapping) and props:
-        prop_strs = [f"{k}={v!r}" for k, v in props.items()]
-        line = f"{line}  {{props: {', '.join(prop_strs)}}}"
+    if isinstance(props, Mapping):
+        # Drop empty-valued properties — board-agnostic, no field-name
+        # assumptions (an empty value carries no information). This is only a
+        # partial trim; the real fix for big boards is the agentic PULL mode
+        # (schema discovery + column projection), not a smarter push-side
+        # filter — name-based and statistical filters are both unsafe here.
+        prop_strs = [f"{k}={v!r}" for k, v in props.items() if str(v).strip()]
+        if prop_strs:
+            line = f"{line}  {{props: {', '.join(prop_strs)}}}"
     return line
 
 

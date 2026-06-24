@@ -41,11 +41,15 @@ TOOLS = [
     {
         "name": "read_pdf",
         "description": (
-            "Read a PDF and return its extracted text. The 'source' is either an "
-            "http(s) URL to a PDF, or the name of a PDF file in the project's "
-            "documents folder (local lookups are sandboxed to that folder). "
-            "Returns the text layer (tables, body text); scanned/image-only PDFs "
-            "have no text layer and cannot be read this way."
+            "Fetch and read a PDF, returning its extracted text. USE THIS FOR "
+            "ANY PDF, datasheets especially: webfetch and websearch CANNOT read "
+            "PDF content (they only handle HTML pages), so whenever you have a "
+            "PDF URL or a PDF in the documents folder, call read_pdf — never "
+            "webfetch on a .pdf. 'source' is an http(s) URL to a PDF, or the "
+            "name of a PDF file in the project's documents folder (local lookups "
+            "are sandboxed to that folder). Returns the text layer (pin tables, "
+            "body text); scanned/image-only PDFs have no text layer and cannot "
+            "be read this way."
         ),
         "inputSchema": {
             "type": "object",

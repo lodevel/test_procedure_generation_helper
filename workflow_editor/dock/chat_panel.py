@@ -76,6 +76,7 @@ class ChatPanel(QWidget):
     message_sent = Signal(str)  # Emitted when user sends a message
     reset_requested = Signal()  # Emitted when user clicks reset button
     cancel_requested = Signal()  # Emitted when user clicks cancel button
+    restart_requested = Signal()  # Emitted when user clicks restart-backend
     
     def __init__(self, main_window: "MainWindow", parent=None):
         super().__init__(parent)
@@ -240,6 +241,13 @@ class ChatPanel(QWidget):
         self.reset_btn.clicked.connect(self._on_reset)
         btn_layout.addWidget(self.reset_btn)
         
+        self.restart_btn = QPushButton("🔄")
+        self.restart_btn.setToolTip("Restart the backend server (recover a hung / unresponsive backend without relaunching)")
+        self.restart_btn.setObjectName("iconButton")
+        self.restart_btn.setStyleSheet("QPushButton { padding: 4px 8px; min-width: 0; }")
+        self.restart_btn.clicked.connect(self._on_restart)
+        btn_layout.addWidget(self.restart_btn)
+        
         layout.addLayout(btn_layout)
         
         # Context indicator
@@ -289,6 +297,10 @@ class ChatPanel(QWidget):
     def _on_cancel(self):
         """Handle cancel button click."""
         self.cancel_requested.emit()
+    
+    def _on_restart(self):
+        """Handle restart-backend button click."""
+        self.restart_requested.emit()
     
     def get_force_mode(self) -> bool:
         """Get the current force mode state."""

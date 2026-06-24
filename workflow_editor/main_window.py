@@ -9,6 +9,7 @@ from typing import Optional
 import json
 import logging
 import os
+import threading
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QStatusBar, QMenuBar, QMenu, QToolBar, QMessageBox, QLabel, QDockWidget,
@@ -728,6 +729,7 @@ class MainWindow(QMainWindow):
         self.dock.chat_panel.message_sent.connect(self._on_chat_message)
         self.dock.chat_panel.reset_requested.connect(self._on_reset_session)
         self.dock.chat_panel.cancel_requested.connect(self._on_cancel_llm)
+        self.dock.chat_panel.restart_requested.connect(self._on_restart_backend)
         
         # Connect toggle action
         self.toggle_dock_action.setChecked(self.dock.isVisible())
@@ -1279,6 +1281,33 @@ class MainWindow(QMainWindow):
             self.dock.chat_panel.remove_thinking_message()
             self.dock.chat_panel.add_system_message("Request cancelled by user")
             self.status_bar.showMessage("LLM request cancelled", 3000)
+
+    def _on_restart_backend(self):
+        """Restart the shared OpenCode server to recover a hung / unresponsive
+        backend without relaunching the editor. Cancels any in-flight request,
+        then stop+start the server off the UI thread (the spawn takes a few
+        seconds); the next send re-uses the restarted server."""
+        sm = self._server_manager
+        if sm is None:
+            self.dock.chat_panel.add_system_message(
+                "No restartable backend server is configured.")
+            return
+        # Cancel any in-flight (possibly hung) request first (best-effort).
+        try:
+            self._on_cancel_llm()
+        except Exception:
+            log.exception("cancel before backend restart failed")
+        self.dock.chat_panel.add_message("system", "Restarting backend…")
+        self.status_bar.showMessage("Restarting backend…", 3000)
+
+        def _restart():
+            try:
+                sm.stop()
+                sm.start()
+            except Exception:
+                log.exception("backend restart failed")
+
+        threading.Thread(target=_restart, daemon=True).start()
 
     def _on_toggle_workspace(self):
         """Toggle workspace dock visibility."""

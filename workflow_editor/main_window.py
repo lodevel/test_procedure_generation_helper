@@ -168,6 +168,14 @@ class MainWindow(QMainWindow):
         
         # Process CLI arguments to load project/test
         self._process_cli_arguments()
+
+        # Project is now loaded: point the (lazily-spawned) OpenCode
+        # server at the project dir so it loads that project's
+        # opencode.json (providers/model), not the home/global config.
+        if self._server_manager is not None:
+            _pr = getattr(self.project_manager, "project_root", None)
+            if _pr:
+                self._server_manager.config.working_directory = str(_pr)
     
     def _process_cli_arguments(self):
         """Process command-line arguments to load project and/or test."""

@@ -287,6 +287,9 @@ class SettingsDialog(QDialog):
                     server_port=self.opencode_port.value(),
                     server_hostname=self.opencode_host.text() or "127.0.0.1",
                     model=self._opencode_model_value() or None,
+                    # Test in the open project's dir so OpenCode loads its
+                    # opencode.json (providers/model), matching real chat.
+                    working_directory=str(self._project_root) if self._project_root else None,
                 )
                 backend_obj = OpenCodeBackend(config=config)
                 

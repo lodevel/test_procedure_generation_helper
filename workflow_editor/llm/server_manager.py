@@ -187,12 +187,8 @@ class OpenCodeServerManager:
                 self._config.server_port = port
 
                 # bash -lc loads the user's PATH so `opencode` resolves.
-                # `cd ~` first: wsl.exe otherwise inherits the editor's (project)
-                # working directory, so OpenCode would bootstrap THERE and pick
-                # up a stray project opencode.json. Run from home so it resolves
-                # the editor-level / global config instead.
                 opencode_cmd = (
-                    f"cd ~ && opencode serve --port {port} "
+                    f"opencode serve --port {port} "
                     f"--hostname {self._config.server_hostname}"
                 )
                 cmd = [self._config.wsl_path, "bash", "-lc", opencode_cmd]
@@ -205,6 +201,10 @@ class OpenCodeServerManager:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.PIPE,
                     text=True,
+                    # Spawn in the open project's dir (a Windows path; wsl.exe
+                    # translates it) so OpenCode loads that project's
+                    # opencode.json — its providers/model. None -> inherited cwd.
+                    cwd=self._config.working_directory or None,
                 )
                 self._start_stderr_drain()
                 log.debug(f"Server process started, PID: {self._server_process.pid}")

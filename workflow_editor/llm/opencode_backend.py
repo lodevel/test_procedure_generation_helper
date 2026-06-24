@@ -32,7 +32,13 @@ class OpenCodeConfig:
     
     # Model settings (optional override)
     model: Optional[str] = None  # e.g., "anthropic/claude-3-5-sonnet"
-    
+
+    # Working directory for the spawned `opencode serve` (a Windows path;
+    # wsl.exe translates it). Set to the open project so OpenCode loads THAT
+    # project's opencode.json (its providers/model) instead of the home/global
+    # config. None -> inherit the launching process's cwd.
+    working_directory: Optional[str] = None
+
     # Session mode: "persistent" (default) or "oneshot" (future: new session per request)
     session_mode: str = "persistent"
     
@@ -160,12 +166,14 @@ class OpenCodeBackend(LLMBackend):
                 ]
                 log.debug(f"Server command: {' '.join(cmd)}")
                 
-                # Start server process
+                # Start server process (in the project dir so OpenCode loads
+                # that project's opencode.json — providers/model).
                 self._server_process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
+                    cwd=self.config.working_directory or None,
                 )
                 log.debug(f"Server process started, PID: {self._server_process.pid}")
                 

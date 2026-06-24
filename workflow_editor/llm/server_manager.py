@@ -9,11 +9,19 @@ import logging
 import subprocess
 import threading
 import time
+from collections import deque
 from typing import Optional
 
 import requests
 
 from .opencode_backend import OpenCodeConfig
+from .server_health import (
+    ServerError,
+    ServerStatus,
+    classify_install,
+    find_free_port,
+    is_port_conflict,
+)
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +60,13 @@ class OpenCodeServerManager:
         self._server_process: Optional[subprocess.Popen] = None
         self._lock = threading.Lock()
         self._running = False
+        # Last classified outcome of start()/is_available(), read by the backend
+        # factory to show a clear reason to the user. None until the first check.
+        self.last_status: Optional[ServerStatus] = None
+        # Drained server stderr (tail) for the failure reason; the drain thread
+        # prevents the pipe-buffer deadlock a chatty server would otherwise hit.
+        self._stderr_tail: "deque[str]" = deque(maxlen=50)
+        self._stderr_thread: Optional[threading.Thread] = None
     
     @property
     def config(self) -> OpenCodeConfig:
@@ -115,40 +130,68 @@ class OpenCodeServerManager:
             if self._check_external_server():
                 log.info(f"Attached to existing OpenCode server at {self.server_url}")
                 self._running = True
+                self.last_status = ServerStatus.healthy()
                 # Note: _server_process remains None - we didn't start it
                 return True
-            
+
+            # Pre-flight: a missing WSL / opencode gives a precise reason
+            # instead of an opaque spawn failure later.
+            diag = self._diagnose_installation()
+            if not diag.ok:
+                self.last_status = diag
+                log.error(f"OpenCode unavailable: {diag.message}")
+                return False
+
             log.info("Starting OpenCode server...")
             try:
-                # Build server command - use bash -lc to load user's PATH
-                opencode_cmd = f"opencode serve --port {self._config.server_port} --hostname {self._config.server_hostname}"
-                cmd = [
-                    self._config.wsl_path,
-                    "bash", "-lc",
-                    opencode_cmd,
-                ]
+                # Bind the configured port if free, else an OS-assigned one, and
+                # propagate the choice to the shared config so backends POST to
+                # the right URL.
+                port = find_free_port(
+                    self._config.server_port, self._config.server_hostname
+                )
+                self._config.server_port = port
+
+                # bash -lc loads the user's PATH so `opencode` resolves.
+                opencode_cmd = (
+                    f"opencode serve --port {port} "
+                    f"--hostname {self._config.server_hostname}"
+                )
+                cmd = [self._config.wsl_path, "bash", "-lc", opencode_cmd]
                 log.debug(f"Server command: {' '.join(cmd)}")
-                
-                # Start server process
+
+                # stdout discarded; stderr PIPE is drained by a thread so the
+                # pipe buffer never fills and deadlocks the server.
                 self._server_process = subprocess.Popen(
                     cmd,
-                    stdout=subprocess.PIPE,
+                    stdout=subprocess.DEVNULL,
                     stderr=subprocess.PIPE,
                     text=True,
                 )
+                self._start_stderr_drain()
                 log.debug(f"Server process started, PID: {self._server_process.pid}")
-                
-                # Wait for server to be ready
+
                 if not self._wait_for_server():
-                    log.error("Server failed to become ready")
+                    detail = "".join(self._stderr_tail).strip()
+                    died = self._server_process.poll() is not None
+                    if died and is_port_conflict(detail):
+                        err = ServerError.PORT_IN_USE
+                    elif died:
+                        err = ServerError.START_FAILED
+                    else:
+                        err = ServerError.START_TIMEOUT
+                    self.last_status = ServerStatus.failure(err, detail)
+                    log.error(f"Server failed to become ready: {self.last_status.message}")
                     self._stop_process()
                     return False
-                
+
                 self._running = True
+                self.last_status = ServerStatus.healthy()
                 log.info(f"OpenCode server started successfully at {self.server_url}")
                 return True
-                
+
             except Exception as e:
+                self.last_status = ServerStatus.failure(ServerError.START_FAILED, str(e))
                 log.error(f"Failed to start server: {e}")
                 self._stop_process()
                 return False
@@ -210,14 +253,17 @@ class OpenCodeServerManager:
             True if OpenCode can be used.
         """
         log.debug("Checking if OpenCode is available...")
-        
+
         # First, check if a server is already running
         if self._check_external_server():
             log.info("OpenCode server is already running")
+            self.last_status = ServerStatus.healthy()
             return True
-        
-        # Check WSL and opencode installation
-        return self._check_wsl_installation()
+
+        # Check WSL and opencode installation (records the classified reason).
+        diag = self._diagnose_installation()
+        self.last_status = diag
+        return diag.ok
     
     def _check_external_server(self) -> bool:
         """
@@ -236,44 +282,61 @@ class OpenCodeServerManager:
         except requests.exceptions.RequestException:
             return False
     
-    def _check_wsl_installation(self) -> bool:
-        """
-        Check if WSL and OpenCode are properly installed.
-        
-        Returns:
-            True if both WSL and opencode are available.
-        """
+    def _diagnose_installation(self) -> ServerStatus:
+        """Probe WSL + opencode and classify the outcome, capturing stderr as
+        the failure detail. ``ok`` when both are present."""
+        detail = ""
         try:
-            # Check WSL is available
             result = subprocess.run(
                 [self._config.wsl_path, "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5
+                capture_output=True, text=True, timeout=5,
             )
-            if result.returncode != 0:
-                log.warning(f"WSL not available: {result.stderr}")
-                return False
-            
-            log.debug("WSL is available")
-            
-            # Check OpenCode is installed in WSL
-            result = subprocess.run(
-                [self._config.wsl_path, "bash", "-lc", "opencode --version"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            available = result.returncode == 0
-            if available:
-                log.debug(f"OpenCode is installed in WSL: {result.stdout.strip()}")
-            else:
-                log.warning(f"OpenCode not found in WSL PATH: {result.stderr}")
-            return available
-            
+            wsl_ok = result.returncode == 0
+            if not wsl_ok:
+                detail = (result.stderr or "").strip()
         except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-            log.error(f"Error checking OpenCode availability: {e}")
-            return False
+            return ServerStatus.failure(ServerError.WSL_MISSING, str(e))
+
+        opencode_ok = False
+        if wsl_ok:
+            try:
+                result = subprocess.run(
+                    [self._config.wsl_path, "bash", "-lc", "opencode --version"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                opencode_ok = result.returncode == 0
+                if not opencode_ok:
+                    detail = (result.stderr or "").strip()
+            except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+                return ServerStatus.failure(ServerError.OPENCODE_MISSING, str(e))
+
+        err = classify_install(wsl_ok, opencode_ok)
+        return ServerStatus.healthy() if err is ServerError.NONE \
+            else ServerStatus.failure(err, detail)
+
+    def _start_stderr_drain(self) -> None:
+        """Drain the server's stderr into a bounded tail on a daemon thread —
+        keeps the pipe from filling (which would deadlock the server) and keeps
+        the last lines available as a failure reason."""
+        proc = self._server_process
+        if proc is None or proc.stderr is None:
+            return
+        # Fresh per-spawn tail so a lingering drain thread from a previous spawn
+        # can't write into this spawn's reason blob.
+        tail: "deque[str]" = deque(maxlen=50)
+        self._stderr_tail = tail
+
+        def _drain() -> None:
+            try:
+                for line in proc.stderr:
+                    tail.append(line)
+            except Exception:  # noqa: BLE001 — best-effort drain
+                pass
+
+        self._stderr_thread = threading.Thread(
+            target=_drain, daemon=True, name="opencode-stderr-drain"
+        )
+        self._stderr_thread.start()
     
     def _wait_for_server(self) -> bool:
         """
@@ -301,12 +364,9 @@ class OpenCodeServerManager:
             except requests.exceptions.RequestException:
                 pass
             
-            # Check if process died
+            # Check if process died (stderr is captured by the drain thread).
             if self._server_process and self._server_process.poll() is not None:
-                stderr = ""
-                if self._server_process.stderr:
-                    stderr = self._server_process.stderr.read()
-                log.error(f"Server process died during startup: {stderr}")
+                log.error("Server process died during startup")
                 return False
             
             time.sleep(0.5)

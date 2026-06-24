@@ -302,7 +302,13 @@ class OpenCodeBackend(LLMBackend):
         
         try:
             # Build the prompt (TabContext has already set include_* flags)
-            prompt = self._prompt_builder.build(request, output_contract_override=request.output_contract)
+            prompt = (
+                request.raw_prompt
+                if request.raw_prompt is not None
+                else self._prompt_builder.build(
+                    request, output_contract_override=request.output_contract
+                )
+            )
             
             if progress_callback:
                 progress_callback("Sending request to LLM...")
@@ -353,7 +359,13 @@ class OpenCodeBackend(LLMBackend):
             )
         
         try:
-            prompt = self._prompt_builder.build(request, output_contract_override=request.output_contract)
+            prompt = (
+                request.raw_prompt
+                if request.raw_prompt is not None
+                else self._prompt_builder.build(
+                    request, output_contract_override=request.output_contract
+                )
+            )
             
             # Build request body
             body = {

@@ -152,7 +152,12 @@ class LLMRequest:
     
     # Output contract (for tab-specific restrictions)
     output_contract: Optional[str] = None
-    
+
+    # Pre-built prompt. When set, the backend sends it verbatim and SKIPS the
+    # prompt builder (and its JSON output format). Used by the skill chat, whose
+    # draft mode is plain-text — no JSON contract. ``None`` = normal build path.
+    raw_prompt: Optional[str] = None
+
     # Additional context
     extra_context: dict[str, Any] = field(default_factory=dict)
 
@@ -331,28 +336,33 @@ class NoneBackend(LLMBackend):
     Local validation still works.
     """
     
-    def __init__(self):
+    _DEFAULT_REASON = "LLM backend is disabled. Enable it in Settings -> LLM Backend."
+
+    def __init__(self, reason: Optional[str] = None):
         # NoneBackend doesn't need prompt builder/parser but needs base init
         super().__init__()
-    
+        # The reason shown when the user sends a message — e.g. a classified
+        # OpenCode start failure (WSL/opencode missing, port, timeout).
+        self._reason = reason or self._DEFAULT_REASON
+
     def is_available(self) -> bool:
         return True  # Always "available" since it's just disabled
-    
+
     def start(self) -> bool:
         return True  # No-op
-    
+
     def stop(self) -> None:
         pass  # No-op
-    
+
     def send_request(
-        self, 
+        self,
         request: LLMRequest,
         progress_callback: Optional[Callable[[str], None]] = None
     ) -> LLMResponse:
         return LLMResponse(
             success=False,
-            error_message="LLM backend is disabled. Enable it in Settings -> LLM Backend.",
-            assistant_message="LLM backend is disabled. Please configure it in Settings.",
+            error_message=self._reason,
+            assistant_message=self._reason,
         )
     
     def cancel(self) -> None:

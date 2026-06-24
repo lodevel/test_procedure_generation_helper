@@ -293,8 +293,11 @@ class BackendFactory:
         if not self._server_manager.is_running:
             log.debug("Server not running, starting via manager...")
             if not self._server_manager.start():
-                log.error("Failed to start OpenCode server")
-                return NoneBackend()
+                status = self._server_manager.last_status
+                reason = status.message if status else None
+                log.error(f"Failed to start OpenCode server: {reason}")
+                # NoneBackend surfaces the classified reason when the user chats.
+                return NoneBackend(reason=reason)
         
         # Create backend with same config (will create its own session)
         # The backend's start() will detect the running server and create a session

@@ -165,6 +165,12 @@ class LLMRequest:
     # told to leak attached context via a crafted URL).
     web_enabled: bool = False
 
+    # System prompt sent as the message-level ``system`` (OpenCode), separate
+    # from the user ``parts``. The skill chat sets this to the SKILL.md so the
+    # skill GOVERNS behaviour, instead of being buried in the user message under
+    # OpenCode's default coding-agent prompt. ``None`` = no override.
+    system_prompt: Optional[str] = None
+
     # Additional context
     extra_context: dict[str, Any] = field(default_factory=dict)
 

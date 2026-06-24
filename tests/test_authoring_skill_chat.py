@@ -15,16 +15,19 @@ def _skill(prompt="You author a draft."):
     )
 
 
-def test_first_turn_leads_with_system_prompt_and_context():
+def test_wire_is_context_plus_transcript_system_separate():
     s = SkillChatSession(_skill("SYSTEM"), context_text="CONTEXT")
     wire = s.start_user_turn("hello")
-    assert wire == "SYSTEM\n\nCONTEXT\n\nUser: hello"
+    # the skill prompt rides as the message system, NOT in the wire.
+    assert wire == "CONTEXT\n\nUser: hello"
+    assert s.system_prompt == "SYSTEM"
     assert s.started is True
 
 
 def test_first_turn_without_context_omits_it():
     s = SkillChatSession(_skill("SYSTEM"))
-    assert s.start_user_turn("hello") == "SYSTEM\n\nUser: hello"
+    assert s.start_user_turn("hello") == "User: hello"
+    assert s.system_prompt == "SYSTEM"
 
 
 def test_later_turn_carries_full_transcript():
@@ -34,7 +37,7 @@ def test_later_turn_carries_full_transcript():
     wire = s.start_user_turn("second")
     # full transcript every turn — correct on a stateless backend.
     assert wire == (
-        "SYSTEM\n\nCONTEXT\n\nUser: first\n\nAssistant: a reply\n\nUser: second"
+        "CONTEXT\n\nUser: first\n\nAssistant: a reply\n\nUser: second"
     )
 
 
@@ -56,21 +59,28 @@ def test_turns_recorded_in_order():
 def test_set_context_before_first_turn_takes_effect():
     s = SkillChatSession(_skill("SYS"))
     s.set_context("LATE CONTEXT")
-    assert s.start_user_turn("hi") == "SYS\n\nLATE CONTEXT\n\nUser: hi"
+    assert s.start_user_turn("hi") == "LATE CONTEXT\n\nUser: hi"
 
 
 def test_started_false_before_any_turn():
     assert SkillChatSession(_skill()).started is False
 
 
-def test_kickoff_is_skill_plus_context_no_user_turn():
+def test_kickoff_is_context_only_system_separate():
     s = SkillChatSession(_skill("SYS"), context_text="CTX")
-    assert s.kickoff() == "SYS\n\nCTX"     # no "User:" line
+    assert s.kickoff() == "CTX"             # context only; no "User:" line
+    assert s.system_prompt == "SYS"         # the skill rides as system
     assert s.started is False               # records no turn
     s.record_assistant("draft")             # the kickoff reply
     assert s.started is True
     # follow-ups carry the whole transcript, kickoff context included
-    assert s.start_user_turn("more") == "SYS\n\nCTX\n\nAssistant: draft\n\nUser: more"
+    assert s.start_user_turn("more") == "CTX\n\nAssistant: draft\n\nUser: more"
+
+
+def test_kickoff_falls_back_when_no_context():
+    s = SkillChatSession(_skill("SYS"))
+    assert s.kickoff() == "Begin."          # never an empty user body
+    assert s.system_prompt == "SYS"
 
 
 def test_interpret_prefers_assistant_message():

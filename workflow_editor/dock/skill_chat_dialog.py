@@ -290,6 +290,8 @@ class SkillChatDialog(QDialog):
         request = LLMRequest(
             task=LLMTask.AD_HOC_CHAT,
             raw_prompt=prompt,
+            # SKILL.md as the governing system prompt (not buried in the body).
+            system_prompt=self._session.system_prompt,
             web_enabled=self._web_checkbox.isChecked(),
         )
         self._worker = LLMWorker(backend, request, parent=self)

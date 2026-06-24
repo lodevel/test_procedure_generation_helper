@@ -785,15 +785,27 @@ class OpenCodeBackend(LLMBackend):
         # opts in. webfetch is keyless; websearch uses Exa, made available at
         # server launch via OPENCODE_ENABLE_EXA.
         body["tools"] = {
+            # Filesystem/shell tools are never wanted: the editor's LLM converses
+            # and drafts text, it does not edit the project. Disabled on every
+            # request (additive — other tools keep their defaults), which also
+            # stops OpenCode's default coding-agent from trying to use them.
+            "edit": False,
+            "write": False,
+            "bash": False,
+            "apply_patch": False,
+            # Web tools ride the per-request web toggle. read_pdf (the pdf_tools
+            # MCP server) fetches URLs, so it shares the same gate. OpenCode
+            # namespaces a local-server tool as "<server>_<tool>" ->
+            # "pdf_tools_read_pdf"; VERIFY that exact key on a live model (Gemma
+            # retest) — a wrong key is simply ignored.
             "webfetch": request.web_enabled,
             "websearch": request.web_enabled,
-            # read_pdf (the pdf_tools MCP server) can fetch URLs, so it rides the
-            # same web gate. OpenCode namespaces a local-server tool as
-            # "<server>_<tool>" -> "pdf_tools_read_pdf"; VERIFY this exact key
-            # against a live model (Gemma retest) — if it differs, only this line
-            # changes (a wrong key is ignored, leaving read_pdf at its default).
             "pdf_tools_read_pdf": request.web_enabled,
         }
+        # Message-level system prompt (e.g. the skill chat's SKILL.md) so the
+        # caller's instructions GOVERN, rather than sitting in the user body.
+        if request.system_prompt:
+            body["system"] = request.system_prompt
         return body
 
     def _send_via_api(self, prompt: str, request: LLMRequest) -> LLMResponse:

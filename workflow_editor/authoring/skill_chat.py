@@ -1,10 +1,12 @@
 """The skill-chat session — the pure brain of the dedicated send-path.
 
-A skill chat is a plain multi-turn conversation: the skill's ``SKILL.md`` (its
-system prompt) plus the user's chosen context, followed by the whole transcript
-so far. Replies are plain prose — a no-JSON response is the NORMAL case, not a
-failure (the Qt controller sends with ``LLMRequest.raw_prompt`` to bypass the
-JSON output contract).
+A skill chat is a plain multi-turn conversation. The skill's ``SKILL.md`` rides
+as the message ``system`` (``LLMRequest.system_prompt``, see
+:attr:`SkillChatSession.system_prompt`) so it GOVERNS the model; the rendered
+wire (``raw_prompt``) carries only the user's chosen context plus the whole
+transcript so far. Replies are plain prose — a no-JSON response is the NORMAL
+case, not a failure (the Qt controller sends with ``LLMRequest.raw_prompt`` to
+bypass the JSON output contract).
 
 **Each turn carries the full transcript**, so the bridge is correct on ANY
 backend — the stateless external API *and* OpenCode — without depending on
@@ -49,6 +51,15 @@ class SkillChatSession:
     def started(self) -> bool:
         return bool(self.turns)
 
+    @property
+    def system_prompt(self) -> str:
+        """The skill's SKILL.md — sent as the message ``system`` so it GOVERNS
+        the model, instead of being buried in the user body under OpenCode's
+        default agent prompt. The controller passes this as
+        ``LLMRequest.system_prompt``; the rendered wire carries only the
+        context + transcript."""
+        return self.skill.system_prompt
+
     def start_user_turn(self, user_message: str) -> str:
         """Record the user message and return the FULL prompt to send.
 
@@ -59,15 +70,16 @@ class SkillChatSession:
         return self._render()
 
     def kickoff(self) -> str:
-        """The RUN prompt with no user message — the skill system prompt + pushed
-        context only. Starts a self-contained skill without the user typing
-        anything; the model responds to the instructions directly. Records no
-        turn (the assistant reply is recorded via :meth:`record_assistant`)."""
-        parts = [self.skill.system_prompt, self.context_text]
-        return "\n\n".join(p.strip() for p in parts if p and p.strip())
+        """The RUN body with no user message — the pushed context only (the skill
+        prompt now rides as the message ``system`` via :attr:`system_prompt`).
+        Starts a self-contained skill without the user typing anything; the model
+        responds to the system instructions directly. Records no turn (the
+        assistant reply is recorded via :meth:`record_assistant`). Falls back to a
+        minimal nudge when no context is checked, so the user body is never empty."""
+        return self.context_text.strip() or "Begin."
 
     def _render(self) -> str:
-        parts = [self.skill.system_prompt, self.context_text]
+        parts = [self.context_text]
         parts += [
             f"{'User' if t.role == 'user' else 'Assistant'}: {t.content}"
             for t in self.turns

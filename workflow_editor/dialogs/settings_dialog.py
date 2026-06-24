@@ -20,6 +20,7 @@ from PySide6.QtGui import QFont
 from .. import theme
 from ..core.task_config import TaskConfig, TaskConfigManager, ChatConfig
 from ..llm.backend_base import LLMTask
+from ..llm.server_manager import fetch_opencode_models
 from ..theme import muted_text
 from ..core.odb_inspect import load_hide_prefixes, save_hide_prefixes
 
@@ -136,7 +137,7 @@ class SettingsDialog(QDialog):
         backend_layout = QFormLayout(backend_group)
         
         self.backend_combo = QComboBox()
-        self.backend_combo.addItems(["opencode", "external_api", "none"])
+        self.backend_combo.addItems(["opencode", "none"])
         self.backend_combo.currentTextChanged.connect(self._on_backend_changed)
         backend_layout.addRow("Backend:", self.backend_combo)
         
@@ -145,14 +146,7 @@ class SettingsDialog(QDialog):
         # Common LLM Parameters
         common_group = QGroupBox("Common Parameters")
         common_layout = QFormLayout(common_group)
-        
-        self.temperature = QDoubleSpinBox()
-        self.temperature.setRange(0.0, 2.0)
-        self.temperature.setSingleStep(0.1)
-        self.temperature.setValue(0.2)
-        self.temperature.setToolTip("Controls randomness: 0 = deterministic, 2 = very random")
-        common_layout.addRow("Temperature:", self.temperature)
-        
+
         self.context_window = QSpinBox()
         self.context_window.setRange(1000, 2_000_000)
         self.context_window.setValue(16384)
@@ -188,15 +182,27 @@ class SettingsDialog(QDialog):
         self.opencode_host.setPlaceholderText("127.0.0.1")
         opencode_layout.addRow("Host:", self.opencode_host)
         
-        self.opencode_model = QLineEdit()
-        self.opencode_model.setPlaceholderText(
-            "providerID/modelID  (e.g. my_vllm/cyankiwi/gemma-3-27b)")
+        self.opencode_model = QComboBox()
         self.opencode_model.setToolTip(
-            "providerID/modelID — split on the FIRST '/'. The text before the "
-            "first '/' is the OpenCode provider; everything after is the model "
-            "id (which may itself contain '/'). Leave blank for the server "
-            "default; a bare name with no '/' is ignored (default is used).")
-        opencode_layout.addRow("Model:", self.opencode_model)
+            "Which model OpenCode uses. 'Default — use opencode.json' sends no "
+            "override, so the server uses its own configured model. The other "
+            "entries are the models the running server reports (provider/model); "
+            "picking one overrides it per request.")
+        self.opencode_model_refresh = QPushButton("Refresh")
+        self.opencode_model_refresh.setToolTip(
+            "Re-query the running OpenCode server for the models configured in "
+            "its opencode.json.")
+        self.opencode_model_refresh.clicked.connect(
+            lambda: self._populate_opencode_models())
+        model_row = QHBoxLayout()
+        model_row.setContentsMargins(0, 0, 0, 0)
+        model_row.addWidget(self.opencode_model, 1)
+        model_row.addWidget(self.opencode_model_refresh)
+        opencode_layout.addRow("Model:", model_row)
+        self.opencode_models_note = QLabel("")
+        self.opencode_models_note.setStyleSheet(
+            f"color: {theme.muted_color()}; font-size: 11px;")
+        opencode_layout.addRow("", self.opencode_models_note)
         
         self.opencode_wsl_path = QLineEdit()
         self.opencode_wsl_path.setPlaceholderText("/mnt/c/...")
@@ -210,32 +216,6 @@ class SettingsDialog(QDialog):
         opencode_layout.addRow("Startup Timeout:", self.opencode_startup_timeout)
         
         layout.addWidget(self.opencode_group)
-        
-        # External API settings
-        self.api_group = QGroupBox("External API Settings")
-        api_layout = QFormLayout(self.api_group)
-        
-        self.api_url = QLineEdit()
-        self.api_url.setPlaceholderText("https://api.openai.com/v1")
-        self.api_url.setToolTip("Base URL with /v1 suffix. Examples:\n• OpenAI: https://api.openai.com/v1\n• Ollama: http://127.0.0.1:11434/v1")
-        api_layout.addRow("API URL:", self.api_url)
-        
-        self.api_key = QLineEdit()
-        self.api_key.setEchoMode(QLineEdit.Password)
-        self.api_key.setPlaceholderText("sk-...")
-        api_layout.addRow("API Key:", self.api_key)
-        
-        self.api_model = QLineEdit()
-        self.api_model.setPlaceholderText("e.g., gpt-4, qwen3:8b-16k")
-        api_layout.addRow("Model:", self.api_model)
-        
-        self.api_retry_count = QSpinBox()
-        self.api_retry_count.setRange(0, 10)
-        self.api_retry_count.setValue(2)
-        self.api_retry_count.setToolTip("Number of retry attempts for failed requests")
-        api_layout.addRow("Retry Count:", self.api_retry_count)
-        
-        layout.addWidget(self.api_group)
         
         # Test Connection button
         test_btn_layout = QHBoxLayout()
@@ -252,8 +232,43 @@ class SettingsDialog(QDialog):
     def _on_backend_changed(self, backend: str):
         """Handle backend selection change."""
         self.opencode_group.setVisible(backend == "opencode")
-        self.api_group.setVisible(backend == "external_api")
-    
+        # Lazily fill the model dropdown the first time OpenCode is shown
+        # (a /config round-trip; Refresh re-queries on demand).
+        if backend == "opencode" and self.opencode_model.count() == 0:
+            self._populate_opencode_models()
+
+    def _opencode_model_value(self) -> str:
+        """The selected 'provider/model' override, or '' for Default."""
+        return self.opencode_model.currentData() or ""
+
+    def _populate_opencode_models(self):
+        """Fill the OpenCode model dropdown from the running server's /config.
+
+        Preserves the current/saved selection even when the server is down
+        (kept as a '(saved)' entry) so saving never silently drops it.
+        """
+        if self.opencode_model.count():
+            preserve = self.opencode_model.currentData() or ""
+        else:
+            preserve = self._settings.get("opencode", {}).get("model", "") or ""
+        url = (f"http://{self.opencode_host.text() or '127.0.0.1'}"
+               f":{self.opencode_port.value()}")
+        models = fetch_opencode_models(url)
+        self.opencode_model.blockSignals(True)
+        self.opencode_model.clear()
+        self.opencode_model.addItem("Default — use opencode.json", "")
+        for m in models:
+            self.opencode_model.addItem(m, m)
+        if preserve and preserve not in models:
+            self.opencode_model.addItem(f"{preserve}  (saved)", preserve)
+        idx = self.opencode_model.findData(preserve)
+        self.opencode_model.setCurrentIndex(idx if idx >= 0 else 0)
+        self.opencode_model.blockSignals(False)
+        self.opencode_models_note.setText(
+            f"{len(models)} model(s) from the running server" if models
+            else "Server not reachable — showing the saved value. "
+                 "Start OpenCode, then Refresh.")
+
     def _on_test_connection(self):
         """Test the LLM backend configuration."""
         backend = self.backend_combo.currentText()
@@ -271,7 +286,7 @@ class SettingsDialog(QDialog):
                 config = OpenCodeConfig(
                     server_port=self.opencode_port.value(),
                     server_hostname=self.opencode_host.text() or "127.0.0.1",
-                    model=self.opencode_model.text() or None,
+                    model=self._opencode_model_value() or None,
                 )
                 backend_obj = OpenCodeBackend(config=config)
                 
@@ -350,91 +365,6 @@ class SettingsDialog(QDialog):
                         f"✓ OpenCode backend is available\n\nHost: {config.server_hostname}\nPort: {config.server_port}\n\nNo model specified - will use OpenCode's default."
                     )
             
-            elif backend == "external_api":
-                # Test External API backend
-                from ..llm.external_api_backend import ExternalAPIBackend, ExternalAPIConfig
-                from ..llm.backend_base import LLMRequest, LLMTask
-
-                api_key = self.api_key.text().strip()
-
-                model = self.api_model.text()
-                if not model:
-                    QMessageBox.warning(
-                        self, "Test Connection",
-                        "✗ No model specified\n\nEnter a model name (e.g., gpt-4 for OpenAI, qwen3:8b-16k for Ollama)."
-                    )
-                    return
-                
-                # Use request timeout from settings
-                test_timeout = self.request_timeout.value()
-                
-                config = ExternalAPIConfig(
-                    base_url=self.api_url.text() or "https://api.openai.com/v1",
-                    model=model,
-                    api_key=api_key or None,
-                    request_timeout=test_timeout,
-                )
-                backend_obj = ExternalAPIBackend(config=config)
-
-                # Start backend
-                if not backend_obj.start():
-                    QMessageBox.warning(
-                        self, "Test Connection",
-                        f"✗ Could not start External API backend\n\nURL: {config.base_url}"
-                    )
-                    return
-                
-                try:
-                    # Make a minimal test request
-                    test_request = LLMRequest(
-                        task=LLMTask.AD_HOC_CHAT,
-                        strict_mode=False,
-                        user_message="Respond with just 'OK'",
-                    )
-                    
-                    # Send request with timeout handling
-                    import threading
-                    result = {"response": None, "error": None}
-                    
-                    def test_send():
-                        try:
-                            result["response"] = backend_obj.send_request(test_request)
-                        except Exception as e:
-                            result["error"] = str(e)
-                    
-                    thread = threading.Thread(target=test_send)
-                    thread.start()
-                    thread.join(timeout=test_timeout)
-                    
-                    if thread.is_alive():
-                        result["error"] = f"Request timed out after {test_timeout} seconds"
-                    
-                    # Clean up
-                    if backend_obj.is_running:
-                        backend_obj.stop()
-                    
-                    if result["error"]:
-                        QMessageBox.warning(
-                            self, "Test Connection",
-                            f"✗ API test failed\n\nURL: {config.base_url}\nModel: {config.model}\n\nError: {result['error']}\n\nCheck that the server is running and the URL/model are correct."
-                        )
-                    elif result["response"] and result["response"].error_message:
-                        QMessageBox.warning(
-                            self, "Test Connection",
-                            f"✗ API test failed\n\nURL: {config.base_url}\nModel: {config.model}\n\nError: {result['response'].error_message}\n\nCheck that the server is running and the URL/model are correct."
-                        )
-                    else:
-                        auth_msg = "With API key" if api_key else "Without authentication (e.g., Ollama)"
-                        QMessageBox.information(
-                            self, "Test Connection",
-                            f"✓ External API backend is working\n\nURL: {config.base_url}\nModel: {config.model}\n{auth_msg}"
-                        )
-                except Exception as e:
-                    # Clean up on error
-                    if backend_obj.is_running:
-                        backend_obj.stop()
-                    raise
-        
         except Exception as e:
             QMessageBox.critical(
                 self, "Test Connection Failed",
@@ -594,27 +524,21 @@ class SettingsDialog(QDialog):
         
         # Common LLM parameters
         common_llm = self._settings.get("common_llm", {})
-        self.temperature.setValue(common_llm.get("temperature", 0.2))
         # Backwards-compat: old setting name was "max_tokens"; prefer new "context_window"
         self.context_window.setValue(
             common_llm.get("context_window", common_llm.get("max_tokens", 16384))
         )
         self.request_timeout.setValue(common_llm.get("request_timeout", 120.0))
         
-        # OpenCode settings
+        # OpenCode settings — host/port set BEFORE the final
+        # _on_backend_changed (below) so the model dropdown queries the right
+        # server; _populate_opencode_models preserves opencode["model"].
         opencode = self._settings.get("opencode", {})
         self.opencode_port.setValue(opencode.get("port", 4096))
         self.opencode_host.setText(opencode.get("host", "127.0.0.1"))
-        self.opencode_model.setText(opencode.get("model", ""))
         self.opencode_wsl_path.setText(opencode.get("wsl_path", ""))
         self.opencode_startup_timeout.setValue(opencode.get("startup_timeout", 60.0))
         
-        # External API settings
-        api = self._settings.get("external_api", {})
-        self.api_url.setText(api.get("url", ""))
-        self.api_key.setText(api.get("key", ""))
-        self.api_model.setText(api.get("model", ""))
-        self.api_retry_count.setValue(api.get("retry_count", 2))
         
         # Update visibility
         self._on_backend_changed(self.backend_combo.currentText())
@@ -642,22 +566,15 @@ class SettingsDialog(QDialog):
         self._settings = {
             "llm_backend": self.backend_combo.currentText(),
             "common_llm": {
-                "temperature": self.temperature.value(),
                 "context_window": self.context_window.value(),
                 "request_timeout": self.request_timeout.value(),
             },
             "opencode": {
                 "port": self.opencode_port.value(),
                 "host": self.opencode_host.text() or "127.0.0.1",
-                "model": self.opencode_model.text(),
+                "model": self._opencode_model_value(),
                 "wsl_path": self.opencode_wsl_path.text(),
                 "startup_timeout": self.opencode_startup_timeout.value(),
-            },
-            "external_api": {
-                "url": self.api_url.text(),
-                "key": self.api_key.text(),
-                "model": self.api_model.text(),
-                "retry_count": self.api_retry_count.value(),
             },
         }
         

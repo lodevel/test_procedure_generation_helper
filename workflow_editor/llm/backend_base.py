@@ -168,7 +168,6 @@ class LLMBackend(ABC):
     
     Implementations:
     - OpenCodeBackend: Uses WSL OpenCode CLI
-    - ExternalAPIBackend: Uses OpenAI-compatible API
     - NoneBackend: Disabled, returns error
     """
     

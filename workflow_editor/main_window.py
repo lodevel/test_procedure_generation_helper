@@ -25,13 +25,13 @@ from .core.task_config import TaskConfigManager
 from .llm import (
     LLMBackend,
     LLMRequest, LLMTask,
-    OpenCodeConfig, ExternalAPIConfig,
+    OpenCodeConfig,
     LLMWorker,
 )
 from .llm.server_manager import OpenCodeServerManager
 from .llm.backend_factory import (
     BackendFactory, BackendConfig,
-    BACKEND_TYPE_OPENCODE, BACKEND_TYPE_EXTERNAL_API, BACKEND_TYPE_NONE
+    BACKEND_TYPE_OPENCODE, BACKEND_TYPE_NONE
 )
 from .tabs import (
     WorkspaceTab, TextOnlyTab, TextJsonTab, JsonCodeTab, TraceabilityTab
@@ -281,25 +281,6 @@ class MainWindow(QMainWindow):
                 custom_prompts={},  # Deprecated: now handled by TaskConfigManager
                 custom_output_format=custom_output_format,
             )
-        elif backend_type == "external_api":
-            config_dict = self._settings.get("external_api", {})
-            log.debug(f"External API config: {config_dict}")
-            model_name = config_dict.get("model", "gpt-4")
-            external_api_config = ExternalAPIConfig(
-                base_url=config_dict.get("url", "https://api.openai.com/v1"),
-                model=model_name,
-                api_key=config_dict.get("key") or None,
-                temperature=common_llm.get("temperature", 0.2),
-                request_timeout=common_llm.get("request_timeout", 120.0),
-                retry_count=config_dict.get("retry_count", 2),
-            )
-            return BackendConfig(
-                backend_type=BACKEND_TYPE_EXTERNAL_API,
-                external_api=external_api_config,
-                custom_prompts={},  # Deprecated: now handled by TaskConfigManager
-                custom_output_format=custom_output_format,
-            )
-        
         else:
             return BackendConfig.create_disabled()
     
@@ -1231,11 +1212,6 @@ class MainWindow(QMainWindow):
         if backend_type == BACKEND_TYPE_OPENCODE:
             server_status = "ready" if self._server_manager and self._server_manager.is_available() else "not started"
             self.llm_status.setText(f"LLM: OpenCode ({server_status})")
-        elif backend_type == BACKEND_TYPE_EXTERNAL_API:
-            model = "unknown"
-            if self._backend_factory.config.external_api:
-                model = self._backend_factory.config.external_api.model
-            self.llm_status.setText(f"LLM: External API ({model})")
         else:
             self.llm_status.setText("LLM: Disabled")
     

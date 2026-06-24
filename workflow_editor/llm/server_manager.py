@@ -26,6 +26,40 @@ from .server_health import (
 log = logging.getLogger(__name__)
 
 
+def fetch_opencode_models(server_url: str, timeout: float = 2.0) -> list:
+    """Query a running OpenCode server's ``/config`` and return its available
+    ``<providerID>/<modelID>`` ids (sorted, de-duped).
+
+    Returns ``[]`` when the server is unreachable or isn't OpenCode (same JSON
+    signature check as :meth:`OpenCodeServerManager._check_external_server`).
+    Pure + side-effect-free so the Settings model picker can call it directly.
+    """
+    try:
+        resp = requests.get(
+            f"{server_url}/config",
+            headers={"Accept": "application/json"},
+            timeout=timeout,
+        )
+        if resp.status_code != 200:
+            return []
+        if "application/json" not in resp.headers.get("Content-Type", ""):
+            return []
+        data = resp.json()
+    except (requests.exceptions.RequestException, ValueError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    models = set()
+    providers = data.get("provider") or {}
+    if isinstance(providers, dict):
+        for provider_id, info in providers.items():
+            provider_models = (info or {}).get("models") or {}
+            if isinstance(provider_models, dict):
+                for model_id in provider_models:
+                    models.add(f"{provider_id}/{model_id}")
+    return sorted(models)
+
+
 class OpenCodeServerManager:
     """
     Manages the OpenCode WSL server lifecycle.

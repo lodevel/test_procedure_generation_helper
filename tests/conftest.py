@@ -1,9 +1,7 @@
 ﻿"""Test fixtures."""
-import os
 import pytest
 from workflow_editor.llm import (
-    LLMRequest, LLMTask, NoneBackend, OpenCodeBackend, 
-    ExternalAPIBackend, OpenCodeConfig
+    LLMRequest, LLMTask, NoneBackend, OpenCodeBackend, OpenCodeConfig
 )
 
 def _populate_pack_registry() -> None:
@@ -81,20 +79,6 @@ def sample_llm_response_json():
 
 @pytest.fixture
 def available_backend():
-    # Try OpenAI first
-    if os.environ.get("OPENAI_API_KEY"):
-        backend = ExternalAPIBackend(
-            api_url="https://api.openai.com/v1",
-            api_key=os.environ["OPENAI_API_KEY"],
-            model="gpt-3.5-turbo"
-        )
-        if backend.is_available():
-            yield backend
-            if backend.is_running:
-                backend.stop()
-            return
-    
-    # Try OpenCode
     config = OpenCodeConfig()
     backend = OpenCodeBackend(config)
     if backend.is_available():
@@ -102,5 +86,5 @@ def available_backend():
         if backend.is_running:
             backend.stop()
         return
-    
+
     pytest.skip("No LLM backend available")

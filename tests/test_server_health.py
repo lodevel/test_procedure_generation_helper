@@ -3,7 +3,10 @@ import socket
 from unittest.mock import MagicMock, patch
 
 from workflow_editor.llm.backend_base import NoneBackend
-from workflow_editor.llm.server_manager import OpenCodeServerManager
+from workflow_editor.llm.server_manager import (
+    OpenCodeServerManager,
+    fetch_opencode_models,
+)
 
 
 def _fake_resp(status, content_type, body=None):
@@ -29,6 +32,34 @@ def test_external_check_accepts_opencode_json():
     with patch("workflow_editor.llm.server_manager.requests.get",
                return_value=_fake_resp(200, "application/json", body)):
         assert mgr._check_external_server() is True
+
+
+def test_fetch_models_lists_provider_models_sorted():
+    body = {
+        "model": "my_vllm/gemma",
+        "provider": {
+            "my_vllm": {"models": {"gemma": {}, "qwen": {}}},
+            "openai": {"models": {"gpt-5.2-low": {}}},
+        },
+    }
+    with patch("workflow_editor.llm.server_manager.requests.get",
+               return_value=_fake_resp(200, "application/json", body)):
+        assert fetch_opencode_models("http://x:4096") == [
+            "my_vllm/gemma", "my_vllm/qwen", "openai/gpt-5.2-low",
+        ]
+
+
+def test_fetch_models_empty_when_not_opencode():
+    with patch("workflow_editor.llm.server_manager.requests.get",
+               return_value=_fake_resp(200, "text/html", None)):
+        assert fetch_opencode_models("http://x:4096") == []
+
+
+def test_fetch_models_empty_on_unreachable():
+    import requests as _rq
+    with patch("workflow_editor.llm.server_manager.requests.get",
+               side_effect=_rq.exceptions.ConnectionError()):
+        assert fetch_opencode_models("http://x:4096") == []
 from workflow_editor.llm.server_health import (
     ServerError,
     ServerStatus,

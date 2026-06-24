@@ -6,6 +6,7 @@ Implements Section 12.2 of the spec with unified task management.
 
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Optional
 from PySide6.QtWidgets import (
@@ -94,7 +95,57 @@ def ensure_opencode_config(seed_from: Optional[Path] = None) -> Path:
                     log.info("Generated editor OpenCode master config from %s", src)
         except Exception:
             log.exception("Failed to generate editor OpenCode config")
+    # Idempotently point the pdf_tools MCP server at the current project's
+    # documents dir so the LLM's read_pdf tool can reach attached datasheets.
+    # Merged on every call (not once) so it lands on pre-existing master configs
+    # and follows project changes.
+    if seed_from is not None:
+        try:
+            _ensure_pdf_tools_mcp(cfg, project_root=Path(seed_from).parent)
+        except Exception:
+            log.exception("Failed to wire pdf_tools MCP server")
     return d
+
+
+def _ensure_pdf_tools_mcp(cfg: Path, project_root: Path) -> None:
+    """Merge/refresh the ``pdf_tools`` local MCP block in the master opencode.json.
+
+    Writes only when the block actually changes. The MCP server is THIS editor's
+    Python (it carries pypdf) launched by OpenCode-in-WSL; ``mcp_config`` handles
+    the ``/mnt/c`` interop translation of the python path.
+    """
+    from ..llm.mcp_config import build_pdf_tools_mcp_block
+
+    documents_dir = project_root / "documents"
+    documents_dir.mkdir(parents=True, exist_ok=True)
+    # pythonw has no console; prefer python.exe for reliable stdio pipes.
+    python_win = sys.executable.replace("pythonw.exe", "python.exe")
+    script_win = str(
+        Path(__file__).resolve().parents[1] / "authoring" / "_pdf_tool_mcp.py"
+    )
+    block = build_pdf_tools_mcp_block(
+        venv_python_win=python_win,
+        mcp_script_win=script_win,
+        documents_dir_win=str(documents_dir),
+    )
+
+    data = {}
+    if cfg.exists():
+        try:
+            loaded = json.loads(cfg.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        except Exception:
+            log.exception("could not parse master opencode.json; rebuilding mcp block")
+    mcp = data.get("mcp")
+    if not isinstance(mcp, dict):
+        mcp = {}
+    if mcp.get("pdf_tools") == block["pdf_tools"]:
+        return  # already current — no write
+    mcp.update(block)
+    data["mcp"] = mcp
+    cfg.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    log.info("Wired pdf_tools MCP server (documents=%s)", documents_dir)
 
 
 

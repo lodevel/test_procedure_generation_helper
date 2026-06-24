@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from .context import ContextItem, ContextSource
+from .pdf_text import extract_pdf_text
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +50,19 @@ class DocumentsSource(ContextSource):
         blocks = []
         for path in self._files():
             if path.name not in wanted:
+                continue
+            if path.suffix.lower() == ".pdf":
+                # Decode the datasheet to text here (cheap context, any model).
+                # An unreadable/scanned PDF -> a short note so the model knows it
+                # is attached but unread, rather than silently dropped.
+                text = extract_pdf_text(path)
+                if text:
+                    blocks.append(_wrap(f"{path.name} (extracted text)", text))
+                else:
+                    blocks.append(_wrap(
+                        path.name,
+                        "(PDF attached but no extractable text — likely a "
+                        "scanned/image-only datasheet.)"))
                 continue
             try:
                 body = path.read_text(encoding="utf-8")

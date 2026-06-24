@@ -19,19 +19,22 @@ def _req(web_enabled: bool) -> LLMRequest:
 
 def test_web_enabled_exposes_both_web_tools():
     body = _backend()._build_message_body("hi", _req(web_enabled=True))
-    assert body["tools"] == {"webfetch": True, "websearch": True}
+    assert body["tools"] == {
+        "webfetch": True, "websearch": True, "pdf_tools_read_pdf": True}
 
 
 def test_web_disabled_sends_explicit_false():
     # Off must be explicit — relying on the server default would let a toggle-off
     # skill keep web access if the launch config/agent enabled it.
     body = _backend()._build_message_body("hi", _req(web_enabled=False))
-    assert body["tools"] == {"webfetch": False, "websearch": False}
+    assert body["tools"] == {
+        "webfetch": False, "websearch": False, "pdf_tools_read_pdf": False}
 
 
 def test_default_request_has_web_off():
     body = _backend()._build_message_body("hi", LLMRequest(task=LLMTask.AD_HOC_CHAT))
-    assert body["tools"] == {"webfetch": False, "websearch": False}
+    assert body["tools"] == {
+        "webfetch": False, "websearch": False, "pdf_tools_read_pdf": False}
 
 
 def test_tools_override_does_not_disturb_model_override():
@@ -39,7 +42,8 @@ def test_tools_override_does_not_disturb_model_override():
         "hi", _req(web_enabled=True)
     )
     assert body["model"] == {"providerID": "openai", "modelID": "gpt-5.5"}
-    assert body["tools"] == {"webfetch": True, "websearch": True}
+    assert body["tools"] == {
+        "webfetch": True, "websearch": True, "pdf_tools_read_pdf": True}
     assert body["parts"] == [{"type": "text", "text": "hi"}]
 
 

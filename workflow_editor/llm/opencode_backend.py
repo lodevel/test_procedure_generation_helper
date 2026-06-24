@@ -787,6 +787,12 @@ class OpenCodeBackend(LLMBackend):
         body["tools"] = {
             "webfetch": request.web_enabled,
             "websearch": request.web_enabled,
+            # read_pdf (the pdf_tools MCP server) can fetch URLs, so it rides the
+            # same web gate. OpenCode namespaces a local-server tool as
+            # "<server>_<tool>" -> "pdf_tools_read_pdf"; VERIFY this exact key
+            # against a live model (Gemma retest) — if it differs, only this line
+            # changes (a wrong key is ignored, leaving read_pdf at its default).
+            "pdf_tools_read_pdf": request.web_enabled,
         }
         return body
 

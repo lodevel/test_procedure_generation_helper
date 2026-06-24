@@ -169,13 +169,15 @@ class MainWindow(QMainWindow):
         # Process CLI arguments to load project/test
         self._process_cli_arguments()
 
-        # Project is now loaded: point the (lazily-spawned) OpenCode
-        # server at the project dir so it loads that project's
-        # opencode.json (providers/model), not the home/global config.
+        # The editor OWNS its OpenCode config (the project's opencode.json
+        # is a relic): launch OpenCode from an editor-controlled dir, seeded
+        # ONCE from the current project's opencode.json.
         if self._server_manager is not None:
+            from .dialogs.settings_dialog import ensure_opencode_config
             _pr = getattr(self.project_manager, "project_root", None)
-            if _pr:
-                self._server_manager.config.working_directory = str(_pr)
+            _seed = (_pr / "opencode.json") if _pr else None
+            self._server_manager.config.working_directory = str(
+                ensure_opencode_config(seed_from=_seed))
     
     def _process_cli_arguments(self):
         """Process command-line arguments to load project and/or test."""

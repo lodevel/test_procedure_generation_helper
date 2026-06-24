@@ -6,6 +6,7 @@ Implements Section 12.2 of the spec with unified task management.
 
 import json
 import logging
+import shutil
 from pathlib import Path
 from typing import Optional
 from PySide6.QtWidgets import (
@@ -53,6 +54,37 @@ def save_settings(settings: dict):
     path = get_settings_path()
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(settings, f, indent=2)
+
+
+def get_opencode_config_dir() -> Path:
+    """The editor-OWNED OpenCode config directory (sibling of settings.json).
+
+    OpenCode is launched with this as its working dir so it loads THIS
+    ``opencode.json`` — never the open project's (which is a relic). One config,
+    tied to the editor, not per project.
+    """
+    d = get_settings_path().parent / "opencode"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def ensure_opencode_config(seed_from: Optional[Path] = None) -> Path:
+    """Return the editor's OpenCode config dir, seeding its ``opencode.json``
+    ONCE from ``seed_from`` (e.g. a project's opencode.json) if it doesn't exist
+    yet. After the one-time seed the editor owns the copy; the source is never
+    read again.
+    """
+    d = get_opencode_config_dir()
+    cfg = d / "opencode.json"
+    if not cfg.exists() and seed_from is not None:
+        try:
+            src = Path(seed_from)
+            if src.is_file():
+                shutil.copyfile(src, cfg)
+                log.info("Seeded editor OpenCode config from %s", src)
+        except Exception:
+            log.exception("Failed to seed editor OpenCode config")
+    return d
 
 
 
@@ -287,9 +319,11 @@ class SettingsDialog(QDialog):
                     server_port=self.opencode_port.value(),
                     server_hostname=self.opencode_host.text() or "127.0.0.1",
                     model=self._opencode_model_value() or None,
-                    # Test in the open project's dir so OpenCode loads its
-                    # opencode.json (providers/model), matching real chat.
-                    working_directory=str(self._project_root) if self._project_root else None,
+                    # Test against the EDITOR-owned OpenCode config (seeded once
+                    # from the project), matching how real chat launches it.
+                    working_directory=str(ensure_opencode_config(
+                        seed_from=(self._project_root / "opencode.json")
+                        if self._project_root else None)),
                 )
                 backend_obj = OpenCodeBackend(config=config)
                 

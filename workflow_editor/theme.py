@@ -60,6 +60,14 @@ def apply_app_theme(
     if app is None:
         return theme_id
 
+    if theme_id in (PRIDE_THEME_ID, PRIDE_DARK_THEME_ID):
+        dark = theme_id == PRIDE_DARK_THEME_ID
+        _remember_original_palette(app)
+        app.setPalette(_pride_dark_palette() if dark else _pride_light_palette())
+        app.setStyleSheet(_pride_app_stylesheet(dark))
+        _THEME_ACTIVE = True
+        return theme_id
+
     if modern_workspace:
         # Modern workspace is an app-wide Fluent / Windows-11 design
         # language that reaches every window and dialog (set on the
@@ -70,14 +78,6 @@ def apply_app_theme(
             _neutral_dark_palette() if dark else _modern_light_palette()
         )
         app.setStyleSheet(_fluent_app_stylesheet(dark))
-        _THEME_ACTIVE = True
-        return theme_id
-
-    if theme_id in (PRIDE_THEME_ID, PRIDE_DARK_THEME_ID):
-        dark = theme_id == PRIDE_DARK_THEME_ID
-        _remember_original_palette(app)
-        app.setPalette(_pride_dark_palette() if dark else _pride_light_palette())
-        app.setStyleSheet(_pride_app_stylesheet(dark))
         _THEME_ACTIVE = True
         return theme_id
 

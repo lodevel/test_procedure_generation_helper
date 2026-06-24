@@ -15,11 +15,15 @@ from PySide6.QtWidgets import QApplication
 ORIGINAL_THEME_ID = "original"
 NEUTRAL_DARK_THEME_ID = "dark"
 MODERN_DARK_THEME_ID = "modern_dark"
+PRIDE_THEME_ID = "pride"
+PRIDE_DARK_THEME_ID = "pride_dark"
 
 _THEME_LABELS: dict[str, str] = {
     ORIGINAL_THEME_ID: "Original / system",
     NEUTRAL_DARK_THEME_ID: "Neutral dark",
     MODERN_DARK_THEME_ID: "Modern dark",
+    PRIDE_THEME_ID: "🏳️‍🌈 Pride (light)",
+    PRIDE_DARK_THEME_ID: "🏳️‍🌈 Pride (dark)",
 }
 
 _ORIGINAL_PALETTE: QPalette | None = None
@@ -66,6 +70,14 @@ def apply_app_theme(
             _neutral_dark_palette() if dark else _modern_light_palette()
         )
         app.setStyleSheet(_fluent_app_stylesheet(dark))
+        _THEME_ACTIVE = True
+        return theme_id
+
+    if theme_id in (PRIDE_THEME_ID, PRIDE_DARK_THEME_ID):
+        dark = theme_id == PRIDE_DARK_THEME_ID
+        _remember_original_palette(app)
+        app.setPalette(_pride_dark_palette() if dark else _pride_light_palette())
+        app.setStyleSheet(_pride_app_stylesheet(dark))
         _THEME_ACTIVE = True
         return theme_id
 
@@ -2579,3 +2591,130 @@ def status_modified() -> str:
 def status_saved() -> str:
     """CSS colour for saved/clean content indicator."""
     return success_color()
+
+# ── Pride theme (LGBTQIA+) ───────────────────────────
+# Palette mirrors the existing builders; only the colours differ.
+# The app stylesheet reuses the Fluent QSS and appends a pride override
+# block (later QSS rules win), so all base widget coverage is retained.
+
+
+def _pride_light_palette() -> QPalette:
+    """Build the light Pride palette (mirrors _modern_light_palette)."""
+    palette = QPalette()
+    window = QColor("#F4EEF7")
+    base = QColor("#FFFFFF")
+    alt_base = QColor("#F6F0FA")
+    text = QColor("#1F2937")
+    muted = QColor("#6A5A78")
+    disabled = QColor("#9A8FA6")
+    accent = QColor("#7048E8")
+    border = QColor("#D9C9E6")
+    palette.setColor(QPalette.ColorRole.Window, window)
+    palette.setColor(QPalette.ColorRole.WindowText, text)
+    palette.setColor(QPalette.ColorRole.Base, base)
+    palette.setColor(QPalette.ColorRole.AlternateBase, alt_base)
+    palette.setColor(QPalette.ColorRole.ToolTipBase, base)
+    palette.setColor(QPalette.ColorRole.ToolTipText, text)
+    palette.setColor(QPalette.ColorRole.Text, text)
+    palette.setColor(QPalette.ColorRole.Button, QColor("#F2EAF8"))
+    palette.setColor(QPalette.ColorRole.ButtonText, text)
+    palette.setColor(QPalette.ColorRole.BrightText, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.Light, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.Midlight, alt_base)
+    palette.setColor(QPalette.ColorRole.Mid, border)
+    palette.setColor(QPalette.ColorRole.Dark, QColor("#b9c3d4"))
+    palette.setColor(QPalette.ColorRole.Shadow, QColor("#aab4c2"))
+    palette.setColor(QPalette.ColorRole.Link, QColor("#3B5BDB"))
+    palette.setColor(QPalette.ColorRole.LinkVisited, accent)
+    palette.setColor(QPalette.ColorRole.Highlight, accent)
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#FFFFFF"))
+    palette.setColor(QPalette.ColorRole.PlaceholderText, muted)
+    for role in (
+        QPalette.ColorRole.WindowText,
+        QPalette.ColorRole.Text,
+        QPalette.ColorRole.ButtonText,
+    ):
+        palette.setColor(QPalette.ColorGroup.Disabled, role, disabled)
+    palette.setColor(
+        QPalette.ColorGroup.Disabled, QPalette.ColorRole.Highlight, QColor("#dbe2ec")
+    )
+    palette.setColor(
+        QPalette.ColorGroup.Disabled, QPalette.ColorRole.HighlightedText, disabled
+    )
+    return palette
+
+
+def _pride_dark_palette() -> QPalette:
+    """Build the dark Pride palette (mirrors _neutral_dark_palette)."""
+    palette = QPalette()
+    window = QColor("#1A1622")
+    panel = QColor("#20242C")
+    base = QColor("#1B1E24")
+    alt_base = QColor("#252B35")
+    text = QColor("#F1F5F9")
+    muted = QColor("#A99BBA")
+    disabled = QColor("#7A6E8A")
+    accent = QColor("#9775FA")
+    border = QColor("#465263")
+    palette.setColor(QPalette.ColorRole.Window, window)
+    palette.setColor(QPalette.ColorRole.WindowText, text)
+    palette.setColor(QPalette.ColorRole.Base, base)
+    palette.setColor(QPalette.ColorRole.AlternateBase, alt_base)
+    palette.setColor(QPalette.ColorRole.Light, QColor("#4a515e"))
+    palette.setColor(QPalette.ColorRole.Midlight, QColor("#3A4350"))
+    palette.setColor(QPalette.ColorRole.Dark, QColor("#151820"))
+    palette.setColor(QPalette.ColorRole.Mid, border)
+    palette.setColor(QPalette.ColorRole.Shadow, QColor("#0f1117"))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, panel)
+    palette.setColor(QPalette.ColorRole.ToolTipText, text)
+    palette.setColor(QPalette.ColorRole.Text, text)
+    palette.setColor(QPalette.ColorRole.Button, panel)
+    palette.setColor(QPalette.ColorRole.ButtonText, text)
+    palette.setColor(QPalette.ColorRole.BrightText, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.Link, QColor("#5C7CFA"))
+    palette.setColor(QPalette.ColorRole.LinkVisited, QColor("#B197FC"))
+    palette.setColor(QPalette.ColorRole.Highlight, accent)
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#0C0E14"))
+    palette.setColor(QPalette.ColorRole.PlaceholderText, muted)
+    for role in (
+        QPalette.ColorRole.WindowText,
+        QPalette.ColorRole.Text,
+        QPalette.ColorRole.ButtonText,
+    ):
+        palette.setColor(QPalette.ColorGroup.Disabled, role, disabled)
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Button, window)
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Highlight, QColor("#3a414c"))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.HighlightedText, disabled)
+    return palette
+
+
+_PRIDE_OVERRIDE_LIGHT = """
+QTabBar::tab:selected { background-color: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #e63946, stop:0.2 #f3722c, stop:0.4 #f9c74f, stop:0.6 #2a9d8f, stop:0.8 #3b5bdb, stop:1 #7048e8); color:#1f2937; font-weight:700; }
+QProgressBar { text-align:center; color:#1f2937; }
+QProgressBar::chunk { background-color: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #e63946, stop:0.2 #f3722c, stop:0.4 #f9c74f, stop:0.6 #2a9d8f, stop:0.8 #3b5bdb, stop:1 #7048e8); border-radius:5px; margin:1px; }
+QGroupBox::title { color:#7048e8; font-weight:700; }
+QPushButton:focus, QLineEdit:focus, QComboBox:focus, QComboBox:on, QSpinBox:focus, QDoubleSpinBox:focus, QPlainTextEdit:focus, QTextEdit:focus { border:1px solid #7048e8; border-bottom:2px solid #7048e8; }
+QPushButton#primaryRunButton { background-color: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 #c1304a, stop:0.25 #c75c2e, stop:0.5 #2a7f74, stop:0.75 #2f4fc0, stop:1 #5a37b8); border:1px solid #2f3aa0; border-radius:6px; padding:8px 18px; color:#ffffff; font-weight:700; }
+QPushButton#primaryRunButton:hover { border-color:#1f2f90; }
+QPushButton#primaryRunButton:pressed { background-color:#5a37b8; }
+"""
+
+
+_PRIDE_OVERRIDE_DARK = """
+QTabBar::tab:selected { background-color: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #ff6b6b, stop:0.2 #ffa94d, stop:0.4 #ffd43b, stop:0.6 #51cf66, stop:0.8 #5c7cfa, stop:1 #b197fc); color:#1b1e24; font-weight:700; }
+QProgressBar { text-align:center; color:#1b1e24; }
+QProgressBar::chunk { background-color: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #ff6b6b, stop:0.2 #ffa94d, stop:0.4 #ffd43b, stop:0.6 #51cf66, stop:0.8 #5c7cfa, stop:1 #b197fc); border-radius:5px; margin:1px; }
+QGroupBox::title { color:#b197fc; font-weight:700; }
+QPushButton:focus, QLineEdit:focus, QComboBox:focus, QComboBox:on, QSpinBox:focus, QDoubleSpinBox:focus, QPlainTextEdit:focus, QTextEdit:focus { border:1px solid #9775fa; border-bottom:2px solid #9775fa; }
+QPushButton#primaryRunButton { background-color: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 #c1304a, stop:0.25 #c75c2e, stop:0.5 #2a7f74, stop:0.75 #2f4fc0, stop:1 #5a37b8); border:1px solid #2f3aa0; border-radius:6px; padding:8px 18px; color:#ffffff; font-weight:700; }
+QPushButton#primaryRunButton:hover { border-color:#1f2f90; }
+QPushButton#primaryRunButton:pressed { background-color:#5a37b8; }
+"""
+
+
+def _pride_app_stylesheet(dark: bool) -> str:
+    """Return the Fluent QSS for this mode plus the pride override block."""
+    base = _FLUENT_APP_QSS_DARK if dark else _FLUENT_APP_QSS_LIGHT
+    override = _PRIDE_OVERRIDE_DARK if dark else _PRIDE_OVERRIDE_LIGHT
+    return base + override
+

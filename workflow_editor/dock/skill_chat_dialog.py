@@ -411,12 +411,15 @@ class SkillChatDialog(QDialog):
         self._update_context_label(response)
 
     def _update_context_label(self, response) -> None:
-        """Show the LATEST turn's input tokens as the current context size. For a
-        stateless skill chat this IS the live context; it tracks compaction (a
-        running sum would over-count after a compact). Falls back to total_tokens
-        when the backend doesn't split input/output."""
-        used = (getattr(response, "prompt_tokens", 0)
-                or getattr(response, "total_tokens", 0) or 0)
+        """Show the LATEST turn's TOTAL tokens (input + output) as the current
+        context size. Output counts too: the reply joins the transcript and is
+        re-sent as input next turn, so total = system + context + the whole
+        transcript INCLUDING this reply. For a stateless skill chat this IS the
+        live context, and it tracks compaction (a running sum would over-count
+        after a compact)."""
+        used = (getattr(response, "total_tokens", 0)
+                or (getattr(response, "prompt_tokens", 0)
+                    + getattr(response, "completion_tokens", 0)) or 0)
         if not used:
             return
         limit = self._context_limit or 16384

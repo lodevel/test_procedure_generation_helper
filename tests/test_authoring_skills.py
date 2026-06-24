@@ -93,13 +93,13 @@ def test_find_skill_file_accepts_both_casings(tmp_path):
 
 def test_load_skill_populates_fields(tmp_path):
     folder = _make_skill(tmp_path / "dcdc_bringup")
-    skill = load_skill(folder, SkillSource.USER)
+    skill = load_skill(folder, SkillSource.LOCAL)
     assert skill.skill_id == "dcdc_bringup"          # identity = folder name
     assert skill.title == "DCDC bring-up test"        # display = frontmatter name
     assert skill.target == "dcdc"
     assert skill.version == "0.1.0"
     assert skill.kind == "authoring"
-    assert skill.source is SkillSource.USER
+    assert skill.source is SkillSource.LOCAL
     assert skill.system_prompt.startswith("You author")
     assert skill.has_tools is False
 
@@ -107,7 +107,7 @@ def test_load_skill_populates_fields(tmp_path):
 def test_load_skill_title_falls_back_to_folder_name(tmp_path):
     body = "---\nkind: authoring\n---\nbody text here"
     folder = _make_skill(tmp_path / "no_name", body=body)
-    skill = load_skill(folder, SkillSource.USER)
+    skill = load_skill(folder, SkillSource.LOCAL)
     assert skill.title == "no_name"
 
 
@@ -122,13 +122,13 @@ def test_load_skill_missing_file_raises(tmp_path):
     empty = tmp_path / "empty"
     empty.mkdir()
     with pytest.raises(SkillLoadError):
-        load_skill(empty, SkillSource.USER)
+        load_skill(empty, SkillSource.LOCAL)
 
 
 def test_load_skill_empty_body_raises(tmp_path):
     folder = _make_skill(tmp_path / "blank", body="---\nkind: authoring\n---\n   \n")
     with pytest.raises(SkillLoadError):
-        load_skill(folder, SkillSource.USER)
+        load_skill(folder, SkillSource.LOCAL)
 
 
 # --------------------------------------------------------------------------- #
@@ -139,7 +139,7 @@ def test_discover_finds_and_sorts_by_title(tmp_path):
     root = tmp_path / "user"
     _make_skill(root / "zebra", body="---\nname: Zebra skill\n---\nbody")
     _make_skill(root / "alpha", body="---\nname: Alpha skill\n---\nbody")
-    skills = discover_skills([(root, SkillSource.USER)])
+    skills = discover_skills([(root, SkillSource.LOCAL)])
     assert [s.title for s in skills] == ["Alpha skill", "Zebra skill"]
 
 
@@ -173,7 +173,7 @@ def test_discover_skips_broken_folder_without_raising(tmp_path):
     _make_skill(root / "good", body="---\nname: Good\n---\nbody")
     # malformed frontmatter — must be skipped, not fatal.
     _make_skill(root / "bad", body="---\nname: [unclosed\n---\nbody")
-    skills = discover_skills([(root, SkillSource.USER)])
+    skills = discover_skills([(root, SkillSource.LOCAL)])
     assert [s.title for s in skills] == ["Good"]
 
 
@@ -182,7 +182,7 @@ def test_discover_ignores_non_skill_folders(tmp_path):
     _make_skill(root / "real", body="---\nname: Real\n---\nbody")
     (root / "not_a_skill").mkdir()
     (root / "not_a_skill" / "readme.txt").write_text("nope", encoding="utf-8")
-    skills = discover_skills([(root, SkillSource.USER)])
+    skills = discover_skills([(root, SkillSource.LOCAL)])
     assert [s.title for s in skills] == ["Real"]
 
 
@@ -198,7 +198,7 @@ def test_discover_logs_same_source_duplicate(tmp_path, caplog):
     other = tmp_path / "user2"
     _make_skill(other / "dup", body="---\nname: Second\n---\nbody")
     with caplog.at_level("WARNING"):
-        skills = discover_skills([(root, SkillSource.USER), (other, SkillSource.USER)])
+        skills = discover_skills([(root, SkillSource.LOCAL), (other, SkillSource.LOCAL)])
     assert len(skills) == 1                      # first seen kept
     assert skills[0].title == "First"
     assert any("duplicate skill_id" in r.message for r in caplog.records)
@@ -216,7 +216,7 @@ def test_load_skill_handles_utf8_bom(tmp_path):
     (folder / "SKILL.md").write_bytes(
         b"\xef\xbb\xbf---\nname: BOM skill\n---\nbody text"
     )
-    skill = load_skill(folder, SkillSource.USER)
+    skill = load_skill(folder, SkillSource.LOCAL)
     assert skill.title == "BOM skill"
     assert skill.system_prompt == "body text"
 
@@ -227,7 +227,7 @@ def test_load_skill_handles_crlf(tmp_path):
     (folder / "SKILL.md").write_bytes(
         b"---\r\nname: CRLF skill\r\ntarget: dcdc\r\n---\r\nline one\r\nline two\r\n"
     )
-    skill = load_skill(folder, SkillSource.USER)
+    skill = load_skill(folder, SkillSource.LOCAL)
     assert skill.title == "CRLF skill"
     assert skill.target == "dcdc"
     assert "line one" in skill.system_prompt and "\r" not in skill.system_prompt
@@ -236,6 +236,6 @@ def test_load_skill_handles_crlf(tmp_path):
 def test_load_skill_empty_frontmatter_block(tmp_path):
     # "---\n\n---\n" → yaml.safe_load returns None → guarded to {}.
     folder = _make_skill(tmp_path / "emptyfm", body="---\n\n---\nplain body")
-    skill = load_skill(folder, SkillSource.USER)
+    skill = load_skill(folder, SkillSource.LOCAL)
     assert skill.title == "emptyfm"          # falls back to folder name
     assert skill.system_prompt == "plain body"

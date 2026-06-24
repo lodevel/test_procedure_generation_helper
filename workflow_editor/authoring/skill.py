@@ -21,7 +21,7 @@ class SkillSource(IntEnum):
     overrides bundled, mirroring the pack drop-in-overrides-bundled rule."""
 
     BUNDLED = 1  # <project>/bundle/authoring_skills — shipped with a pack
-    USER = 2     # <app-data>/authoring_skills — user drop-in, all projects
+    LOCAL = 2    # <repo>/local_packages/authoring_skills — drop-in, all projects
     PROJECT = 3  # <project>/authoring_skills — this project only
 
 

@@ -1,10 +1,10 @@
 """Resolve the directories skills are discovered from — the three location
-tiers (bundled / user / project).
+tiers (bundled / local / project).
 
-Thin wiring over :func:`get_app_data_dir` (the app's single source for the
-per-user config dir — not re-derived here). The discovery LOGIC lives in
-:mod:`.registry` and takes roots explicitly, so it stays testable without any
-of these app/project paths.
+Thin wiring over the repo-root path helpers in ``project_services`` (the single
+source for those dirs — not re-derived here). The discovery LOGIC lives in
+:mod:`.registry` and takes roots explicitly, so it stays testable without any of
+these app/project paths.
 """
 from __future__ import annotations
 
@@ -19,17 +19,19 @@ log = logging.getLogger(__name__)
 _SKILLS_SUBDIR = "authoring_skills"
 
 
-def user_skills_dir() -> Optional[Path]:
-    """Per-user drop-in dir (all projects): ``<app-data>/authoring_skills``.
+def local_skills_dir() -> Optional[Path]:
+    """Install-wide drop-in dir (all projects): the existing ``local_packages``
+    folder, under an identifying ``authoring_skills/`` subfolder — the same
+    place local pack sources are dropped.
 
-    Returns None when the app-data dir can't be resolved (e.g. the editor run
-    standalone without ``project_services`` on the path)."""
+    Returns None when ``project_services`` can't be imported (e.g. the editor
+    run fully standalone)."""
     try:
-        from project_services.app_settings import get_app_data_dir
+        from project_services.config_manager import get_local_packages_dir
     except Exception:
-        log.debug("project_services.app_settings unavailable; no user skills dir")
+        log.debug("project_services.config_manager unavailable; no local skills dir")
         return None
-    return get_app_data_dir() / _SKILLS_SUBDIR
+    return get_local_packages_dir() / _SKILLS_SUBDIR
 
 
 def project_skills_dir(project_root: Optional[Path]) -> Optional[Path]:
@@ -53,7 +55,7 @@ def skill_roots(
     precedence — the registry resolves that by :class:`SkillSource`."""
     candidates = [
         (bundled_skills_dir(project_root), SkillSource.BUNDLED),
-        (user_skills_dir(), SkillSource.USER),
+        (local_skills_dir(), SkillSource.LOCAL),
         (project_skills_dir(project_root), SkillSource.PROJECT),
     ]
     return [(d, src) for d, src in candidates if d is not None and d.is_dir()]

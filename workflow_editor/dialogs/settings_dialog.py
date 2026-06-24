@@ -6,7 +6,6 @@ Implements Section 12.2 of the spec with unified task management.
 
 import json
 import logging
-import shutil
 from pathlib import Path
 from typing import Optional
 from PySide6.QtWidgets import (
@@ -69,21 +68,31 @@ def get_opencode_config_dir() -> Path:
 
 
 def ensure_opencode_config(seed_from: Optional[Path] = None) -> Path:
-    """Return the editor's OpenCode config dir, seeding its ``opencode.json``
-    ONCE from ``seed_from`` (e.g. a project's opencode.json) if it doesn't exist
-    yet. After the one-time seed the editor owns the copy; the source is never
-    read again.
+    """GENERATE the editor's own ``opencode.json`` (in its dir) from the current
+    project's opencode.json (``seed_from``): keep its PROVIDERS but strip the
+    default ``model``/``small_model`` so OpenCode AUTO-PICKS a supported model
+    (the Default that works without VPN, and that a Codex/ChatGPT account
+    accepts). A specific model stays SELECTABLE via the Settings picker
+    (per-request override). REGENERATED on each project load so it tracks the
+    current project's providers — the editor owns this copy and launches
+    OpenCode from this dir, never the project (which is a relic). With no
+    source, the dir's config is left as-is → OpenCode falls back to the global
+    config.
     """
     d = get_opencode_config_dir()
     cfg = d / "opencode.json"
-    if not cfg.exists() and seed_from is not None:
+    if seed_from is not None:
         try:
             src = Path(seed_from)
             if src.is_file():
-                shutil.copyfile(src, cfg)
-                log.info("Seeded editor OpenCode config from %s", src)
+                data = json.loads(src.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    data.pop("model", None)
+                    data.pop("small_model", None)
+                    cfg.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                    log.info("Generated editor OpenCode config from %s", src)
         except Exception:
-            log.exception("Failed to seed editor OpenCode config")
+            log.exception("Failed to generate editor OpenCode config")
     return d
 
 
@@ -215,11 +224,17 @@ class SettingsDialog(QDialog):
         opencode_layout.addRow("Host:", self.opencode_host)
         
         self.opencode_model = QComboBox()
+        self.opencode_model.setEditable(True)
+        self.opencode_model.setInsertPolicy(QComboBox.NoInsert)
+        self.opencode_model.lineEdit().setPlaceholderText(
+            "Default — leave empty for OpenCode to auto-pick")
         self.opencode_model.setToolTip(
-            "Which model OpenCode uses. 'Default — use opencode.json' sends no "
-            "override, so the server uses its own configured model. The other "
-            "entries are the models the running server reports (provider/model); "
-            "picking one overrides it per request.")
+            "Model OpenCode uses (providerID/modelID). Leave EMPTY for the "
+            "reliable default — OpenCode auto-picks a model your account "
+            "supports. The dropdown lists the server's configured models for "
+            "convenience, but you can TYPE any valid id (e.g. openai/gpt-5.5); "
+            "the list isn't exhaustive and some listed ids may be rejected by "
+            "your account.")
         self.opencode_model_refresh = QPushButton("Refresh")
         self.opencode_model_refresh.setToolTip(
             "Re-query the running OpenCode server for the models configured in "
@@ -270,36 +285,34 @@ class SettingsDialog(QDialog):
             self._populate_opencode_models()
 
     def _opencode_model_value(self) -> str:
-        """The selected 'provider/model' override, or '' for Default."""
-        return self.opencode_model.currentData() or ""
+        """The model id the user typed/selected, or '' for Default (no override
+        -> OpenCode auto-picks a supported model)."""
+        return self.opencode_model.currentText().strip()
 
     def _populate_opencode_models(self):
-        """Fill the OpenCode model dropdown from the running server's /config.
-
-        Preserves the current/saved selection even when the server is down
-        (kept as a '(saved)' entry) so saving never silently drops it.
+        """Fill the editable model field's dropdown from the running server's
+        /config — a convenience list to pick/copy from. The user may also TYPE a
+        model id NOT in the list (e.g. openai/gpt-5.5, which OpenCode auto-picks
+        but doesn't report in /config). Empty = Default (auto-pick). The current
+        text is preserved across a refresh.
         """
-        if self.opencode_model.count():
-            preserve = self.opencode_model.currentData() or ""
-        else:
+        if self.opencode_model.count() == 0:
             preserve = self._settings.get("opencode", {}).get("model", "") or ""
+        else:
+            preserve = self.opencode_model.currentText().strip()
         url = (f"http://{self.opencode_host.text() or '127.0.0.1'}"
                f":{self.opencode_port.value()}")
         models = fetch_opencode_models(url)
         self.opencode_model.blockSignals(True)
         self.opencode_model.clear()
-        self.opencode_model.addItem("Default — use opencode.json", "")
-        for m in models:
-            self.opencode_model.addItem(m, m)
-        if preserve and preserve not in models:
-            self.opencode_model.addItem(f"{preserve}  (saved)", preserve)
-        idx = self.opencode_model.findData(preserve)
-        self.opencode_model.setCurrentIndex(idx if idx >= 0 else 0)
+        self.opencode_model.addItems(models)        # convenience list
+        self.opencode_model.setEditText(preserve)   # keep typed text (empty=Default)
         self.opencode_model.blockSignals(False)
         self.opencode_models_note.setText(
-            f"{len(models)} model(s) from the running server" if models
-            else "Server not reachable — showing the saved value. "
-                 "Start OpenCode, then Refresh.")
+            "Pick/copy from the list, TYPE any id (e.g. openai/gpt-5.5), or "
+            "leave empty for auto-pick." if models
+            else "Server not reachable — type a model id or leave empty for "
+                 "auto-pick.")
 
     def _on_test_connection(self):
         """Test the LLM backend configuration."""
@@ -319,88 +332,84 @@ class SettingsDialog(QDialog):
                     server_port=self.opencode_port.value(),
                     server_hostname=self.opencode_host.text() or "127.0.0.1",
                     model=self._opencode_model_value() or None,
-                    # Test against the EDITOR-owned OpenCode config (seeded once
+                    # Test against the EDITOR-owned OpenCode config (generated
                     # from the project), matching how real chat launches it.
                     working_directory=str(ensure_opencode_config(
                         seed_from=(self._project_root / "opencode.json")
                         if self._project_root else None)),
                 )
                 backend_obj = OpenCodeBackend(config=config)
-                
-                # Check availability first
-                if not backend_obj.is_available():
-                    QMessageBox.warning(
-                        self, "Test Connection",
-                        f"✗ OpenCode backend is not available\n\nHost: {config.server_hostname}\nPort: {config.server_port}\n\nMake sure OpenCode is running."
-                    )
+
+                # Classified availability check — a precise reason (e.g.
+                # "OpenCode was not found in the WSL PATH. Install it
+                # (npm i -g opencode-ai)...") instead of a vague "not available".
+                from ..llm.server_manager import OpenCodeServerManager
+                mgr = OpenCodeServerManager(config)
+                if not mgr.is_available():
+                    status = mgr.last_status
+                    reason = status.message if status else "OpenCode is not available."
+                    QMessageBox.warning(self, "Test Connection", f"✗ {reason}")
                     return
                 
-                # If model is specified, test it with a minimal request
-                if config.model:
-                    # Try to start backend if not running
-                    if not backend_obj.is_running:
-                        if not backend_obj.start():
-                            QMessageBox.warning(
-                                self, "Test Connection",
-                                f"✗ Could not start OpenCode backend\n\nHost: {config.server_hostname}\nPort: {config.server_port}"
-                            )
-                            return
-                    
-                    try:
-                        # Make a minimal test request
-                        test_request = LLMRequest(
-                            task=LLMTask.AD_HOC_CHAT,
-                            strict_mode=False,
-                            user_message="Respond with just 'OK'",
+                # Always run a real end-to-end chat test (Default = auto-pick
+                # included), so the button truly validates the model, not just
+                # that OpenCode is installed.
+                model_label = config.model or "auto-pick (Default)"
+                if not backend_obj.is_running:
+                    if not backend_obj.start():
+                        st = mgr.last_status
+                        why = f"\n\n{st.message}" if st and not st.ok else ""
+                        QMessageBox.warning(
+                            self, "Test Connection",
+                            f"✗ Could not start OpenCode\n\nHost: {config.server_hostname}\nPort: {config.server_port}{why}"
                         )
-                        
-                        # Send request with timeout handling
-                        import threading
-                        result = {"response": None, "error": None}
-                        
-                        def test_send():
-                            try:
-                                result["response"] = backend_obj.send_request(test_request)
-                            except Exception as e:
-                                result["error"] = str(e)
-                        
-                        thread = threading.Thread(target=test_send)
-                        thread.start()
-                        thread.join(timeout=15)
-                        
-                        if thread.is_alive():
-                            result["error"] = "Request timed out after 15 seconds"
-                        
-                        # Clean up
-                        if backend_obj.is_running:
-                            backend_obj.stop()
-                        
-                        if result["error"]:
-                            QMessageBox.warning(
-                                self, "Test Connection",
-                                f"✗ Model test failed\n\nHost: {config.server_hostname}\nPort: {config.server_port}\nModel: {config.model}\n\nError: {result['error']}\n\nThe model may not exist or be unavailable."
-                            )
-                        elif result["response"] and result["response"].error_message:
-                            QMessageBox.warning(
-                                self, "Test Connection",
-                                f"✗ Model test failed\n\nHost: {config.server_hostname}\nPort: {config.server_port}\nModel: {config.model}\n\nError: {result['response'].error_message}\n\nThe model may not exist or be unavailable."
-                            )
-                        else:
-                            QMessageBox.information(
-                                self, "Test Connection",
-                                f"✓ OpenCode backend and model are working\n\nHost: {config.server_hostname}\nPort: {config.server_port}\nModel: {config.model}"
-                            )
-                    except Exception as e:
-                        # Clean up on error
-                        if backend_obj.is_running:
-                            backend_obj.stop()
-                        raise
-                else:
-                    # No model specified, just confirm availability
-                    QMessageBox.information(
-                        self, "Test Connection",
-                        f"✓ OpenCode backend is available\n\nHost: {config.server_hostname}\nPort: {config.server_port}\n\nNo model specified - will use OpenCode's default."
+                        return
+                try:
+                    test_request = LLMRequest(
+                        task=LLMTask.AD_HOC_CHAT,
+                        strict_mode=False,
+                        user_message="Respond with just 'OK'",
                     )
+                    import threading
+                    result = {"response": None, "error": None}
+
+                    def test_send():
+                        try:
+                            result["response"] = backend_obj.send_request(test_request)
+                        except Exception as e:
+                            result["error"] = str(e)
+
+                    thread = threading.Thread(target=test_send)
+                    thread.start()
+                    thread.join(timeout=30)
+                    if thread.is_alive():
+                        result["error"] = "Request timed out after 30 seconds"
+
+                    if backend_obj.is_running:
+                        backend_obj.stop()
+
+                    hint = ("\n\nIf you picked a specific model, your account "
+                            "may not support it — try leaving Model empty "
+                            "(auto-pick).")
+                    if result["error"]:
+                        QMessageBox.warning(
+                            self, "Test Connection",
+                            f"✗ Chat test failed\n\nModel: {model_label}\n\nError: {result['error']}{hint}"
+                        )
+                    elif result["response"] and result["response"].error_message:
+                        QMessageBox.warning(
+                            self, "Test Connection",
+                            f"✗ Chat test failed\n\nModel: {model_label}\n\nError: {result['response'].error_message}{hint}"
+                        )
+                    else:
+                        QMessageBox.information(
+                            self, "Test Connection",
+                            f"✓ OpenCode is working\n\nHost: {config.server_hostname}\nPort: {config.server_port}\nModel: {model_label}"
+                        )
+                except Exception:
+                    if backend_obj.is_running:
+                        backend_obj.stop()
+                    raise
             
         except Exception as e:
             QMessageBox.critical(

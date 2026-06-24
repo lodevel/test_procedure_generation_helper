@@ -387,13 +387,15 @@ class OpenCodeBackend(LLMBackend):
             body = {
                 "parts": [{"type": "text", "text": prompt}],
             }
+            # Optional per-request model override (blank = OpenCode auto-picks a
+            # supported model from its launch config — the reliable default).
             if self.config.model and "/" in self.config.model:
                 provider, model = self.config.model.split("/", 1)
                 body["model"] = {
                     "providerID": provider,
                     "modelID": model,
                 }
-            
+
             session_id = self._session_id
             
             # 1. Open SSE connection FIRST (so we don't miss early events)
@@ -763,14 +765,15 @@ class OpenCodeBackend(LLMBackend):
                 "parts": [{"type": "text", "text": prompt}],
             }
             
-            # Add model override if configured
+            # Optional per-request model override (blank = OpenCode auto-picks a
+            # supported model from its launch config — the reliable default).
             if self.config.model and "/" in self.config.model:
                 provider, model = self.config.model.split("/", 1)
                 body["model"] = {
                     "providerID": provider,
                     "modelID": model,
                 }
-            
+
             # Send request
             response = requests.post(
                 f"{self.config.server_url}/session/{self._session_id}/message",

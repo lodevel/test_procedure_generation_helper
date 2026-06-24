@@ -4,6 +4,7 @@ OpenCode Backend - LLM backend using WSL OpenCode CLI.
 Uses a persistent OpenCode server for faster responses.
 """
 
+import os
 import subprocess
 import threading
 import time
@@ -18,6 +19,19 @@ from dataclasses import dataclass
 from .backend_base import LLMBackend, LLMRequest, LLMResponse, LLMTask
 
 log = logging.getLogger(__name__)
+
+
+def safe_wsl_cwd() -> str:
+    """A Windows directory wsl.exe can always translate to a WSL path (the
+    system drive root, mounted at /mnt/c).
+
+    Used as the cwd for every wsl.exe call: if the editor was launched from a
+    non-translatable drive (e.g. an ``L:\\`` mapped/network drive), wsl.exe
+    inherits that cwd and fails — "wsl: Failed to translate 'L:\\...'" — which
+    degrades the shell so even an installed `opencode` reports "command not
+    found". Anchoring the cwd to the system drive avoids that.
+    """
+    return os.environ.get("SystemDrive", "C:") + "\\"
 
 
 @dataclass
@@ -116,25 +130,27 @@ class OpenCodeBackend(LLMBackend):
         
         # If no server running, check if we can start one
         try:
-            # Check WSL is available
+            # Check WSL is available (cwd anchored to a translatable drive)
             result = subprocess.run(
                 [self.config.wsl_path, "--version"],
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=5,
+                cwd=safe_wsl_cwd(),
             )
             if result.returncode != 0:
                 log.warning(f"WSL not available: {result.stderr}")
                 return False
-            
+
             log.debug("WSL is available")
-            
+
             # Check OpenCode is installed in WSL
             # Use bash -lc to load user profile/PATH
             result = subprocess.run(
                 [self.config.wsl_path, "bash", "-lc", "opencode --version"],
                 capture_output=True,
                 text=True,
+                cwd=safe_wsl_cwd(),
                 timeout=5
             )
             available = result.returncode == 0
@@ -173,7 +189,7 @@ class OpenCodeBackend(LLMBackend):
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
-                    cwd=self.config.working_directory or None,
+                    cwd=self.config.working_directory or safe_wsl_cwd(),
                 )
                 log.debug(f"Server process started, PID: {self._server_process.pid}")
                 
@@ -881,12 +897,13 @@ class OpenCodeBackend(LLMBackend):
                 if self.config.model:
                     cmd.extend(["-m", self.config.model])
                 
-                # Run command
+                # Run command (cwd anchored to a translatable drive)
                 result = subprocess.run(
                     cmd,
                     capture_output=True,
                     text=True,
                     timeout=self.config.request_timeout,
+                    cwd=safe_wsl_cwd(),
                 )
                 
                 if result.returncode != 0:

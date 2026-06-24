@@ -14,7 +14,7 @@ from typing import Optional
 
 import requests
 
-from .opencode_backend import OpenCodeConfig
+from .opencode_backend import OpenCodeConfig, safe_wsl_cwd
 from .server_health import (
     ServerError,
     ServerStatus,
@@ -201,10 +201,11 @@ class OpenCodeServerManager:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.PIPE,
                     text=True,
-                    # Spawn in the open project's dir (a Windows path; wsl.exe
-                    # translates it) so OpenCode loads that project's
-                    # opencode.json — its providers/model. None -> inherited cwd.
-                    cwd=self._config.working_directory or None,
+                    # Launch from the editor master-config dir (a translatable
+                    # Windows path) so OpenCode loads the editor's opencode.json.
+                    # Fall back to the system drive — NEVER the inherited cwd,
+                    # which may be a non-translatable drive (e.g. L:).
+                    cwd=self._config.working_directory or safe_wsl_cwd(),
                 )
                 self._start_stderr_drain()
                 log.debug(f"Server process started, PID: {self._server_process.pid}")
@@ -338,6 +339,7 @@ class OpenCodeServerManager:
             result = subprocess.run(
                 [self._config.wsl_path, "--version"],
                 capture_output=True, text=True, timeout=5,
+                cwd=safe_wsl_cwd(),
             )
             wsl_ok = result.returncode == 0
             if not wsl_ok:
@@ -351,6 +353,7 @@ class OpenCodeServerManager:
                 result = subprocess.run(
                     [self._config.wsl_path, "bash", "-lc", "opencode --version"],
                     capture_output=True, text=True, timeout=5,
+                    cwd=safe_wsl_cwd(),
                 )
                 opencode_ok = result.returncode == 0
                 if not opencode_ok:

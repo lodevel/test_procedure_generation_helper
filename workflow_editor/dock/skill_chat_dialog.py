@@ -30,6 +30,7 @@ the stateless external API that is already correct.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Callable, Optional
 
 from PySide6.QtCore import Qt, QEvent
@@ -189,6 +190,12 @@ class SkillChatDialog(QDialog):
         self._trash_btn = self._icon_button(
             "🗑️", "Clear the conversation and start over", self._on_trash)
         btn_row.addWidget(self._trash_btn)
+
+        # Stays enabled even while busy — the point is to recover a HUNG send.
+        self._restart_btn = self._icon_button(
+            "🔄", "Restart the backend server (recover a hung / unresponsive "
+            "backend without relaunching the editor)", self._on_restart_backend)
+        btn_row.addWidget(self._restart_btn)
 
         btn_row.addStretch()
 
@@ -393,6 +400,36 @@ class SkillChatDialog(QDialog):
         self._transcript.clear()
         self._status.setText("")
         self._set_busy(False)  # fresh session → Run re-enabled, controls live
+
+    def _on_restart_backend(self) -> None:
+        """Stop + start the shared OpenCode server to recover from a hung or
+        unresponsive backend — without relaunching the whole editor (the only
+        recovery before). The trash icon resets the chat SESSION only, which
+        can't fix a wedged server. Runs off the UI thread (the WSL spawn takes a
+        few seconds); the next send re-creates the backend with a fresh session
+        against the new server."""
+        sm = getattr(self._backend_factory, "server_manager", None)
+        if sm is None:
+            self._status.setText("This backend has no restartable server.")
+            return
+        # Cancel any in-flight (possibly hung) request and drop the cached
+        # backend so the next send reconnects to the fresh server.
+        if self._worker is not None:
+            self._worker.cancel()
+        self._teardown_worker()
+        self._set_busy(False)
+        self._backend = None
+        self._status.setText("Restarting backend…")
+
+        def _restart() -> None:
+            try:
+                sm.stop()
+                sm.start()
+            except Exception:
+                log.exception("backend restart failed")
+
+        threading.Thread(target=_restart, daemon=True).start()
+        self._status.setText("Backend restarting — send again in a moment.")
 
     # -- insert ---------------------------------------------------------------
 

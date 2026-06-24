@@ -187,8 +187,12 @@ class OpenCodeServerManager:
                 self._config.server_port = port
 
                 # bash -lc loads the user's PATH so `opencode` resolves.
+                # `cd ~` first: wsl.exe otherwise inherits the editor's (project)
+                # working directory, so OpenCode would bootstrap THERE and pick
+                # up a stray project opencode.json. Run from home so it resolves
+                # the editor-level / global config instead.
                 opencode_cmd = (
-                    f"opencode serve --port {port} "
+                    f"cd ~ && opencode serve --port {port} "
                     f"--hostname {self._config.server_hostname}"
                 )
                 cmd = [self._config.wsl_path, "bash", "-lc", opencode_cmd]

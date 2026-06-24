@@ -1,0 +1,81 @@
+"""End-to-end: a pack that ships authoring_skills/ gets bundled, then the skill
+is discovered in a project via the BUNDLED tier.
+
+Crosses the two repos: project_services.bundle_generator (build-side copy) +
+workflow_editor.authoring (consumer-side discovery). Pure tmp_path — no real
+build, no Qt.
+"""
+import json
+
+from project_services.bundle_generator import copy_pack_skills, enabled_pack_roots
+from workflow_editor.authoring import SkillSource, load_skills
+
+_SKILL_MD = """\
+---
+kind: authoring
+name: Fake Bundled Skill
+target: dcdc
+version: 0.1.0
+---
+Author a rough-draft test procedure for the fake rail.
+"""
+
+
+def _pack_with_skill(pack_root, skill_id="fake_skill"):
+    d = pack_root / "authoring_skills" / skill_id
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(_SKILL_MD, encoding="utf-8")
+    return pack_root
+
+
+def test_pack_skill_is_bundled_then_discovered_in_project(tmp_path):
+    # 1. a fake pack shipping a skill
+    pack = _pack_with_skill(tmp_path / "fake_pack")
+    # 2. a fake project with a bundle dir
+    project = tmp_path / "proj"
+    (project / "bundle").mkdir(parents=True)
+
+    # 3. THE BUNDLING PATH: copy the pack's skills into the project bundle
+    copied = copy_pack_skills([pack], project / "bundle")
+    assert [p.name for p in copied] == ["fake_skill"]
+    assert (project / "bundle" / "authoring_skills" / "fake_skill" / "SKILL.md").is_file()
+
+    # 4. the consumer discovers it in the project via the BUNDLED tier
+    skills = load_skills(project_root=project)
+    bundled = [s for s in skills if s.source is SkillSource.BUNDLED]
+    match = [s for s in bundled if s.skill_id == "fake_skill"]
+    assert match, f"fake_skill not discovered as bundled; got {[s.skill_id for s in skills]}"
+    assert match[0].title == "Fake Bundled Skill"
+    assert match[0].target == "dcdc"
+
+
+def test_copy_is_noop_for_pack_without_skills(tmp_path):
+    (tmp_path / "plain_pack").mkdir()
+    assert copy_pack_skills([tmp_path / "plain_pack"], tmp_path / "out") == []
+    assert not (tmp_path / "out" / "authoring_skills").exists()
+
+
+def test_later_pack_wins_on_name_clash(tmp_path):
+    a = _pack_with_skill(tmp_path / "packA")
+    b = tmp_path / "packB" / "authoring_skills" / "fake_skill"
+    b.mkdir(parents=True)
+    (b / "SKILL.md").write_text("---\nname: From B\n---\nbody", encoding="utf-8")
+    out = tmp_path / "bundle"
+    copy_pack_skills([tmp_path / "packA", tmp_path / "packB"], out)
+    text = (out / "authoring_skills" / "fake_skill" / "SKILL.md").read_text(encoding="utf-8")
+    assert "From B" in text  # later pack overwrote
+
+
+def test_enabled_pack_roots_resolves_only_enabled(tmp_path):
+    (tmp_path / "fake_pack").mkdir()
+    reg = tmp_path / "drivers_registry.json"
+    reg.write_text(json.dumps({"packs": [
+        {"id": "p1", "enabled": True, "wheel": {"project_root": "fake_pack"}},
+        {"id": "p2", "enabled": False, "wheel": {"project_root": "fake_pack"}},
+        {"id": "p3", "enabled": True, "rules": {"source": {"path": "fake_pack"}}},
+        {"id": "p4", "enabled": True, "wheel": {"project_root": "missing_dir"}},
+    ]}), encoding="utf-8")
+    roots = enabled_pack_roots(reg)
+    # p1 + p3 resolve to the existing dir; p2 disabled; p4 missing dir dropped.
+    assert all(r.name == "fake_pack" for r in roots)
+    assert len(roots) == 2

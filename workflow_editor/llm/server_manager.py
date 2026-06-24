@@ -191,7 +191,7 @@ class OpenCodeServerManager:
                     f"opencode serve --port {port} "
                     f"--hostname {self._config.server_hostname}"
                 )
-                cmd = [self._config.wsl_path, "bash", "-lc", opencode_cmd]
+                cmd = [self._config.wsl_path, "bash", "-ic", opencode_cmd]
                 log.debug(f"Server command: {' '.join(cmd)}")
 
                 # stdout discarded; stderr PIPE is drained by a thread so the
@@ -351,7 +351,7 @@ class OpenCodeServerManager:
         if wsl_ok:
             try:
                 result = subprocess.run(
-                    [self._config.wsl_path, "bash", "-lc", "opencode --version"],
+                    [self._config.wsl_path, "bash", "-ic", "opencode --version"],
                     capture_output=True, text=True, timeout=5,
                     cwd=safe_wsl_cwd(),
                 )

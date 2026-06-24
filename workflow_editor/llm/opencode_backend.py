@@ -147,7 +147,7 @@ class OpenCodeBackend(LLMBackend):
             # Check OpenCode is installed in WSL
             # Use bash -lc to load user profile/PATH
             result = subprocess.run(
-                [self.config.wsl_path, "bash", "-lc", "opencode --version"],
+                [self.config.wsl_path, "bash", "-ic", "opencode --version"],
                 capture_output=True,
                 text=True,
                 cwd=safe_wsl_cwd(),
@@ -177,7 +177,7 @@ class OpenCodeBackend(LLMBackend):
                 opencode_cmd = f"opencode serve --port {self.config.server_port} --hostname {self.config.server_hostname}"
                 cmd = [
                     self.config.wsl_path,
-                    "bash", "-lc",
+                    "bash", "-ic",
                     opencode_cmd,
                 ]
                 log.debug(f"Server command: {' '.join(cmd)}")

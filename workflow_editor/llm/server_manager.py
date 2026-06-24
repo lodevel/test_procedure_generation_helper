@@ -449,3 +449,17 @@ class OpenCodeServerManager:
             log.error(f"Error stopping server process: {e}")
         finally:
             self._server_process = None
+
+        # Terminating wsl.exe can leave the Linux-side `opencode serve` running
+        # (a WSL relay gotcha). We reach here only when WE started the server
+        # (the early return above guards the attached case), so best-effort kill
+        # it by OUR exact port — never the user's manually-launched one — so it
+        # doesn't outlive the editor on close OR crash (via the atexit hook).
+        try:
+            subprocess.run(
+                [self._config.wsl_path, "bash", "-ic",
+                 f"pkill -f 'opencode serve --port {self._config.server_port}'"],
+                capture_output=True, timeout=3, cwd=safe_wsl_cwd(),
+            )
+        except Exception:
+            pass

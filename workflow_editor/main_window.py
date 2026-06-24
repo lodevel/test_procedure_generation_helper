@@ -178,6 +178,15 @@ class MainWindow(QMainWindow):
             _seed = (_pr / "opencode.json") if _pr else None
             self._server_manager.config.working_directory = str(
                 ensure_opencode_config(seed_from=_seed))
+            # Pre-warm the server in the BACKGROUND so the first chat
+            # doesn't lag (cold WSL boot + opencode serve). Daemon thread;
+            # start() is lock-guarded so the lazy first-chat start coexists.
+            # atexit stops it if closeEvent never runs (e.g. a crash).
+            import atexit
+            import threading as _pw_threading
+            atexit.register(self._server_manager.stop)
+            _pw_threading.Thread(
+                target=self._server_manager.start, daemon=True).start()
     
     def _process_cli_arguments(self):
         """Process command-line arguments to load project and/or test."""

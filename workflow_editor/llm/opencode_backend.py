@@ -394,7 +394,9 @@ class OpenCodeBackend(LLMBackend):
                 sse_response = requests.get(
                     f"{self.config.server_url}/event",
                     stream=True,
-                    timeout=(5, None),  # 5s connect timeout, no read timeout
+                    # connect 5s; read = inactivity cap so a hung/unreachable
+                    # model (no SSE bytes) can't leave the chat stuck forever.
+                    timeout=(5, self.config.request_timeout),
                     headers={"Accept": "text/event-stream"},
                 )
                 if sse_response.status_code != 200:
@@ -530,13 +532,26 @@ class OpenCodeBackend(LLMBackend):
                     
                     event_data_buffer = ""
                     event_type = ""
-        
+
+        except requests.exceptions.RequestException as e:
+            # No SSE data within the read-timeout window (or the stream broke):
+            # the model/backend is unresponsive. Surface a clear error rather than
+            # leaving the chat stuck on "Thinking…" forever.
+            log.warning(f"Streaming: SSE stalled/failed ({e}); treating as timeout")
+            return LLMResponse(
+                success=False,
+                error_message=(
+                    f"The model did not respond within "
+                    f"{int(self.config.request_timeout)}s — check that the model "
+                    f"server is reachable."
+                ),
+            )
         finally:
             try:
                 sse_response.close()
             except Exception:
                 pass
-        
+
         if self._cancel_requested:
             return LLMResponse(
                 success=False,

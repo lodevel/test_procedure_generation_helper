@@ -52,21 +52,22 @@ def _project_root(main_window) -> Optional[Path]:
 def _populate(main_window, menu) -> None:
     menu.clear()
     try:
-        skills = load_skills(project_root=_project_root(main_window))
+        count = len(load_skills(project_root=_project_root(main_window)))
     except Exception:  # noqa: BLE001 — discovery must never break the menu
         log.exception("skill discovery failed")
-        skills = []
+        count = 0
 
-    for skill in skills:
-        act = QAction(skill.title or skill.skill_id, menu)
-        if skill.when_to_use:
-            act.setToolTip(skill.when_to_use)
-        act.triggered.connect(lambda _=False, s=skill: _launch(main_window, s))
-        menu.addAction(act)
-    if not skills:
-        empty = QAction("(no skills found)", menu)
-        empty.setEnabled(False)
-        menu.addAction(empty)
+    # ONE entry — the skill is chosen inside the dialog (a flat menu of every
+    # skill doesn't scale).
+    chat_act = QAction(f"Skill chat…  ({count})" if count else "Skill chat…", menu)
+    chat_act.setEnabled(count > 0)
+    chat_act.setToolTip("Run an authoring skill (choose which one in the window).")
+    chat_act.triggered.connect(lambda: _launch_chat(main_window))
+    menu.addAction(chat_act)
+    if not count:
+        hint = QAction("(no skills found — add one via 'Open skills folder…')", menu)
+        hint.setEnabled(False)
+        menu.addAction(hint)
 
     menu.addSeparator()
     open_act = QAction("Open skills folder…", menu)
@@ -160,13 +161,21 @@ def _make_insert_callback(main_window):
     return insert
 
 
-def _launch(main_window, skill) -> None:
+def _launch_chat(main_window) -> None:
     from ..dock.skill_chat_dialog import SkillChatDialog
 
     root = _project_root(main_window)
+    skills = load_skills(project_root=root)
+    if not skills:
+        QMessageBox.information(
+            main_window, "Skills",
+            "No skills found. Use 'Open skills folder…' to add one, or ship one "
+            "in the built-in library.",
+        )
+        return
     sources, documents_dir = _build_sources(main_window, root)
     dialog = SkillChatDialog(
-        skill=skill,
+        skills=skills,
         sources=sources,
         backend_factory=main_window.backend_factory,
         documents_dir=documents_dir,

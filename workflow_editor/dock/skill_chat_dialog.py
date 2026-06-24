@@ -36,7 +36,7 @@ from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QSplitter, QGroupBox,
-    QPlainTextEdit, QPushButton, QCheckBox, QLabel, QWidget,
+    QPlainTextEdit, QPushButton, QCheckBox, QComboBox, QLabel, QWidget,
 )
 
 from .. import theme
@@ -58,7 +58,7 @@ class SkillChatDialog(QDialog):
 
     def __init__(
         self,
-        skill: Skill,
+        skills: list,
         sources: list,
         backend_factory,
         documents_dir,
@@ -67,7 +67,8 @@ class SkillChatDialog(QDialog):
     ) -> None:
         """
         Args:
-            skill: The discovered skill to run (its ``system_prompt`` leads).
+            skills: The discovered skills to choose from (selected in-dialog via
+                a combobox — scales to many; the first is active initially).
             sources: Context sources (one picker tab each).
             backend_factory: Factory exposing ``create_backend(tab_id=...)``;
                 used to mint a dedicated ``"skill_chat"`` backend/session.
@@ -79,10 +80,11 @@ class SkillChatDialog(QDialog):
             parent: Parent widget (the window stays modeless regardless).
         """
         super().__init__(parent)
-        self._skill = skill
+        self._skills: list[Skill] = list(skills)
+        self._skill = self._skills[0]  # active skill (switchable in-dialog)
         self._backend_factory = backend_factory
         self._insert_callback = insert_callback
-        self._session = SkillChatSession(skill)
+        self._session = SkillChatSession(self._skill)
 
         # Lazily-created dedicated backend + the in-flight worker.
         self._backend = None
@@ -93,7 +95,7 @@ class SkillChatDialog(QDialog):
         # Accumulates streamed response text for the live "Assistant: ..." line.
         self._stream_buffer: str = ""
 
-        self.setWindowTitle(f"Skill chat — {skill.title or skill.skill_id}")
+        self.setWindowTitle("Skill chat")
         self.setModal(False)
         self.resize(900, 680)
 
@@ -105,10 +107,21 @@ class SkillChatDialog(QDialog):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        header = QLabel(self._skill.when_to_use or self._skill.title or "")
-        header.setWordWrap(True)
-        header.setStyleSheet(f"color:{theme.muted_color()};")
-        layout.addWidget(header)
+        # Skill selector — choose which skill to run here (scales to many skills;
+        # a flat menu of every skill doesn't).
+        sel_row = QHBoxLayout()
+        sel_row.addWidget(QLabel("Skill:"))
+        self._skill_combo = QComboBox()
+        for s in self._skills:
+            self._skill_combo.addItem(s.title or s.skill_id, s.skill_id)
+        self._skill_combo.currentIndexChanged.connect(self._on_skill_changed)
+        sel_row.addWidget(self._skill_combo, 1)
+        layout.addLayout(sel_row)
+
+        self._header = QLabel(self._skill.when_to_use or "")
+        self._header.setWordWrap(True)
+        self._header.setStyleSheet(f"color:{theme.muted_color()};")
+        layout.addWidget(self._header)
 
         # Transcript (left) | context picker (right).
         split = QSplitter(Qt.Orientation.Horizontal)
@@ -134,10 +147,12 @@ class SkillChatDialog(QDialog):
         split.setSizes([560, 340])
         layout.addWidget(split, stretch=1)
 
-        # Web-search toggle — cosmetic placeholder for now (wired later).
-        self._web_checkbox = QCheckBox("🌐 Web search")
+        # Web-search toggle — placeholder until the OpenCode web tools land;
+        # kept visible so the planned capability is discoverable.
+        self._web_checkbox = QCheckBox("🌐 Web search  (coming soon)")
         self._web_checkbox.setToolTip(
-            "Allow the skill to search the web (not wired yet — placeholder)."
+            "Let the skill search the web. Not wired yet — needs the OpenCode "
+            "web-tool config (a later phase)."
         )
         self._web_checkbox.setEnabled(False)
         layout.addWidget(self._web_checkbox)
@@ -156,17 +171,13 @@ class SkillChatDialog(QDialog):
         self._send_btn.clicked.connect(self._on_send)
         btn_row.addWidget(self._send_btn)
 
-        self._stop_btn = QPushButton("⏹️")
-        self._stop_btn.setToolTip("Stop the current request")
-        self._stop_btn.setMaximumWidth(35)
+        self._stop_btn = self._icon_button(
+            "⏹️", "Stop the current request", self._on_stop)
         self._stop_btn.setEnabled(False)
-        self._stop_btn.clicked.connect(self._on_stop)
         btn_row.addWidget(self._stop_btn)
 
-        self._trash_btn = QPushButton("🗑️")
-        self._trash_btn.setToolTip("Clear the conversation and start over")
-        self._trash_btn.setMaximumWidth(35)
-        self._trash_btn.clicked.connect(self._on_trash)
+        self._trash_btn = self._icon_button(
+            "🗑️", "Clear the conversation and start over", self._on_trash)
         btn_row.addWidget(self._trash_btn)
 
         btn_row.addStretch()
@@ -194,6 +205,17 @@ class SkillChatDialog(QDialog):
                 self._on_send()
                 return True
         return super().eventFilter(obj, event)
+
+    def _icon_button(self, text: str, tooltip: str, on_click) -> QPushButton:
+        """A compact icon button whose glyph isn't clipped — a local stylesheet
+        overrides the app's wider button padding (the old setMaximumWidth(35) cut
+        the emoji off)."""
+        btn = QPushButton(text)
+        btn.setToolTip(tooltip)
+        btn.setObjectName("iconButton")
+        btn.setStyleSheet("QPushButton { padding: 4px 8px; min-width: 0; }")
+        btn.clicked.connect(on_click)
+        return btn
 
     # -- backend lifecycle ----------------------------------------------------
 
@@ -318,6 +340,20 @@ class SkillChatDialog(QDialog):
             self._worker.cancel()
             self._status.setText("Stopping…")
 
+    def _on_skill_changed(self, index: int) -> None:
+        """Switch the active skill: fresh session + header, cleared transcript.
+        (The combo is disabled while a request is in flight, so this never fires
+        mid-send.)"""
+        if not (0 <= index < len(self._skills)):
+            return
+        self._skill = self._skills[index]
+        self._session = SkillChatSession(self._skill)
+        self._latest_draft = ""
+        self._stream_buffer = ""
+        self._insert_btn.setEnabled(False)
+        self._transcript.clear()
+        self._header.setText(self._skill.when_to_use or "")
+
     def _on_trash(self) -> None:
         """Clear the conversation and start a fresh session (same skill)."""
         if self._worker is not None:
@@ -375,6 +411,7 @@ class SkillChatDialog(QDialog):
         self._input.setEnabled(not busy)
         self._stop_btn.setEnabled(busy)
         self._trash_btn.setEnabled(not busy)
+        self._skill_combo.setEnabled(not busy)  # no skill-switch mid-request
 
     def _teardown_worker(self) -> None:
         worker, self._worker = self._worker, None

@@ -5,11 +5,18 @@ Pure-Python: tmp_path + fakes only — no Qt, no managers, no ODB CLI.
 from workflow_editor.authoring import (
     ArtifactProvider,
     ArtifactsSource,
+    ContextBundle,
     DocumentsSource,
     RulesSource,
     assemble,
     format_netlist,
 )
+
+
+def test_context_bundle_approx_tokens():
+    assert ContextBundle("", 0).approx_tokens == 0
+    assert ContextBundle("x" * 8, 8).approx_tokens == 2     # 8//4
+    assert ContextBundle("x" * 10, 10).approx_tokens == 3   # ceil-ish (10+3)//4
 
 # --------------------------------------------------------------------------- #
 # format_netlist                                                              #

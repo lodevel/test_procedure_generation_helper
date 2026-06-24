@@ -127,7 +127,7 @@ class SkillContextPicker(QWidget):
     """3-tab context picker for the skill-chat window.
 
     Renders one tab per source, exposes the checked selection, and shows a live
-    "Context: N items, ~M chars" readout (recomputed through
+    "Context: N items, ~M tokens" readout (recomputed through
     :func:`assemble`). The widget is purely a view over the injected sources.
     """
 
@@ -211,9 +211,9 @@ class SkillContextPicker(QWidget):
     def _update_readout(self) -> None:
         selections = self.selections()
         item_count = sum(len(keys) for _, keys in selections)
-        char_count = assemble(selections).char_count
+        tokens = assemble(selections).approx_tokens
         self._readout.setText(
-            f"Context: {item_count} items, ~{char_count} chars")
+            f"Context: {item_count} items, ~{tokens:,} tokens (est.)")
 
     def _iter_tabs(self):
         for i in range(self._tabs.count()):

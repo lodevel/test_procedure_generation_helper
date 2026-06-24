@@ -30,10 +30,16 @@ class ContextItem:
 @dataclass(frozen=True)
 class ContextBundle:
     """The assembled push payload: the concatenated text plus its size (for the
-    picker's token/char readout)."""
+    picker's token readout)."""
 
     text: str
     char_count: int
+
+    @property
+    def approx_tokens(self) -> int:
+        """Rough token estimate (~4 chars/token) — a size gauge, not exact; the
+        real tokenizer is the remote model's. Good enough to judge payload cost."""
+        return (self.char_count + 3) // 4
 
 
 class ContextSource(ABC):

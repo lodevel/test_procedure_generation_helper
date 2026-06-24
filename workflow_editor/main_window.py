@@ -547,6 +547,11 @@ class MainWindow(QMainWindow):
         about_action = QAction("&About", self)
         about_action.triggered.connect(self._on_about)
         help_menu.addAction(about_action)
+
+        # Skills menu (authoring skill-chat); logic lives in
+        # authoring.skill_menu so this mixed-EOL file gains only a call.
+        from .authoring.skill_menu import install_skills_menu
+        install_skills_menu(self)
     
     # ------------------------------------------------------------------
     #  Export (File → Export → Markdown / Word)

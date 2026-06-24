@@ -1,0 +1,164 @@
+"""The editor's **Skills** menu — discovers chat skills and launches the
+skill-chat dialog.
+
+Kept out of ``main_window`` so that the (mixed-EOL) main window only needs a
+one-line call: ``install_skills_menu(self)``. Everything host-specific is reached
+through the passed-in ``MainWindow`` (project root, backend factory, the text tab
+for the insert, the context sources).
+"""
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Optional
+
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QAction, QDesktopServices
+from PySide6.QtWidgets import QMessageBox
+
+from . import load_skills, locations
+from .context_sources import (
+    ArtifactProvider,
+    ArtifactsSource,
+    DocumentsSource,
+    RulesSource,
+)
+from .netlist_text import format_netlist
+
+log = logging.getLogger(__name__)
+
+_DOCS_SUBDIR = "documents"
+
+
+def install_skills_menu(main_window) -> None:
+    """Add a **Skills** menu to ``main_window``, repopulated each time it opens
+    (so freshly-dropped skills appear without a restart)."""
+    menu = main_window.menuBar().addMenu("S&kills")
+    menu.aboutToShow.connect(lambda: _populate(main_window, menu))
+    _populate(main_window, menu)
+
+
+# --------------------------------------------------------------------------- #
+# menu population                                                             #
+# --------------------------------------------------------------------------- #
+
+def _project_root(main_window) -> Optional[Path]:
+    pm = getattr(main_window, "project_manager", None)
+    root = getattr(pm, "project_root", None) if pm else None
+    return Path(root) if root else None
+
+
+def _populate(main_window, menu) -> None:
+    menu.clear()
+    try:
+        skills = load_skills(project_root=_project_root(main_window))
+    except Exception:  # noqa: BLE001 — discovery must never break the menu
+        log.exception("skill discovery failed")
+        skills = []
+
+    for skill in skills:
+        act = QAction(skill.title or skill.skill_id, menu)
+        if skill.when_to_use:
+            act.setToolTip(skill.when_to_use)
+        act.triggered.connect(lambda _=False, s=skill: _launch(main_window, s))
+        menu.addAction(act)
+    if not skills:
+        empty = QAction("(no skills found)", menu)
+        empty.setEnabled(False)
+        menu.addAction(empty)
+
+    menu.addSeparator()
+    open_act = QAction("Open skills folder…", menu)
+    open_act.triggered.connect(lambda: _open_skills_folder(main_window))
+    menu.addAction(open_act)
+
+
+def _open_skills_folder(main_window) -> None:
+    folder = locations.local_skills_dir()
+    if folder is None:
+        QMessageBox.information(
+            main_window, "Skills", "No local skills folder is available."
+        )
+        return
+    folder.mkdir(parents=True, exist_ok=True)
+    QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+
+# --------------------------------------------------------------------------- #
+# launching a skill                                                           #
+# --------------------------------------------------------------------------- #
+
+def _build_sources(main_window, root: Optional[Path]):
+    """Build the picker's (Rules, Documents, Artifacts) sources + the documents
+    dir, all bound to the live project. Returns ``(sources, documents_dir)``."""
+    pm = main_window.project_manager
+    am = getattr(main_window, "artifact_manager", None)
+
+    # Rules — the same docs the text tab sends; strip LLM-useless frontmatter.
+    try:
+        from ..llm.tab_context import _strip_llm_useless_frontmatter as _strip
+    except Exception:  # noqa: BLE001
+        def _strip(s):
+            return s
+    sources = [RulesSource(pm.get_rules_files, transform=_strip)]
+
+    documents_dir = (root / _DOCS_SUBDIR) if root else None
+    if documents_dir is not None:
+        sources.append(DocumentsSource(documents_dir))
+
+    providers = []
+    if am is not None:
+        from ..core.artifact_manager import ArtifactType
+        providers += [
+            ArtifactProvider("procedure_text", "Procedure text",
+                             lambda: am.get_content(ArtifactType.PROCEDURE_TEXT)),
+            ArtifactProvider("procedure_json", "Procedure JSON",
+                             lambda: am.get_content(ArtifactType.PROCEDURE_JSON)),
+            ArtifactProvider("test_code", "Test code",
+                             lambda: am.get_content(ArtifactType.TEST_CODE)),
+        ]
+    from ..core import odb_inspect
+    providers.append(ArtifactProvider(
+        "netlist", "Netlist", lambda: format_netlist(odb_inspect.load_board(root))
+    ))
+    sources.append(ArtifactsSource(providers))
+    return sources, documents_dir
+
+
+def _make_insert_callback(main_window):
+    """Raw-append the draft to the procedure text editor (the live source of
+    truth) and surface the Text tab. The editor's own ``textChanged`` keeps the
+    artifact in sync."""
+    def insert(draft: str) -> None:
+        tab = getattr(main_window, "text_only_tab", None)
+        editor = getattr(tab, "text_editor", None)
+        if editor is None:
+            return
+        existing = editor.toPlainText()
+        editor.setPlainText(f"{existing}\n\n{draft}" if existing.strip() else draft)
+        tabs = getattr(main_window, "tab_widget", None)
+        if tabs is not None and tab is not None:
+            tabs.setCurrentWidget(tab)
+
+    return insert
+
+
+def _launch(main_window, skill) -> None:
+    from ..dock.skill_chat_dialog import SkillChatDialog
+
+    root = _project_root(main_window)
+    sources, documents_dir = _build_sources(main_window, root)
+    dialog = SkillChatDialog(
+        skill=skill,
+        sources=sources,
+        backend_factory=main_window.backend_factory,
+        documents_dir=documents_dir,
+        insert_callback=_make_insert_callback(main_window),
+        parent=main_window,
+    )
+    # Hold a reference so the modeless dialog isn't garbage-collected.
+    refs = getattr(main_window, "_skill_chat_dialogs", None)
+    if refs is None:
+        refs = main_window._skill_chat_dialogs = []
+    refs.append(dialog)
+    dialog.show()

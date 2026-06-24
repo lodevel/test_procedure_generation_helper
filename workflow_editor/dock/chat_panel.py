@@ -227,14 +227,16 @@ class ChatPanel(QWidget):
         
         self.cancel_btn = QPushButton("⏹️")
         self.cancel_btn.setToolTip("Cancel Current LLM Request")
-        self.cancel_btn.setMaximumWidth(35)
+        self.cancel_btn.setObjectName("iconButton")
+        self.cancel_btn.setStyleSheet("QPushButton { padding: 4px 8px; min-width: 0; }")
         self.cancel_btn.setEnabled(False)  # Disabled until request starts
         self.cancel_btn.clicked.connect(self._on_cancel)
         btn_layout.addWidget(self.cancel_btn)
         
         self.reset_btn = QPushButton("🗑️")
         self.reset_btn.setToolTip("Reset LLM Session")
-        self.reset_btn.setMaximumWidth(35)
+        self.reset_btn.setObjectName("iconButton")
+        self.reset_btn.setStyleSheet("QPushButton { padding: 4px 8px; min-width: 0; }")
         self.reset_btn.clicked.connect(self._on_reset)
         btn_layout.addWidget(self.reset_btn)
         

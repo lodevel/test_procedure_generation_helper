@@ -100,6 +100,19 @@ class SkillChatDialog(QDialog):
         self.setModal(False)
         self.resize(900, 680)
 
+        # Per-chat toggle DEFAULTS come from Settings (opencode.web_default /
+        # opencode.project_tools_default; both False if unset or unreadable).
+        # Each is still per-chat overridable via its checkbox.
+        opencode_settings: dict = {}
+        try:
+            from ..dialogs.settings_dialog import load_settings
+            opencode_settings = load_settings().get("opencode", {}) or {}
+        except Exception:
+            log.exception("skill-chat could not read Settings defaults")
+        self._web_default = bool(opencode_settings.get("web_default", False))
+        self._project_tools_default = bool(
+            opencode_settings.get("project_tools_default", False))
+
         self._picker = SkillContextPicker(sources, documents_dir=documents_dir)
         self._setup_ui()
 
@@ -162,7 +175,28 @@ class SkillChatDialog(QDialog):
             "Off by default — only enable it for skills you trust, since web "
             "access can be used to leak the context you attached."
         )
-        layout.addWidget(self._web_checkbox)
+        # Default checked state comes from Settings (per-chat overridable).
+        self._web_checkbox.setChecked(self._web_default)
+
+        # Project-data tools toggle — exposes the project_tools MCP server for
+        # this chat only, letting the LLM PULL board data (netlist, components,
+        # test points) on demand instead of having it all pushed up front. OFF
+        # by default (Settings can flip the default); per-chat overridable.
+        self._project_tools_checkbox = QCheckBox("🔧 Project data tools (pull)")
+        self._project_tools_checkbox.setToolTip(
+            "Let the skill pull board data on demand — query the netlist, list "
+            "or inspect components, and read test points — instead of pushing "
+            "it all into the context up front.\n"
+            "Off by default; enable it so the model can fetch exactly the "
+            "board data it needs."
+        )
+        self._project_tools_checkbox.setChecked(self._project_tools_default)
+
+        toggle_row = QHBoxLayout()
+        toggle_row.addWidget(self._web_checkbox)
+        toggle_row.addWidget(self._project_tools_checkbox)
+        toggle_row.addStretch()
+        layout.addLayout(toggle_row)
 
         # Input box (Enter sends, Shift+Enter newline — mirrors ChatPanel).
         self._input = QPlainTextEdit()
@@ -303,6 +337,7 @@ class SkillChatDialog(QDialog):
             # SKILL.md as the governing system prompt (not buried in the body).
             system_prompt=self._session.system_prompt,
             web_enabled=self._web_checkbox.isChecked(),
+            project_tools_enabled=self._project_tools_checkbox.isChecked(),
         )
         self._worker = LLMWorker(backend, request, parent=self)
         self._worker.text_chunk.connect(self._on_text_chunk)

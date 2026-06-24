@@ -9,6 +9,18 @@ from workflow_editor.llm import LLMRequest, LLMTask, OpenCodeBackend, OpenCodeCo
 # Filesystem/shell tools are disabled on every editor request.
 _CODING_OFF = {"edit": False, "write": False, "bash": False, "apply_patch": False}
 
+# The 7 project_tools (project_tools MCP server) keys, all OFF — the default
+# (project_tools_enabled defaults False on LLMRequest).
+_PROJECT_TOOLS_OFF = {
+    "project_tools_list_property_fields": False,
+    "project_tools_list_components": False,
+    "project_tools_get_component": False,
+    "project_tools_query_net": False,
+    "project_tools_netlist": False,
+    "project_tools_get_bom": False,
+    "project_tools_list_test_points": False,
+}
+
 
 def _backend(model: str = "") -> OpenCodeBackend:
     return OpenCodeBackend(OpenCodeConfig(model=model))
@@ -23,7 +35,7 @@ def _req(web_enabled: bool) -> LLMRequest:
 def test_web_enabled_exposes_web_tools_and_read_pdf():
     body = _backend()._build_message_body("hi", _req(web_enabled=True))
     assert body["tools"] == {
-        **_CODING_OFF,
+        **_CODING_OFF, **_PROJECT_TOOLS_OFF,
         "webfetch": True, "websearch": True, "pdf_tools_read_pdf": True}
 
 
@@ -32,15 +44,31 @@ def test_web_disabled_sends_explicit_false():
     # skill keep web access if the launch config/agent enabled it.
     body = _backend()._build_message_body("hi", _req(web_enabled=False))
     assert body["tools"] == {
-        **_CODING_OFF,
+        **_CODING_OFF, **_PROJECT_TOOLS_OFF,
         "webfetch": False, "websearch": False, "pdf_tools_read_pdf": False}
 
 
 def test_default_request_has_web_off():
     body = _backend()._build_message_body("hi", LLMRequest(task=LLMTask.AD_HOC_CHAT))
     assert body["tools"] == {
-        **_CODING_OFF,
+        **_CODING_OFF, **_PROJECT_TOOLS_OFF,
         "webfetch": False, "websearch": False, "pdf_tools_read_pdf": False}
+
+
+def test_project_tools_enabled_exposes_the_seven_tools():
+    req = LLMRequest(
+        task=LLMTask.AD_HOC_CHAT, raw_prompt="hi", project_tools_enabled=True)
+    body = _backend()._build_message_body("hi", req)
+    for key in _PROJECT_TOOLS_OFF:
+        assert body["tools"][key] is True
+    # The project-tools toggle is independent of the web toggle.
+    assert body["tools"]["webfetch"] is False
+
+
+def test_project_tools_default_is_off():
+    body = _backend()._build_message_body("hi", LLMRequest(task=LLMTask.AD_HOC_CHAT))
+    for key in _PROJECT_TOOLS_OFF:
+        assert body["tools"][key] is False
 
 
 def test_coding_tools_always_disabled():

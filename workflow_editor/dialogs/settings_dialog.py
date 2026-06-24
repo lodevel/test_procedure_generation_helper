@@ -104,6 +104,12 @@ def ensure_opencode_config(seed_from: Optional[Path] = None) -> Path:
             _ensure_pdf_tools_mcp(cfg, project_root=Path(seed_from).parent)
         except Exception:
             log.exception("Failed to wire pdf_tools MCP server")
+        # Idempotently wire the project_tools MCP server at the project's ODB++
+        # archive so the LLM's netlist/BOM/component tools can reach the board.
+        try:
+            _ensure_project_tools_mcp(cfg, project_root=Path(seed_from).parent)
+        except Exception:
+            log.exception("Failed to wire project_tools MCP server")
     return d
 
 
@@ -146,6 +152,55 @@ def _ensure_pdf_tools_mcp(cfg: Path, project_root: Path) -> None:
     data["mcp"] = mcp
     cfg.write_text(json.dumps(data, indent=2), encoding="utf-8")
     log.info("Wired pdf_tools MCP server (documents=%s)", documents_dir)
+
+
+def _ensure_project_tools_mcp(cfg: Path, project_root: Path) -> None:
+    """Merge/refresh the ``project_tools`` local MCP block in the master
+    opencode.json.
+
+    Mirrors :func:`_ensure_pdf_tools_mcp`. The server is launched by
+    OpenCode-in-WSL with the project's ODB++ archive (the first ``*.tgz`` in the
+    project root, like odb_inspect's auto-detect) via ``--odb-tgz``; if no
+    archive is present, skip (nothing to wire). Writes only when the block
+    actually changes.
+    """
+    from ..llm.mcp_config import build_project_tools_mcp_block
+
+    try:
+        tgz = sorted(project_root.glob("*.tgz"))
+    except OSError:
+        tgz = []
+    if not tgz:
+        return  # no board archive in the project — nothing to wire
+    odb_tgz = tgz[0]
+    # pythonw has no console; prefer python.exe for reliable stdio pipes.
+    python_win = sys.executable.replace("pythonw.exe", "python.exe")
+    script_win = str(
+        Path(__file__).resolve().parents[1] / "authoring" / "_project_tools_mcp.py"
+    )
+    block = build_project_tools_mcp_block(
+        venv_python_win=python_win,
+        mcp_script_win=script_win,
+        odb_tgz_win=str(odb_tgz),
+    )
+
+    data = {}
+    if cfg.exists():
+        try:
+            loaded = json.loads(cfg.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        except Exception:
+            log.exception("could not parse master opencode.json; rebuilding mcp block")
+    mcp = data.get("mcp")
+    if not isinstance(mcp, dict):
+        mcp = {}
+    if mcp.get("project_tools") == block["project_tools"]:
+        return  # already current — no write
+    mcp.update(block)
+    data["mcp"] = mcp
+    cfg.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    log.info("Wired project_tools MCP server (odb_tgz=%s)", odb_tgz)
 
 
 
@@ -334,6 +389,25 @@ class SettingsDialog(QDialog):
         self.open_opencode_config_btn.clicked.connect(self._on_open_opencode_config)
         cfg_row.addWidget(self.open_opencode_config_btn)
         opencode_layout.addRow("Config:", cfg_row)
+
+        # Skill-chat default toggles. These only seed the INITIAL state of the
+        # skill chat's per-request toggles; the user can still flip either off/on
+        # per conversation. Both default off (no web / no project-data access
+        # unless explicitly opted in).
+        self.web_default = QCheckBox("Web access on by default (skill chat)")
+        self.web_default.setToolTip(
+            "Seed the skill chat's web toggle ON for new conversations. The "
+            "model can still be flipped off per chat. Off by default.")
+        opencode_layout.addRow("", self.web_default)
+
+        self.project_tools_default = QCheckBox(
+            "Project data tools on by default (skill chat)")
+        self.project_tools_default.setToolTip(
+            "Seed the skill chat's project-data tools toggle ON for new "
+            "conversations (netlist/BOM/component access via the project_tools "
+            "MCP server). The model can still be flipped off per chat. Off by "
+            "default.")
+        opencode_layout.addRow("", self.project_tools_default)
 
         layout.addWidget(self.opencode_group)
         
@@ -667,8 +741,12 @@ class SettingsDialog(QDialog):
         self.opencode_host.setText(opencode.get("host", "127.0.0.1"))
         self.opencode_wsl_path.setText(opencode.get("wsl_path", ""))
         self.opencode_startup_timeout.setValue(opencode.get("startup_timeout", 60.0))
-        
-        
+        # Skill-chat default toggles (both default off).
+        self.web_default.setChecked(opencode.get("web_default", False))
+        self.project_tools_default.setChecked(
+            opencode.get("project_tools_default", False))
+
+
         # Update visibility
         self._on_backend_changed(self.backend_combo.currentText())
 
@@ -704,6 +782,8 @@ class SettingsDialog(QDialog):
                 "model": self._opencode_model_value(),
                 "wsl_path": self.opencode_wsl_path.text(),
                 "startup_timeout": self.opencode_startup_timeout.value(),
+                "web_default": self.web_default.isChecked(),
+                "project_tools_default": self.project_tools_default.isChecked(),
             },
         }
         

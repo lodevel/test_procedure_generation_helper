@@ -39,3 +39,21 @@ def test_build_pdf_tools_mcp_block_shape():
         "--documents-dir",
         r"C:\Projects\demo\documents",                 # docs dir stays Windows
     ]
+
+
+def test_build_project_tools_mcp_block_shape():
+    block = mcp_config.build_project_tools_mcp_block(
+        venv_python_win=r"C:\Workspace\.venv\Scripts\python.exe",
+        mcp_script_win=r"C:\Workspace\editor\_project_tools_mcp.py",
+        odb_tgz_win=r"C:\Projects\demo\board.tgz",
+    )
+    assert set(block.keys()) == {"project_tools"}
+    entry = block["project_tools"]
+    assert entry["type"] == "local"
+    assert entry["enabled"] is True
+    assert entry["command"] == [
+        "/mnt/c/Workspace/.venv/Scripts/python.exe",   # command[0] translated
+        r"C:\Workspace\editor\_project_tools_mcp.py",   # script stays Windows
+        "--odb-tgz",
+        r"C:\Projects\demo\board.tgz",                  # tgz stays Windows
+    ]

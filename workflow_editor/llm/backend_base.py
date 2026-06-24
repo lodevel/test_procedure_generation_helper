@@ -165,6 +165,13 @@ class LLMRequest:
     # told to leak attached context via a crafted URL).
     web_enabled: bool = False
 
+    # When True, the OpenCode backend exposes the project-data tools (the
+    # project_tools MCP server: list_property_fields, list_components,
+    # get_component, query_net, netlist, get_bom, list_test_points) for THIS
+    # request only — the skill chat's project-tools toggle. Off by default so
+    # the model gets NO project-data access unless the user explicitly opts in.
+    project_tools_enabled: bool = False
+
     # System prompt sent as the message-level ``system`` (OpenCode), separate
     # from the user ``parts``. The skill chat sets this to the SKILL.md so the
     # skill GOVERNS behaviour, instead of being buried in the user message under

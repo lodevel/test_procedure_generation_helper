@@ -801,6 +801,19 @@ class OpenCodeBackend(LLMBackend):
             "webfetch": request.web_enabled,
             "websearch": request.web_enabled,
             "pdf_tools_read_pdf": request.web_enabled,
+            # Project-data tools ride the per-request project-tools toggle (the
+            # project_tools MCP server). Sent explicitly on AND off so the model
+            # gets NO project-data access unless the user opts in. OpenCode
+            # namespaces a local-server tool as "<server>_<tool>" ->
+            # "project_tools_<tool>"; VERIFY those exact keys on a live model
+            # (like pdf_tools_read_pdf) — a wrong key is simply ignored.
+            "project_tools_list_property_fields": request.project_tools_enabled,
+            "project_tools_list_components": request.project_tools_enabled,
+            "project_tools_get_component": request.project_tools_enabled,
+            "project_tools_query_net": request.project_tools_enabled,
+            "project_tools_netlist": request.project_tools_enabled,
+            "project_tools_get_bom": request.project_tools_enabled,
+            "project_tools_list_test_points": request.project_tools_enabled,
         }
         # Message-level system prompt (e.g. the skill chat's SKILL.md) so the
         # caller's instructions GOVERN, rather than sitting in the user body.

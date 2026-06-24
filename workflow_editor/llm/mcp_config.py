@@ -64,3 +64,30 @@ def build_pdf_tools_mcp_block(
             "enabled": True,
         }
     }
+
+
+def build_project_tools_mcp_block(
+    venv_python_win: str,
+    mcp_script_win: str,
+    odb_tgz_win: str,
+) -> dict:
+    """Return the ``mcp`` entry for the ``project_tools`` local server.
+
+    Mirrors :func:`build_pdf_tools_mcp_block`: ``command[0]`` is the python
+    translated to its ``/mnt/c`` WSL path (OpenCode runs in WSL); the script and
+    ``--odb-tgz`` value stay as Windows paths (argv for the Windows python). The
+    server exposes the project-data tools (netlist/BOM/components) the LLM PULLs.
+    Merge the returned dict into the master opencode.json's ``mcp`` object.
+    """
+    return {
+        "project_tools": {
+            "type": "local",
+            "command": [
+                win_to_wsl_path(venv_python_win),
+                mcp_script_win,
+                "--odb-tgz",
+                odb_tgz_win,
+            ],
+            "enabled": True,
+        }
+    }

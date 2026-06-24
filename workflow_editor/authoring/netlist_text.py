@@ -9,10 +9,25 @@ loaded elsewhere.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
+
+# Integrated-circuit reference designators (U1, IC3, ...). The prefix must be
+# immediately followed by a digit so connectors like "USB1" don't match. This is
+# the near-universal IPC refdes convention — NOT an EDA-specific field name — so
+# only ICs carry part-number properties in the component-ids block (passives are
+# skipped, which is the bulk of the property tokens).
+_IC_REFDES_RE = re.compile(r"(?i)^(?:U|IC)\d")
+
+
+def _is_ic_refdes(refdes: str) -> bool:
+    return bool(_IC_REFDES_RE.match(refdes or ""))
 
 
 def _component_line(comp: Mapping[str, Any]) -> str:
+    """Connectivity only (refdes + pins -> nets). Part-number properties live in
+    :func:`format_component_ids`, a separate context item, so a skill that only
+    needs wiring isn't charged the property tokens."""
     refdes = comp.get("refdes", "") or "?"
     side = comp.get("side", "") or ""
     pins = comp.get("pins", []) or ()
@@ -22,21 +37,7 @@ def _component_line(comp: Mapping[str, Any]) -> str:
         if isinstance(p, Mapping)
     ]
     head = f"- {refdes}" + (f" [{side}]" if side else "")
-    line = f"{head}: {', '.join(pin_strs)}" if pin_strs else head
-    # Append raw component properties (part number / value / description live
-    # here) so the LLM can identify ICs. Only when present, and AFTER the pins,
-    # so empty-property lines stay byte-identical to before.
-    props = comp.get("properties") or {}
-    if isinstance(props, Mapping):
-        # Drop empty-valued properties — board-agnostic, no field-name
-        # assumptions (an empty value carries no information). This is only a
-        # partial trim; the real fix for big boards is the agentic PULL mode
-        # (schema discovery + column projection), not a smarter push-side
-        # filter — name-based and statistical filters are both unsafe here.
-        prop_strs = [f"{k}={v!r}" for k, v in props.items() if str(v).strip()]
-        if prop_strs:
-            line = f"{line}  {{props: {', '.join(prop_strs)}}}"
-    return line
+    return f"{head}: {', '.join(pin_strs)}" if pin_strs else head
 
 
 def _node_str(node: Mapping[str, Any]) -> str:
@@ -69,3 +70,32 @@ def format_netlist(board: Mapping[str, Any]) -> str:
         *[_net_line(n) for n in nets if isinstance(n, Mapping)],
     ]
     return "\n".join(sections)
+
+
+def format_component_ids(board: Mapping[str, Any]) -> str:
+    """Render part-number / identity properties for the ICs (U*/IC* refdes) — the
+    data a skill needs to identify power ICs — as a block SEPARATE from the
+    connectivity netlist, so a skill that only needs wiring isn't charged for it.
+
+    Passives are skipped by refdes convention (the bulk of the property tokens);
+    empty values are dropped. Returns ``""`` when no IC properties are present,
+    so the artifact simply contributes nothing. (Smarter, board-agnostic
+    column projection is the agentic MCP mode's job — see the project tasks.)
+    """
+    components = board.get("components", []) or []
+    lines = []
+    for c in components:
+        if not isinstance(c, Mapping):
+            continue
+        refdes = c.get("refdes") or "?"
+        if not _is_ic_refdes(refdes):
+            continue
+        props = c.get("properties") or {}
+        if not isinstance(props, Mapping):
+            continue
+        prop_strs = [f"{k}={v!r}" for k, v in props.items() if str(v).strip()]
+        if prop_strs:
+            lines.append(f"- {refdes}: {', '.join(prop_strs)}")
+    if not lines:
+        return ""
+    return "Component part numbers (ICs):\n" + "\n".join(lines)

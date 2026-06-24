@@ -13,7 +13,7 @@ from .context_sources import (
     DocumentsSource,
     RulesSource,
 )
-from .netlist_text import format_netlist
+from .netlist_text import format_component_ids, format_netlist
 from .registry import discover_skills, load_skills
 from .skill import Skill, SkillSource
 from .skill_chat import SkillChatSession, SkillTurn
@@ -38,6 +38,7 @@ __all__ = [
     "ArtifactsSource",
     "ArtifactProvider",
     "format_netlist",
+    "format_component_ids",
     # skill chat (bridge)
     "SkillChatSession",
     "SkillTurn",

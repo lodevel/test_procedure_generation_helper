@@ -23,7 +23,7 @@ from .context_sources import (
     DocumentsSource,
     RulesSource,
 )
-from .netlist_text import format_netlist
+from .netlist_text import format_component_ids, format_netlist
 
 log = logging.getLogger(__name__)
 
@@ -136,17 +136,25 @@ def _build_sources(main_window, root: Optional[Path]):
                              lambda: am.get_content(ArtifactType.TEST_CODE)),
         ]
     from ..core import odb_inspect
-    # Cache the netlist for the dialog's lifetime: load_board spawns an ODB CLI
-    # subprocess (~seconds), and the picker re-materializes on every checkbox
+    # Cache the loaded board for the dialog's lifetime: load_board spawns an ODB
+    # CLI subprocess (~seconds), and the picker re-materializes on every checkbox
     # toggle for the token readout — without this each toggle would re-run it.
-    _netlist_cache: dict = {}
+    # Both providers below share the single load.
+    _board_cache: dict = {}
 
-    def _netlist_text() -> str:
-        if "text" not in _netlist_cache:
-            _netlist_cache["text"] = format_netlist(odb_inspect.load_board(root))
-        return _netlist_cache["text"]
+    def _board() -> dict:
+        if "board" not in _board_cache:
+            _board_cache["board"] = odb_inspect.load_board(root)
+        return _board_cache["board"]
 
-    providers.append(ArtifactProvider("netlist", "Netlist", _netlist_text))
+    # Connectivity and part numbers are SEPARATE toggles: connectivity is small
+    # and broadly useful; the IC part-number block is larger and only some skills
+    # need it.
+    providers.append(ArtifactProvider(
+        "netlist", "Netlist (connectivity)", lambda: format_netlist(_board())))
+    providers.append(ArtifactProvider(
+        "component_ids", "Component part numbers",
+        lambda: format_component_ids(_board())))
     sources.append(ArtifactsSource(providers))
     return sources, documents_dir
 

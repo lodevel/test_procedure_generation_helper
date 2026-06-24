@@ -104,9 +104,14 @@ class SkillChatDialog(QDialog):
         # opencode.project_tools_default; both False if unset or unreadable).
         # Each is still per-chat overridable via its checkbox.
         opencode_settings: dict = {}
+        self._context_limit = 16384  # token window for the context-% readout
         try:
             from ..dialogs.settings_dialog import load_settings
-            opencode_settings = load_settings().get("opencode", {}) or {}
+            _s = load_settings()
+            opencode_settings = _s.get("opencode", {}) or {}
+            _common = _s.get("common_llm", {}) or {}
+            self._context_limit = int(
+                _common.get("context_window", _common.get("max_tokens", 16384)) or 16384)
         except Exception:
             log.exception("skill-chat could not read Settings defaults")
         self._web_default = bool(opencode_settings.get("web_default", False))
@@ -249,6 +254,14 @@ class SkillChatDialog(QDialog):
         self._status = QLabel("")
         self._status.setStyleSheet(f"color:{theme.muted_color()}; font-size:9pt;")
         layout.addWidget(self._status)
+
+        # Context-usage readout. We show the LATEST turn's INPUT tokens as the
+        # current context size: the skill chat re-sends the whole transcript each
+        # turn, so the last input IS the live context — and this stays correct
+        # across any compaction, unlike a running sum (which would over-count).
+        self._context_label = QLabel("")
+        self._context_label.setStyleSheet(f"color:{theme.muted_color()}; font-size:9pt;")
+        layout.addWidget(self._context_label)
 
     def eventFilter(self, obj, event):  # noqa: N802 — Qt override
         """Enter in the input field sends; Shift+Enter inserts a newline."""
@@ -395,6 +408,23 @@ class SkillChatDialog(QDialog):
         # re-rendering the whole transcript from the session — cheap and avoids
         # drift between the live stream and the final parse.
         self._render_transcript()
+        self._update_context_label(response)
+
+    def _update_context_label(self, response) -> None:
+        """Show the LATEST turn's input tokens as the current context size. For a
+        stateless skill chat this IS the live context; it tracks compaction (a
+        running sum would over-count after a compact). Falls back to total_tokens
+        when the backend doesn't split input/output."""
+        used = (getattr(response, "prompt_tokens", 0)
+                or getattr(response, "total_tokens", 0) or 0)
+        if not used:
+            return
+        limit = self._context_limit or 16384
+        pct = 100 * used / limit
+        colour = ("#c0392b" if pct >= 95 else "#e67e22" if pct >= 90
+                  else "#b8860b" if pct >= 80 else theme.muted_color())
+        self._context_label.setText(f"Context: {used:,} / {limit:,} tokens ({pct:.0f}%)")
+        self._context_label.setStyleSheet(f"color:{colour}; font-size:9pt;")
 
     def _on_error(self, message: str) -> None:
         self._teardown_worker()

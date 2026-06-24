@@ -136,9 +136,17 @@ def _build_sources(main_window, root: Optional[Path]):
                              lambda: am.get_content(ArtifactType.TEST_CODE)),
         ]
     from ..core import odb_inspect
-    providers.append(ArtifactProvider(
-        "netlist", "Netlist", lambda: format_netlist(odb_inspect.load_board(root))
-    ))
+    # Cache the netlist for the dialog's lifetime: load_board spawns an ODB CLI
+    # subprocess (~seconds), and the picker re-materializes on every checkbox
+    # toggle for the token readout — without this each toggle would re-run it.
+    _netlist_cache: dict = {}
+
+    def _netlist_text() -> str:
+        if "text" not in _netlist_cache:
+            _netlist_cache["text"] = format_netlist(odb_inspect.load_board(root))
+        return _netlist_cache["text"]
+
+    providers.append(ArtifactProvider("netlist", "Netlist", _netlist_text))
     sources.append(ArtifactsSource(providers))
     return sources, documents_dir
 

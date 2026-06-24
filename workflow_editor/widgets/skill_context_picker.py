@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal, QUrl
+from PySide6.QtCore import Qt, Signal, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QCheckBox, QPushButton, QLabel,
@@ -168,6 +168,13 @@ class SkillContextPicker(QWidget):
             f"color:{theme.muted_color()}; font-size:9pt;")
         outer.addWidget(self._readout)
 
+        # Debounce the readout: it re-materializes the payload (assemble) to
+        # size it, which can be costly; coalesce rapid toggles into one update.
+        self._readout_timer = QTimer(self)
+        self._readout_timer.setSingleShot(True)
+        self._readout_timer.setInterval(150)
+        self._readout_timer.timeout.connect(self._update_readout)
+
         self._update_readout()
 
     # -- public API -----------------------------------------------------------
@@ -187,7 +194,7 @@ class SkillContextPicker(QWidget):
         tab = self._tabs_by_source.get(source_id)
         if tab is not None:
             tab.set_checked(keys)
-            self._update_readout()
+            self._readout_timer.start()
 
     # -- internals ------------------------------------------------------------
 
@@ -202,10 +209,10 @@ class SkillContextPicker(QWidget):
 
     def _refresh_tab(self, tab: _SourceTab) -> None:
         tab.refresh()
-        self._update_readout()
+        self._readout_timer.start()
 
     def _on_selection_changed(self) -> None:
-        self._update_readout()
+        self._readout_timer.start()   # debounced (assemble can be costly)
         self.selectionChanged.emit()
 
     def _update_readout(self) -> None:

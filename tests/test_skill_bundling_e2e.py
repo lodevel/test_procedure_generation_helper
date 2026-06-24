@@ -10,6 +10,8 @@ import json
 from project_services.bundle_generator import (
     bundle_skills_for_registry,
     copy_pack_skills,
+    copy_skill_dirs,
+    discover_bundleable_skills,
     enabled_pack_roots,
 )
 from workflow_editor.authoring import SkillSource, load_skills
@@ -81,6 +83,50 @@ def test_later_pack_wins_on_name_clash(tmp_path):
     copy_pack_skills([tmp_path / "packA", tmp_path / "packB"], out)
     text = (out / "authoring_skills" / "fake_skill" / "SKILL.md").read_text(encoding="utf-8")
     assert "From B" in text  # later pack overwrote
+
+
+def _local_skill(local_base, skill_id, name="L"):
+    d = local_base / skill_id
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(f"---\nname: {name}\n---\nbody", encoding="utf-8")
+    return d
+
+
+def _registry_for(tmp_path, project_root_rel="fake_pack"):
+    reg = tmp_path / "drivers_registry.json"
+    reg.write_text(json.dumps({"packs": [
+        {"id": "p1", "enabled": True, "wheel": {"project_root": project_root_rel}},
+    ]}), encoding="utf-8")
+    return reg
+
+
+def test_discover_bundleable_skills_local_and_pack(tmp_path):
+    _pack_with_skill(tmp_path / "fake_pack", "from_pack")
+    reg = _registry_for(tmp_path)
+    local = tmp_path / "local_pkgs" / "authoring_skills"
+    _local_skill(local, "from_local")
+    by_id = {s["id"]: s for s in discover_bundleable_skills(reg, local_base=local)}
+    assert by_id["from_pack"]["source"] == "pack:fake_pack"
+    assert by_id["from_local"]["source"] == "local"
+
+
+def test_discover_local_overrides_pack_on_name_clash(tmp_path):
+    _pack_with_skill(tmp_path / "fake_pack", "dup")
+    reg = _registry_for(tmp_path)
+    local = tmp_path / "local_pkgs" / "authoring_skills"
+    _local_skill(local, "dup")
+    by_id = {s["id"]: s for s in discover_bundleable_skills(reg, local_base=local)}
+    assert by_id["dup"]["source"] == "local"   # standalone overrides pack-embedded
+
+
+def test_copy_skill_dirs_copies_selected_only(tmp_path):
+    a = _local_skill(tmp_path / "src", "a")
+    _local_skill(tmp_path / "src", "b")   # exists but not selected
+    out = tmp_path / "bundle"
+    copied = copy_skill_dirs([a], out)
+    assert [p.name for p in copied] == ["a"]
+    assert (out / "authoring_skills" / "a" / "SKILL.md").is_file()
+    assert not (out / "authoring_skills" / "b").exists()
 
 
 def test_enabled_pack_roots_resolves_only_enabled(tmp_path):

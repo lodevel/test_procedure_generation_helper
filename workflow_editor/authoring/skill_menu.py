@@ -28,6 +28,7 @@ from .netlist_text import format_netlist
 log = logging.getLogger(__name__)
 
 _DOCS_SUBDIR = "documents"
+_AUTHORING_GUIDE = "authoring-a-skill.md"  # under the editor's docs/ folder
 
 
 def install_skills_menu(main_window) -> None:
@@ -71,6 +72,22 @@ def _populate(main_window, menu) -> None:
     open_act = QAction("Open skills folder…", menu)
     open_act.triggered.connect(lambda: _open_skills_folder(main_window))
     menu.addAction(open_act)
+
+    help_act = QAction("How to write a skill…", menu)
+    help_act.triggered.connect(lambda: _open_authoring_guide(main_window))
+    menu.addAction(help_act)
+
+
+def _open_authoring_guide(main_window) -> None:
+    # docs/authoring-a-skill.md sits at the editor (submodule) root: this file is
+    # workflow_editor/authoring/skill_menu.py → up 3 → <editor>/docs/.
+    doc = Path(__file__).resolve().parents[2] / "docs" / _AUTHORING_GUIDE
+    if not doc.is_file():
+        QMessageBox.information(
+            main_window, "Skills", f"Authoring guide not found at:\n{doc}"
+        )
+        return
+    QDesktopServices.openUrl(QUrl.fromLocalFile(str(doc)))
 
 
 def _open_skills_folder(main_window) -> None:

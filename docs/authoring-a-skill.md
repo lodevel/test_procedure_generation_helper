@@ -136,11 +136,12 @@ across three tiers:
 
 | Tier | Path | Scope |
 |---|---|---|
-| **Local drop-in** | `<repo>/local_packages/authoring_skills/<skill>/SKILL.md` | Hand-authored; available in every project on this install. This is the existing `local_packages` drop-in (same place local pack sources go), under an identifying `authoring_skills/` subfolder. **Skills → Open skills folder…** opens this. |
+| **Built-in library** | `<repo>/authoring_skills/<skill>/SKILL.md` | Curated skills **committed** with the software — shipped to everyone, available out of the box. (Wizards live in the parallel `<repo>/authoring_wizards/`.) |
+| **Local drop-in** | `<repo>/local_packages/authoring_skills/<skill>/SKILL.md` | Hand-authored; available in every project on this install. The `local_packages` folder is **gitignored** (not committed) — same place local pack sources go, under an identifying `authoring_skills/` subfolder. **Skills → Open skills folder…** opens this. |
 | **Project drop-in** | `<project>/authoring_skills/<skill>/` | One project only. |
-| **Bundled** | `<project>/bundle/authoring_skills/<skill>/` | Ships with a pack, versioned. Populated by the bundle build — not by hand. |
+| **Bundled** | `<project>/bundle/authoring_skills/<skill>/` | Ships inside a built bundle, versioned. Populated by the bundle build — not by hand. |
 
-When two skills share the same folder name, **project > local > bundled**.
+When two skills share the same folder name, **project > local > bundled > built-in** — your local or project copy shadows the shipped library.
 
 ## Bundling for distribution
 

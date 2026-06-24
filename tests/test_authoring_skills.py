@@ -186,6 +186,19 @@ def test_discover_ignores_non_skill_folders(tmp_path):
     assert [s.title for s in skills] == ["Real"]
 
 
+def test_discover_builtin_is_lowest_precedence(tmp_path):
+    builtin = tmp_path / "builtin"
+    local = tmp_path / "local"
+    _make_skill(builtin / "dcdc", body="---\nname: Builtin\n---\nb")
+    _make_skill(local / "dcdc", body="---\nname: Local\n---\nl")
+    skills = discover_skills(
+        [(builtin, SkillSource.BUILTIN), (local, SkillSource.LOCAL)]
+    )
+    assert len(skills) == 1
+    assert skills[0].source is SkillSource.LOCAL  # local overrides the built-in lib
+    assert skills[0].title == "Local"
+
+
 def test_discover_empty_when_no_roots():
     assert discover_skills([]) == []
 

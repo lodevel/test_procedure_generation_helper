@@ -110,6 +110,18 @@ def test_discover_bundleable_skills_local_and_pack(tmp_path):
     assert by_id["from_local"]["source"] == "local"
 
 
+def test_discover_bundleable_includes_builtin_library(tmp_path):
+    reg = _registry_for(tmp_path)
+    builtin = tmp_path / "builtin"
+    _local_skill(builtin, "lib_skill")
+    found = {
+        s["id"]: s for s in discover_bundleable_skills(
+            reg, local_base=tmp_path / "empty_local", builtin_base=builtin
+        )
+    }
+    assert found["lib_skill"]["source"] == "builtin"
+
+
 def test_discover_local_overrides_pack_on_name_clash(tmp_path):
     _pack_with_skill(tmp_path / "fake_pack", "dup")
     reg = _registry_for(tmp_path)

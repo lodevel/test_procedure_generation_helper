@@ -24,12 +24,13 @@ SKILL_CHAT_KIND = "skill-chat"
 
 class SkillSource(IntEnum):
     """Where a skill was found. The integer value IS its precedence: when two
-    skills share a ``skill_id`` the higher source wins — project overrides user
-    overrides bundled, mirroring the pack drop-in-overrides-bundled rule."""
+    skills share a ``skill_id`` the higher source wins —
+    project > local > bundled > builtin."""
 
-    BUNDLED = 1  # <project>/bundle/authoring_skills — shipped with a pack
-    LOCAL = 2    # <repo>/local_packages/authoring_skills — drop-in, all projects
-    PROJECT = 3  # <project>/authoring_skills — this project only
+    BUILTIN = 1  # <repo>/authoring_skills — committed library, ships with the app
+    BUNDLED = 2  # <project>/bundle/authoring_skills — shipped in a built bundle
+    LOCAL = 3    # <repo>/local_packages/authoring_skills — drop-in (uncommitted)
+    PROJECT = 4  # <project>/authoring_skills — this project only
 
 
 @dataclass(frozen=True)

@@ -34,6 +34,18 @@ def local_skills_dir() -> Optional[Path]:
     return get_local_packages_dir() / _SKILLS_SUBDIR
 
 
+def builtin_skills_dir() -> Optional[Path]:
+    """Built-in library (committed, ships with the app): ``<repo>/authoring_skills``.
+
+    Returns None when ``project_services`` can't be imported (fully standalone)."""
+    try:
+        from project_services.config_manager import get_builtin_skills_dir
+    except Exception:
+        log.debug("project_services.config_manager unavailable; no builtin skills dir")
+        return None
+    return get_builtin_skills_dir()
+
+
 def project_skills_dir(project_root: Optional[Path]) -> Optional[Path]:
     """``<project>/authoring_skills`` — skills scoped to one project."""
     if not project_root:
@@ -54,6 +66,7 @@ def skill_roots(
     """All EXISTING skill roots, tagged by source. Order is irrelevant to
     precedence — the registry resolves that by :class:`SkillSource`."""
     candidates = [
+        (builtin_skills_dir(), SkillSource.BUILTIN),
         (bundled_skills_dir(project_root), SkillSource.BUNDLED),
         (local_skills_dir(), SkillSource.LOCAL),
         (project_skills_dir(project_root), SkillSource.PROJECT),

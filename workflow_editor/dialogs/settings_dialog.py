@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QGroupBox, QFileDialog, QMessageBox, QPlainTextEdit,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QSplitter
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QFont
 
 from .. import theme
@@ -299,7 +299,16 @@ class SettingsDialog(QDialog):
     Settings are stored in settings.json in user's home directory.
     Task configurations are managed through TaskConfigManager.
     """
-    
+
+    # Thread-safe UI marshal: a worker daemon (the model-list fetch, the
+    # Start-server liveness probe) emits a callable here and Qt queues the slot
+    # onto THIS dialog's (UI) thread. QTimer.singleShot(0, fn) from a non-Qt
+    # daemon thread creates the timer in the CALLING thread, so the callback can
+    # be lost (the probe-in-flight flag would stay set forever and the note
+    # would stick at "Querying server…"); a signal/slot is the canonical
+    # cross-thread marshal (AutoConnection -> QueuedConnection).
+    _ui_call = Signal(object)
+
     def __init__(
         self,
         task_config_manager: TaskConfigManager,
@@ -308,6 +317,9 @@ class SettingsDialog(QDialog):
         server_manager=None,
     ):
         super().__init__(parent)
+        # Cross-thread UI marshal: queue daemon-posted callables onto the UI
+        # thread (AutoConnection -> QueuedConnection from a worker thread).
+        self._ui_call.connect(self._run_ui_call)
         self.setWindowTitle("Settings")
         self.setMinimumWidth(700)
         self.setMinimumHeight(600)
@@ -326,12 +338,38 @@ class SettingsDialog(QDialog):
         # to the spinbox host/port.
         self._server_manager = server_manager
 
+        # Set true in done() (the accept/reject chokepoint). A model-fetch worker
+        # may post _apply_opencode_models() back AFTER the dialog is closed; the
+        # posted callback returns early on this flag instead of touching deleted
+        # C++ widgets (use-after-close). The Start-server poll has its own
+        # _start_poll_done latch; this guards the model-refresh path.
+        self._closed = False
+        # Generation token for the Start-server probe: bumped on each
+        # _on_start_server_clicked so a stale probe (from an earlier start
+        # attempt) is dropped instead of applying alive=True to a newer poll.
+        self._start_server_generation = 0
+
         # Note: task / chat editing moved to the parent app's
         # ProjectConfigDialog -> Workflows tab (Phase 4). This dialog
         # now owns only LLM backend + validator-loop settings.
         self._setup_ui()
         self._load_values()
-    
+
+    @Slot(object)
+    def _run_ui_call(self, fn):
+        """UI-thread slot for the _ui_call signal: invoke the marshalled
+        callable. Runs on this dialog's (the UI) thread because the signal was
+        emitted from a worker thread (queued connection)."""
+        fn()
+
+    def _post_to_ui(self, fn):
+        """Marshal a callable onto the UI thread via the _ui_call signal: the
+        canonical thread-safe cross-thread dispatch. A worker daemon has NO Qt
+        event loop, so QTimer.singleShot(0, fn) from it would create the timer
+        in the daemon thread and the callback could be lost. Emitting a signal
+        is thread-safe and Qt queues the slot onto the UI thread."""
+        self._ui_call.emit(fn)
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         
@@ -559,6 +597,11 @@ class SettingsDialog(QDialog):
         model id NOT in the list (e.g. openai/gpt-5.5, which OpenCode auto-picks
         but doesn't report in /config). Empty = Default (auto-pick). The current
         text is preserved across a refresh.
+
+        ``fetch_opencode_models`` is a blocking 2s HTTP GET, so it runs on a
+        daemon thread and the result is marshaled back to the UI thread — the
+        dialog never freezes (matters on dialog-open, the Refresh button, and the
+        Start-server poll's re-query). One in-flight probe at a time.
         """
         if self.opencode_model.count() == 0:
             preserve = self._settings.get("opencode", {}).get("model", "") or ""
@@ -567,12 +610,48 @@ class SettingsDialog(QDialog):
         # C4: query the LIVE running server's port when a manager is running —
         # the OS may have OS-assigned a port different from the saved spinbox
         # value. Fall back to the spinbox host/port when there's no live server.
+        # is_running is a non-blocking process poll, so this read is cheap.
         if self._server_manager is not None and self._server_manager.is_running:
             url = self._server_manager.server_url
         else:
             url = (f"http://{self.opencode_host.text() or '127.0.0.1'}"
                    f":{self.opencode_port.value()}")
-        models = fetch_opencode_models(url)
+        # One in-flight probe at a time so rapid Refresh clicks don't stack
+        # worker threads; a later probe just supersedes the note.
+        if getattr(self, "_models_probe_in_flight", False):
+            return
+        self._models_probe_in_flight = True
+        self.opencode_models_note.setText("Querying server…")
+
+        import threading
+
+        def _worker():
+            try:
+                models = fetch_opencode_models(url)
+            except Exception:
+                models = []
+            # Marshal the widget mutation back to the UI thread via the
+            # thread-safe signal (QTimer.singleShot from this daemon would be
+            # lost — a lost callback leaves _models_probe_in_flight=True forever
+            # and the note stuck at "Querying server…").
+            self._post_to_ui(lambda: self._apply_opencode_models(models, preserve))
+
+        try:
+            threading.Thread(target=_worker, daemon=True).start()
+        except Exception:
+            # Spawn failed after the flag was set — clear it so a later Refresh
+            # can probe again (never wedge the flag / note permanently).
+            self._models_probe_in_flight = False
+            self.opencode_models_note.setText(
+                "Could not query the server — try Refresh again.")
+
+    def _apply_opencode_models(self, models, preserve):
+        """Apply a fetched model list to the picker (UI thread only)."""
+        # The fetch worker may marshal this back AFTER the dialog closed; the
+        # C++ widgets are then deleted. Drop the late result (use-after-close).
+        if getattr(self, "_closed", False):
+            return
+        self._models_probe_in_flight = False
         self.opencode_model.blockSignals(True)
         self.opencode_model.clear()
         self.opencode_model.addItems(models)        # convenience list
@@ -622,40 +701,131 @@ class SettingsDialog(QDialog):
         reset = getattr(parent, "_reset_server_recovery", None)
         if callable(reset):
             reset()
+        # Bump the generation token: each Start-server attempt owns a fresh
+        # token. A probe spawned by an EARLIER attempt carries the old token and
+        # its result is dropped (it must not stop a newer poll's timer, re-enable
+        # the button, or list models for the wrong state).
+        self._start_server_generation += 1
+        generation = self._start_server_generation
         self.opencode_start_server.setEnabled(False)
         self.opencode_models_note.setText("Starting OpenCode server…")
         # Launch off the UI thread; ensure_running short-circuits if it is
         # already alive and otherwise calls start().
-        threading.Thread(target=sm.ensure_running, daemon=True).start()
+        try:
+            threading.Thread(target=sm.ensure_running, daemon=True).start()
+        except Exception:
+            # Spawn failed — re-enable the button and surface a note instead of
+            # wedging it disabled with the "Starting…" note forever. No poll
+            # timer is armed (nothing to poll), so just bail.
+            self.opencode_start_server.setEnabled(True)
+            self.opencode_models_note.setText(
+                "Could not start the server — check the OpenCode install / "
+                "logs, then try again.")
+            return
 
         # Poll liveness for up to ~startup timeout; refresh + re-enable on the UI
-        # thread when it answers (or give up with a clear note).
+        # thread when it answers (or give up with a clear note). is_alive is a
+        # blocking 2s HTTP /health GET, so each tick runs it on a daemon thread
+        # and the verdict is MARSHALLED back to the UI thread via _post_to_ui —
+        # the probe never mutates dialog state cross-thread, and the modal dialog
+        # never freezes. _start_poll_done latches the terminal state so a late
+        # probe result can still flip us to success after a timeout note (no
+        # cross-thread flag the UI reads stale, no ignored late success).
         self._start_poll_elapsed = 0.0
+        self._start_probe_in_flight = False
+        self._start_poll_done = False
         timer = QTimer(self)
         timer.setInterval(1000)
+        # Stash the timer so done() (dialog close) can stop it — a fired-after-
+        # close tick would otherwise run HTTP on the UI thread and touch deleted
+        # C++ widgets (use-after-close).
+        self._start_poll_timer = timer
 
         def _tick():
-            self._start_poll_elapsed += 1.0
-            # Gate success on is_alive (process up AND /health answers), not the
-            # bare process poll: start() spawns the process EARLY then waits for
-            # /health, so is_running flips true before the server can serve
-            # /config — re-querying then would just re-show "down". is_alive only
-            # reads ready once the server actually answers, so the refresh below
-            # lists models on the first try.
-            if sm.is_alive:
-                timer.stop()
-                self.opencode_start_server.setEnabled(True)
-                self._populate_opencode_models()  # toggles the button off + lists models
+            if self._start_poll_done:
                 return
+            self._start_poll_elapsed += 1.0
             if self._start_poll_elapsed >= 60.0:
+                # Timeout: stop ticking and show the give-up note. We do NOT set
+                # _start_poll_done here — an is_alive probe may still be in
+                # flight; if it comes back alive its UI-thread handler honours
+                # the LATE success (flips the note + lists models) instead of
+                # silently dropping it.
                 timer.stop()
                 self.opencode_start_server.setEnabled(True)
                 self.opencode_models_note.setText(
                     "Server did not come up — check the OpenCode install / logs, "
                     "then try again.")
+                return
+            # Kick off the next is_alive probe off the UI thread (one at a time).
+            if self._start_probe_in_flight:
+                return
+            self._start_probe_in_flight = True
 
+            def _probe():
+                # Off the UI thread (blocking ~2s /health). The verdict is
+                # marshalled back via the thread-safe signal; the daemon mutates
+                # NO dialog state directly (a lost QTimer.singleShot here would
+                # wedge _start_probe_in_flight=True forever).
+                try:
+                    alive = sm.is_alive
+                except Exception:
+                    alive = False
+                self._post_to_ui(
+                    lambda: self._on_start_probe_result(alive, generation))
+
+            try:
+                threading.Thread(target=_probe, daemon=True).start()
+            except Exception:
+                # Spawn failed after the flag was set — clear it so the next
+                # tick can probe again (never wedge _start_probe_in_flight=True).
+                self._start_probe_in_flight = False
+
+        def _on_start_probe_result(alive, gen=generation):
+            # UI-thread continuation of one is_alive probe.
+            # Drop a stale probe from an EARLIER Start-server attempt: applying
+            # its verdict would stop a newer poll's timer / re-enable the button /
+            # list models for the wrong state.
+            if gen != self._start_server_generation:
+                return
+            self._start_probe_in_flight = False
+            if self._start_poll_done:
+                return  # already terminal (a prior probe won, or dialog logic done)
+            if not alive:
+                return  # keep polling (the tick re-arms / enforces timeout)
+            # Gate success on is_alive (process up AND /health answers): start()
+            # spawns the process EARLY then waits for /health, so is_running
+            # flips true before the server can serve /config. This is the SINGLE
+            # success seam — it also catches a late success after the timeout
+            # note (the timer may already be stopped).
+            self._start_poll_done = True
+            timer.stop()
+            self.opencode_start_server.setEnabled(True)
+            self._populate_opencode_models()  # toggles the button off + lists models
+
+        self._on_start_probe_result = _on_start_probe_result
         timer.timeout.connect(_tick)
         timer.start()
+
+    def done(self, result):
+        """Cancel the Start-server poll on ANY dialog close (OK or Cancel).
+
+        ``done()`` is the single chokepoint for accept/reject, so stopping the
+        timer here guarantees no tick fires after the dialog (and its C++
+        widgets) are gone — avoiding HTTP on the UI thread + use-after-close.
+        """
+        timer = getattr(self, "_start_poll_timer", None)
+        if timer is not None:
+            timer.stop()
+        # Latch the poll terminal so a probe still in flight, whose result
+        # marshals back after this close, no-ops in its UI-thread handler
+        # instead of touching deleted C++ widgets (use-after-close).
+        self._start_poll_done = True
+        # Disposed flag for any OTHER posted callback (the model-refresh worker's
+        # _apply_opencode_models) — it returns early on this instead of mutating
+        # deleted C++ widgets after close.
+        self._closed = True
+        super().done(result)
 
     def _on_test_connection(self):
         """Test the LLM backend configuration."""

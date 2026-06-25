@@ -516,6 +516,73 @@ def test_ensure_running_respects_retirement(tmp_path):
         popen.assert_not_called()
 
 
+def test_ensure_running_relaunches_wedged_server(tmp_path):
+    # A WEDGED server: the process is ALIVE (poll() -> None) but /health returns
+    # 500. is_alive is False, so start()'s poll-only reuse-guard would
+    # short-circuit on the live-but-wedged handle and NEVER respawn. ensure_running
+    # must tear the corpse down first so start() spawns a FRESH process and the
+    # wedged handle is replaced.
+    mgr = _mgr(tmp_path)
+    mgr._running = True
+    wedged = _live_proc()           # process polls alive
+    mgr._server_process = wedged
+
+    bad = MagicMock(); bad.status_code = 500   # /health dead -> not alive
+    healthy = MagicMock(); healthy.ok = True
+    fresh = _live_proc()
+    with patch("workflow_editor.llm.server_manager.requests.get", return_value=bad), \
+         patch.object(mgr, "_diagnose_installation", return_value=healthy), \
+         patch.object(mgr, "_sweep_orphan"), \
+         patch.object(mgr, "_stop_process") as stop_process, \
+         patch("workflow_editor.llm.server_manager.find_free_port", return_value=5005), \
+         patch("workflow_editor.llm.server_manager.subprocess.Popen", return_value=fresh) as popen, \
+         patch.object(mgr, "_start_stderr_drain"), \
+         patch.object(mgr, "_write_pid_file"), \
+         patch.object(mgr, "_wait_for_server", return_value=True):
+        assert mgr.ensure_running() is True
+        # The wedged corpse was torn down (force-stop) AND a fresh server spawned.
+        stop_process.assert_called()
+        popen.assert_called_once()
+    # The wedged handle was replaced by the respawned process.
+    assert mgr._server_process is fresh
+    assert mgr._server_process is not wedged
+    assert mgr._running is True
+
+
+def test_ensure_running_defers_when_start_in_flight(tmp_path):
+    # is_alive reads False for EITHER "process dead" OR "a start/stop is in
+    # flight" (is_running try-acquires _lock and reports not-running while it is
+    # held). ensure_running must NOT relaunch on the in-flight case: another
+    # thread is already booting this server. We simulate an in-flight boot by
+    # holding _lock, then assert ensure_running bails (returns False, no start()).
+    mgr = _mgr(tmp_path)
+    mgr._running = True
+    mgr._server_process = _dead_proc()  # is_alive -> False (process polled dead)
+    mgr._lock.acquire()  # model "a start/stop is in flight"
+    try:
+        with patch.object(mgr, "start") as start, \
+             patch.object(mgr, "_force_stop_for_relaunch") as force_stop:
+            assert mgr.ensure_running() is False
+            # Deferred to the in-flight boot: neither relaunched nor torn down.
+            start.assert_not_called()
+            force_stop.assert_not_called()
+    finally:
+        mgr._lock.release()
+
+
+def test_ensure_running_relaunches_once_lock_free(tmp_path):
+    # The lock-busy guard is transient: once the in-flight start/stop releases
+    # _lock, a later ensure_running on a dead server relaunches as normal (the
+    # guard never permanently wedges recovery).
+    mgr = _mgr(tmp_path)
+    mgr._running = True
+    mgr._server_process = _dead_proc()
+    assert not mgr._lock.locked()  # lock free -> proceed
+    with patch.object(mgr, "start", return_value=True) as start:
+        assert mgr.ensure_running() is True
+        start.assert_called_once()
+
+
 # --------------------------------------------------------------------------- #
 # Retirement — the prewarm/manager-swap orphan race + the synchronous-stop UI  #
 # freeze (BLOCKER A).                                                          #
@@ -574,14 +641,28 @@ def test_wait_for_server_aborts_when_retired_mid_wait(tmp_path):
 # --------------------------------------------------------------------------- #
 
 class _FakeSM:
-    """A minimal server-manager stand-in for the MainWindow recovery seam."""
-    def __init__(self, alive=False, retired=False):
+    """A minimal server-manager stand-in for the MainWindow recovery seam.
+
+    The MainWindow tick + recovery finally now read the strong predicate
+    ``is_alive`` (process up AND /health 200), so the fake exposes both. By
+    default ``is_alive`` tracks ``is_running``; ``wedged=True`` models a
+    hung server (process up, /health dead) where ``is_running`` is True but
+    ``is_alive`` is False.
+    """
+    def __init__(self, alive=False, retired=False, wedged=False):
         self._alive = alive
         self._retired = retired
+        self._wedged = wedged
         self.ensure_calls = 0
 
     @property
     def is_running(self):
+        # A wedged server's PROCESS is up even though /health is dead.
+        return self._alive or self._wedged
+
+    @property
+    def is_alive(self):
+        # Strong verdict: a wedged server reads NOT alive.
         return self._alive
 
     def ensure_running(self):
@@ -598,6 +679,9 @@ def _fake_window(sm):
     w._server_manager = sm
     w._server_recovering = False
     w._server_recovery_attempts = 0
+    # Off-thread health-probe state the new tick path reads/writes.
+    w._last_server_alive = None
+    w._health_probe_inflight = False
     # The cap is a MainWindow class attribute the unbound method reads off self.
     w._MAX_SERVER_RECOVERY_ATTEMPTS = MainWindow._MAX_SERVER_RECOVERY_ATTEMPTS
     # status_bar.showMessage / _refresh_server_indicator are side-effect-only.
@@ -607,18 +691,56 @@ def _fake_window(sm):
 
 
 def _run_tick_sync(w):
-    """Drive one _on_server_health_tick with the recovery thread executed
-    INLINE (so the failure-count increment is observable synchronously)."""
+    """Drive one _on_server_health_tick to completion SYNCHRONOUSLY.
+
+    The tick is now fully off-thread: it spawns a daemon that probes
+    ``is_alive`` and marshals the verdict back to the UI thread via
+    ``_post_to_ui`` (a thread-safe ``_ui_call`` signal emit in production —
+    NOT QTimer.singleShot, which is lost when emitted from a non-Qt daemon
+    thread). To observe the whole
+    probe -> result -> recover -> done chain in one call we (a) run every
+    spawned thread body inline on ``.start()`` and (b) run every ``_post_to_ui``
+    callback inline. The bound methods resolve off ``w`` (a SimpleNamespace), so
+    we install an inline ``_post_to_ui`` on ``w`` itself."""
     from workflow_editor.main_window import MainWindow
 
     def _inline_thread(target, daemon=False):
         t = MagicMock()
-        t.start.side_effect = target  # run the recover body on .start()
+        t.start.side_effect = target  # run the probe/recover body on .start()
         return t
+
+    def _inline_post_to_ui(fn):
+        fn()  # run the UI-thread continuation immediately (no event loop)
+
+    w._post_to_ui = _inline_post_to_ui
+    # Bind the UI-thread continuations as methods on the SimpleNamespace so the
+    # inline _post_to_ui callbacks (which call self._on_*) resolve them.
+    w._on_health_probe_result = lambda sm, alive: MainWindow._on_health_probe_result(w, sm, alive)
+    w._recover = lambda sm: MainWindow._recover(w, sm)
+    w._on_recover_done = lambda sm, ok: MainWindow._on_recover_done(w, sm, ok)
 
     with patch("workflow_editor.main_window.threading.Thread",
                side_effect=_inline_thread):
         MainWindow._on_server_health_tick(w)
+
+
+def test_post_to_ui_uses_signal_not_singleshot():
+    # The dispatch primitive: _post_to_ui must marshal via the _ui_call SIGNAL
+    # (thread-safe, queued to the UI thread), NOT QTimer.singleShot — which,
+    # called from a non-Qt daemon thread, creates the timer in the calling
+    # thread and the callback can be lost (probe/recover would wedge forever).
+    import types
+    from workflow_editor.main_window import MainWindow
+
+    w = types.SimpleNamespace()
+    w._ui_call = MagicMock()  # stand-in for the bound Signal
+    payload = object()
+    with patch("PySide6.QtCore.QTimer") as qtimer:
+        MainWindow._post_to_ui(w, payload)
+    # Marshalled by emitting the signal with the exact callable...
+    w._ui_call.emit.assert_called_once_with(payload)
+    # ...and NOT by the lost-from-daemon QTimer.singleShot path.
+    qtimer.singleShot.assert_not_called()
 
 
 def test_auto_recovery_gives_up_after_three_failures():
@@ -681,6 +803,19 @@ def test_reset_server_recovery_rearms_after_giveup():
     assert sm.ensure_calls == 4
 
 
+def test_auto_recovery_triggers_on_wedged_server():
+    # A WEDGED server (process up, /health dead) reads is_running True but
+    # is_alive False. The tick must trust is_alive: it relaunches via
+    # ensure_running AND counts the still-not-alive outcome as a failed attempt
+    # toward the give-up cap (a process-poll-only tick would see "running",
+    # never recover it, and show a green lie).
+    sm = _FakeSM(alive=False, wedged=True)
+    w = _fake_window(sm)
+    _run_tick_sync(w)
+    assert sm.ensure_calls == 1                 # wedge detected -> relaunch
+    assert w._server_recovery_attempts == 1     # still not alive -> counts as a failure
+
+
 def test_stop_manager_async_sets_retired_synchronously():
     # BLOCKER: the orphan race is only closed if _retired is armed
     # SYNCHRONOUSLY at the swap (on the calling thread), BEFORE the daemon
@@ -713,3 +848,154 @@ def test_stop_manager_async_sets_retired_synchronously():
     # teardown is still blocked on the gate (deferred off this thread).
     assert mgr._retired is True
     stop_gate.set()  # let the daemon thread finish cleanly
+
+
+def test_stale_health_probe_does_not_clear_live_inflight_flag():
+    # Residual #1: a probe spawned for an OLD manager must not clear the CURRENT
+    # manager's in-flight flag — otherwise the next tick stacks a 2nd concurrent
+    # probe. The flag clear must happen AFTER the stale-manager guard returns.
+    from workflow_editor.main_window import MainWindow
+    current_sm = _FakeSM(alive=True)
+    w = _fake_window(current_sm)
+    w._health_probe_inflight = True  # the CURRENT manager's probe is in flight
+
+    old_sm = _FakeSM(alive=True)  # a different (swapped-out) manager
+    # A late result from the OLD manager's probe marshals back.
+    MainWindow._on_health_probe_result(w, old_sm, True)
+
+    # Dropped by the stale-manager guard WITHOUT clearing the live flag.
+    assert w._health_probe_inflight is True
+    # The stale verdict must not have driven the current indicator either.
+    w._refresh_server_indicator.assert_not_called()
+
+
+def test_current_health_probe_clears_inflight_flag():
+    # The complement: the CURRENT manager's probe DOES clear its own in-flight
+    # flag (so the next tick is unblocked).
+    from workflow_editor.main_window import MainWindow
+    sm = _FakeSM(alive=True)
+    w = _fake_window(sm)
+    w._health_probe_inflight = True
+
+    MainWindow._on_health_probe_result(w, sm, True)
+
+    assert w._health_probe_inflight is False
+    w._refresh_server_indicator.assert_called_once_with(True)
+
+
+# --- Settings-dialog probe hardening (residuals #2/#3/#4) -------------------
+#
+# The dialog methods are driven UNBOUND on a SimpleNamespace carrying just the
+# widgets they touch (every widget is a MagicMock — no Qt event loop). The
+# in-method ``import threading`` resolves the global ``threading`` module, so
+# patching ``threading.Thread`` forces / observes the spawn path.
+
+
+def _fake_dialog():
+    import types
+    self = types.SimpleNamespace()
+    self.opencode_model = MagicMock()
+    self.opencode_model.count.return_value = 0
+    self.opencode_models_note = MagicMock()
+    self.opencode_start_server = MagicMock()
+    self.opencode_host = MagicMock()
+    self.opencode_host.text.return_value = "127.0.0.1"
+    self.opencode_port = MagicMock()
+    self.opencode_port.value.return_value = 4096
+    self._settings = {}
+    self._server_manager = None
+    self._models_probe_in_flight = False
+    self._start_server_generation = 0
+    self._closed = False
+    # _post_to_ui is not reached on the spawn-failure paths under test.
+    self._post_to_ui = MagicMock()
+    return self
+
+
+def _raising_thread(*args, **kwargs):
+    t = MagicMock()
+    t.start.side_effect = RuntimeError("can't start new thread")
+    return t
+
+
+def test_models_probe_spawn_failure_clears_inflight_flag():
+    # Residual #3: a Thread.start() failure must clear _models_probe_in_flight
+    # (and surface a note) — otherwise the flag wedges True and the note is stuck
+    # at "Querying server…" forever, blocking every future Refresh.
+    from workflow_editor.dialogs.settings_dialog import SettingsDialog
+    self = _fake_dialog()
+    with patch("threading.Thread", side_effect=_raising_thread):
+        SettingsDialog._populate_opencode_models(self)
+    assert self._models_probe_in_flight is False
+    # The last note is the failure message, not the stuck "Querying server…".
+    assert "Querying server" not in self.opencode_models_note.setText.call_args[0][0]
+
+
+def test_start_probe_spawn_failure_re_enables_button():
+    # Residual #4: ensure_running Thread.start() failure must re-enable the Start
+    # button and replace the "Starting…" note — not wedge it disabled forever.
+    from workflow_editor.dialogs.settings_dialog import SettingsDialog
+    self = _fake_dialog()
+    self._server_manager = _FakeSM(alive=False)
+    self.parent = MagicMock(return_value=None)
+    # The spawn fails BEFORE the poll timer is armed, so QTimer is never reached;
+    # patch it anyway for safety (a SimpleNamespace is not a valid QObject parent).
+    with patch("threading.Thread", side_effect=_raising_thread), \
+            patch("PySide6.QtCore.QTimer", MagicMock()):
+        SettingsDialog._on_start_server_clicked(self)
+    # Button re-enabled (last setEnabled call is True) after the spawn failure.
+    assert self.opencode_start_server.setEnabled.call_args[0][0] is True
+    assert "Starting" not in self.opencode_models_note.setText.call_args[0][0]
+
+
+def test_stale_start_probe_result_is_dropped_by_generation():
+    # Residual #2: a probe result from an EARLIER Start-server attempt (older
+    # generation token) must be dropped — it must not stop a newer poll's timer,
+    # re-enable the button, or list models for the wrong state.
+    from workflow_editor.dialogs.settings_dialog import SettingsDialog
+    self = _fake_dialog()
+    self._server_manager = _FakeSM(alive=False)
+    self.parent = MagicMock(return_value=None)
+    # First click installs _on_start_probe_result bound to generation 1.
+    captured = {}
+
+    def _capture_thread(target=None, daemon=False):
+        t = MagicMock()
+        t.start.side_effect = lambda: captured.setdefault("ran", True)
+        return t
+
+    with patch("threading.Thread", side_effect=_capture_thread), \
+            patch("PySide6.QtCore.QTimer", MagicMock()):
+        SettingsDialog._on_start_server_clicked(self)
+    handler_gen1 = self._on_start_probe_result
+    assert self._start_server_generation == 1
+
+    # A SECOND click bumps the generation to 2 (a newer poll owns the state).
+    with patch("threading.Thread", side_effect=_capture_thread), \
+            patch("PySide6.QtCore.QTimer", MagicMock()):
+        SettingsDialog._on_start_server_clicked(self)
+    assert self._start_server_generation == 2
+
+    # Reset observable widgets, then deliver the STALE gen-1 result (alive=True).
+    self.opencode_start_server.reset_mock()
+    self._populate_opencode_models = MagicMock()
+    handler_gen1(True, 1)
+
+    # Dropped: no button re-enable, no model re-query for the stale generation.
+    self.opencode_start_server.setEnabled.assert_not_called()
+    self._populate_opencode_models.assert_not_called()
+
+
+def test_apply_models_no_ops_after_dialog_closed():
+    # Residual #5: a model-fetch worker may post _apply_opencode_models() AFTER
+    # the dialog closed; the C++ widgets are deleted. The _closed guard must drop
+    # the late callback before it touches any widget.
+    from workflow_editor.dialogs.settings_dialog import SettingsDialog
+    self = _fake_dialog()
+    self._models_probe_in_flight = True
+    self._closed = True  # done() ran
+    SettingsDialog._apply_opencode_models(self, ["a/b"], "")
+    # Returned early: no widget mutation, flag left as-is (not cleared on a dead
+    # dialog — nothing reads it anymore).
+    self.opencode_model.clear.assert_not_called()
+    self.opencode_models_note.setText.assert_not_called()

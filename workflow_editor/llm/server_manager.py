@@ -169,16 +169,31 @@ class OpenCodeServerManager:
     @property
     def is_running(self) -> bool:
         """
-        Check if the server is running.
+        Check if the server is running (NON-BLOCKING process poll).
 
         This checks both the internal state AND verifies the process
         is still alive.
 
+        ``start()``/``stop()`` hold ``self._lock`` for the WHOLE boot — up to
+        ``startup_timeout`` (~30s cold, longer on port-conflict retries). A
+        UI-thread liveness poll (the 5s health tick, the settings poll, the
+        indicator refresh) must NEVER block on that lock, so we try-acquire
+        and report not-running when a start/stop is in flight. A genuinely
+        running server holds the lock only for the microsecond of
+        ``_process_is_alive_locked()``, so the try-acquire effectively always
+        succeeds for it; only an in-flight boot is reported as not-yet-running,
+        which is the truthful answer (it cannot serve requests mid-boot) and
+        self-corrects on the next poll once the lock is free.
+
         Returns:
             True if server process is running.
         """
-        with self._lock:
+        if not self._lock.acquire(blocking=False):
+            return False
+        try:
             return self._process_is_alive_locked()
+        finally:
+            self._lock.release()
 
     @property
     def is_alive(self) -> bool:
@@ -196,19 +211,56 @@ class OpenCodeServerManager:
             return False
         return self.health_check()
 
+    def _force_stop_for_relaunch(self) -> None:
+        """Tear down a wedged process so the next ``start()`` respawns — withOUT
+        retiring the manager (unlike ``stop()``, which sets ``_retired=True`` and
+        would permanently block relaunch). Runs under the lock so it is ordered
+        against an in-flight boot."""
+        with self._lock:
+            self._running = False
+            self._stop_process()
+
     def ensure_running(self) -> bool:
         """Idempotent self-heal: return True if the server is already alive,
         otherwise (re)launch it via ``start()`` and report the outcome.
 
         This is the single auto-recovery seam — the app-level liveness poll and
         the model picker both call it on a daemon thread when the server reads as
-        down. ``start()``'s own reuse-guard now consults REAL liveness, so a
-        crashed prior process is swept and relaunched rather than mistaken for a
-        still-running one. A retired manager stays retired (``start()`` refuses);
-        the caller must build a fresh manager in that case.
+        down. The down verdict is ``is_alive`` (process up AND ``/health`` 200),
+        so a WEDGED server (process alive but ``/health`` dead) also reads as
+        down here. ``start()``'s reuse-guard is a process poll only, so it would
+        short-circuit on a wedged-but-alive corpse and never respawn — we
+        proactively tear it down first so ``start()`` sees a dead handle and
+        relaunches. A retired manager stays retired (``start()`` refuses); the
+        caller must build a fresh manager in that case.
+
+        ``is_alive`` reads False for EITHER "process dead" OR "a start/stop is in
+        flight" (``is_running`` try-acquires ``self._lock`` and reports
+        not-running while the lock is held). We must NOT relaunch on the latter:
+        another thread is already booting this server, and barging in would only
+        block on the lock and then redundantly respawn / fight the in-flight
+        boot. So we disambiguate up front: if the lock is busy, a start/stop is
+        in flight — treat it as "recovery already in progress" and bail, letting
+        the caller's next poll re-check once the boot settles.
         """
         if self.is_alive:
             return True
+        # Disambiguate "dead" from "lock busy (a start/stop is in flight)": a
+        # non-blocking probe of the SAME lock start()/stop() hold for the whole
+        # boot. Busy -> a relaunch is already under way; do not stack another.
+        if not self._lock.acquire(blocking=False):
+            log.debug(
+                "ensure_running: a start/stop is already in flight — deferring "
+                "to it instead of relaunching")
+            return False
+        self._lock.release()
+        # Wedge guard: process alive but /health dead -> kill the corpse so
+        # start()'s poll-only reuse-guard does not short-circuit on it.
+        if self.is_running:
+            log.warning(
+                "Server wedged (process alive, /health dead) — tearing down "
+                "before relaunch")
+            self._force_stop_for_relaunch()
         log.info("Server found down — attempting auto-recovery (relaunch)")
         return self.start()
 

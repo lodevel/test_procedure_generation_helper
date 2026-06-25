@@ -69,6 +69,13 @@ class MainWindow(QMainWindow):
     - Status bar
     """
     
+    # Thread-safe UI marshal: a daemon (health probe / recover) emits a
+    # callable here and Qt queues the slot onto THIS object's (UI) thread.
+    # QTimer.singleShot(0, fn) from a non-Qt daemon thread creates the timer
+    # in the CALLING thread, so the callback can be lost; a signal/slot is
+    # the canonical cross-thread marshal (AutoConnection -> QueuedConnection).
+    _ui_call = Signal(object)
+    
     def __init__(
         self,
         parent=None,
@@ -80,6 +87,9 @@ class MainWindow(QMainWindow):
         llm_profile: Optional[str] = None,
     ):
         super().__init__(parent)
+        # Cross-thread UI marshal: queue daemon-posted callables onto the UI
+        # thread (AutoConnection -> QueuedConnection from a worker thread).
+        self._ui_call.connect(self._run_ui_call)
         log.debug("MainWindow.__init__ starting")
         self.setWindowTitle("Workflow Editor")
         self.setMinimumSize(1200, 700)
@@ -308,6 +318,14 @@ class MainWindow(QMainWindow):
         
         # Create factory for tabs to use
         self._backend_factory = BackendFactory(config, self._server_manager)
+
+        # Re-arm auto-recovery on EVERY manager swap: a fresh manager must
+        # never inherit a retired predecessor's give-up count (the Settings
+        # Save path reaches here without _reset_server_recovery), and this
+        # also clears any _server_recovering left set by a now-stale recover
+        # thread. The reset in _restart_server_for_project is now redundant
+        # but harmless.
+        self._reset_server_recovery()
         
         # C2: pre-warm the NEW manager on a daemon thread (set its launch
         # config first so it never launches from safe_wsl_cwd with the
@@ -1405,26 +1423,71 @@ class MainWindow(QMainWindow):
         always lifts a prior give-up state."""
         self._server_recovery_attempts = 0
         self._server_recovering = False
+        # Off-thread health-probe state (read via getattr defaults elsewhere):
+        # the last probe verdict for the cheap indicator refresh, and the
+        # single-probe-in-flight gate so ticks never stack daemons.
+        self._last_server_alive = None
+        self._health_probe_inflight = False
 
     def _on_server_health_tick(self):
-        """One liveness poll: refresh the indicator and, if the server is down,
-        kick off background auto-recovery.
+        """One liveness poll, fully OFF the UI thread.
 
-        is_running is a cheap process poll (no HTTP) — fine for a 5s tick. A
-        recovery in flight is gated by _server_recovering so we never stack
-        relaunch threads while one start() is still working.
+        is_alive does a process poll AND a synchronous ~2s /health GET, so
+        it must NEVER run on the UI thread (it would freeze the Qt event
+        loop every 5s tick). Instead we spawn a daemon that probes is_alive
+        and marshals the verdict back to the UI thread via _post_to_ui. One
+        probe at a time (gated by _health_probe_inflight) so ticks never
+        stack daemons while a slow /health is still outstanding.
         """
         sm = getattr(self, '_server_manager', None)
         if sm is None:
             self._refresh_server_indicator()
             return
-        alive = sm.is_running
+        # One probe in flight at a time; the next tick re-checks.
+        if getattr(self, '_health_probe_inflight', False):
+            return
+        self._health_probe_inflight = True
+
+        def _probe():
+            try:
+                alive = sm.is_alive  # process poll + ~2s /health, OFF the UI thread
+            except Exception:
+                log.debug('server health probe failed', exc_info=True)
+                alive = False
+            self._post_to_ui(lambda: self._on_health_probe_result(sm, alive))
+
+        try:
+            threading.Thread(target=_probe, daemon=True).start()
+        except Exception:
+            # Spawn failed after the in-flight flag was set — clear it so the
+            # next tick can probe again (never wedge the poll permanently).
+            self._health_probe_inflight = False
+            log.debug('server health probe thread spawn failed', exc_info=True)
+
+    def _on_health_probe_result(self, sm, alive):
+        """UI-thread continuation of one health probe.
+
+        Runs on the UI thread (marshalled by _post_to_ui), so every read/write
+        of the recovery state (_server_recovering / _server_recovery_attempts /
+        _last_server_alive) and the manager-identity guard happen on ONE thread.
+        The manager swap (_init_llm_backend) is also UI-thread, so they
+        serialise — no lock needed, no stale-thread clobber.
+        """
+        # A swap (Restart backend / project switch / Settings Save) may have
+        # installed a NEW manager while this probe was in flight. Drop the stale
+        # verdict — it must not drive the new manager's indicator or recovery.
+        if sm is not getattr(self, '_server_manager', None):
+            return
+        # Clear AFTER the stale-manager guard: only the CURRENT manager's probe
+        # owns the in-flight flag (a stale probe must not unblock the next tick).
+        self._health_probe_inflight = False
+        self._last_server_alive = alive
         self._refresh_server_indicator(alive)
         if alive or getattr(sm, '_retired', False):
             self._server_recovering = False
-            # Server is back (or retired): a manual/auto recovery succeeded —
-            # clear the consecutive-failure count so auto-recovery is armed
-            # again for any FUTURE crash.
+            # Server is back (or retired): a recovery succeeded — clear the
+            # consecutive-failure count so auto-recovery is armed for the next
+            # crash.
             self._server_recovery_attempts = 0
             return
         # Server is DOWN. After N consecutive failed auto-recoveries we GIVE
@@ -1439,22 +1502,71 @@ class MainWindow(QMainWindow):
         self._server_recovering = True
         log.warning('OpenCode server detected down; auto-recovering...')
         self.status_bar.showMessage('OpenCode server down — recovering…', 4000)
+        try:
+            threading.Thread(target=lambda: self._recover(sm), daemon=True).start()
+        except Exception:
+            # Thread.start() raised after the in-flight flag was set —
+            # clear it so auto-recovery is not permanently disabled.
+            self._server_recovering = False
+            log.debug('server auto-recovery thread spawn failed', exc_info=True)
 
-        def _recover():
-            try:
-                sm.ensure_running()
-            except Exception:
-                log.debug('server auto-recovery failed', exc_info=True)
-            finally:
-                self._server_recovering = False
-                # Count this attempt as a FAILURE iff the server still isn't
-                # up afterwards; a success is reset to 0 by the tick's alive
-                # branch. Hitting the cap freezes further auto-recovery.
-                if not sm.is_running:
-                    self._server_recovery_attempts = (
-                        getattr(self, '_server_recovery_attempts', 0) + 1)
+    def _recover(self, sm):
+        """Daemon body: relaunch the server, then probe the result — both
+        OFF the UI thread. ensure_running() is a blocking relaunch and is_alive
+        is a ~2s HTTP probe, so neither may touch the UI thread. The verdict is
+        marshalled back to _on_recover_done on the UI thread, which owns ALL
+        recovery-state mutation and the manager-identity guard."""
+        try:
+            sm.ensure_running()
+        except Exception:
+            log.debug('server auto-recovery failed', exc_info=True)
+        try:
+            ok = sm.is_alive  # post-relaunch verdict, OFF the UI thread
+        except Exception:
+            log.debug('post-recovery health probe failed', exc_info=True)
+            ok = False
+        self._post_to_ui(lambda: self._on_recover_done(sm, ok))
 
-        threading.Thread(target=_recover, daemon=True).start()
+    def _on_recover_done(self, sm, ok):
+        """UI-thread continuation of one recovery attempt — the SINGLE place
+        recovery state is mutated after a relaunch.
+
+        A swap may have retired THIS sm and installed a new manager while we
+        relaunched. Only the verdict for the CURRENT manager may touch the
+        shared recovery flags, else a stale thread clobbers the new manager's
+        state (bogus failure count -> premature give-up; or a spurious
+        recovering=False that breaks the single-in-flight gate). The guard is
+        re-validated HERE, on the UI thread, AFTER the blocking relaunch+probe.
+        """
+        if sm is not getattr(self, '_server_manager', None):
+            return
+        self._server_recovering = False
+        # is_alive (process + /health) so a relaunch that leaves the server
+        # still wedged counts as a failed attempt toward the give-up cap.
+        if not ok:
+            self._server_recovery_attempts = (
+                getattr(self, '_server_recovery_attempts', 0) + 1)
+        else:
+            self._server_recovery_attempts = 0
+        self._last_server_alive = ok
+        self._refresh_server_indicator(ok)
+
+    @Slot(object)
+    def _run_ui_call(self, fn):
+        """UI-thread slot for the _ui_call signal: just invoke the marshalled
+        callable. Runs on this QObject's (the UI) thread because the signal
+        was emitted from another thread (queued connection)."""
+        fn()
+
+    def _post_to_ui(self, fn):
+        """Marshal a callable onto the UI thread via the _ui_call signal: the
+        canonical thread-safe cross-thread dispatch. The off-thread
+        probe/recover daemons have NO Qt event loop, so QTimer.singleShot(0, fn)
+        from them would create the timer in the daemon thread and the callback
+        could be lost (probe/recover would wedge forever). Emitting a signal is
+        thread-safe and Qt queues the slot onto the receiver's (UI) thread.
+        Isolated as a seam so tests can run continuations inline."""
+        self._ui_call.emit(fn)
 
     def _refresh_server_indicator(self, alive=None):
         """Update the always-visible 'OpenCode: running / down' status label.
@@ -1472,7 +1584,10 @@ class MainWindow(QMainWindow):
             self.server_indicator.setToolTip('')
             return
         if alive is None:
-            alive = sm.is_running
+            # Use the cached verdict from the last off-thread probe — NEVER
+            # call is_alive/health_check here (that is blocking HTTP and this
+            # runs on the UI thread). None (no probe yet) is treated as down.
+            alive = getattr(self, '_last_server_alive', None)
         if getattr(self, '_server_recovering', False) and not alive:
             self.server_indicator.setText('OpenCode: recovering…')
             self.server_indicator.setStyleSheet('color: #b8860b;')  # amber
@@ -1603,9 +1718,10 @@ class MainWindow(QMainWindow):
                 ok = bool(backend.compact())
             except Exception:
                 log.exception("session compact failed")
-            # Marshal the UI feedback back onto the UI thread.
-            from PySide6.QtCore import QTimer
-            QTimer.singleShot(0, lambda: _done(ok))
+            # Marshal the UI feedback back onto the UI thread via the
+            # thread-safe _ui_call signal (this runs on a daemon with no Qt
+            # event loop, so QTimer.singleShot from here could be lost).
+            self._post_to_ui(lambda: _done(ok))
 
         threading.Thread(target=_compact, daemon=True).start()
 

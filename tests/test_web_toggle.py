@@ -6,8 +6,14 @@ model override is unchanged, and a caller system prompt becomes message ``system
 """
 from workflow_editor.llm import LLMRequest, LLMTask, OpenCodeBackend, OpenCodeConfig
 
-# Filesystem/shell tools are disabled on every editor request.
-_CODING_OFF = {"edit": False, "write": False, "bash": False, "apply_patch": False}
+# EVERY OpenCode built-in is forced off on every editor request — the LLM gets no
+# filesystem (read/glob/grep/list), shell (bash), file-write (edit/write/patch),
+# or sub-agent (task) access; only the explicit MCP/web tools are enabled.
+_BUILTIN_OFF = {
+    "bash": False, "edit": False, "write": False, "patch": False,
+    "apply_patch": False, "read": False, "glob": False, "grep": False,
+    "list": False, "task": False, "todowrite": False, "todoread": False,
+}
 
 # The 7 project_tools (project_tools MCP server) keys, all OFF — the default
 # (project_tools_enabled defaults False on LLMRequest).
@@ -38,7 +44,7 @@ def _req(web_enabled: bool) -> LLMRequest:
 def test_web_enabled_exposes_web_tools_and_read_pdf():
     body = _backend()._build_message_body("hi", _req(web_enabled=True))
     assert body["tools"] == {
-        **_CODING_OFF, **_PROJECT_TOOLS_OFF, **_DCDC_TOOLS_OFF,
+        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DCDC_TOOLS_OFF,
         "webfetch": True, "websearch": True, "pdf_tools_read_pdf": True}
 
 
@@ -47,14 +53,14 @@ def test_web_disabled_sends_explicit_false():
     # skill keep web access if the launch config/agent enabled it.
     body = _backend()._build_message_body("hi", _req(web_enabled=False))
     assert body["tools"] == {
-        **_CODING_OFF, **_PROJECT_TOOLS_OFF, **_DCDC_TOOLS_OFF,
+        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DCDC_TOOLS_OFF,
         "webfetch": False, "websearch": False, "pdf_tools_read_pdf": False}
 
 
 def test_default_request_has_web_off():
     body = _backend()._build_message_body("hi", LLMRequest(task=LLMTask.AD_HOC_CHAT))
     assert body["tools"] == {
-        **_CODING_OFF, **_PROJECT_TOOLS_OFF, **_DCDC_TOOLS_OFF,
+        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DCDC_TOOLS_OFF,
         "webfetch": False, "websearch": False, "pdf_tools_read_pdf": False}
 
 
@@ -89,12 +95,16 @@ def test_dcdc_tools_default_is_off():
     assert body["tools"]["dcdc_tools_generate_dcdc_test"] is False
 
 
-def test_coding_tools_always_disabled():
-    # The editor's LLM never edits the filesystem, regardless of the web toggle.
+def test_builtin_tools_always_disabled():
+    # The editor's LLM gets NO filesystem/shell/file-write/sub-agent tool, EVER —
+    # regardless of the web toggle. read/glob/grep/list/task are the dangerous
+    # ones that previously let it wander the user's disk.
     for web in (True, False):
         body = _backend()._build_message_body("hi", _req(web_enabled=web))
-        for tool in ("edit", "write", "bash", "apply_patch"):
+        for tool in _BUILTIN_OFF:
             assert body["tools"][tool] is False
+    # The real write-via-diff tool is `patch` (not just `apply_patch`).
+    assert _backend()._build_message_body("hi", _req(web_enabled=True))["tools"]["patch"] is False
 
 
 def test_tools_override_does_not_disturb_model_override():

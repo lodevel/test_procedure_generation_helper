@@ -855,14 +855,28 @@ class OpenCodeBackend(LLMBackend):
         # opts in. webfetch is keyless; websearch uses Exa, made available at
         # server launch via OPENCODE_ENABLE_EXA.
         body["tools"] = {
-            # Filesystem/shell tools are never wanted: the editor's LLM converses
-            # and drafts text, it does not edit the project. Disabled on every
-            # request (additive — other tools keep their defaults), which also
-            # stops OpenCode's default coding-agent from trying to use them.
+            # SECURITY: the editor's LLM converses and drafts text — it must NEVER
+            # read or search the user's filesystem, run a shell, write files, or
+            # spawn sub-agents. OpenCode's tool override is ADDITIVE, so any
+            # built-in we DON'T list keeps its (enabled) default — we therefore
+            # force EVERY built-in OFF here. (Real OpenCode tool IDs, confirmed
+            # against its API: the write-via-diff tool is `patch`, NOT
+            # `apply_patch`; `read`/`glob`/`grep`/`list` are the filesystem
+            # readers; `task` spawns sub-agents.) Without this the model wanders
+            # the disk (e.g. reading recovered projects from the recycle bin)
+            # instead of using our MCP tools.
+            "bash": False,
             "edit": False,
             "write": False,
-            "bash": False,
-            "apply_patch": False,
+            "patch": False,
+            "apply_patch": False,  # harmless alias on builds that use this name
+            "read": False,
+            "glob": False,
+            "grep": False,
+            "list": False,
+            "task": False,
+            "todowrite": False,
+            "todoread": False,
             # Web tools ride the per-request web toggle. read_pdf (the pdf_tools
             # MCP server) fetches URLs, so it shares the same gate. OpenCode
             # namespaces a local-server tool as "<server>_<tool>" ->

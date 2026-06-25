@@ -99,12 +99,20 @@ def _port_is_free(port: int, host: str = "127.0.0.1") -> bool:
             return False
 
 
-def find_free_port(preferred: int, host: str = "127.0.0.1") -> int:
-    """Return ``preferred`` if it's free, else an OS-assigned free port.
+def find_free_port(preferred: int = 0, host: str = "127.0.0.1") -> int:
+    """Return a free TCP port.
+
+    Decision Q1: with the default ``preferred=0`` (the lifecycle's only caller)
+    the OS always assigns the port — a stray on the old saved port is never
+    silently reused, and the saved Port setting is cosmetic. A non-zero
+    ``preferred`` is honoured when free (kept for callers/tests that want it),
+    else the OS assigns one.
 
     There is an unavoidable TOCTOU gap between probing and the server binding;
-    the caller treats a later bind failure as :data:`ServerError.PORT_IN_USE`."""
-    if _port_is_free(preferred, host):
+    the caller treats a later bind failure as :data:`ServerError.PORT_IN_USE`
+    and retries with a fresh OS-assigned port (Windows-probe / WSL2-bind
+    namespaces can disagree)."""
+    if preferred and _port_is_free(preferred, host):
         return preferred
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((host, 0))

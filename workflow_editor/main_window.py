@@ -165,29 +165,28 @@ class MainWindow(QMainWindow):
         # Process CLI arguments on first show only
         if hasattr(self, '_cli_args_processed'):
             return
-        self._cli_args_processed = True
+        # Mark in-progress (re-entrancy guard, the hasattr check above) but
+        # keep the prewarm gate FALSE while CLI args load: setting a project
+        # root can route through _init_llm_backend / _restart_server_for_project,
+        # whose prewarm is gated on _cli_args_processed. Flip to True only AFTER
+        # processing so the single explicit prewarm below is the only one (no
+        # latent double-prewarm: two managers racing the same launch dir).
+        self._cli_args_processed = False
         
         # Process CLI arguments to load project/test
         self._process_cli_arguments()
+        self._cli_args_processed = True
 
         # The editor OWNS its OpenCode config (the project's opencode.json
         # is a relic): launch OpenCode from an editor-controlled dir, seeded
         # ONCE from the current project's opencode.json.
         if self._server_manager is not None:
-            from .dialogs.settings_dialog import ensure_opencode_config
-            _pr = getattr(self.project_manager, "project_root", None)
-            _seed = (_pr / "opencode.json") if _pr else None
-            self._server_manager.config.working_directory = str(
-                ensure_opencode_config(seed_from=_seed))
             # Pre-warm the server in the BACKGROUND so the first chat
-            # doesn't lag (cold WSL boot + opencode serve). Daemon thread;
-            # start() is lock-guarded so the lazy first-chat start coexists.
-            # atexit stops it if closeEvent never runs (e.g. a crash).
-            import atexit
-            import threading as _pw_threading
-            atexit.register(self._server_manager.stop)
-            _pw_threading.Thread(
-                target=self._server_manager.start, daemon=True).start()
+            # doesn't lag (cold WSL boot + opencode serve). _prewarm_server
+            # rebuilds the derived launch config for the current project,
+            # sets working_directory BEFORE start() (C3 race), registers the
+            # live-targeting cleanup hook (C2), and starts on a daemon thread.
+            self._prewarm_server()
     
     def _process_cli_arguments(self):
         """Process command-line arguments to load project and/or test."""
@@ -240,12 +239,55 @@ class MainWindow(QMainWindow):
             log.error(f"Error processing CLI arguments: {e}", exc_info=True)
 
     
+    def _stop_manager_async(self, manager):
+        """Retire + stop a RETIRED-bound server manager off the UI thread.
+
+        We arm the manager's permanent ``_retired`` flag synchronously HERE,
+        before the stop thread runs (so a still-pending prewarm daemon on it
+        refuses to launch -> no orphan), then tear the process down. That
+        teardown (stop(), which also re-sets the flag) can block up to the
+        startup timeout if the manager is mid-boot, so it runs on a daemon
+        thread and the UI never freezes. The manager is single-use after this;
+        callers build a FRESH OpenCodeServerManager for the new server.
+        """
+        if manager is None:
+            return
+
+        # Arm the permanent retirement guard SYNCHRONOUSLY, here on the
+        # calling (UI) thread, BEFORE spawning the stop thread. stop() also
+        # sets it (idempotent), but the teardown it does runs on the daemon
+        # thread and can lag. A stale prewarm thread that races into the old
+        # manager start() must see _retired==True at the swap instant, or it
+        # spawns the orphan we are swapping away from. Only the guard flag is
+        # armed now; the teardown stays deferred off the UI thread.
+        manager._retired = True
+
+        def _stop():
+            try:
+                manager.stop()
+            except Exception:
+                log.debug('async server manager stop() failed', exc_info=True)
+
+        threading.Thread(target=_stop, daemon=True).start()
+
     def _init_llm_backend(self):
         """Initialize LLM backend infrastructure.
         
         Creates server manager (for OpenCode) and backend factory.
         Each tab will create its own backend via the factory.
         """
+        # C2 manager-swap: retire the OLD manager before replacing it so a
+        # re-init (e.g. Settings Save) never orphans the pre-warmed server.
+        # stop() runs on a DAEMON THREAD: it can block up to the startup
+        # timeout if the old manager is mid-boot, and that must never freeze
+        # the UI. stop() sets the manager's permanent _retired flag
+        # synchronously here (before the thread even runs), so a stale prewarm
+        # daemon on the old manager refuses to launch -> no orphan. The fresh
+        # manager built below is a NEW object (a retired one never restarts).
+        _old_server_manager = getattr(self, '_server_manager', None)
+        if _old_server_manager is not None:
+            log.info('Retiring previous OpenCode server manager (swap)...')
+            self._stop_manager_async(_old_server_manager)
         # Initialize server manager (will be None if not using OpenCode)
         self._server_manager: Optional[OpenCodeServerManager] = None
         
@@ -261,6 +303,14 @@ class MainWindow(QMainWindow):
         # Create factory for tabs to use
         self._backend_factory = BackendFactory(config, self._server_manager)
         
+        # C2: pre-warm the NEW manager on a daemon thread (set its launch
+        # config first so it never launches from safe_wsl_cwd with the
+        # wrong config). Only on a swap; the initial __init__ call defers
+        # to showEvent (no project root yet), gated on _cli_args_processed.
+        if getattr(self, '_cli_args_processed', False) \
+                and self._server_manager is not None:
+            self._prewarm_server()
+        
         log.info(f"Backend infrastructure initialized: type={config.backend_type}")
         
         # Update LLM status display
@@ -268,6 +318,70 @@ class MainWindow(QMainWindow):
         
         # Update all tab contexts with new factory (if tabs are already initialized)
         self._update_all_tab_contexts()
+    
+    def _prewarm_server(self):
+        """Set the current manager's launch config + pre-warm it (C1/C2/C3).
+
+        Rebuilds the derived launch dir for the CURRENT project, assigns it
+        to ``working_directory`` BEFORE start() fires (C3 race), registers a
+        single stable cleanup hook that always targets the LIVE
+        ``self._server_manager`` (C2 -- never a stale bound reference), and
+        starts the server on a daemon thread so the UI never blocks.
+        """
+        sm = getattr(self, '_server_manager', None)
+        if sm is None:
+            return
+        try:
+            from .dialogs.settings_dialog import (
+                build_launch_config, ensure_master_config)
+            _pr = getattr(self.project_manager, 'project_root', None)
+            _seed = (_pr / 'opencode.json') if _pr else None
+            ensure_master_config(seed_from=_seed)
+            sm.config.working_directory = str(build_launch_config(_pr))
+        except Exception:
+            log.warning('failed to build launch config for pre-warm',
+                        exc_info=True)
+        # Register the exit cleanup hook ONCE; it reads self._server_manager
+        # live so it always stops whatever manager is current (C2).
+        if not getattr(self, '_server_cleanup_registered', False):
+            import atexit
+            atexit.register(self._stop_current_server)
+            self._server_cleanup_registered = True
+        import threading as _pw_threading
+        _pw_threading.Thread(target=sm.start, daemon=True).start()
+    
+    def _stop_current_server(self):
+        """Stop whatever server manager is CURRENT (stable cleanup target).
+
+        Bound once via atexit in _prewarm_server; reads self._server_manager
+        at call time so a manager swap (Settings Save) can't leave a stale
+        reference uncleaned (C2).
+        """
+        sm = getattr(self, '_server_manager', None)
+        if sm is not None:
+            try:
+                sm.stop()
+            except Exception:
+                log.debug('current server manager stop() failed',
+                          exc_info=True)
+    
+    def _restart_server_for_project(self):
+        """On project change, retire the old server and stand up a FRESH one
+        for the new project (Q2 auto-restart).
+
+        A manager is single-use once retired (its ``_retired`` flag is
+        permanent), so we can NOT stop+prewarm the same object — we delegate to
+        ``_init_llm_backend``, which retires the old manager OFF the UI thread
+        (no freeze, no orphan), builds a brand-new OpenCodeServerManager +
+        factory, rewires the tab contexts, and pre-warms it (the prewarm
+        rebuilds the derived launch config for the new project so its MCP
+        blocks take effect). No-op when no manager / the UI hasn't been shown
+        yet (showEvent does the initial pre-warm).
+        """
+        sm = getattr(self, '_server_manager', None)
+        if sm is None or not getattr(self, '_cli_args_processed', False):
+            return
+        self._init_llm_backend()
     
     def _build_backend_config(self) -> BackendConfig:
         """Build backend config from settings.
@@ -1286,8 +1400,8 @@ class MainWindow(QMainWindow):
     def _on_restart_backend(self):
         """Restart the shared OpenCode server to recover a hung / unresponsive
         backend without relaunching the editor. Cancels any in-flight request,
-        then stop+start the server off the UI thread (the spawn takes a few
-        seconds); the next send re-uses the restarted server."""
+        then retires the old manager and stands up a FRESH one (the retired
+        manager is single-use); the next send re-uses the restarted server."""
         sm = self._server_manager
         if sm is None:
             self.dock.chat_panel.add_system_message(
@@ -1301,14 +1415,12 @@ class MainWindow(QMainWindow):
         self.dock.chat_panel.add_message("system", "Restarting backend…")
         self.status_bar.showMessage("Restarting backend…", 3000)
 
-        def _restart():
-            try:
-                sm.stop()
-                sm.start()
-            except Exception:
-                log.exception("backend restart failed")
-
-        threading.Thread(target=_restart, daemon=True).start()
+        # A manager is single-use after stop() (its _retired flag is
+        # permanent), so we can NOT stop+start the SAME object. Stand up a
+        # FRESH manager instead: _restart_server_for_project retires the old
+        # one off the UI thread (no freeze, no orphan) and pre-warms the new
+        # one on a daemon thread, so this returns immediately.
+        self._restart_server_for_project()
 
     def _on_compact_session(self):
         """Manually compact the active tab's LLM session so a long
@@ -1434,6 +1546,7 @@ class MainWindow(QMainWindow):
         # Show workspace dock if hidden
         if self.workspace_dock.isHidden():
             self.workspace_dock.show()
+        self._restart_server_for_project()
         
         # Show success message
         QMessageBox.information(
@@ -1456,6 +1569,7 @@ class MainWindow(QMainWindow):
         self._watch_project_config()
         if self.workspace_dock.isHidden():
             self.workspace_dock.show()
+        self._restart_server_for_project()
 
     def _rebuild_open_recent_menu(self):
         # Repopulate from the SHARED recent list (same app_settings the main
@@ -1526,6 +1640,7 @@ class MainWindow(QMainWindow):
                 # Show workspace dock
                 if self.workspace_dock.isHidden():
                     self.workspace_dock.show()
+                self._restart_server_for_project()
             else:
                 QMessageBox.warning(
                     self,
@@ -1792,6 +1907,7 @@ class MainWindow(QMainWindow):
             self.task_config_manager,
             self,
             project_root=self.project_manager.project_root,
+            server_manager=self._server_manager,
         )
         if dialog.exec():
             self._settings = dialog.get_settings()

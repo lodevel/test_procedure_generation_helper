@@ -4,9 +4,12 @@ Settings Dialog - Application configuration.
 Implements Section 12.2 of the spec with unified task management.
 """
 
+import copy
 import json
 import logging
+import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Optional
 from PySide6.QtWidgets import (
@@ -59,31 +62,62 @@ def save_settings(settings: dict):
 def get_opencode_config_dir() -> Path:
     """The editor-OWNED OpenCode config directory (sibling of settings.json).
 
-    OpenCode is launched with this as its working dir so it loads THIS
-    ``opencode.json`` — never the open project's (which is a relic). One config,
-    tied to the editor, not per project.
+    Holds the project-agnostic ``master.json`` blueprint and the per-launch
+    ``launch/opencode.json`` derived config. One config tree, tied to the editor,
+    not per project.
     """
     d = get_settings_path().parent / "opencode"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
-def ensure_opencode_config(seed_from: Optional[Path] = None) -> Path:
-    """Return the editor's OpenCode config dir, GENERATING its ``opencode.json``
-    ONCE (if absent) from the project's opencode.json (``seed_from``): keep its
-    PROVIDERS but strip the default ``model``/``small_model`` so OpenCode
-    AUTO-PICKS a supported model (the reliable Default — the project's pinned
-    model may be unreachable/Codex-rejected). A specific model stays SELECTABLE
-    via the Settings picker (per-request override).
+def get_opencode_master_path() -> Path:
+    """The editor's project-agnostic MASTER blueprint (``master.json``).
 
-    This file is the editor's MASTER config (``opencode serve`` is launched from
-    this dir). It is generated only once so the user can edit it; delete it to
-    regenerate from the current project. The project's own opencode.json is a
-    relic and is never used directly.
+    Holds ONLY providers + general config — NO ``model``/``small_model`` (so
+    OpenCode auto-picks a supported model) and NO ``mcp`` (the MCP blocks are
+    built FRESH at each launch by :func:`build_launch_config`, computing every
+    install/project path at runtime). Fully portable; generated once; user-editable.
     """
-    d = get_opencode_config_dir()
-    cfg = d / "opencode.json"
-    if not cfg.exists() and seed_from is not None:
+    return get_opencode_config_dir() / "master.json"
+
+
+def get_opencode_launch_dir() -> Path:
+    """The stable directory the per-launch derived ``opencode.json`` is written
+    to (and that ``opencode serve`` is launched with / pointed at via
+    ``OPENCODE_CONFIG``)."""
+    d = get_opencode_config_dir() / "launch"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def get_opencode_launch_test_dir() -> Path:
+    """A SEPARATE, throwaway launch dir used ONLY by Test Connection.
+
+    Test Connection spins up its own ``opencode serve`` to validate the config.
+    That probe must NOT share the live ``launch/`` dir: a test manager's
+    ``start()`` would overwrite ``launch/opencode.pid`` and its ``stop()`` would
+    DELETE it, wiping the LIVE server's orphan-sweep record (the exact
+    orphan-left bug class). Isolating the probe in ``launch_test/`` keeps its pid
+    file + derived ``opencode.json`` from ever colliding with the live ones."""
+    d = get_opencode_config_dir() / "launch_test"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def ensure_master_config(seed_from: Optional[Path] = None) -> Path:
+    """Return the editor's MASTER blueprint path, GENERATING it ONCE (if absent)
+    from the project's opencode.json (``seed_from``): keep its PROVIDERS + general
+    config but strip ``model``/``small_model`` (so OpenCode auto-picks a supported
+    model — the reliable Default) AND ``mcp`` (the MCP blocks are project/install
+    specific and are always built fresh at launch, never baked into the portable
+    master).
+
+    Generated only once so the user can edit it; delete it to regenerate from the
+    current project. The project's own opencode.json is a relic, never used directly.
+    """
+    master = get_opencode_master_path()
+    if not master.exists() and seed_from is not None:
         try:
             src = Path(seed_from)
             if src.is_file():
@@ -91,165 +125,170 @@ def ensure_opencode_config(seed_from: Optional[Path] = None) -> Path:
                 if isinstance(data, dict):
                     data.pop("model", None)
                     data.pop("small_model", None)
-                    cfg.write_text(json.dumps(data, indent=2), encoding="utf-8")
-                    log.info("Generated editor OpenCode master config from %s", src)
+                    data.pop("mcp", None)
+                    master.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                    log.info("Generated editor OpenCode master blueprint from %s", src)
         except Exception:
-            log.exception("Failed to generate editor OpenCode config")
-    # Idempotently point the pdf_tools MCP server at the current project's
-    # documents dir so the LLM's read_pdf tool can reach attached datasheets.
-    # Merged on every call (not once) so it lands on pre-existing master configs
-    # and follows project changes.
-    if seed_from is not None:
-        try:
-            _ensure_pdf_tools_mcp(cfg, project_root=Path(seed_from).parent)
-        except Exception:
-            log.exception("Failed to wire pdf_tools MCP server")
-        # Idempotently wire the project_tools MCP server at the project's ODB++
-        # archive so the LLM's netlist/BOM/component tools can reach the board.
-        try:
-            _ensure_project_tools_mcp(cfg, project_root=Path(seed_from).parent)
-        except Exception:
-            log.exception("Failed to wire project_tools MCP server")
-        # The DCDC generator tool is project-independent; wire it so a skill that
-        # declares it (mcp_tools: [dcdc_tools]) can call generate_dcdc_test.
-        try:
-            _ensure_dcdc_tools_mcp(cfg)
-        except Exception:
-            log.exception("Failed to wire dcdc_tools MCP server")
-    return d
+            log.exception("Failed to generate editor OpenCode master blueprint")
+    return master
 
 
-def _ensure_pdf_tools_mcp(cfg: Path, project_root: Path) -> None:
-    """Merge/refresh the ``pdf_tools`` local MCP block in the master opencode.json.
+def _python_win() -> str:
+    """The editor venv's Windows python.exe (pythonw has no console; prefer
+    python.exe for reliable MCP stdio pipes). Computed at runtime via
+    ``sys.executable`` so it self-heals on reinstall/move."""
+    return sys.executable.replace("pythonw.exe", "python.exe")
 
-    Writes only when the block actually changes. The MCP server is THIS editor's
-    Python (it carries pypdf) launched by OpenCode-in-WSL; ``mcp_config`` handles
-    the ``/mnt/c`` interop translation of the python path.
+
+def _mcp_script_win(name: str) -> str:
+    """Windows path to an ``authoring/_*_mcp.py`` MCP script, computed at runtime
+    relative to this file so it self-heals on move/reinstall."""
+    return str(Path(__file__).resolve().parents[1] / "authoring" / name)
+
+
+def _build_pdf_tools_block(project_root: Optional[Path]) -> dict:
+    """Build the ``pdf_tools`` MCP block FRESH for ``project_root``.
+
+    Computes the venv python, the script path, the project's documents dir and
+    the bundle's rules dir all at RUNTIME (no baked paths). ``project_root`` may
+    be ``None`` (no project open) — documents/rules then point at a portable
+    placeholder under the config dir so the server still launches cleanly.
     """
     from ..llm.mcp_config import build_pdf_tools_mcp_block
 
-    documents_dir = project_root / "documents"
-    documents_dir.mkdir(parents=True, exist_ok=True)
-    # The procedure grammar / rule docs (read-only) live in the project bundle;
-    # the server lists/reads them via list_rules/read_rule (missing dir is fine).
-    rules_dir = project_root / "bundle" / "rules"
-    # pythonw has no console; prefer python.exe for reliable stdio pipes.
-    python_win = sys.executable.replace("pythonw.exe", "python.exe")
-    script_win = str(
-        Path(__file__).resolve().parents[1] / "authoring" / "_pdf_tool_mcp.py"
-    )
-    block = build_pdf_tools_mcp_block(
-        venv_python_win=python_win,
-        mcp_script_win=script_win,
+    if project_root is not None:
+        documents_dir = project_root / "documents"
+        rules_dir = project_root / "bundle" / "rules"
+    else:
+        documents_dir = get_opencode_config_dir() / "documents"
+        rules_dir = get_opencode_config_dir() / "rules"
+    try:
+        documents_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        log.exception("Could not create documents dir %s", documents_dir)
+    return build_pdf_tools_mcp_block(
+        venv_python_win=_python_win(),
+        mcp_script_win=_mcp_script_win("_pdf_tool_mcp.py"),
         documents_dir_win=str(documents_dir),
         rules_dir_win=str(rules_dir),
     )
 
-    data = {}
-    if cfg.exists():
-        try:
-            loaded = json.loads(cfg.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                data = loaded
-        except Exception:
-            log.exception("could not parse master opencode.json; rebuilding mcp block")
-    mcp = data.get("mcp")
-    if not isinstance(mcp, dict):
-        mcp = {}
-    if mcp.get("pdf_tools") == block["pdf_tools"]:
-        return  # already current — no write
-    mcp.update(block)
-    data["mcp"] = mcp
-    cfg.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    log.info("Wired pdf_tools MCP server (documents=%s)", documents_dir)
 
+def _build_project_tools_block(project_root: Optional[Path]) -> Optional[dict]:
+    """Build the ``project_tools`` MCP block FRESH for ``project_root``, or
+    ``None`` when there's no ODB++ archive to wire.
 
-def _ensure_project_tools_mcp(cfg: Path, project_root: Path) -> None:
-    """Merge/refresh the ``project_tools`` local MCP block in the master
-    opencode.json.
-
-    Mirrors :func:`_ensure_pdf_tools_mcp`. The server is launched by
-    OpenCode-in-WSL with the project's ODB++ archive (the first ``*.tgz`` in the
-    project root, like odb_inspect's auto-detect) via ``--odb-tgz``; if no
-    archive is present, skip (nothing to wire). Writes only when the block
-    actually changes.
-    """
+    The server is launched with the project's ODB++ archive (the first ``*.tgz``
+    in the project root, like odb_inspect's auto-detect) via ``--odb-tgz``. No
+    project or no archive -> return ``None`` (the block is dropped from the
+    derived config)."""
     from ..llm.mcp_config import build_project_tools_mcp_block
 
+    if project_root is None:
+        return None
     try:
         tgz = sorted(project_root.glob("*.tgz"))
     except OSError:
         tgz = []
     if not tgz:
-        return  # no board archive in the project — nothing to wire
-    odb_tgz = tgz[0]
-    # pythonw has no console; prefer python.exe for reliable stdio pipes.
-    python_win = sys.executable.replace("pythonw.exe", "python.exe")
-    script_win = str(
-        Path(__file__).resolve().parents[1] / "authoring" / "_project_tools_mcp.py"
-    )
-    block = build_project_tools_mcp_block(
-        venv_python_win=python_win,
-        mcp_script_win=script_win,
-        odb_tgz_win=str(odb_tgz),
+        return None  # no board archive in the project — nothing to wire
+    return build_project_tools_mcp_block(
+        venv_python_win=_python_win(),
+        mcp_script_win=_mcp_script_win("_project_tools_mcp.py"),
+        odb_tgz_win=str(tgz[0]),
     )
 
-    data = {}
-    if cfg.exists():
-        try:
-            loaded = json.loads(cfg.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                data = loaded
-        except Exception:
-            log.exception("could not parse master opencode.json; rebuilding mcp block")
-    mcp = data.get("mcp")
-    if not isinstance(mcp, dict):
-        mcp = {}
-    if mcp.get("project_tools") == block["project_tools"]:
-        return  # already current — no write
-    mcp.update(block)
-    data["mcp"] = mcp
-    cfg.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    log.info("Wired project_tools MCP server (odb_tgz=%s)", odb_tgz)
 
-
-def _ensure_dcdc_tools_mcp(cfg: Path) -> None:
-    """Merge/refresh the ``dcdc_tools`` local MCP block in the master opencode.json.
-
-    Mirrors :func:`_ensure_project_tools_mcp` but simpler: the DCDC generator is
-    project-independent (it consumes only per-call params), so there's no
-    ``--odb-tgz`` and nothing to skip. The dcdc_bringup skill opts into the tool
-    via its frontmatter ``mcp_tools``. Writes only when the block changes.
-    """
+def _build_dcdc_tools_block() -> dict:
+    """Build the ``dcdc_tools`` MCP block FRESH. Project-independent (the DCDC
+    generator consumes only per-call params), so no per-project argv."""
     from ..llm.mcp_config import build_dcdc_tools_mcp_block
 
-    # pythonw has no console; prefer python.exe for reliable stdio pipes.
-    python_win = sys.executable.replace("pythonw.exe", "python.exe")
-    script_win = str(
-        Path(__file__).resolve().parents[1] / "authoring" / "_dcdc_tools_mcp.py"
-    )
-    block = build_dcdc_tools_mcp_block(
-        venv_python_win=python_win,
-        mcp_script_win=script_win,
+    return build_dcdc_tools_mcp_block(
+        venv_python_win=_python_win(),
+        mcp_script_win=_mcp_script_win("_dcdc_tools_mcp.py"),
     )
 
-    data = {}
-    if cfg.exists():
+
+def build_launch_config(
+    project_root: Optional[Path] = None,
+    launch_dir: Optional[Path] = None,
+) -> Path:
+    """Derive the per-launch ``opencode.json`` from the MASTER blueprint and the
+    CURRENT project, returning the LAUNCH DIR (what ``opencode serve`` is pointed
+    at via ``OPENCODE_CONFIG`` / launched from).
+
+    Reads ``master.json`` (providers + general, no model/mcp), deep-copies it, and
+    BUILDS the 3 MCP blocks FRESH — ``pdf_tools`` (documents/rules) and
+    ``dcdc_tools`` always present, ``project_tools`` only when the project has a
+    ``*.tgz`` board archive. Every path (venv python via ``sys.executable``,
+    scripts via ``__file__``, documents/rules/tgz under ``project_root``) is
+    computed at RUNTIME, so the derived config self-heals on reinstall/move and
+    follows the active project. The result is written ATOMICALLY (temp file in the
+    SAME launch dir + ``os.replace``) so a half-written config can never be loaded.
+
+    ``launch_dir`` overrides the live ``launch/`` dir — Test Connection passes a
+    throwaway ``launch_test/`` so its derived config + pid file never collide
+    with the live server's (see :func:`get_opencode_launch_test_dir`).
+    """
+    master = get_opencode_master_path()
+    data: dict = {}
+    if master.exists():
         try:
-            loaded = json.loads(cfg.read_text(encoding="utf-8"))
+            loaded = json.loads(master.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
-                data = loaded
+                data = copy.deepcopy(loaded)
         except Exception:
-            log.exception("could not parse master opencode.json; rebuilding mcp block")
-    mcp = data.get("mcp")
-    if not isinstance(mcp, dict):
-        mcp = {}
-    if mcp.get("dcdc_tools") == block["dcdc_tools"]:
-        return  # already current — no write
-    mcp.update(block)
+            log.exception("could not parse master.json; deriving from empty config")
+
+    # Master must NOT carry model/mcp — strip BOTH defensively in case the user
+    # edited them back in, so the blueprint stays project-agnostic (OpenCode then
+    # auto-picks a supported model; MCP is always built fresh below).
+    data.pop("model", None)
+    data.pop("small_model", None)
+    data.pop("mcp", None)
+
+    mcp: dict = {}
+    try:
+        mcp.update(_build_pdf_tools_block(project_root))
+    except Exception:
+        log.exception("Failed to build pdf_tools MCP block")
+    proj_block = None
+    try:
+        proj_block = _build_project_tools_block(project_root)
+    except Exception:
+        log.exception("Failed to build project_tools MCP block")
+    if proj_block:
+        mcp.update(proj_block)
+    try:
+        mcp.update(_build_dcdc_tools_block())
+    except Exception:
+        log.exception("Failed to build dcdc_tools MCP block")
     data["mcp"] = mcp
-    cfg.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    log.info("Wired dcdc_tools MCP server")
+
+    if launch_dir is None:
+        launch_dir = get_opencode_launch_dir()
+    else:
+        launch_dir.mkdir(parents=True, exist_ok=True)
+    target = launch_dir / "opencode.json"
+    payload = json.dumps(data, indent=2)
+    # Atomic write: temp in the SAME dir as target so os.replace stays on one
+    # filesystem (no EXDEV from /tmp), then rename over the target.
+    tmp_fd, tmp_name = tempfile.mkstemp(
+        dir=str(launch_dir), prefix=".opencode-", suffix=".json.tmp")
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+        os.replace(tmp_name, target)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+    log.info("Built launch config (project=%s, mcp=%s)",
+             project_root, sorted(mcp.keys()))
+    return launch_dir
 
 
 
@@ -266,6 +305,7 @@ class SettingsDialog(QDialog):
         task_config_manager: TaskConfigManager,
         parent=None,
         project_root=None,
+        server_manager=None,
     ):
         super().__init__(parent)
         self.setWindowTitle("Settings")
@@ -279,6 +319,12 @@ class SettingsDialog(QDialog):
         # ``None`` means no project is open — the Validator tab's controls
         # then disable themselves with an explanatory tooltip.
         self._project_root = project_root
+        # The live OpenCode server manager (when one exists): the model picker
+        # queries its ACTUAL running port (the OS may have OS-assigned a
+        # different port than the saved spinbox value), and Test Connection can
+        # confirm reachability against the running server. ``None`` -> fall back
+        # to the spinbox host/port.
+        self._server_manager = server_manager
 
         # Note: task / chat editing moved to the parent app's
         # ProjectConfigDialog -> Workflows tab (Phase 4). This dialog
@@ -418,11 +464,12 @@ class SettingsDialog(QDialog):
         self.opencode_startup_timeout.setToolTip("Timeout for backend startup")
         opencode_layout.addRow("Startup Timeout:", self.opencode_startup_timeout)
 
-        # The editor's MASTER opencode.json (what `opencode serve` is launched
-        # with). Generated once from the project; the user owns/edits it here.
+        # The editor's MASTER blueprint (master.json) — providers only, project
+        # agnostic. The per-launch opencode.json is DERIVED from it (MCP built
+        # fresh) at each launch. Generated once from the project; user-editable.
         cfg_row = QHBoxLayout()
         cfg_row.setContentsMargins(0, 0, 0, 0)
-        self.opencode_config_path = QLabel(str(get_opencode_config_dir() / "opencode.json"))
+        self.opencode_config_path = QLabel(str(get_opencode_master_path()))
         self.opencode_config_path.setWordWrap(True)
         self.opencode_config_path.setTextInteractionFlags(
             Qt.TextSelectableByMouse)
@@ -431,10 +478,11 @@ class SettingsDialog(QDialog):
         cfg_row.addWidget(self.opencode_config_path, 1)
         self.open_opencode_config_btn = QPushButton("Open…")
         self.open_opencode_config_btn.setToolTip(
-            "Open the editor's OpenCode config (opencode.json) — what the editor "
-            "launches `opencode serve` with. Generated once from your project's "
-            "providers (default model stripped so it auto-picks). Edit it to "
-            "change providers/models; delete it to regenerate from the project.")
+            "Open the editor's OpenCode master blueprint (master.json) — the "
+            "project-agnostic providers config. The per-launch opencode.json is "
+            "derived from it (default model stripped so it auto-picks; MCP tools "
+            "built fresh each launch). Edit it to change providers; delete it to "
+            "regenerate from the project.")
         self.open_opencode_config_btn.clicked.connect(self._on_open_opencode_config)
         cfg_row.addWidget(self.open_opencode_config_btn)
         opencode_layout.addRow("Config:", cfg_row)
@@ -481,13 +529,12 @@ class SettingsDialog(QDialog):
             self._populate_opencode_models()
 
     def _on_open_opencode_config(self):
-        """Open the editor's master opencode.json (or its folder if it hasn't
+        """Open the editor's master.json blueprint (or its folder if it hasn't
         been generated yet) in the OS default application."""
         from PySide6.QtGui import QDesktopServices
         from PySide6.QtCore import QUrl
-        d = get_opencode_config_dir()
-        cfg = d / "opencode.json"
-        target = cfg if cfg.exists() else d
+        master = get_opencode_master_path()
+        target = master if master.exists() else master.parent
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
 
     def _opencode_model_value(self) -> str:
@@ -506,8 +553,14 @@ class SettingsDialog(QDialog):
             preserve = self._settings.get("opencode", {}).get("model", "") or ""
         else:
             preserve = self.opencode_model.currentText().strip()
-        url = (f"http://{self.opencode_host.text() or '127.0.0.1'}"
-               f":{self.opencode_port.value()}")
+        # C4: query the LIVE running server's port when a manager is running —
+        # the OS may have OS-assigned a port different from the saved spinbox
+        # value. Fall back to the spinbox host/port when there's no live server.
+        if self._server_manager is not None and self._server_manager.is_running:
+            url = self._server_manager.server_url
+        else:
+            url = (f"http://{self.opencode_host.text() or '127.0.0.1'}"
+                   f":{self.opencode_port.value()}")
         models = fetch_opencode_models(url)
         self.opencode_model.blockSignals(True)
         self.opencode_model.clear()
@@ -534,17 +587,28 @@ class SettingsDialog(QDialog):
                 from ..llm.opencode_backend import OpenCodeBackend, OpenCodeConfig
                 from ..llm.backend_base import LLMRequest, LLMTask
                 
+                # Build the per-launch derived config (MCP built fresh) from the
+                # MASTER blueprint, matching how real chat launches it. Ensure the
+                # master exists first (seeded once from the project relic).
+                #
+                # CRITICAL: build into a THROWAWAY launch_test/ dir, NOT the live
+                # launch/ dir. The test server's start() writes a pid file and its
+                # stop() DELETES it; sharing the live dir would clobber the LIVE
+                # server's orphan-sweep record (opencode.pid) — the exact
+                # orphan-left bug class. Isolating it means the probe's pid file +
+                # derived opencode.json never collide with the live ones.
+                ensure_master_config(
+                    seed_from=(self._project_root / "opencode.json")
+                    if self._project_root else None)
+                test_launch_dir = get_opencode_launch_test_dir()
+                launch_dir = str(build_launch_config(
+                    self._project_root, launch_dir=test_launch_dir))
                 config = OpenCodeConfig(
                     server_port=self.opencode_port.value(),
                     server_hostname=self.opencode_host.text() or "127.0.0.1",
                     model=self._opencode_model_value() or None,
-                    # Test against the EDITOR-owned OpenCode config (generated
-                    # from the project), matching how real chat launches it.
-                    working_directory=str(ensure_opencode_config(
-                        seed_from=(self._project_root / "opencode.json")
-                        if self._project_root else None)),
+                    working_directory=launch_dir,
                 )
-                backend_obj = OpenCodeBackend(config=config)
 
                 # Classified availability check — a precise reason (e.g.
                 # "OpenCode was not found in the WSL PATH. Install it
@@ -556,11 +620,39 @@ class SettingsDialog(QDialog):
                     reason = status.message if status else "OpenCode is not available."
                     QMessageBox.warning(self, "Test Connection", f"✗ {reason}")
                     return
-                
+
+                # C6: install OK is not enough — actually START a server and
+                # confirm /health is reachable, surfacing bind failures (the
+                # manager classifies PORT_IN_USE/START_TIMEOUT/START_FAILED).
+                # Then STOP it so the chat-test backend (which spawns its own
+                # `opencode serve`) doesn't collide on the port. try/finally so
+                # the probe server is ALWAYS torn down (and its launch_test pid
+                # file cleaned), even on an early-return warning path below.
+                if not mgr.start():
+                    st = mgr.last_status
+                    why = f"\n\n{st.message}" if st and not st.ok else ""
+                    QMessageBox.warning(
+                        self, "Test Connection",
+                        f"✗ Could not start OpenCode\n\nHost: {config.server_hostname}\nPort: {config.server_port}{why}"
+                    )
+                    return
+                try:
+                    reachable = mgr.health_check()
+                finally:
+                    mgr.stop()
+                if not reachable:
+                    QMessageBox.warning(
+                        self, "Test Connection",
+                        f"✗ Server started but /health was not reachable\n\n"
+                        f"Host: {config.server_hostname}\nPort: {config.server_port}"
+                    )
+                    return
+
                 # Always run a real end-to-end chat test (Default = auto-pick
                 # included), so the button truly validates the model, not just
-                # that OpenCode is installed.
+                # that OpenCode is installed + reachable.
                 model_label = config.model or "auto-pick (Default)"
+                backend_obj = OpenCodeBackend(config=config)
                 if not backend_obj.is_running:
                     if not backend_obj.start():
                         st = mgr.last_status

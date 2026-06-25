@@ -729,6 +729,41 @@ class OpenCodeBackend(LLMBackend):
                     accumulated_text.append(new_text)
                     part_snapshots[part_id] = len(part_text)
     
+    def _turn_peak_token_usage(self, messages: list, last_assistant: dict) -> tuple[int, int, int]:
+        """Token usage for the whole last agentic turn, not just one message.
+
+        A tool-using turn produces MULTIPLE assistant messages — N intermediate
+        ``finish:"tool-calls"`` steps then one final ``finish:"stop"`` message.
+        The model's true context is the PEAK input+cache.read across those steps:
+        for OpenAI the peak lands on the final stop message (cache.read carries
+        the tool result), but for providers that don't populate cache.read
+        (vLLM/gemma) the big tool-result prompt is billed on an INTERMEDIATE
+        tool-calls message and the final stop reports only a tiny delta.
+
+        Walk back from the end to the previous ``user`` message (the start of
+        this turn) and return the assistant-step usage with the largest prompt
+        context (``prompt_tokens`` = input + cache.read), falling back to the
+        single ``last_assistant`` message if no turn boundary is found.
+        """
+        best = None  # (prompt_tokens, completion_tokens, total_tokens)
+        for msg in reversed(messages):
+            info = msg.get("info", {})
+            role = info.get("role")
+            if role == "user":
+                break  # reached the start of this turn
+            if role != "assistant":
+                continue
+            try:
+                usage = self._extract_token_usage(msg)
+            except (KeyError, TypeError):
+                continue
+            # Peak by prompt context (input + cache.read), then total as tiebreak.
+            if best is None or (usage[0], usage[2]) > (best[0], best[2]):
+                best = usage
+        if best is None:
+            return self._extract_token_usage(last_assistant)
+        return best
+
     def _fetch_final_response(self, session_id: str, request: LLMRequest,
                                accumulated_thinking: Optional[list] = None) -> LLMResponse:
         """Fetch the final complete response after streaming is done.
@@ -744,7 +779,11 @@ class OpenCodeBackend(LLMBackend):
         try:
             response = requests.get(
                 f"{self.config.server_url}/session/{session_id}/message",
-                params={"limit": 2},  # Get last few messages
+                # Fetch a turn-sized window: an agentic tool turn produces
+                # multiple assistant messages (N tool-call steps + one final
+                # stop). We need them all so the token readout can peak over
+                # the whole turn, not just the final (delta-only) message.
+                params={"limit": 20},
                 timeout=10,
             )
             
@@ -812,9 +851,14 @@ class OpenCodeBackend(LLMBackend):
             if not llm_response.thinking_content and accumulated_thinking:
                 llm_response.thinking_content = "".join(accumulated_thinking)
             
-            # Extract token usage
+            # Extract token usage. Use the PEAK across the whole agentic turn
+            # (not just last_assistant): a tool turn's full prompt context can
+            # land on an intermediate tool-call message when the provider
+            # doesn't report it under cache.read on the final stop message.
             try:
-                prompt_tokens, completion_tokens, total_tokens = self._extract_token_usage(last_assistant)
+                prompt_tokens, completion_tokens, total_tokens = self._turn_peak_token_usage(
+                    messages, last_assistant
+                )
                 llm_response.prompt_tokens = prompt_tokens
                 llm_response.completion_tokens = completion_tokens
                 llm_response.total_tokens = total_tokens

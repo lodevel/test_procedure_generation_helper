@@ -30,6 +30,9 @@ _PROJECT_TOOLS_OFF = {
 # The DCDC generator tool key, OFF by default (dcdc_tools_enabled defaults False).
 _DCDC_TOOLS_OFF = {"dcdc_tools_generate_dcdc_test": False}
 
+# Local document tools — sandboxed, no network — are ALWAYS on (ungated from web).
+_DOCS_ALWAYS_ON = {"pdf_tools_list_documents": True, "pdf_tools_read_document": True}
+
 
 def _backend(model: str = "") -> OpenCodeBackend:
     return OpenCodeBackend(OpenCodeConfig(model=model))
@@ -44,7 +47,7 @@ def _req(web_enabled: bool) -> LLMRequest:
 def test_web_enabled_exposes_web_tools_and_read_pdf():
     body = _backend()._build_message_body("hi", _req(web_enabled=True))
     assert body["tools"] == {
-        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DCDC_TOOLS_OFF,
+        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DCDC_TOOLS_OFF, **_DOCS_ALWAYS_ON,
         "webfetch": True, "websearch": True, "pdf_tools_read_pdf": True}
 
 
@@ -53,14 +56,14 @@ def test_web_disabled_sends_explicit_false():
     # skill keep web access if the launch config/agent enabled it.
     body = _backend()._build_message_body("hi", _req(web_enabled=False))
     assert body["tools"] == {
-        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DCDC_TOOLS_OFF,
+        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DCDC_TOOLS_OFF, **_DOCS_ALWAYS_ON,
         "webfetch": False, "websearch": False, "pdf_tools_read_pdf": False}
 
 
 def test_default_request_has_web_off():
     body = _backend()._build_message_body("hi", LLMRequest(task=LLMTask.AD_HOC_CHAT))
     assert body["tools"] == {
-        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DCDC_TOOLS_OFF,
+        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DCDC_TOOLS_OFF, **_DOCS_ALWAYS_ON,
         "webfetch": False, "websearch": False, "pdf_tools_read_pdf": False}
 
 
@@ -93,6 +96,17 @@ def test_dcdc_tools_enabled_exposes_the_generator_tool():
 def test_dcdc_tools_default_is_off():
     body = _backend()._build_message_body("hi", LLMRequest(task=LLMTask.AD_HOC_CHAT))
     assert body["tools"]["dcdc_tools_generate_dcdc_test"] is False
+
+
+def test_local_document_tools_always_on():
+    # list_documents + read_document are local + sandboxed, so they're available
+    # even with web OFF; read_pdf (the URL fetcher) stays web-gated.
+    for web in (True, False):
+        body = _backend()._build_message_body("hi", _req(web_enabled=web))
+        assert body["tools"]["pdf_tools_list_documents"] is True
+        assert body["tools"]["pdf_tools_read_document"] is True
+    off = _backend()._build_message_body("hi", _req(web_enabled=False))
+    assert off["tools"]["pdf_tools_read_pdf"] is False
 
 
 def test_builtin_tools_always_disabled():

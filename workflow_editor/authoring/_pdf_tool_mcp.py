@@ -62,7 +62,36 @@ TOOLS = [
             },
             "required": ["source"],
         },
-    }
+    },
+    {
+        "name": "list_documents",
+        "description": (
+            "List the files in the project's documents folder (datasheets, notes, "
+            "etc.) so you can see what is available to read. No arguments. Pair with "
+            "read_document to read one. Local only, no network — always available."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "read_document",
+        "description": (
+            "Read a LOCAL document PDF from the project's documents folder and "
+            "return its text layer. 'name' is a filename/relative path inside the "
+            "documents folder (use list_documents to discover names). Sandboxed to "
+            "that folder; no network, so it works WITHOUT web access. For a PDF at "
+            "an http(s) URL, use read_pdf instead (that one needs web)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Filename or relative path inside the documents folder.",
+                }
+            },
+            "required": ["name"],
+        },
+    },
 ]
 
 _UNREADABLE_MSG = (
@@ -113,6 +142,42 @@ def _handle_read_pdf(arguments, documents_dir):
         return _text_result(text if text is not None else _UNREADABLE_MSG)
 
     resolved = _resolve_local(source, documents_dir)
+    if resolved is None:
+        return _text_result(
+            "Access denied: that path is outside the documents folder."
+        )
+    text = extract_pdf_text(resolved)
+    return _text_result(text if text is not None else _UNREADABLE_MSG)
+
+
+def _handle_list_documents(documents_dir):
+    """List the files under the (sandboxed) documents folder, relative paths."""
+    base = os.path.realpath(documents_dir)
+    if not os.path.isdir(base):
+        return _text_result("(no documents folder for this project)")
+    names = []
+    for root, _dirs, files in os.walk(base):
+        for fn in files:
+            names.append(os.path.relpath(os.path.join(root, fn), base))
+            if len(names) >= 500:
+                break
+        if len(names) >= 500:
+            break
+    if not names:
+        return _text_result("(documents folder is empty)")
+    names.sort()
+    return _text_result(
+        "Documents available (read one with read_document):\n"
+        + "\n".join("- " + n for n in names)
+    )
+
+
+def _handle_read_document(arguments, documents_dir):
+    """Read a LOCAL document from the sandboxed folder — no network branch."""
+    name = (arguments or {}).get("name")
+    if not isinstance(name, str) or not name.strip():
+        return _text_result("read_document requires a non-empty 'name' string.")
+    resolved = _resolve_local(name.strip(), documents_dir)
     if resolved is None:
         return _text_result(
             "Access denied: that path is outside the documents folder."
@@ -178,7 +243,14 @@ def main(argv=None):
             elif method == "tools/call":
                 params = req.get("params") or {}
                 name = params.get("name")
-                if name != "read_pdf":
+                args = params.get("arguments")
+                if name == "read_pdf":
+                    result = _handle_read_pdf(args, documents_dir)
+                elif name == "read_document":
+                    result = _handle_read_document(args, documents_dir)
+                elif name == "list_documents":
+                    result = _handle_list_documents(documents_dir)
+                else:
                     _send({
                         "jsonrpc": "2.0",
                         "id": rid,
@@ -188,7 +260,6 @@ def main(argv=None):
                         },
                     })
                     continue
-                result = _handle_read_pdf(params.get("arguments"), documents_dir)
                 _send({"jsonrpc": "2.0", "id": rid, "result": result})
             elif method == "ping":
                 _send({"jsonrpc": "2.0", "id": rid, "result": {}})

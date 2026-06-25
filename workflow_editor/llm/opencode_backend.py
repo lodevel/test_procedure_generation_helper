@@ -913,6 +913,12 @@ class OpenCodeBackend(LLMBackend):
             "webfetch": request.web_enabled,
             "websearch": request.web_enabled,
             "pdf_tools_read_pdf": request.web_enabled,
+            # Local document tools (sandboxed to the project's documents folder,
+            # NO network) — ALWAYS available, even without the 🌐 web toggle, so
+            # the LLM can discover + read attached datasheets. read_pdf above
+            # stays web-gated because fetching a URL IS a network action.
+            "pdf_tools_list_documents": True,
+            "pdf_tools_read_document": True,
             # Project-data tools ride the per-request project-tools toggle (the
             # project_tools MCP server). Sent explicitly on AND off so the model
             # gets NO project-data access unless the user opts in. OpenCode

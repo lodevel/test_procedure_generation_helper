@@ -25,6 +25,7 @@ so it resolves the CLI path relative to its own location, not the launch cwd.
 Board-agnostic by design: NO property field name is ever hardcoded — discovery
 and projection are the whole point.
 """
+import importlib.util
 import json
 import os
 import subprocess
@@ -47,6 +48,28 @@ _EXTERNAL_DIR = os.path.dirname(
 _CLI_PATH = os.environ.get("_PROJECT_TOOLS_CLI") or os.path.join(
     _EXTERNAL_DIR, "odb_image_generator", "cli.py"
 )
+
+
+def _load_netlist_text():
+    """Load the sibling ``netlist_text.py`` as a standalone module.
+
+    This server runs as a bare script (no ``workflow_editor`` package on the
+    path — see ``mcp_config.build_project_tools_mcp_block``), so neither a
+    relative (``from .netlist_text``) nor an absolute package import works.
+    ``netlist_text`` is pure stdlib (``re`` / ``typing``), so loading it by file
+    path from this file's own directory is safe and launch-location-independent,
+    mirroring how ``_CLI_PATH`` is resolved from ``__file__``. This is the SAME
+    formatter the editor's PUSH context uses, so the ``netlist`` tool returns
+    connectivity identical to the pushed netlist.
+    """
+    path = os.path.join(_AUTHORING_DIR, "netlist_text.py")
+    spec = importlib.util.spec_from_file_location("_project_netlist_text", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_netlist_text = _load_netlist_text()
 
 
 SERVER_INFO = {"name": "project-tools", "version": "1.0.0"}
@@ -80,8 +103,11 @@ TOOLS = [
             "refdes_prefix keeps only components whose refdes starts with one of "
             "the given prefixes followed by a digit (U,IC -> U1, IC3, ...; not "
             "UART). filter keeps only rows whose property KEY equals VALUE "
-            "(case-insensitive; the field name comes from list_property_fields, "
-            "NEVER guessed). fields keeps only the columns you ask for "
+            "(case-insensitive; field from list_property_fields, NEVER guessed). "
+            "To READ a property (e.g. the part number) for EVERY matched IC, put "
+            "it in fields — NOT filter: filter NARROWS to a single value and HIDES "
+            "all other ICs (filter='Manufacturer_Reference=TPS16630' returns only "
+            "that one part, not the board's ICs). fields keeps only the columns you ask for "
             "(fields=['Type','Package'] keeps output small). Omit all three to "
             "get every component with all properties (large). Each result is "
             "{refdes, side, pins, properties}."
@@ -162,38 +188,12 @@ TOOLS = [
     {
         "name": "netlist",
         "description": (
-            "A CAPPED OVERVIEW of the board netlist, NOT a full dump. Returns at "
-            "most 'limit' nets (default 200) starting at 'offset', each with its "
-            "connected {refdes, pin} nodes. To TRACE a specific rail or pin use "
-            "query_net(name) (one net) or get_component(refdes) (one IC) — do not "
-            "page through the whole graph here. Optionally pass name_contains to "
-            "keep only nets whose name contains a substring (case-insensitive). "
-            "When the result is truncated a 'note' field tells you so and how to "
-            "narrow; prefer narrowing over paging. Returns "
-            "{nets:[{net, nodes:[{refdes, pin}]}], total, returned, offset"
-            "[, note]}."
+            "The FULL board netlist as compact text — every component's "
+            "pins->nets AND every net's nodes (the same connectivity the "
+            "editor's push context sends). Use query_net(name) for a single net, "
+            "list_components for the BOM/part numbers."
         ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "name_contains": {
-                    "type": "string",
-                    "description": "Keep only nets whose name contains this "
-                    "substring (case-insensitive). Use to scope the overview to a "
-                    "rail family instead of paging the whole graph.",
-                },
-                "offset": {
-                    "type": "integer",
-                    "description": "Start index into the (filtered, sorted) net "
-                    "list. Default 0.",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max nets to return (default 200). The full "
-                    "unbounded graph is never returned in one call.",
-                },
-            },
-        },
+        "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "get_bom",
@@ -331,7 +331,7 @@ def _tool_list_property_fields(board, _args):
 
 
 def _tool_list_components(board, args):
-    filter_kv = (args or {}).get("filter")
+    filter_kv = (args or {}).get("filter") or None  # "" means no filter, not malformed
     fields = (args or {}).get("fields")
     refdes_prefix = (args or {}).get("refdes_prefix")
     if filter_kv is not None and not isinstance(filter_kv, str):
@@ -349,8 +349,9 @@ def _tool_list_components(board, args):
             "like 'U,IC'."
         )
     try:
-        return _text_result(board.components(
-            fields=fields, filter_kv=filter_kv, refdes_prefix=refdes_prefix))
+        rows = board.components(
+            fields=fields, filter_kv=filter_kv, refdes_prefix=refdes_prefix)
+        return _text_result({"count": len(rows), "components": rows})
     except _CliError as exc:
         return _err_result(exc)
 
@@ -388,63 +389,18 @@ def _tool_query_net(board, args):
     return _text_result(f"Net not found: {name}")
 
 
-# netlist() is a CAPPED overview, never a full dump: an unbounded netlist is what
-# made gpt-5.5 hand the whole connectivity graph to a sub-agent that hung. The
-# cap forces the model toward query_net / get_component for actual tracing.
-_NETLIST_DEFAULT_LIMIT = 200
-
-
-def _tool_netlist(board, args):
-    args = args or {}
-    name_contains = args.get("name_contains")
-    if name_contains is not None and not isinstance(name_contains, str):
-        return _text_result("netlist: 'name_contains' must be a string.")
-
-    def _as_int(val, default):
-        if val is None:
-            return default, True
-        try:
-            return int(val), True
-        except (TypeError, ValueError):
-            return default, False
-
-    offset, ok_off = _as_int(args.get("offset"), 0)
-    if not ok_off:
-        return _text_result("netlist: 'offset' must be an integer.")
-    limit, ok_lim = _as_int(args.get("limit"), _NETLIST_DEFAULT_LIMIT)
-    if not ok_lim:
-        return _text_result("netlist: 'limit' must be an integer.")
-    offset = max(0, offset)
-    # Cap the page size: the full unbounded graph must never be one response.
-    limit = max(1, min(limit, _NETLIST_DEFAULT_LIMIT))
-
+def _tool_netlist(board, _args):
+    """The FULL board netlist as compact connectivity TEXT — every component's
+    pins->nets AND every net's nodes — identical to what the editor's PUSH
+    context sends (``format_netlist`` over the same ``--list-nets`` board). No
+    cap / filter / paging: any subset breaks the connectivity graph, and the
+    full compact text is small (~27k tokens on a real board). For ONE net use
+    query_net(name); for the BOM / part numbers use list_components."""
     try:
         data = board.netlist()
     except _CliError as exc:
         return _err_result(exc)
-
-    nets = data.get("nets", []) or []
-    if name_contains:
-        needle = name_contains.lower()
-        nets = [n for n in nets if needle in str(n.get("net", "")).lower()]
-
-    total = len(nets)
-    page = nets[offset:offset + limit]
-    result = {
-        "nets": page,
-        "total": total,
-        "returned": len(page),
-        "offset": offset,
-    }
-    if offset + len(page) < total:
-        result["note"] = (
-            f"Truncated: showing nets {offset}..{offset + len(page) - 1} of "
-            f"{total}. This is an overview, not a full dump — to trace a "
-            f"specific rail use query_net(name) or get_component(refdes), or "
-            f"narrow this overview with name_contains. Avoid paging the whole "
-            f"graph."
-        )
-    return _text_result(result)
+    return _text_result(_netlist_text.format_netlist(data))
 
 
 def _tool_get_bom(board, _args):

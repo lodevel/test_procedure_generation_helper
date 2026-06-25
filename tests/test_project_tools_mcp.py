@@ -246,6 +246,22 @@ def _result_json(resp):
     return json.loads(_result_text(resp))
 
 
+def _components(resp):
+    """Unwrap the list_components ``{"count", "components"}`` envelope.
+
+    The product intentionally wraps the rows in a count envelope so an
+    over-filtered result (e.g. 98 components collapsing to 2) is visible to the
+    model. Here we assert the envelope is well-formed (count == len(rows)) and
+    hand back the rows for the per-test content assertions.
+    """
+    payload = _result_json(resp)
+    assert isinstance(payload, dict)
+    assert set(payload) >= {"count", "components"}
+    rows = payload["components"]
+    assert payload["count"] == len(rows)
+    return rows
+
+
 @pytest.fixture
 def server(tmp_path):
     # Write the synthetic board + the fake CLI (LF) to a temp dir.
@@ -297,7 +313,7 @@ def test_list_property_fields(server):
 def test_list_components_all(server):
     _handshake(server)
     resp = server.call(2, "list_components")
-    comps = _result_json(resp)
+    comps = _components(resp)
     refdes = {c["refdes"] for c in comps}
     assert refdes == {"U1", "R1", "C1", "TP_VCC", "TP_GND"}
     # Full properties present by default.
@@ -308,21 +324,21 @@ def test_list_components_all(server):
 def test_list_components_filtered(server):
     _handshake(server)
     resp = server.call(2, "list_components", {"filter": "Type=Pad"})
-    comps = _result_json(resp)
+    comps = _components(resp)
     assert {c["refdes"] for c in comps} == {"TP_VCC", "TP_GND"}
 
 
 def test_list_components_filter_case_insensitive(server):
     _handshake(server)
     resp = server.call(2, "list_components", {"filter": "Type=pad"})
-    comps = _result_json(resp)
+    comps = _components(resp)
     assert {c["refdes"] for c in comps} == {"TP_VCC", "TP_GND"}
 
 
 def test_list_components_projected_fields(server):
     _handshake(server)
     resp = server.call(2, "list_components", {"fields": ["Type"]})
-    comps = _result_json(resp)
+    comps = _components(resp)
     r1 = next(c for c in comps if c["refdes"] == "R1")
     assert set(r1["properties"].keys()) == {"Type"}
 
@@ -333,12 +349,21 @@ def test_list_components_bad_filter(server):
     assert "filter" in _result_text(resp).lower()
 
 
+def test_list_components_empty_filter_is_no_filter(server):
+    # An empty filter string is coerced to "no filter" (not a malformed
+    # 'KEY=VALUE' error): the model gets every component, not a complaint.
+    _handshake(server)
+    resp = server.call(2, "list_components", {"filter": ""})
+    comps = _components(resp)
+    assert {c["refdes"] for c in comps} == {"U1", "R1", "C1", "TP_VCC", "TP_GND"}
+
+
 def test_list_components_refdes_prefix_keeps_only_ics(server):
     # The targeted one-call IC pull: refdes_prefix='U,IC' + the part-number field.
     _handshake(server)
     resp = server.call(
         2, "list_components", {"refdes_prefix": "U,IC", "fields": ["MfgRef"]})
-    comps = _result_json(resp)
+    comps = _components(resp)
     assert {c["refdes"] for c in comps} == {"U1"}
     # Only the requested column came back.
     assert comps[0]["properties"] == {"MfgRef": "TPS62840"}
@@ -347,7 +372,7 @@ def test_list_components_refdes_prefix_keeps_only_ics(server):
 def test_list_components_refdes_prefix_excludes_passives(server):
     _handshake(server)
     resp = server.call(2, "list_components", {"refdes_prefix": "U,IC"})
-    comps = _result_json(resp)
+    comps = _components(resp)
     # R1/C1/TP_* are not U#/IC# and must be excluded.
     assert all(c["refdes"] == "U1" for c in comps)
 
@@ -401,56 +426,17 @@ def test_query_net_not_found(server):
     assert "not found" in _result_text(resp).lower()
 
 
-def test_netlist_full(server):
+def test_netlist_returns_full_connectivity_text(server):
+    # netlist() returns the FULL board as compact format_netlist TEXT — the same
+    # connectivity the editor's PUSH context sends. No cap / filter / paging: any
+    # subset breaks the graph. Both the component->pins->nets and the net->nodes
+    # sections are present, and EVERY net is included.
     _handshake(server)
     resp = server.call(2, "netlist")
-    data = _result_json(resp)
-    net_names = {e["net"] for e in data["nets"]}
-    assert net_names == {"VCC", "GND"}
-    # netlist() projects to just the nets graph (no bulky component echo).
-    assert "components" not in data
-    # Capped-overview envelope is present; the synthetic board is tiny so it is
-    # NOT truncated (no 'note').
-    assert data["total"] == 2
-    assert data["returned"] == 2
-    assert data["offset"] == 0
-    assert "note" not in data
-
-
-def test_netlist_is_capped_and_paginated(server):
-    # A small limit truncates and advertises how to narrow instead of paging.
-    _handshake(server)
-    resp = server.call(2, "netlist", {"limit": 1})
-    data = _result_json(resp)
-    assert data["total"] == 2
-    assert data["returned"] == 1
-    assert len(data["nets"]) == 1
-    assert "note" in data  # tells the model to narrow with query_net/name_contains
-    assert "query_net" in data["note"]
-    # Page 2 via offset returns the rest, no note.
-    resp2 = server.call(3, "netlist", {"limit": 1, "offset": 1})
-    data2 = _result_json(resp2)
-    assert data2["returned"] == 1
-    assert data2["offset"] == 1
-    assert "note" not in data2
-    assert {data["nets"][0]["net"], data2["nets"][0]["net"]} == {"VCC", "GND"}
-
-
-def test_netlist_name_contains_filters_nets(server):
-    _handshake(server)
-    resp = server.call(2, "netlist", {"name_contains": "vc"})
-    data = _result_json(resp)
-    assert {e["net"] for e in data["nets"]} == {"VCC"}
-    assert data["total"] == 1
-
-
-def test_netlist_limit_cannot_exceed_cap(server):
-    # Even an absurd limit is clamped to the server cap (never a full dump path).
-    _handshake(server)
-    resp = server.call(2, "netlist", {"limit": 100000})
-    data = _result_json(resp)
-    # Tiny board so all 2 nets fit, but the request did not bypass the cap.
-    assert data["returned"] == 2
+    text = _result_text(resp)
+    assert "Components" in text
+    assert "Nets (2):" in text
+    assert "VCC" in text and "GND" in text
 
 
 def test_list_test_points_board_agnostic(server):

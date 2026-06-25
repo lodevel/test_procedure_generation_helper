@@ -34,6 +34,37 @@ def safe_wsl_cwd() -> str:
     return os.environ.get("SystemDrive", "C:") + "\\"
 
 
+def resolve_context_window(
+    model_str: Optional[str],
+    providers_doc: Optional[dict],
+) -> Optional[int]:
+    """The active model's real context window from a ``/config/providers`` doc.
+
+    ``model_str`` is OpenCode's ``"providerID/modelID"`` string (modelID may
+    itself contain slashes — only the FIRST ``/`` splits provider from model).
+    ``providers_doc`` is the parsed ``GET /config/providers`` JSON, shaped
+    ``{"providers": [{"id": ..., "models": {modelID: {"limit": {"context": N}}}}]}``.
+
+    Returns the model's ``limit.context`` as a positive int, or ``None`` when the
+    model can't be resolved / carries no positive context limit (caller falls
+    back to the static setting). Pure (no HTTP) so it's unit-testable.
+    """
+    if not model_str or "/" not in model_str:
+        return None
+    provider_id, model_id = model_str.split("/", 1)
+    if not isinstance(providers_doc, dict):
+        return None
+    for provider in providers_doc.get("providers") or []:
+        if not isinstance(provider, dict) or provider.get("id") != provider_id:
+            continue
+        model = (provider.get("models") or {}).get(model_id)
+        if isinstance(model, dict):
+            ctx = (model.get("limit") or {}).get("context")
+            if isinstance(ctx, (int, float)) and ctx > 0:
+                return int(ctx)
+    return None
+
+
 @dataclass
 class OpenCodeConfig:
     """Configuration for OpenCode backend."""
@@ -97,6 +128,10 @@ class OpenCodeBackend(LLMBackend):
         self.config = config or OpenCodeConfig()
         self._server_process: Optional[subprocess.Popen] = None
         self._session_id: Optional[str] = None
+        # Cached real context window for the active model (fetched once from the
+        # running server's /config + /config/providers). ``None`` = not yet
+        # resolved or unavailable; the readout falls back to the static setting.
+        self._context_window: Optional[int] = None
     
     @property
     def name(self) -> str:
@@ -766,6 +801,41 @@ class OpenCodeBackend(LLMBackend):
                 error_message=f"Failed to fetch final response: {str(e)}",
             )
     
+    def get_context_window(self) -> Optional[int]:
+        """The active model's REAL context window (tokens), from the server.
+
+        Resolves the active model — the editor's ``config.model`` override if set,
+        else the server's configured ``model`` from ``GET /config`` — then looks
+        up its ``limit.context`` in ``GET /config/providers`` (the full model
+        catalogue). The result is cached on the instance (fetched once); returns
+        ``None`` on any failure or when the model carries no positive limit, so
+        the readout falls back to the static ``common_llm.context_window`` setting.
+        """
+        if self._context_window is not None:
+            return self._context_window
+        try:
+            model_str = self.config.model
+            if not model_str:
+                cfg = requests.get(
+                    f"{self.config.server_url}/config", timeout=5
+                )
+                if cfg.status_code == 200:
+                    model_str = (cfg.json() or {}).get("model")
+            if not model_str:
+                return None
+            providers = requests.get(
+                f"{self.config.server_url}/config/providers", timeout=5
+            )
+            if providers.status_code != 200:
+                return None
+            window = resolve_context_window(model_str, providers.json())
+        except (requests.exceptions.RequestException, ValueError) as e:
+            log.debug(f"get_context_window: could not resolve model window: {e}")
+            return None
+        if window:
+            self._context_window = window
+        return window
+
     def _build_message_body(self, prompt: str, request: LLMRequest) -> dict:
         """Build the POST body for ``/session/{id}/message``.
 

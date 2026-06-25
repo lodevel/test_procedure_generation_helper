@@ -302,6 +302,15 @@ Your response must be a single JSON object."""
         log.warning("No token usage data found in response")
         return 0, 0, 0
     
+    def get_context_window(self) -> Optional[int]:
+        """The active model's real context window in tokens, or ``None``.
+
+        Concrete backends that know their model's window (e.g. OpenCode, which
+        reads it from the running server) override this. The default returns
+        ``None`` so context-% readouts fall back to the static setting.
+        """
+        return None
+
     @abstractmethod
     def is_available(self) -> bool:
         """Check if this backend is available and configured."""

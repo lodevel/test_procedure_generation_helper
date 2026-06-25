@@ -405,6 +405,17 @@ class LLMTabMixin:
             self._pending_request = None
 
         if is_active:
+            # Prefer the active model's REAL context window (from the now-running
+            # OpenCode server) over the static common_llm.context_window setting,
+            # which is wrong for modern models (e.g. gpt-5.x: 272k+). Resolved
+            # lazily here (the server is up post-response) and cached per backend;
+            # leaves the static fallback in place when it can't be resolved.
+            try:
+                window = self.tab_context.backend.get_context_window()
+            except Exception:
+                window = None
+            if isinstance(window, int) and window > 0:
+                self.main_window.dock.chat_panel.set_context_limit(window)
             self.main_window.dock.chat_panel.switch_context(self.tab_context)
 
     def _publish_response_issues(

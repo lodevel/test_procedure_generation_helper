@@ -422,6 +422,18 @@ class SkillChatDialog(QDialog):
         used = used_tokens(response)
         if not used:
             return
+        # Prefer the active model's REAL context window (from the running
+        # OpenCode server) over the static common_llm.context_window setting,
+        # which is wrong for modern models (e.g. gpt-5.x: 272k+). The server is
+        # up by the time a response lands, so resolve it lazily here and cache.
+        backend = self._backend
+        if backend is not None:
+            try:
+                window = backend.get_context_window()
+            except Exception:
+                window = None
+            if isinstance(window, int) and window > 0:
+                self._context_limit = window
         limit = self._context_limit or 16384
         text, colour = format_context_usage(used, limit)
         # An empty colour from the helper means "use the widget's muted default".

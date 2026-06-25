@@ -124,6 +124,7 @@ class ChatPanel(QWidget):
         
         if tab_context is None:
             self._cumulative_tokens = 0
+            self._latest_total_tokens = 0
             self._update_context_label()
             return
         

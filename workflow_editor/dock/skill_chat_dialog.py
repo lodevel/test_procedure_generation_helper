@@ -340,6 +340,14 @@ class SkillChatDialog(QDialog):
         self._append_line("You", message)
         self._dispatch(prompt)
 
+    def _skill_declares_tool(self, server: str) -> bool:
+        """True if the ACTIVE skill declares ``server`` in its frontmatter
+        ``mcp_tools`` list — how a skill opts into a host MCP tool (e.g. the
+        dcdc_bringup skill declares ``dcdc_tools``). Tolerant of a missing or
+        non-list value."""
+        declared = (self._skill.metadata or {}).get("mcp_tools") or []
+        return isinstance(declared, (list, tuple)) and server in declared
+
     def _dispatch(self, prompt: str) -> None:
         """Send a built prompt on a worker thread (shared by Run + Send)."""
         backend = self._ensure_backend()
@@ -352,6 +360,10 @@ class SkillChatDialog(QDialog):
             system_prompt=self._session.system_prompt,
             web_enabled=self._web_checkbox.isChecked(),
             project_tools_enabled=self._project_tools_checkbox.isChecked(),
+            # A skill auto-enables its own MCP tools by declaring them in
+            # frontmatter (e.g. dcdc_bringup -> `mcp_tools: [dcdc_tools]`), so the
+            # tool is exposed only to the skill that uses it — no global toggle.
+            dcdc_tools_enabled=self._skill_declares_tool("dcdc_tools"),
         )
         self._worker = LLMWorker(backend, request, parent=self)
         self._worker.text_chunk.connect(self._on_text_chunk)

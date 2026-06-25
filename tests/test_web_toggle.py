@@ -21,6 +21,9 @@ _PROJECT_TOOLS_OFF = {
     "project_tools_list_test_points": False,
 }
 
+# The DCDC generator tool key, OFF by default (dcdc_tools_enabled defaults False).
+_DCDC_TOOLS_OFF = {"dcdc_tools_generate_dcdc_test": False}
+
 
 def _backend(model: str = "") -> OpenCodeBackend:
     return OpenCodeBackend(OpenCodeConfig(model=model))
@@ -35,7 +38,7 @@ def _req(web_enabled: bool) -> LLMRequest:
 def test_web_enabled_exposes_web_tools_and_read_pdf():
     body = _backend()._build_message_body("hi", _req(web_enabled=True))
     assert body["tools"] == {
-        **_CODING_OFF, **_PROJECT_TOOLS_OFF,
+        **_CODING_OFF, **_PROJECT_TOOLS_OFF, **_DCDC_TOOLS_OFF,
         "webfetch": True, "websearch": True, "pdf_tools_read_pdf": True}
 
 
@@ -44,14 +47,14 @@ def test_web_disabled_sends_explicit_false():
     # skill keep web access if the launch config/agent enabled it.
     body = _backend()._build_message_body("hi", _req(web_enabled=False))
     assert body["tools"] == {
-        **_CODING_OFF, **_PROJECT_TOOLS_OFF,
+        **_CODING_OFF, **_PROJECT_TOOLS_OFF, **_DCDC_TOOLS_OFF,
         "webfetch": False, "websearch": False, "pdf_tools_read_pdf": False}
 
 
 def test_default_request_has_web_off():
     body = _backend()._build_message_body("hi", LLMRequest(task=LLMTask.AD_HOC_CHAT))
     assert body["tools"] == {
-        **_CODING_OFF, **_PROJECT_TOOLS_OFF,
+        **_CODING_OFF, **_PROJECT_TOOLS_OFF, **_DCDC_TOOLS_OFF,
         "webfetch": False, "websearch": False, "pdf_tools_read_pdf": False}
 
 
@@ -69,6 +72,21 @@ def test_project_tools_default_is_off():
     body = _backend()._build_message_body("hi", LLMRequest(task=LLMTask.AD_HOC_CHAT))
     for key in _PROJECT_TOOLS_OFF:
         assert body["tools"][key] is False
+
+
+def test_dcdc_tools_enabled_exposes_the_generator_tool():
+    req = LLMRequest(
+        task=LLMTask.AD_HOC_CHAT, raw_prompt="hi", dcdc_tools_enabled=True)
+    body = _backend()._build_message_body("hi", req)
+    assert body["tools"]["dcdc_tools_generate_dcdc_test"] is True
+    # independent of the other toggles
+    assert body["tools"]["webfetch"] is False
+    assert body["tools"]["project_tools_list_components"] is False
+
+
+def test_dcdc_tools_default_is_off():
+    body = _backend()._build_message_body("hi", LLMRequest(task=LLMTask.AD_HOC_CHAT))
+    assert body["tools"]["dcdc_tools_generate_dcdc_test"] is False
 
 
 def test_coding_tools_always_disabled():

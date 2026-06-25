@@ -110,6 +110,12 @@ def ensure_opencode_config(seed_from: Optional[Path] = None) -> Path:
             _ensure_project_tools_mcp(cfg, project_root=Path(seed_from).parent)
         except Exception:
             log.exception("Failed to wire project_tools MCP server")
+        # The DCDC generator tool is project-independent; wire it so a skill that
+        # declares it (mcp_tools: [dcdc_tools]) can call generate_dcdc_test.
+        try:
+            _ensure_dcdc_tools_mcp(cfg)
+        except Exception:
+            log.exception("Failed to wire dcdc_tools MCP server")
     return d
 
 
@@ -201,6 +207,45 @@ def _ensure_project_tools_mcp(cfg: Path, project_root: Path) -> None:
     data["mcp"] = mcp
     cfg.write_text(json.dumps(data, indent=2), encoding="utf-8")
     log.info("Wired project_tools MCP server (odb_tgz=%s)", odb_tgz)
+
+
+def _ensure_dcdc_tools_mcp(cfg: Path) -> None:
+    """Merge/refresh the ``dcdc_tools`` local MCP block in the master opencode.json.
+
+    Mirrors :func:`_ensure_project_tools_mcp` but simpler: the DCDC generator is
+    project-independent (it consumes only per-call params), so there's no
+    ``--odb-tgz`` and nothing to skip. The dcdc_bringup skill opts into the tool
+    via its frontmatter ``mcp_tools``. Writes only when the block changes.
+    """
+    from ..llm.mcp_config import build_dcdc_tools_mcp_block
+
+    # pythonw has no console; prefer python.exe for reliable stdio pipes.
+    python_win = sys.executable.replace("pythonw.exe", "python.exe")
+    script_win = str(
+        Path(__file__).resolve().parents[1] / "authoring" / "_dcdc_tools_mcp.py"
+    )
+    block = build_dcdc_tools_mcp_block(
+        venv_python_win=python_win,
+        mcp_script_win=script_win,
+    )
+
+    data = {}
+    if cfg.exists():
+        try:
+            loaded = json.loads(cfg.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        except Exception:
+            log.exception("could not parse master opencode.json; rebuilding mcp block")
+    mcp = data.get("mcp")
+    if not isinstance(mcp, dict):
+        mcp = {}
+    if mcp.get("dcdc_tools") == block["dcdc_tools"]:
+        return  # already current — no write
+    mcp.update(block)
+    data["mcp"] = mcp
+    cfg.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    log.info("Wired dcdc_tools MCP server")
 
 
 

@@ -172,6 +172,12 @@ class LLMRequest:
     # the model gets NO project-data access unless the user explicitly opts in.
     project_tools_enabled: bool = False
 
+    # When True, the OpenCode backend exposes the DCDC generator tool (the
+    # dcdc_tools MCP server: generate_dcdc_test). A skill opts in by declaring
+    # ``mcp_tools: [dcdc_tools]`` in its frontmatter (the dcdc_bringup skill), so
+    # the tool is exposed only to the skill that actually uses it.
+    dcdc_tools_enabled: bool = False
+
     # System prompt sent as the message-level ``system`` (OpenCode), separate
     # from the user ``parts``. The skill chat sets this to the SKILL.md so the
     # skill GOVERNS behaviour, instead of being buried in the user message under

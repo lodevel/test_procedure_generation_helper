@@ -884,6 +884,10 @@ class OpenCodeBackend(LLMBackend):
             "project_tools_netlist": request.project_tools_enabled,
             "project_tools_get_bom": request.project_tools_enabled,
             "project_tools_list_test_points": request.project_tools_enabled,
+            # The DCDC generator tool (dcdc_tools MCP server). A skill opts in via
+            # its frontmatter mcp_tools; namespaced "<server>_<tool>" key — verify
+            # the exact key on a live model, like project_tools.
+            "dcdc_tools_generate_dcdc_test": request.dcdc_tools_enabled,
         }
         # Message-level system prompt (e.g. the skill chat's SKILL.md) so the
         # caller's instructions GOVERN, rather than sitting in the user body.

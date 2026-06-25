@@ -92,6 +92,34 @@ TOOLS = [
             "required": ["name"],
         },
     },
+    {
+        "name": "list_rules",
+        "description": (
+            "List the procedure GRAMMAR / rule files available for this project so "
+            "you can see what's there. No arguments. Pair with read_rule. Local "
+            "only, no network — always available."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "read_rule",
+        "description": (
+            "Read a GRAMMAR / rule file (returns its text) so you can write VALID "
+            "procedure text. 'name' is a filename from list_rules. Sandboxed to the "
+            "rules folder; no network — always available. Do NOT re-read a rule that "
+            "is already present in your context."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Filename of a rule file (see list_rules).",
+                }
+            },
+            "required": ["name"],
+        },
+    },
 ]
 
 _UNREADABLE_MSG = (
@@ -150,11 +178,12 @@ def _handle_read_pdf(arguments, documents_dir):
     return _text_result(text if text is not None else _UNREADABLE_MSG)
 
 
-def _handle_list_documents(documents_dir):
-    """List the files under the (sandboxed) documents folder, relative paths."""
-    base = os.path.realpath(documents_dir)
+def _list_dir(directory, missing_msg, empty_msg, header):
+    """List files under a sandboxed folder (relative paths, capped). Shared by
+    list_documents and list_rules so they can't drift."""
+    base = os.path.realpath(directory)
     if not os.path.isdir(base):
-        return _text_result("(no documents folder for this project)")
+        return _text_result(missing_msg)
     names = []
     for root, _dirs, files in os.walk(base):
         for fn in files:
@@ -164,12 +193,39 @@ def _handle_list_documents(documents_dir):
         if len(names) >= 500:
             break
     if not names:
-        return _text_result("(documents folder is empty)")
+        return _text_result(empty_msg)
     names.sort()
-    return _text_result(
-        "Documents available (read one with read_document):\n"
-        + "\n".join("- " + n for n in names)
-    )
+    return _text_result(header + "\n" + "\n".join("- " + n for n in names))
+
+
+def _handle_list_documents(documents_dir):
+    return _list_dir(
+        documents_dir, "(no documents folder for this project)",
+        "(documents folder is empty)",
+        "Documents available (read one with read_document):")
+
+
+def _handle_list_rules(rules_dir):
+    return _list_dir(
+        rules_dir, "(no rules folder for this project)",
+        "(rules folder is empty)",
+        "Grammar/rule files available (read one with read_rule):")
+
+
+def _handle_read_rule(arguments, rules_dir):
+    """Read a LOCAL rule/grammar file as TEXT (not PDF), sandboxed to the rules
+    folder — no network."""
+    name = (arguments or {}).get("name")
+    if not isinstance(name, str) or not name.strip():
+        return _text_result("read_rule requires a non-empty 'name' string.")
+    resolved = _resolve_local(name.strip(), rules_dir)
+    if resolved is None:
+        return _text_result("Access denied: that path is outside the rules folder.")
+    try:
+        with open(resolved, encoding="utf-8", errors="replace") as fh:
+            return _text_result(fh.read())
+    except OSError as exc:
+        return _text_result(f"Could not read the rule file: {exc}")
 
 
 def _handle_read_document(arguments, documents_dir):
@@ -186,30 +242,23 @@ def _handle_read_document(arguments, documents_dir):
     return _text_result(text if text is not None else _UNREADABLE_MSG)
 
 
-def _parse_documents_dir(argv):
-    """Tiny manual argv parse for ``--documents-dir <path>`` (default cwd)."""
-    docs = os.getcwd()
+def _parse_dir_arg(argv, flag, default):
+    """Tiny manual argv parse for ``<flag> <path>`` or ``<flag>=<path>``."""
     i = 0
     while i < len(argv):
-        arg = argv[i]
-        if arg == "--documents-dir":
-            if i + 1 < len(argv):
-                docs = argv[i + 1]
-                i += 2
-                continue
-            i += 1
-        elif arg.startswith("--documents-dir="):
-            docs = arg.split("=", 1)[1]
-            i += 1
-        else:
-            i += 1
-    return docs
+        if argv[i] == flag and i + 1 < len(argv):
+            return argv[i + 1]
+        if argv[i].startswith(flag + "="):
+            return argv[i].split("=", 1)[1]
+        i += 1
+    return default
 
 
 def main(argv=None):
     if argv is None:
         argv = sys.argv[1:]
-    documents_dir = _parse_documents_dir(argv)
+    documents_dir = _parse_dir_arg(argv, "--documents-dir", os.getcwd())
+    rules_dir = _parse_dir_arg(argv, "--rules-dir", os.getcwd())
 
     for line in sys.stdin:
         line = line.strip()
@@ -250,6 +299,10 @@ def main(argv=None):
                     result = _handle_read_document(args, documents_dir)
                 elif name == "list_documents":
                     result = _handle_list_documents(documents_dir)
+                elif name == "list_rules":
+                    result = _handle_list_rules(rules_dir)
+                elif name == "read_rule":
+                    result = _handle_read_rule(args, rules_dir)
                 else:
                     _send({
                         "jsonrpc": "2.0",

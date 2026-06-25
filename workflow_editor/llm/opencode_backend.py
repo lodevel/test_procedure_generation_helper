@@ -919,6 +919,10 @@ class OpenCodeBackend(LLMBackend):
             # stays web-gated because fetching a URL IS a network action.
             "pdf_tools_list_documents": True,
             "pdf_tools_read_document": True,
+            # Grammar / rule files (read-only, sandboxed, no network) — also always
+            # available so the LLM can pull the procedure grammar it must write in.
+            "pdf_tools_list_rules": True,
+            "pdf_tools_read_rule": True,
             # Project-data tools ride the per-request project-tools toggle (the
             # project_tools MCP server). Sent explicitly on AND off so the model
             # gets NO project-data access unless the user opts in. OpenCode

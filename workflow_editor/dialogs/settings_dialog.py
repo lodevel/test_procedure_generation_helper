@@ -130,6 +130,9 @@ def _ensure_pdf_tools_mcp(cfg: Path, project_root: Path) -> None:
 
     documents_dir = project_root / "documents"
     documents_dir.mkdir(parents=True, exist_ok=True)
+    # The procedure grammar / rule docs (read-only) live in the project bundle;
+    # the server lists/reads them via list_rules/read_rule (missing dir is fine).
+    rules_dir = project_root / "bundle" / "rules"
     # pythonw has no console; prefer python.exe for reliable stdio pipes.
     python_win = sys.executable.replace("pythonw.exe", "python.exe")
     script_win = str(
@@ -139,6 +142,7 @@ def _ensure_pdf_tools_mcp(cfg: Path, project_root: Path) -> None:
         venv_python_win=python_win,
         mcp_script_win=script_win,
         documents_dir_win=str(documents_dir),
+        rules_dir_win=str(rules_dir),
     )
 
     data = {}

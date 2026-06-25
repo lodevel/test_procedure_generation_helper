@@ -28,6 +28,7 @@ def test_build_pdf_tools_mcp_block_shape():
         venv_python_win=r"C:\Workspace\.venv\Scripts\python.exe",
         mcp_script_win=r"C:\Workspace\editor\_pdf_tool_mcp.py",
         documents_dir_win=r"C:\Projects\demo\documents",
+        rules_dir_win=r"C:\Projects\demo\bundle\rules",
     )
     assert set(block.keys()) == {"pdf_tools"}
     entry = block["pdf_tools"]
@@ -38,6 +39,8 @@ def test_build_pdf_tools_mcp_block_shape():
         r"C:\Workspace\editor\_pdf_tool_mcp.py",       # script stays Windows
         "--documents-dir",
         r"C:\Projects\demo\documents",                 # docs dir stays Windows
+        "--rules-dir",
+        r"C:\Projects\demo\bundle\rules",              # rules dir stays Windows
     ]
 
 

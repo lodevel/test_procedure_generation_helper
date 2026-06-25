@@ -44,13 +44,14 @@ def build_pdf_tools_mcp_block(
     venv_python_win: str,
     mcp_script_win: str,
     documents_dir_win: str,
+    rules_dir_win: str,
 ) -> dict:
     """Return the ``mcp`` entry for the ``pdf_tools`` local server.
 
     ``command[0]`` is the python translated to its ``/mnt/c`` WSL path (OpenCode
-    runs in WSL); the script and ``--documents-dir`` value stay as Windows paths
-    (argv for the Windows python). Merge the returned dict into the master
-    opencode.json's ``mcp`` object.
+    runs in WSL); the script, ``--documents-dir`` (datasheets) and ``--rules-dir``
+    (procedure grammar) values stay as Windows paths (argv for the Windows
+    python). Merge the returned dict into the master opencode.json's ``mcp`` object.
     """
     return {
         "pdf_tools": {
@@ -60,6 +61,8 @@ def build_pdf_tools_mcp_block(
                 mcp_script_win,
                 "--documents-dir",
                 documents_dir_win,
+                "--rules-dir",
+                rules_dir_win,
             ],
             "enabled": True,
         }

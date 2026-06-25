@@ -30,8 +30,11 @@ _PROJECT_TOOLS_OFF = {
 # The DCDC generator tool key, OFF by default (dcdc_tools_enabled defaults False).
 _DCDC_TOOLS_OFF = {"dcdc_tools_generate_dcdc_test": False}
 
-# Local document tools — sandboxed, no network — are ALWAYS on (ungated from web).
-_DOCS_ALWAYS_ON = {"pdf_tools_list_documents": True, "pdf_tools_read_document": True}
+# Local document + rule tools — sandboxed, no network — are ALWAYS on (ungated).
+_DOCS_ALWAYS_ON = {
+    "pdf_tools_list_documents": True, "pdf_tools_read_document": True,
+    "pdf_tools_list_rules": True, "pdf_tools_read_rule": True,
+}
 
 
 def _backend(model: str = "") -> OpenCodeBackend:
@@ -98,13 +101,13 @@ def test_dcdc_tools_default_is_off():
     assert body["tools"]["dcdc_tools_generate_dcdc_test"] is False
 
 
-def test_local_document_tools_always_on():
-    # list_documents + read_document are local + sandboxed, so they're available
-    # even with web OFF; read_pdf (the URL fetcher) stays web-gated.
+def test_local_document_and_rule_tools_always_on():
+    # list/read for documents AND rules are local + sandboxed, so they're
+    # available even with web OFF; read_pdf (the URL fetcher) stays web-gated.
     for web in (True, False):
         body = _backend()._build_message_body("hi", _req(web_enabled=web))
-        assert body["tools"]["pdf_tools_list_documents"] is True
-        assert body["tools"]["pdf_tools_read_document"] is True
+        for tool in _DOCS_ALWAYS_ON:
+            assert body["tools"][tool] is True
     off = _backend()._build_message_body("hi", _req(web_enabled=False))
     assert off["tools"]["pdf_tools_read_pdf"] is False
 

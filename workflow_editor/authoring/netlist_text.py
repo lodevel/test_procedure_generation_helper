@@ -72,23 +72,19 @@ def format_netlist(board: Mapping[str, Any]) -> str:
     return "\n".join(sections)
 
 
-def format_component_ids(board: Mapping[str, Any]) -> str:
-    """Render part-number / identity properties for the ICs (U*/IC* refdes) — the
-    data a skill needs to identify power ICs — as a block SEPARATE from the
-    connectivity netlist, so a skill that only needs wiring isn't charged for it.
-
-    Passives are skipped by refdes convention (the bulk of the property tokens);
-    empty values are dropped. Returns ``""`` when no IC properties are present,
-    so the artifact simply contributes nothing. (Smarter, board-agnostic
-    column projection is the agentic MCP mode's job — see the project tasks.)
-    """
+def _format_part_numbers(board: Mapping[str, Any], include, header: str) -> str:
+    """Render part-number / identity properties for the components whose refdes
+    satisfies ``include(refdes)``, as a block SEPARATE from the connectivity
+    netlist. Empty values are dropped; returns ``""`` when nothing matches.
+    Shared by :func:`format_component_ids` (ICs) and
+    :func:`format_other_component_ids` (everything else) so they can't drift."""
     components = board.get("components", []) or []
     lines = []
     for c in components:
         if not isinstance(c, Mapping):
             continue
         refdes = c.get("refdes") or "?"
-        if not _is_ic_refdes(refdes):
+        if not include(refdes):
             continue
         props = c.get("properties") or {}
         if not isinstance(props, Mapping):
@@ -98,4 +94,23 @@ def format_component_ids(board: Mapping[str, Any]) -> str:
             lines.append(f"- {refdes}: {', '.join(prop_strs)}")
     if not lines:
         return ""
-    return "Component part numbers (ICs):\n" + "\n".join(lines)
+    return header + "\n" + "\n".join(lines)
+
+
+def format_component_ids(board: Mapping[str, Any]) -> str:
+    """Part numbers for the ICs (U*/IC* refdes) ONLY — the data a skill needs to
+    identify power ICs — separate from the connectivity netlist so a wiring-only
+    skill isn't charged for it. NON-IC components live in
+    :func:`format_other_component_ids`. Empty values dropped; ``""`` if none.
+    (Smarter, board-agnostic column projection is the agentic MCP mode's job.)"""
+    return _format_part_numbers(
+        board, _is_ic_refdes, "Component part numbers (ICs — U*, IC*):")
+
+
+def format_other_component_ids(board: Mapping[str, Any]) -> str:
+    """Part numbers for the NON-IC components — everything whose refdes is NOT
+    U*/IC* (passives, connectors, relays, modules, ...). A SEPARATE artifact (and
+    usually the larger one) so a skill opts into the non-IC set only when it needs
+    it. Empty values dropped; ``""`` if none."""
+    return _format_part_numbers(
+        board, lambda r: not _is_ic_refdes(r), "Component part numbers (non-ICs):")

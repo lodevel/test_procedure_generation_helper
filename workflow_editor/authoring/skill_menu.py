@@ -23,7 +23,11 @@ from .context_sources import (
     DocumentsSource,
     RulesSource,
 )
-from .netlist_text import format_component_ids, format_netlist
+from .netlist_text import (
+    format_component_ids,
+    format_other_component_ids,
+    format_netlist,
+)
 
 log = logging.getLogger(__name__)
 
@@ -153,8 +157,11 @@ def _build_sources(main_window, root: Optional[Path]):
     providers.append(ArtifactProvider(
         "netlist", "Netlist (connectivity)", lambda: format_netlist(_board())))
     providers.append(ArtifactProvider(
-        "component_ids", "Component part numbers",
+        "component_ids", "Component part numbers (ICs: U, IC)",
         lambda: format_component_ids(_board())))
+    providers.append(ArtifactProvider(
+        "other_component_ids", "Component part numbers (other: non-IC)",
+        lambda: format_other_component_ids(_board())))
     sources.append(ArtifactsSource(providers))
     return sources, documents_dir
 

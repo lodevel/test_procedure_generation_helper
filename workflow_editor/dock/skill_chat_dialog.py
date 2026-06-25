@@ -29,15 +29,15 @@ the stateless external API that is already correct.
 
 from __future__ import annotations
 
+import html
 import logging
 import threading
 from typing import Callable, Optional
 
 from PySide6.QtCore import Qt, QEvent
-from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QSplitter, QGroupBox,
-    QPlainTextEdit, QPushButton, QCheckBox, QComboBox, QLabel, QWidget,
+    QPlainTextEdit, QTextEdit, QPushButton, QCheckBox, QComboBox, QLabel, QWidget,
 )
 
 from .. import theme
@@ -48,6 +48,29 @@ from ..llm.context_usage import format_context_usage, used_tokens
 from ..llm.worker import LLMWorker
 
 log = logging.getLogger(__name__)
+
+
+# Speaker → (theme role, display name, avatar glyph). The speaker strings are
+# the ones already passed to ``_append_line`` / built in ``_render_transcript``
+# ("You" / "Assistant" / "System"); the theme role keys ("user" / "assistant" /
+# "system") drive the palette-aware tints via ``theme.message_bg`` /
+# ``message_border`` so the colours track the light/dark Fluent skin and never
+# hardcode a colour that breaks dark mode.
+_ROLE_META: dict[str, tuple[str, str, str]] = {
+    "You": ("user", "You", "🧑"),
+    "Assistant": ("assistant", "Assistant", "🤖"),
+    "System": ("system", "System", "⚙️"),
+}
+
+
+def _role_accent(role: str) -> str:
+    """Accent (left-border + label) colour for a theme role — reuses the chat
+    palette's role borders so it stays readable in both light and dark."""
+    return {
+        "user": theme.chat_user_border(),
+        "assistant": theme.chat_assistant_border(),
+        "system": theme.chat_system_border(),
+    }.get(role, theme.border_color())
 
 
 class SkillChatDialog(QDialog):
@@ -94,8 +117,12 @@ class SkillChatDialog(QDialog):
         # The most recent assistant draft (what *Insert* appends). Empty until
         # the first reply lands.
         self._latest_draft: str = ""
-        # Accumulates streamed response text for the live "Assistant: ..." line.
+        # Accumulates streamed response text for the live "Assistant: ..." block.
         self._stream_buffer: str = ""
+        # Display source of truth for the rich transcript: an ordered list of
+        # (speaker, text) blocks. Includes transient System/You lines that are
+        # NOT (yet) session turns; a re-render from the session rebuilds it.
+        self._blocks: list[tuple[str, str]] = []
 
         self.setWindowTitle("Skill chat")
         self.setModal(False)
@@ -151,7 +178,11 @@ class SkillChatDialog(QDialog):
 
         transcript_group = QGroupBox("Conversation")
         tg_layout = QVBoxLayout(transcript_group)
-        self._transcript = QPlainTextEdit()
+        # Rich-text transcript: each turn is rendered as a role-tinted block
+        # (accent border + tinted background + bold coloured role label) so the
+        # eye separates You / Assistant / System at a glance. QTextEdit (not
+        # QPlainTextEdit) because we paint per-role HTML.
+        self._transcript = QTextEdit()
         self._transcript.setReadOnly(True)
         self._transcript.setPlaceholderText(
             "The skill conversation appears here. Ask for a draft, refine it "
@@ -378,14 +409,10 @@ class SkillChatDialog(QDialog):
 
     def _on_text_chunk(self, text: str) -> None:
         """Show response text progressively so the operator isn't staring at
-        silence. The final, authoritative text is set in :meth:`_on_finished`."""
-        if not self._stream_buffer:
-            self._append_line("Assistant", text, newline_before=True)
-        else:
-            self._transcript.moveCursor(QTextCursor.MoveOperation.End)
-            self._transcript.insertPlainText(text)
-            self._scroll_to_end()
+        silence. The growing reply is repainted as a live "Assistant" block; the
+        final, authoritative text is set in :meth:`_on_finished`."""
         self._stream_buffer += text
+        self._repaint(live=("Assistant", self._stream_buffer))
 
     def _on_thinking_chunk(self, _text: str) -> None:
         # Reasoning chunks are not displayed in the transcript; just keep the
@@ -408,7 +435,10 @@ class SkillChatDialog(QDialog):
                 or getattr(response, "assistant_message", "")
                 or "The request failed."
             )
-            self._append_line("System", reason, newline_before=bool(self._stream_buffer))
+            # Keep any partial streamed reply visible above the failure notice.
+            if self._stream_buffer:
+                self._blocks.append(("Assistant", self._stream_buffer))
+            self._append_line("System", reason)
             self._session.drop_last_user_turn()
             return
 
@@ -459,9 +489,10 @@ class SkillChatDialog(QDialog):
         self._status.setText("")
         # The send failed/cancelled — drop the unanswered user turn.
         self._session.drop_last_user_turn()
-        self._append_line(
-            "System", message, newline_before=bool(self._stream_buffer)
-        )
+        # Keep any partial streamed reply visible above the error notice.
+        if self._stream_buffer:
+            self._blocks.append(("Assistant", self._stream_buffer))
+        self._append_line("System", message)
 
     def _on_stop(self) -> None:
         if self._worker is not None:
@@ -478,6 +509,7 @@ class SkillChatDialog(QDialog):
         self._session = SkillChatSession(self._skill)
         self._latest_draft = ""
         self._stream_buffer = ""
+        self._blocks = []
         self._insert_btn.setEnabled(False)
         self._transcript.clear()
         self._header.setText(self._skill.when_to_use or "")
@@ -491,6 +523,7 @@ class SkillChatDialog(QDialog):
         self._session = SkillChatSession(self._skill)
         self._latest_draft = ""
         self._stream_buffer = ""
+        self._blocks = []
         self._insert_btn.setEnabled(False)
         self._transcript.clear()
         self._status.setText("")
@@ -541,21 +574,57 @@ class SkillChatDialog(QDialog):
             return
         self._status.setText("Inserted latest draft into the procedure.")
 
-    def _render_transcript(self) -> None:
-        """Re-render the whole transcript from the session (source of truth)."""
-        self._transcript.clear()
-        for turn in self._session.turns:
-            speaker = "You" if turn.role == "user" else "Assistant"
-            self._transcript.appendPlainText(f"{speaker}: {turn.content}\n")
+    # -- rich-text transcript rendering --------------------------------------
+
+    @staticmethod
+    def _block_html(speaker: str, text: str) -> str:
+        """Render one message as a role-tinted HTML block: an accent left-border,
+        a role-tinted background, a bold coloured role label with an avatar glyph,
+        then the HTML-escaped body. All colours come from the theme so the block
+        stays readable in both the light and dark Fluent skins."""
+        role, name, glyph = _ROLE_META.get(speaker, ("system", speaker, "•"))
+        accent = _role_accent(role)
+        bg = theme.message_bg(role)
+        border = theme.message_border(role)
+        body = html.escape(text).replace("\n", "<br>")
+        return (
+            f'<table width="100%" cellspacing="0" cellpadding="0" '
+            f'style="margin:4px 0;"><tr><td '
+            f'style="background:{bg}; border:1px solid {border}; '
+            f'border-left:4px solid {accent}; padding:6px 10px;">'
+            f'<div style="color:{accent}; font-weight:bold; '
+            f'margin-bottom:3px;">{glyph}&nbsp;{html.escape(name)}</div>'
+            f'<div style="color:{theme.chat_content_color()};">{body}</div>'
+            f'</td></tr></table>'
+        )
+
+    def _repaint(self, live: Optional[tuple[str, str]] = None) -> None:
+        """Repaint the whole transcript from ``self._blocks`` plus an optional
+        in-progress ``live`` (speaker, text) block for the streaming reply."""
+        blocks = list(self._blocks)
+        if live is not None:
+            blocks.append(live)
+        self._transcript.setHtml(
+            "".join(self._block_html(sp, tx) for sp, tx in blocks))
         self._scroll_to_end()
+
+    def _render_transcript(self) -> None:
+        """Rebuild the block list from the session (source of truth) and repaint.
+        This drops transient System lines once the authoritative turns land —
+        matching the prior plain-text behaviour."""
+        self._blocks = [
+            ("You" if turn.role == "user" else "Assistant", turn.content)
+            for turn in self._session.turns
+        ]
+        self._repaint()
 
     def _append_line(
         self, speaker: str, text: str, newline_before: bool = False
     ) -> None:
-        if newline_before:
-            self._transcript.appendPlainText("")
-        self._transcript.appendPlainText(f"{speaker}: {text}")
-        self._scroll_to_end()
+        # ``newline_before`` is a no-op now (blocks have their own spacing); the
+        # parameter is kept so existing call sites don't change.
+        self._blocks.append((speaker, text))
+        self._repaint()
 
     def _scroll_to_end(self) -> None:
         bar = self._transcript.verticalScrollBar()

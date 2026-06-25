@@ -4,6 +4,10 @@ Covers the three structural branches of the v0.13.0 methodology plus param
 validation:
   * +MAIN_5V0 (always-on enable, PG present) reproduces the benchmark structure.
   * a controllable-enable case ADDS the enable-off <100 mV check.
+    - CONNECTOR-NET flavour: asserted by an Operator step (no controller).
+    - CONTROLLER-DRIVEN flavour: asserted/de-asserted via the fncore
+      `Set <ID> <TARGET> <res> = '<0|1>'.` grammar + a controller Equipment line,
+      with active-low polarity respected.
   * a no-PG case OMITS the PG / output→PG delay steps and the CH2 channel.
   * a missing required field raises DcDcParamError.
 """
@@ -124,7 +128,8 @@ def test_main_5v0_reproduces_benchmark_structure():
 
 
 # ---------------------------------------------------------------------------
-# Controllable enable — ADDS the enable-off check
+# Controllable enable, CONNECTOR-NET flavour — Operator-asserted, ADDS the
+# enable-off check
 # ---------------------------------------------------------------------------
 
 def test_controllable_enable_adds_enable_off_check():
@@ -145,6 +150,85 @@ def test_controllable_enable_adds_enable_off_check():
     assert any("< 100 mV" in e for e in sec["Expected"]), sec["Expected"]
     # enable-off screenshot present.
     assert "_enable_off.jpg" in joined
+    # No controller leaked into Equipment (this is a bare connector net).
+    assert not any("controller" in e for e in sec["Equipment"])
+
+
+# ---------------------------------------------------------------------------
+# Controllable enable, CONTROLLER-DRIVEN flavour — fncore Set grammar, NOT
+# Operator. Asserts the controller Equipment line + the assert/de-assert Set
+# lines + active-low polarity.
+# ---------------------------------------------------------------------------
+
+def test_controller_driven_enable_emits_fncore_set_grammar():
+    """Active-HIGH controller-driven enable: assert '1', de-assert '0'."""
+    p = _main_5v0_params()
+    p.enable = EnableParams(present=True, always_on=False,
+                            controller_id="IF_PLM", io_resource="EN_5V0",
+                            assert_value="1")
+    text = generate_dcdc_test(p)
+    sec = _sections(text)
+    joined = "\n".join(sec["Steps"])
+
+    # (a) the controller is declared in ## Equipment.
+    assert "IF_PLM : controller subtype=fncore-mockup" in sec["Equipment"]
+
+    # (b) NO Operator step — the controller grammar drives the enable.
+    assert "Operator: assert the enable" not in joined
+
+    # (c) enable-off check DE-ASSERTS first (assume DSC target), then the
+    #     soft-start ASSERTS — both via the single-quoted fncore Set form.
+    assert "Set IF_PLM DSC EN_5V0 = '0'." in joined   # de-assert (off check)
+    assert "Set IF_PLM DSC EN_5V0 = '1'." in joined   # assert  (soft-start)
+
+    # The de-assert precedes the assert in the procedure order.
+    assert joined.index("= '0'.") < joined.index("= '1'.")
+
+    # The enable-off <100 mV check is still present.
+    assert any("< 100 mV" in e for e in sec["Expected"]), sec["Expected"]
+
+
+def test_controller_driven_enable_active_low_polarity():
+    """Active-LOW enable (e.g. nCMD_AUX0): asserts at '0', de-asserts at '1'."""
+    p = _main_5v0_params()
+    p.enable = EnableParams(present=True, always_on=False,
+                            controller_id="IF_PLM", io_resource="nCMD_AUX0",
+                            assert_value="0")
+    text = generate_dcdc_test(p)
+    sec = _sections(text)
+    joined = "\n".join(sec["Steps"])
+
+    assert "IF_PLM : controller subtype=fncore-mockup" in sec["Equipment"]
+
+    # Active-low: the ASSERT value is '0', the DE-ASSERT value is '1'.
+    assert "Set IF_PLM DSC nCMD_AUX0 = '1'." in joined  # de-assert (off check)
+    assert "Set IF_PLM DSC nCMD_AUX0 = '0'." in joined  # assert  (soft-start)
+
+    # The de-assert ('1') precedes the assert ('0') here.
+    assert joined.index("= '1'.") < joined.index("= '0'.")
+
+    # Still no Operator assert step.
+    assert "Operator: assert the enable" not in joined
+
+
+def test_controller_driven_enable_custom_target():
+    """An explicit target overrides the assumed DSC."""
+    p = _main_5v0_params()
+    p.enable = EnableParams(present=True, always_on=False,
+                            controller_id="IF_PLM", io_resource="IO#HXT3",
+                            assert_value="1", target="HXT")
+    joined = "\n".join(_sections(generate_dcdc_test(p))["Steps"])
+    assert "Set IF_PLM HXT IO#HXT3 = '1'." in joined
+    assert "Set IF_PLM HXT IO#HXT3 = '0'." in joined
+
+
+def test_controller_driven_enable_rejects_bad_assert_value():
+    p = _main_5v0_params()
+    p.enable = EnableParams(present=True, always_on=False,
+                            controller_id="IF_PLM", io_resource="EN_5V0",
+                            assert_value="high")
+    with pytest.raises(DcDcParamError):
+        generate_dcdc_test(p)
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +252,60 @@ def test_no_power_good_omits_pg_steps():
     assert "Measure SCOPE1 CH1 rise time as {1}." in joined
     assert "Measure SCOPE1 CH1 mean voltage as {2}." in joined
     assert "Measure SCOPE1 CH1 RMS voltage as {3}." in joined
+
+
+# ---------------------------------------------------------------------------
+# Ripple limit — ALWAYS strictly positive (ripple is an AC-RMS magnitude >= 0)
+# ---------------------------------------------------------------------------
+
+def _ripple_line(text: str) -> str:
+    """Return the single Expected ripple-RMS pass/fail line ('{N} <= X mV')."""
+    exp = _sections(text)["Expected"]
+    hits = [e for e in exp if e.endswith(" mV") and "<=" in e]
+    assert len(hits) == 1, exp
+    return hits[0]
+
+
+def _ripple_mv(text: str) -> float:
+    """Parse the numeric ripple limit (mV) out of the Expected line."""
+    line = _ripple_line(text)
+    return float(line.split("<=", 1)[1].strip()[:-3].strip())
+
+
+def test_ripple_default_pct_is_2pct_of_nominal():
+    # 2% of 5 V = 100 mV (the benchmark default), unchanged by the clamp.
+    assert _ripple_mv(generate_dcdc_test(_main_5v0_params())) == 100.0
+
+
+def test_ripple_absolute_override_when_positive():
+    p = _main_5v0_params()
+    p.ripple_limit_mv = 50.0           # positive absolute override wins
+    assert _ripple_mv(generate_dcdc_test(p)) == 50.0
+
+
+@pytest.mark.parametrize("bad", [
+    dict(ripple_limit_mv=0.0),         # absolute zero
+    dict(ripple_limit_mv=-50.0),       # absolute negative
+    dict(ripple_limit_pct=0.0),        # percent zero
+    dict(ripple_limit_pct=-2.0),       # percent negative
+    dict(vout_nominal_v=0.0),          # zero nominal (also zeroes the pct path)
+    dict(vout_nominal_v=0.0, ripple_limit_pct=0.0),  # worst case
+])
+def test_ripple_limit_never_non_positive(bad):
+    """A non-positive param must NEVER emit a '<= 0' / '<= -X mV' ripple bound;
+    it falls back to the 2%-of-nominal positive default."""
+    p = _main_5v0_params()
+    # vout_nominal_v is required > 0 by validation when it is the bad field, so
+    # only set it when the case asks for it AND keep the others legal.
+    for k, v in bad.items():
+        setattr(p, k, v)
+    if "vout_nominal_v" in bad:
+        # vout=0 must still validate (it is a number) and yield a positive bound.
+        pass
+    line = _ripple_line(generate_dcdc_test(p))
+    val = _ripple_mv(generate_dcdc_test(p))
+    assert val > 0, line
+    assert "<= 0" not in line and "<= -" not in line, line
 
 
 # ---------------------------------------------------------------------------

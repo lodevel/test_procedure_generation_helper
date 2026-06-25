@@ -70,16 +70,56 @@ class EnableParams:
                     the rail comes up purely from input power. False + present
                     ⇒ a CONTROLLABLE enable (drives the enable-off check + the
                     enable-asserted soft-start). Ignored when present is False.
+
+    CONTROLLABLE ENABLE — two flavours of "what asserts it":
+      * CONTROLLER-DRIVEN (preferred): an on-board CONTROLLER drives the enable
+        node. Supply controller_id + io_resource (and optionally assert_value /
+        target / controller_subtype). The generator then declares the controller
+        in ## Equipment and emits the fncore CONTROLLER-DRIVE grammar
+        (`Set <ID> <TARGET> <res> = '<0|1>'.`) to assert / de-assert it — NOT a
+        manual Operator step.
+      * CONNECTOR-NET (no controller behind it): leave controller_id / io_resource
+        unset and supply control_target; the generator emits an Operator step
+        naming it (no controller grammar is assumed).
+
+      controller_id  – the FNCORE controller's Equipment ID that drives the
+                    enable (e.g. 'IF_PLM'). Present ⇒ controller-driven.
+      io_resource    – the firmware resource id of the enable node on the
+                    controller (e.g. 'CMD_AUX0'). Present ⇒ controller-driven.
+                    A controllable enable is CONTROLLER-DRIVEN iff BOTH
+                    controller_id AND io_resource are given.
+      assert_value   – the digital value ('0' or '1') that ASSERTS (turns ON)
+                    the enable. ACTIVE-LOW enables (e.g. nCMD_AUX0) assert at
+                    '0'; active-high at '1'. Default '1'. The de-assert value is
+                    the opposite.
+      target         – the FNCORE controller TARGET (MCU id) the resource lives
+                    on (e.g. 'DSC'). Default 'DSC' when unknown.
+      controller_subtype – the controller subtype for the Equipment line.
+                    Default 'fncore-mockup'.
       control_target – human-readable description of WHAT is commanded to assert
-                    the enable (e.g. 'connector net EN_5V0' or 'MCU GPIO PB7').
-                    REQUIRED only when present and not always_on; the generator
-                    emits an Operator step naming it (no controller grammar is
-                    assumed). None otherwise.
+                    the enable (e.g. 'connector net EN_5V0'). REQUIRED for the
+                    CONNECTOR-NET case (controllable + NOT controller-driven);
+                    the generator emits an Operator step naming it. None
+                    otherwise.
     """
 
     present: bool
     always_on: bool = True
     control_target: Optional[str] = None
+    controller_id: Optional[str] = None
+    io_resource: Optional[str] = None
+    assert_value: str = "1"
+    target: str = "DSC"
+    controller_subtype: str = "fncore-mockup"
+
+    @property
+    def controller_driven(self) -> bool:
+        """A controllable enable is controller-driven iff it names BOTH a
+        controller_id AND an io_resource (otherwise it is a connector net)."""
+        return bool(
+            (self.controller_id or "").strip()
+            and (self.io_resource or "").strip()
+        )
 
 
 @dataclass
@@ -209,8 +249,32 @@ PARAM_SCHEMA: dict = {
                           "meaning": "EN tied permanently active (no gate)?"},
             "control_target": {"type": "str|null", "required": False,
                                "default": None,
-                               "meaning": "what is commanded to assert EN "
-                               "(required when present and not always_on)"},
+                               "meaning": "CONNECTOR-NET enable only: what is "
+                               "commanded to assert EN (required when present, "
+                               "not always_on, AND no controller_id/io_resource "
+                               "— emitted as an Operator step)"},
+            "controller_id": {"type": "str|null", "required": False,
+                              "default": None,
+                              "meaning": "CONTROLLER-DRIVEN enable: the FNCORE "
+                              "controller Equipment ID driving the enable node "
+                              "(e.g. IF_PLM). Set with io_resource to drive EN "
+                              "via the controller grammar instead of an Operator "
+                              "step"},
+            "io_resource": {"type": "str|null", "required": False,
+                            "default": None,
+                            "meaning": "CONTROLLER-DRIVEN enable: the firmware "
+                            "resource id of the enable node on the controller "
+                            "(e.g. CMD_AUX0)"},
+            "assert_value": {"type": "str", "required": False, "default": "1",
+                             "meaning": "digital value '0'|'1' that ASSERTS the "
+                             "enable; active-low (nCMD...) asserts at '0'"},
+            "target": {"type": "str", "required": False, "default": "DSC",
+                       "meaning": "FNCORE controller TARGET (MCU id) the "
+                       "resource lives on; assume DSC when unknown"},
+            "controller_subtype": {"type": "str", "required": False,
+                                   "default": "fncore-mockup",
+                                   "meaning": "controller subtype for the "
+                                   "Equipment line"},
         },
     },
     "power_good": {
@@ -291,9 +355,23 @@ def validate_params(p: DcDcTestParams) -> None:
     if not isinstance(p.enable.present, bool):
         raise DcDcParamError("missing required field: enable.present")
     if p.enable.present and not p.enable.always_on:
-        # Controllable enable: we must know WHAT to command.
-        _require_str(p.enable.control_target,
-                     "enable.control_target (controllable enable)")
+        # Controllable enable: either an on-board CONTROLLER drives it
+        # (controller_id + io_resource) OR it is a bare connector net (Operator,
+        # named by control_target).
+        if p.enable.controller_driven:
+            av = p.enable.assert_value
+            if av not in ("0", "1"):
+                raise DcDcParamError(
+                    "enable.assert_value must be '0' or '1' "
+                    "(controller-driven enable)")
+            _require_str(p.enable.io_resource,
+                         "enable.io_resource (controller-driven enable)")
+            _require_str(p.enable.target,
+                         "enable.target (controller-driven enable)")
+        else:
+            # Connector-net controllable enable: we must know WHAT to command.
+            _require_str(p.enable.control_target,
+                         "enable.control_target (controllable enable)")
 
     if p.power_good is None:
         raise DcDcParamError("missing required field: power_good")
@@ -321,6 +399,29 @@ def _num(v: float) -> str:
         return f"{f:.1f}"
     s = f"{f:.3f}".rstrip("0")
     return s if not s.endswith(".") else s + "0"
+
+
+def _ripple_limit_mv(p: "DcDcTestParams") -> float:
+    """Resolve the ripple pass/fail limit in mV, ALWAYS strictly positive.
+
+    Ripple is an AC-RMS magnitude (>= 0), so its limit can never be <= 0. We
+    prefer an explicit absolute ``ripple_limit_mv`` (only when given AND > 0),
+    else the percent form (``ripple_limit_pct`` % of ``vout_nominal_v``). If
+    either source yields a non-positive number (bad/missing params), we fall
+    back to the 2%-of-nominal DEFAULT, and finally to an absolute floor so a
+    non-positive ripple bound can NEVER be emitted."""
+    # 1) Absolute override, but only if it is a usable positive number.
+    if p.ripple_limit_mv is not None and p.ripple_limit_mv > 0:
+        return p.ripple_limit_mv
+    # 2) Percent-of-nominal form (the default path).
+    ripple_mv = p.vout_nominal_v * (p.ripple_limit_pct / 100.0) * 1000.0
+    if ripple_mv > 0:
+        return ripple_mv
+    # 3) Bad/missing params -> 2%-of-nominal default off a sane nominal.
+    nominal = p.vout_nominal_v if p.vout_nominal_v > 0 else 5.0
+    ripple_mv = nominal * (2.0 / 100.0) * 1000.0
+    # 4) Ultimate floor: never emit a non-positive ripple limit.
+    return ripple_mv if ripple_mv > 0 else 100.0
 
 
 def _pg_scale_v_per_div(nominal_v: float) -> float:
@@ -363,6 +464,10 @@ def generate_dcdc_test(params: DcDcTestParams) -> str:
     p = params
     pg = p.power_good.present
     controllable_en = p.enable.present and not p.enable.always_on
+    # A controllable enable is CONTROLLER-DRIVEN when an on-board controller
+    # backs it (controller_id + io_resource); otherwise it is a connector net
+    # asserted by an Operator step.
+    controller_en = controllable_en and p.enable.controller_driven
 
     ch1 = p.scope.ch1
     ch2 = p.scope.ch2
@@ -377,6 +482,16 @@ def generate_dcdc_test(params: DcDcTestParams) -> str:
     # screenshot file stem from the rail name (strip a leading '+', lowercase).
     stem = rail.lstrip("+").lower()
 
+    # Controller-drive grammar (fncore): assert / de-assert the enable node.
+    #   Set <ID> <TARGET> <res> = '<0|1>'.   (single-quoted, trailing period)
+    if controller_en:
+        en_assert = p.enable.assert_value
+        en_deassert = "0" if en_assert == "1" else "1"
+
+        def en_drive(value: str) -> str:
+            return (f"Set {p.enable.controller_id} {p.enable.target} "
+                    f"{p.enable.io_resource} = '{value}'.")
+
     # ---- Equipment ----------------------------------------------------------
     scope_channels = f"[{ch1}, {ch2}]" if pg else f"[{ch1}]"
     equip = [
@@ -384,6 +499,11 @@ def generate_dcdc_test(params: DcDcTestParams) -> str:
         f"max_current={_num(p.psu.input_current_a)} A}}]",
         f"SCOPE1 : scope channels={scope_channels}",
     ]
+    # A controller-driven enable adds its FNCORE controller to the bench.
+    if controller_en:
+        equip.append(
+            f"{p.enable.controller_id} : controller "
+            f"subtype={p.enable.controller_subtype}")
 
     # ---- Steps --------------------------------------------------------------
     steps: list[str] = []
@@ -434,6 +554,10 @@ def generate_dcdc_test(params: DcDcTestParams) -> str:
         # Board powered, enable not yet asserted → VOUT must be OFF (<100 mV).
         add("Set PSU1 CH1 output = ON.")
         add("Wait 1 s.")
+        if controller_en:
+            # Controller-driven: explicitly DE-ASSERT the enable node first.
+            add(en_drive(en_deassert))
+            add("Wait 1 s.")
         add("Arm SCOPE1 single acquisition.")
         add("Wait 1 s.")
         add("Force SCOPE1 trigger.")
@@ -446,7 +570,10 @@ def generate_dcdc_test(params: DcDcTestParams) -> str:
     # Soft-start / rise time: arm, THEN the stimulus that brings the rail up.
     add("Arm SCOPE1 single acquisition.")
     add("Wait 1 s.")
-    if controllable_en:
+    if controller_en:
+        # Controller-driven: ASSERT the enable node via the FNCORE grammar.
+        add(en_drive(en_assert))
+    elif controllable_en:
         add(f"Operator: assert the enable ({p.enable.control_target}).")
     else:
         add("Set PSU1 CH1 output = ON.")
@@ -503,11 +630,8 @@ def generate_dcdc_test(params: DcDcTestParams) -> str:
         exp.append(
             f"{{{refs['pg_mean']}}} = {_num(p.power_good.nominal_v)} V "
             f"+/- {_num(p.power_good.tolerance_pct)} %")
-    if p.ripple_limit_mv is not None:
-        exp.append(f"{{{refs['ripple_rms']}}} <= {_num(p.ripple_limit_mv)} mV")
-    else:
-        ripple_mv = p.vout_nominal_v * (p.ripple_limit_pct / 100.0) * 1000.0
-        exp.append(f"{{{refs['ripple_rms']}}} <= {_num(ripple_mv)} mV")
+    exp.append(
+        f"{{{refs['ripple_rms']}}} <= {_num(_ripple_limit_mv(p))} mV")
 
     # ---- Assemble -----------------------------------------------------------
     out = []

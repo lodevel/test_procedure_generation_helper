@@ -180,6 +180,11 @@ def _build_params(args: dict) -> "gen.DcDcTestParams":
         present=en_in.get("present"),
         always_on=en_in.get("always_on", True),
         control_target=en_in.get("control_target"),
+        controller_id=en_in.get("controller_id"),
+        io_resource=en_in.get("io_resource"),
+        assert_value=en_in.get("assert_value", "1"),
+        target=en_in.get("target", "DSC"),
+        controller_subtype=en_in.get("controller_subtype", "fncore-mockup"),
     )
     power_good = gen.PowerGoodParams(
         present=pg_in.get("present"),

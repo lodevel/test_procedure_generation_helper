@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, List, Tuple, Optional
 
 from .. import theme
 from .chat_messages import MessageDetailDialog, MessageWidget, ProposalWidget
+from ..llm.context_usage import format_context_usage, latest_message_total
 
 
 # Tooltip strings for the validator-status indicator + auto-correct
@@ -84,6 +85,10 @@ class ChatPanel(QWidget):
         self._messages: List[Tuple[str, str]] = []
         # self._chat_history removed: chat history is now per-tab only
         self._cumulative_tokens = 0  # Track total tokens used in conversation
+        # Compaction-correct readout: the LATEST turn's reported total
+        # tokens (input+output), NOT the running sum above. OpenCode
+        # reports this per turn and it drops after a compact.
+        self._latest_total_tokens = 0
         self._context_limit = 16384  # Default, will be updated by main_window
         self._current_tab_context: Optional["TabContext"] = None  # Currently displayed tab context
         # Stored auto-correct preference (decoupled from the checkbox's
@@ -137,6 +142,7 @@ class ChatPanel(QWidget):
         # Update token counter
         log.debug("switch_context loading cumulative_tokens=%s from TabContext", tab_context.cumulative_tokens)
         self._cumulative_tokens = tab_context.cumulative_tokens
+        self._latest_total_tokens = latest_message_total(tab_context.messages)
         self._update_context_label()
 
         # Refresh the validator UI (status indicator + auto-correct
@@ -420,6 +426,7 @@ class ChatPanel(QWidget):
         # Add token usage to content for assistant messages
         if role.lower() == "assistant" and total_tokens > 0:
             self._cumulative_tokens += total_tokens
+            self._latest_total_tokens = total_tokens
             token_info = f"\n\n<span style='color: {theme.muted_color()}; font-size: 9px;'>📊 Tokens: {total_tokens} ({prompt_tokens} prompt + {completion_tokens} completion)</span>"
             content = content + token_info
             
@@ -730,29 +737,22 @@ class ChatPanel(QWidget):
         self.validator_status_label.setVisible(True)
     
     def _update_context_label(self):
-        """Update context label with cumulative token count."""
-        log.debug("_update_context_label called: tokens=%s, limit=%s", self._cumulative_tokens, self._context_limit)
-        if self._cumulative_tokens > 0:
-            context_limit = self._context_limit
-            percentage = (self._cumulative_tokens / context_limit) * 100
-            
-            # Color based on usage
-            if percentage >= 95:
-                color = theme.ERROR_COLOR
-                icon = "🔴"
-            elif percentage >= 90:
-                color = theme.WARNING_COLOR
-                icon = "🔶"
-            elif percentage >= 80:
-                color = theme.WARNING_COLOR
-                icon = "⚠️"
-            else:
-                color = theme.muted_color()
-                icon = "📊"
-            
-            label_text = f"{icon} <span style='color: {color};'>Tokens: {self._cumulative_tokens}/{context_limit} ({percentage:.1f}%)</span>"
-            self.context_label.setText(label_text)
-            log.debug("Context label set: tokens=%s/%s (%.1f%%)", self._cumulative_tokens, context_limit, percentage)
+        """Update the context readout from the LATEST turn's total tokens.
+
+        Shares ``context_usage.format_context_usage`` with the skill chat so
+        the two readouts can't drift. Driven by ``_latest_total_tokens`` (the
+        most recent turn's reported total), NOT the running ``_cumulative_
+        tokens`` sum, so it stays correct across a compaction instead of
+        over-counting."""
+        used = self._latest_total_tokens
+        log.debug("_update_context_label called: used=%s, limit=%s", used, self._context_limit)
+        if used > 0:
+            text, colour = format_context_usage(used, self._context_limit)
+            # Empty colour from the helper means "use the muted default".
+            colour = colour or theme.muted_color()
+            self.context_label.setText(
+                f"<span style='color: {colour};'>{text}</span>")
+            log.debug("Context label set: %s", text)
         else:
             self.context_label.setText("")
             log.debug("Context label cleared (no tokens)")

@@ -281,11 +281,21 @@ Your response must be a single JSON object."""
             tokens = info.get("tokens")
         
         if tokens and ("input" in tokens or "output" in tokens):
-            prompt_tokens = tokens.get("input", 0)
-            completion_tokens = tokens.get("output", 0)
-            reasoning_tokens = tokens.get("reasoning", 0)
-            total_tokens = prompt_tokens + completion_tokens + reasoning_tokens
-            log.info(f"Token usage (alternative format): {total_tokens} total ({prompt_tokens} input + {completion_tokens} output + {reasoning_tokens} reasoning)")
+            input_tokens = tokens.get("input", 0) or 0
+            completion_tokens = tokens.get("output", 0) or 0
+            reasoning_tokens = tokens.get("reasoning", 0) or 0
+            # The CACHED part of the prompt is STILL in the context window:
+            # OpenCode bills it under cache.read and leaves only the uncached
+            # delta in "input". Count it, or a big (cached) context reads tiny.
+            cache = tokens.get("cache") or {}
+            cache_read = cache.get("read", 0) or 0
+            prompt_tokens = input_tokens + cache_read
+            # Prefer OpenCode's own total (already sums input+cache+output+
+            # reasoning); else reconstruct; take the larger so a total that
+            # omits cache can't under-count the real context.
+            reconstructed = prompt_tokens + completion_tokens + reasoning_tokens
+            total_tokens = max(tokens.get("total", 0) or 0, reconstructed)
+            log.info(f"Token usage (OpenCode): {total_tokens} total ({input_tokens} input + {cache_read} cache + {completion_tokens} output + {reasoning_tokens} reasoning)")
             return prompt_tokens, completion_tokens, total_tokens
         
         # No token data found

@@ -44,6 +44,7 @@ from .. import theme
 from ..authoring import Skill, SkillChatSession, assemble
 from ..widgets.skill_context_picker import SkillContextPicker
 from ..llm.backend_base import LLMRequest, LLMTask
+from ..llm.context_usage import format_context_usage, used_tokens
 from ..llm.worker import LLMWorker
 
 log = logging.getLogger(__name__)
@@ -416,17 +417,16 @@ class SkillChatDialog(QDialog):
         re-sent as input next turn, so total = system + context + the whole
         transcript INCLUDING this reply. For a stateless skill chat this IS the
         live context, and it tracks compaction (a running sum would over-count
-        after a compact)."""
-        used = (getattr(response, "total_tokens", 0)
-                or (getattr(response, "prompt_tokens", 0)
-                    + getattr(response, "completion_tokens", 0)) or 0)
+        after a compact). Computed via the shared ``context_usage`` helpers so
+        the dock chat and this dialog can't drift."""
+        used = used_tokens(response)
         if not used:
             return
         limit = self._context_limit or 16384
-        pct = 100 * used / limit
-        colour = ("#c0392b" if pct >= 95 else "#e67e22" if pct >= 90
-                  else "#b8860b" if pct >= 80 else theme.muted_color())
-        self._context_label.setText(f"Context: {used:,} / {limit:,} tokens ({pct:.0f}%)")
+        text, colour = format_context_usage(used, limit)
+        # An empty colour from the helper means "use the widget's muted default".
+        colour = colour or theme.muted_color()
+        self._context_label.setText(text)
         self._context_label.setStyleSheet(f"color:{colour}; font-size:9pt;")
 
     def _on_error(self, message: str) -> None:

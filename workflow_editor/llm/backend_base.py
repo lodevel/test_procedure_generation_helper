@@ -317,6 +317,14 @@ Your response must be a single JSON object."""
         """
         return None
 
+    def compact(self) -> bool:
+        """Manually compact the active session (summarize history to free
+        context). Concrete backends that support it (e.g. OpenCode) override
+        this. The default returns ``False`` so any backend — including
+        :class:`NoneBackend` — is safe to call.
+        """
+        return False
+
     @abstractmethod
     def is_available(self) -> bool:
         """Check if this backend is available and configured."""

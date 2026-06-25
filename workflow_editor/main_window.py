@@ -730,6 +730,7 @@ class MainWindow(QMainWindow):
         self.dock.chat_panel.reset_requested.connect(self._on_reset_session)
         self.dock.chat_panel.cancel_requested.connect(self._on_cancel_llm)
         self.dock.chat_panel.restart_requested.connect(self._on_restart_backend)
+        self.dock.chat_panel.compact_requested.connect(self._on_compact_session)
         
         # Connect toggle action
         self.toggle_dock_action.setChecked(self.dock.isVisible())
@@ -1308,6 +1309,48 @@ class MainWindow(QMainWindow):
                 log.exception("backend restart failed")
 
         threading.Thread(target=_restart, daemon=True).start()
+
+    def _on_compact_session(self):
+        """Manually compact the active tab's LLM session so a long
+        conversation keeps fitting in the context window. Runs the compact
+        request (a network POST to the OpenCode server) off the UI thread;
+        the readout reflects the freed context on the next turn (the server
+        reports the reduced total then), and we refresh it now best-effort."""
+        current_tab = self.tab_widget.currentWidget()
+        tab_context = getattr(current_tab, "tab_context", None)
+        if tab_context is None:
+            self.dock.chat_panel.add_system_message(
+                "No active session to compact.")
+            return
+        backend = tab_context.backend
+        self.dock.chat_panel.add_message("system", "Compacting session…")
+        self.status_bar.showMessage("Compacting session…", 3000)
+
+        def _done(ok):
+            if ok:
+                self.dock.chat_panel.add_system_message(
+                    "🗜️ Session compacted — context will shrink on the next reply.")
+            else:
+                self.dock.chat_panel.add_system_message(
+                    "Compaction is unavailable for this backend (or the request failed).")
+            # Re-render the readout from the latest known total (best-effort;
+            # the real reduction lands with the next turn's reported total).
+            try:
+                self.dock.chat_panel._update_context_label()
+            except Exception:
+                log.exception("context-label refresh after compact failed")
+
+        def _compact():
+            ok = False
+            try:
+                ok = bool(backend.compact())
+            except Exception:
+                log.exception("session compact failed")
+            # Marshal the UI feedback back onto the UI thread.
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, lambda: _done(ok))
+
+        threading.Thread(target=_compact, daemon=True).start()
 
     def _on_toggle_workspace(self):
         """Toggle workspace dock visibility."""

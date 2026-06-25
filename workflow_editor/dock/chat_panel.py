@@ -78,6 +78,7 @@ class ChatPanel(QWidget):
     reset_requested = Signal()  # Emitted when user clicks reset button
     cancel_requested = Signal()  # Emitted when user clicks cancel button
     restart_requested = Signal()  # Emitted when user clicks restart-backend
+    compact_requested = Signal()  # Emitted when user clicks compact-session
     
     def __init__(self, main_window: "MainWindow", parent=None):
         super().__init__(parent)
@@ -255,6 +256,13 @@ class ChatPanel(QWidget):
         self.restart_btn.clicked.connect(self._on_restart)
         btn_layout.addWidget(self.restart_btn)
         
+        self.compact_btn = QPushButton("🗜️")
+        self.compact_btn.setToolTip("Compact the LLM session (summarize history to free up context when it gets long)")
+        self.compact_btn.setObjectName("iconButton")
+        self.compact_btn.setStyleSheet("QPushButton { padding: 4px 8px; min-width: 0; }")
+        self.compact_btn.clicked.connect(self._on_compact)
+        btn_layout.addWidget(self.compact_btn)
+        
         layout.addLayout(btn_layout)
         
         # Context indicator
@@ -308,6 +316,10 @@ class ChatPanel(QWidget):
     def _on_restart(self):
         """Handle restart-backend button click."""
         self.restart_requested.emit()
+    
+    def _on_compact(self):
+        """Handle compact-session button click."""
+        self.compact_requested.emit()
     
     def get_force_mode(self) -> bool:
         """Get the current force mode state."""

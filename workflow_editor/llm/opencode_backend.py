@@ -318,7 +318,35 @@ class OpenCodeBackend(LLMBackend):
         transcript every turn and so wants the server holding no prior history."""
         self._session_id = self._create_session()
         return self._session_id
-    
+
+    def compact(self) -> bool:
+        """Manually compact the active session — OpenCode summarizes the prior
+        history in place, freeing context while keeping the SAME session id.
+
+        POSTs (no body) to ``/api/session/{id}/compact`` and returns True on a 2xx
+        (the server returns 204). NOTE the ``/api`` prefix — unlike /message (which
+        the OpenCode server exposes at both /session and /api/session), compact is
+        ONLY under /api/session. Returns False — never raises — when the server
+        isn't running, there's no session, or the request fails, so the caller
+        can report a clean outcome on the UI thread."""
+        if not self._running or self._session_id is None:
+            log.debug("compact: no running server / session")
+            return False
+        try:
+            response = requests.post(
+                f"{self.config.server_url}/api/session/{self._session_id}/compact",
+                timeout=self.config.request_timeout,
+            )
+            ok = 200 <= response.status_code < 300
+            if ok:
+                log.info(f"Compacted session {self._session_id}")
+            else:
+                log.warning(f"compact failed: HTTP {response.status_code}")
+            return ok
+        except requests.exceptions.RequestException as e:
+            log.warning(f"compact request failed: {e}")
+            return False
+
     def stop(self) -> None:
         """Stop the OpenCode server."""
         with self._lock:

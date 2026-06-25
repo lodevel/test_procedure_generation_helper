@@ -34,6 +34,15 @@ SYNTH_BOARD = {
     "property_fields": ["MfgRef", "Package", "Type"],
     "components": [
         {
+            "refdes": "U1",
+            "side": "TOP",
+            "pins": [
+                {"name": "1", "net": "VCC"},
+                {"name": "2", "net": "GND"},
+            ],
+            "properties": {"MfgRef": "TPS62840", "Package": "SOT-23", "Type": "IC"},
+        },
+        {
             "refdes": "R1",
             "side": "TOP",
             "pins": [
@@ -81,6 +90,7 @@ _FAKE_CLI_SRC = textwrap.dedent(
     ap.add_argument("--list-nets", action="store_true")
     ap.add_argument("--fields", default=None)
     ap.add_argument("--filter", dest="filter_kv", default=None)
+    ap.add_argument("--refdes-prefix", dest="refdes_prefix", default=None)
     args = ap.parse_args()
 
     with open(args.odb_tgz, "r", encoding="utf-8") as fh:
@@ -98,9 +108,21 @@ _FAKE_CLI_SRC = textwrap.dedent(
         if args.filter_kv:
             k, _, v = args.filter_kv.partition("=")
             filt = (k.strip(), v)
+        prefixes = None
+        if args.refdes_prefix:
+            prefixes = tuple(
+                p.strip().lower() for p in args.refdes_prefix.split(",") if p.strip()
+            ) or None
         out = []
         for comp in board["components"]:
             props = comp["properties"]
+            if prefixes is not None:
+                rd = (comp["refdes"] or "").lower()
+                if not any(
+                    rd.startswith(p) and len(rd) > len(p) and rd[len(p)].isdigit()
+                    for p in prefixes
+                ):
+                    continue
             if filt is not None:
                 k, v = filt
                 if k not in props or str(props[k]).strip().lower() != v.strip().lower():
@@ -277,7 +299,7 @@ def test_list_components_all(server):
     resp = server.call(2, "list_components")
     comps = _result_json(resp)
     refdes = {c["refdes"] for c in comps}
-    assert refdes == {"R1", "C1", "TP_VCC", "TP_GND"}
+    assert refdes == {"U1", "R1", "C1", "TP_VCC", "TP_GND"}
     # Full properties present by default.
     r1 = next(c for c in comps if c["refdes"] == "R1")
     assert r1["properties"]["MfgRef"] == "RES-1K"
@@ -309,6 +331,31 @@ def test_list_components_bad_filter(server):
     _handshake(server)
     resp = server.call(2, "list_components", {"filter": "NoEquals"})
     assert "filter" in _result_text(resp).lower()
+
+
+def test_list_components_refdes_prefix_keeps_only_ics(server):
+    # The targeted one-call IC pull: refdes_prefix='U,IC' + the part-number field.
+    _handshake(server)
+    resp = server.call(
+        2, "list_components", {"refdes_prefix": "U,IC", "fields": ["MfgRef"]})
+    comps = _result_json(resp)
+    assert {c["refdes"] for c in comps} == {"U1"}
+    # Only the requested column came back.
+    assert comps[0]["properties"] == {"MfgRef": "TPS62840"}
+
+
+def test_list_components_refdes_prefix_excludes_passives(server):
+    _handshake(server)
+    resp = server.call(2, "list_components", {"refdes_prefix": "U,IC"})
+    comps = _result_json(resp)
+    # R1/C1/TP_* are not U#/IC# and must be excluded.
+    assert all(c["refdes"] == "U1" for c in comps)
+
+
+def test_list_components_bad_refdes_prefix_type(server):
+    _handshake(server)
+    resp = server.call(2, "list_components", {"refdes_prefix": ["U", "IC"]})
+    assert "refdes_prefix" in _result_text(resp).lower()
 
 
 def test_get_component_found(server):
@@ -362,6 +409,48 @@ def test_netlist_full(server):
     assert net_names == {"VCC", "GND"}
     # netlist() projects to just the nets graph (no bulky component echo).
     assert "components" not in data
+    # Capped-overview envelope is present; the synthetic board is tiny so it is
+    # NOT truncated (no 'note').
+    assert data["total"] == 2
+    assert data["returned"] == 2
+    assert data["offset"] == 0
+    assert "note" not in data
+
+
+def test_netlist_is_capped_and_paginated(server):
+    # A small limit truncates and advertises how to narrow instead of paging.
+    _handshake(server)
+    resp = server.call(2, "netlist", {"limit": 1})
+    data = _result_json(resp)
+    assert data["total"] == 2
+    assert data["returned"] == 1
+    assert len(data["nets"]) == 1
+    assert "note" in data  # tells the model to narrow with query_net/name_contains
+    assert "query_net" in data["note"]
+    # Page 2 via offset returns the rest, no note.
+    resp2 = server.call(3, "netlist", {"limit": 1, "offset": 1})
+    data2 = _result_json(resp2)
+    assert data2["returned"] == 1
+    assert data2["offset"] == 1
+    assert "note" not in data2
+    assert {data["nets"][0]["net"], data2["nets"][0]["net"]} == {"VCC", "GND"}
+
+
+def test_netlist_name_contains_filters_nets(server):
+    _handshake(server)
+    resp = server.call(2, "netlist", {"name_contains": "vc"})
+    data = _result_json(resp)
+    assert {e["net"] for e in data["nets"]} == {"VCC"}
+    assert data["total"] == 1
+
+
+def test_netlist_limit_cannot_exceed_cap(server):
+    # Even an absurd limit is clamped to the server cap (never a full dump path).
+    _handshake(server)
+    resp = server.call(2, "netlist", {"limit": 100000})
+    data = _result_json(resp)
+    # Tiny board so all 2 nets fit, but the request did not bypass the cap.
+    assert data["returned"] == 2
 
 
 def test_list_test_points_board_agnostic(server):

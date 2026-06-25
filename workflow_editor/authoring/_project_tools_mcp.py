@@ -69,18 +69,33 @@ TOOLS = [
     {
         "name": "list_components",
         "description": (
-            "List the board's components, optionally FILTERED to a property "
-            "value and PROJECTED to chosen property fields. Use after "
-            "list_property_fields so you can request only the columns you care "
-            "about (fields=['Type','Package'] keeps output small) and only the "
-            "rows you want (filter='Type=Pad' — case-insensitive value match, "
-            "the field name comes from list_property_fields, NEVER guessed). "
-            "Omit both to get every component with all properties (large). Each "
-            "result is {refdes, side, pins, properties}."
+            "List the board's components, optionally narrowed to a refdes FAMILY "
+            "(refdes_prefix), FILTERED to a property value, and PROJECTED to "
+            "chosen property fields. "
+            "TO FIND THE ICs AND THEIR PART NUMBERS IN ONE CALL: pass "
+            "refdes_prefix='U,IC' together with the part-number field in fields "
+            "(discover that field name first via list_property_fields — it is "
+            "board-specific, e.g. a Manufacturer_Reference / part-number column). "
+            "Do NOT dump the whole netlist to find ICs. "
+            "refdes_prefix keeps only components whose refdes starts with one of "
+            "the given prefixes followed by a digit (U,IC -> U1, IC3, ...; not "
+            "UART). filter keeps only rows whose property KEY equals VALUE "
+            "(case-insensitive; the field name comes from list_property_fields, "
+            "NEVER guessed). fields keeps only the columns you ask for "
+            "(fields=['Type','Package'] keeps output small). Omit all three to "
+            "get every component with all properties (large). Each result is "
+            "{refdes, side, pins, properties}."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
+                "refdes_prefix": {
+                    "type": "string",
+                    "description": "Keep only components whose refdes starts with "
+                    "one of these comma-separated, case-insensitive prefixes "
+                    "FOLLOWED BY A DIGIT (e.g. 'U,IC' to get just the ICs). "
+                    "Composes with filter and fields.",
+                },
                 "filter": {
                     "type": "string",
                     "description": "Keep only components whose property KEY equals "
@@ -147,13 +162,38 @@ TOOLS = [
     {
         "name": "netlist",
         "description": (
-            "Return the FULL board netlist: every net with its connected "
-            "{refdes, pin} nodes. This can be large — prefer query_net(name) for "
-            "a single net, or list_test_points() to find probe points. Use the "
-            "full netlist only when you need to reason over the whole "
-            "connectivity graph. Returns {nets:[{net, nodes:[{refdes, pin}]}]}."
+            "A CAPPED OVERVIEW of the board netlist, NOT a full dump. Returns at "
+            "most 'limit' nets (default 200) starting at 'offset', each with its "
+            "connected {refdes, pin} nodes. To TRACE a specific rail or pin use "
+            "query_net(name) (one net) or get_component(refdes) (one IC) — do not "
+            "page through the whole graph here. Optionally pass name_contains to "
+            "keep only nets whose name contains a substring (case-insensitive). "
+            "When the result is truncated a 'note' field tells you so and how to "
+            "narrow; prefer narrowing over paging. Returns "
+            "{nets:[{net, nodes:[{refdes, pin}]}], total, returned, offset"
+            "[, note]}."
         ),
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name_contains": {
+                    "type": "string",
+                    "description": "Keep only nets whose name contains this "
+                    "substring (case-insensitive). Use to scope the overview to a "
+                    "rail family instead of paging the whole graph.",
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Start index into the (filtered, sorted) net "
+                    "list. Default 0.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max nets to return (default 200). The full "
+                    "unbounded graph is never returned in one call.",
+                },
+            },
+        },
     },
     {
         "name": "get_bom",
@@ -262,13 +302,16 @@ class _Board:
             self._netlist = _run_cli(self.odb_tgz, ["--list-nets"])
         return self._netlist
 
-    def components(self, fields=None, filter_kv=None):
-        """Component list, narrowed by *fields* / *filter_kv* (not cached)."""
+    def components(self, fields=None, filter_kv=None, refdes_prefix=None):
+        """Component list, narrowed by *fields* / *filter_kv* / *refdes_prefix*
+        (not cached — each narrowing shapes the CLI output)."""
         args = ["--list"]
         if filter_kv:
             args += ["--filter", filter_kv]
         if fields:
             args += ["--fields", ",".join(fields)]
+        if refdes_prefix:
+            args += ["--refdes-prefix", refdes_prefix]
         return _run_cli(self.odb_tgz, args)
 
 
@@ -290,16 +333,24 @@ def _tool_list_property_fields(board, _args):
 def _tool_list_components(board, args):
     filter_kv = (args or {}).get("filter")
     fields = (args or {}).get("fields")
+    refdes_prefix = (args or {}).get("refdes_prefix")
     if filter_kv is not None and not isinstance(filter_kv, str):
         return _text_result("list_components: 'filter' must be a 'KEY=VALUE' string.")
     if filter_kv is not None and "=" not in filter_kv:
         return _text_result(
-            "list_components: 'filter' must be 'KEY=VALUE' (missing '=')."
+            "list_components: 'filter' must be 'KEY=VALUE' (missing '='), e.g. "
+            "'Type=Pad'. The KEY must be a field from list_property_fields."
         )
     if fields is not None and not isinstance(fields, list):
         return _text_result("list_components: 'fields' must be a list of strings.")
+    if refdes_prefix is not None and not isinstance(refdes_prefix, str):
+        return _text_result(
+            "list_components: 'refdes_prefix' must be a comma-separated string "
+            "like 'U,IC'."
+        )
     try:
-        return _text_result(board.components(fields=fields, filter_kv=filter_kv))
+        return _text_result(board.components(
+            fields=fields, filter_kv=filter_kv, refdes_prefix=refdes_prefix))
     except _CliError as exc:
         return _err_result(exc)
 
@@ -337,13 +388,63 @@ def _tool_query_net(board, args):
     return _text_result(f"Net not found: {name}")
 
 
-def _tool_netlist(board, _args):
+# netlist() is a CAPPED overview, never a full dump: an unbounded netlist is what
+# made gpt-5.5 hand the whole connectivity graph to a sub-agent that hung. The
+# cap forces the model toward query_net / get_component for actual tracing.
+_NETLIST_DEFAULT_LIMIT = 200
+
+
+def _tool_netlist(board, args):
+    args = args or {}
+    name_contains = args.get("name_contains")
+    if name_contains is not None and not isinstance(name_contains, str):
+        return _text_result("netlist: 'name_contains' must be a string.")
+
+    def _as_int(val, default):
+        if val is None:
+            return default, True
+        try:
+            return int(val), True
+        except (TypeError, ValueError):
+            return default, False
+
+    offset, ok_off = _as_int(args.get("offset"), 0)
+    if not ok_off:
+        return _text_result("netlist: 'offset' must be an integer.")
+    limit, ok_lim = _as_int(args.get("limit"), _NETLIST_DEFAULT_LIMIT)
+    if not ok_lim:
+        return _text_result("netlist: 'limit' must be an integer.")
+    offset = max(0, offset)
+    # Cap the page size: the full unbounded graph must never be one response.
+    limit = max(1, min(limit, _NETLIST_DEFAULT_LIMIT))
+
     try:
         data = board.netlist()
     except _CliError as exc:
         return _err_result(exc)
-    # Project to just the nets graph (drop the bulky per-pin component echo).
-    return _text_result({"nets": data.get("nets", [])})
+
+    nets = data.get("nets", []) or []
+    if name_contains:
+        needle = name_contains.lower()
+        nets = [n for n in nets if needle in str(n.get("net", "")).lower()]
+
+    total = len(nets)
+    page = nets[offset:offset + limit]
+    result = {
+        "nets": page,
+        "total": total,
+        "returned": len(page),
+        "offset": offset,
+    }
+    if offset + len(page) < total:
+        result["note"] = (
+            f"Truncated: showing nets {offset}..{offset + len(page) - 1} of "
+            f"{total}. This is an overview, not a full dump — to trace a "
+            f"specific rail use query_net(name) or get_component(refdes), or "
+            f"narrow this overview with name_contains. Avoid paging the whole "
+            f"graph."
+        )
+    return _text_result(result)
 
 
 def _tool_get_bom(board, _args):

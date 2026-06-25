@@ -443,10 +443,21 @@ class SettingsDialog(QDialog):
             "its opencode.json.")
         self.opencode_model_refresh.clicked.connect(
             lambda: self._populate_opencode_models())
+        # One-click recovery affordance: shown only when the server reads as down
+        # (no /config). It relaunches OUR server on a daemon thread, then
+        # re-queries the model list — so a crashed mid-session server can be
+        # brought back from the picker WITHOUT restarting the whole app.
+        self.opencode_start_server = QPushButton("Start server")
+        self.opencode_start_server.setToolTip(
+            "The OpenCode server is not reachable. Click to (re)launch it, then "
+            "the model list refreshes automatically.")
+        self.opencode_start_server.clicked.connect(self._on_start_server_clicked)
+        self.opencode_start_server.setVisible(False)
         model_row = QHBoxLayout()
         model_row.setContentsMargins(0, 0, 0, 0)
         model_row.addWidget(self.opencode_model, 1)
         model_row.addWidget(self.opencode_model_refresh)
+        model_row.addWidget(self.opencode_start_server)
         opencode_layout.addRow("Model:", model_row)
         self.opencode_models_note = QLabel("")
         self.opencode_models_note.setStyleSheet(
@@ -567,11 +578,84 @@ class SettingsDialog(QDialog):
         self.opencode_model.addItems(models)        # convenience list
         self.opencode_model.setEditText(preserve)   # keep typed text (empty=Default)
         self.opencode_model.blockSignals(False)
-        self.opencode_models_note.setText(
-            "Pick/copy from the list, TYPE any id (e.g. openai/gpt-5.5), or "
-            "leave empty for auto-pick." if models
-            else "Server not reachable — type a model id or leave empty for "
-                 "auto-pick.")
+        # When the server is reachable we have models; when it's down (no
+        # /config) we surface the "Start server" affordance instead of a dead-end
+        # grey line — the user can relaunch right here. The button only makes
+        # sense when there IS a manager to (re)launch.
+        reachable = bool(models)
+        can_start = self._server_manager is not None
+        self.opencode_start_server.setVisible(not reachable and can_start)
+        if reachable:
+            self.opencode_models_note.setText(
+                "Pick/copy from the list, TYPE any id (e.g. openai/gpt-5.5), or "
+                "leave empty for auto-pick.")
+        elif can_start:
+            self.opencode_models_note.setText(
+                "OpenCode server is down — click “Start server” to "
+                "relaunch it, then the list refreshes.")
+        else:
+            self.opencode_models_note.setText(
+                "Server not reachable — type a model id or leave empty for "
+                "auto-pick.")
+
+    def _on_start_server_clicked(self):
+        """(Re)launch OUR OpenCode server from the picker, off the UI thread, and
+        re-query the model list once it answers.
+
+        Auto-recovery seam for a crashed mid-session server: ``ensure_running``
+        relaunches via the SAME ``start()`` path the app uses (orphan-sweep +
+        respawn), so the user never has to restart the whole app. We poll the
+        manager's liveness on a short QTimer (the daemon ``start()`` returns
+        asynchronously) and refresh the list when it comes up, all without
+        freezing the dialog.
+        """
+        import threading
+        from PySide6.QtCore import QTimer
+        sm = self._server_manager
+        if sm is None:
+            return
+        # A manual Start-server is a user intervention: clear any auto-recovery
+        # give-up state on the main window so the background poll resumes
+        # auto-recovering this server after this attempt (best-effort — the
+        # parent is the main window when launched from it).
+        parent = self.parent()
+        reset = getattr(parent, "_reset_server_recovery", None)
+        if callable(reset):
+            reset()
+        self.opencode_start_server.setEnabled(False)
+        self.opencode_models_note.setText("Starting OpenCode server…")
+        # Launch off the UI thread; ensure_running short-circuits if it is
+        # already alive and otherwise calls start().
+        threading.Thread(target=sm.ensure_running, daemon=True).start()
+
+        # Poll liveness for up to ~startup timeout; refresh + re-enable on the UI
+        # thread when it answers (or give up with a clear note).
+        self._start_poll_elapsed = 0.0
+        timer = QTimer(self)
+        timer.setInterval(1000)
+
+        def _tick():
+            self._start_poll_elapsed += 1.0
+            # Gate success on is_alive (process up AND /health answers), not the
+            # bare process poll: start() spawns the process EARLY then waits for
+            # /health, so is_running flips true before the server can serve
+            # /config — re-querying then would just re-show "down". is_alive only
+            # reads ready once the server actually answers, so the refresh below
+            # lists models on the first try.
+            if sm.is_alive:
+                timer.stop()
+                self.opencode_start_server.setEnabled(True)
+                self._populate_opencode_models()  # toggles the button off + lists models
+                return
+            if self._start_poll_elapsed >= 60.0:
+                timer.stop()
+                self.opencode_start_server.setEnabled(True)
+                self.opencode_models_note.setText(
+                    "Server did not come up — check the OpenCode install / logs, "
+                    "then try again.")
+
+        timer.timeout.connect(_tick)
+        timer.start()
 
     def _on_test_connection(self):
         """Test the LLM backend configuration."""

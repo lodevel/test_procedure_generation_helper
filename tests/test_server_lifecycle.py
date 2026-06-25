@@ -382,6 +382,141 @@ def test_is_available_is_install_check_only(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# Liveness — a CRASHED server reads as not-running, and start() relaunches it  #
+# (dead-server detection + auto-recovery).                                     #
+# --------------------------------------------------------------------------- #
+
+def _live_proc():
+    """A process handle that polls as ALIVE (poll() -> None)."""
+    proc = MagicMock()
+    proc.poll.return_value = None
+    proc.pid = 4242
+    return proc
+
+
+def _dead_proc(returncode=1):
+    """A process handle that polls as DEAD (poll() -> an exit code)."""
+    proc = MagicMock()
+    proc.poll.return_value = returncode
+    proc.pid = 4242
+    return proc
+
+
+def test_is_running_false_when_process_polled_dead(tmp_path):
+    # A server that crashed mid-session: _running is still True and the process
+    # handle lingers, but poll() now returns an exit code → is_running must read
+    # False AND self-heal the stale flag/handle.
+    mgr = _mgr(tmp_path)
+    mgr._running = True
+    mgr._server_process = _dead_proc(returncode=139)  # e.g. SIGSEGV
+    assert mgr.is_running is False
+    # Stale state was cleared so a later start() relaunches cleanly.
+    assert mgr._running is False
+    assert mgr._server_process is None
+
+
+def test_is_running_true_when_process_alive(tmp_path):
+    mgr = _mgr(tmp_path)
+    mgr._running = True
+    mgr._server_process = _live_proc()
+    assert mgr.is_running is True
+
+
+def test_is_alive_requires_process_and_health(tmp_path):
+    # is_alive is process-alive AND /health 200. A live process whose /health
+    # fails (wedged server) is NOT alive.
+    mgr = _mgr(tmp_path)
+    mgr._running = True
+    mgr._server_process = _live_proc()
+    ok = MagicMock(); ok.status_code = 200
+    bad = MagicMock(); bad.status_code = 500
+    with patch("workflow_editor.llm.server_manager.requests.get", return_value=ok):
+        assert mgr.is_alive is True
+    with patch("workflow_editor.llm.server_manager.requests.get", return_value=bad):
+        assert mgr.is_alive is False
+
+
+def test_is_alive_false_when_process_dead_without_http(tmp_path):
+    # A dead process short-circuits is_alive — no HTTP probe is even attempted.
+    mgr = _mgr(tmp_path)
+    mgr._running = True
+    mgr._server_process = _dead_proc()
+    with patch("workflow_editor.llm.server_manager.requests.get") as get:
+        assert mgr.is_alive is False
+        get.assert_not_called()
+
+
+def test_start_relaunches_when_prior_process_dead(tmp_path):
+    # The reuse-guard must consult REAL liveness: a crashed prior process must
+    # NOT short-circuit start() into a no-op "already running" — it must fall
+    # through and spawn a fresh server.
+    mgr = _mgr(tmp_path)
+    mgr._running = True
+    mgr._server_process = _dead_proc()  # crashed — poll() != None
+
+    healthy = MagicMock(); healthy.ok = True
+    fresh = _live_proc()
+    with patch.object(mgr, "_diagnose_installation", return_value=healthy), \
+         patch.object(mgr, "_sweep_orphan"), \
+         patch("workflow_editor.llm.server_manager.find_free_port", return_value=5005), \
+         patch("workflow_editor.llm.server_manager.subprocess.Popen", return_value=fresh) as popen, \
+         patch.object(mgr, "_start_stderr_drain"), \
+         patch.object(mgr, "_write_pid_file"), \
+         patch.object(mgr, "_wait_for_server", return_value=True):
+        assert mgr.start() is True
+        # A FRESH process was spawned (the dead one did not satisfy reuse).
+        popen.assert_called_once()
+    assert mgr._server_process is fresh
+    assert mgr._running is True
+
+
+def test_start_reuses_when_prior_process_alive(tmp_path):
+    # A genuinely live process IS reused — no respawn.
+    mgr = _mgr(tmp_path)
+    mgr._running = True
+    mgr._server_process = _live_proc()
+    with patch("workflow_editor.llm.server_manager.subprocess.Popen") as popen, \
+         patch.object(mgr, "_diagnose_installation") as diag:
+        assert mgr.start() is True
+        popen.assert_not_called()   # reused the live process
+        diag.assert_not_called()    # never even reached the install probe
+
+
+def test_ensure_running_noop_when_alive(tmp_path):
+    # ensure_running short-circuits on a live+healthy server — it does NOT call
+    # start().
+    mgr = _mgr(tmp_path)
+    mgr._running = True
+    mgr._server_process = _live_proc()
+    ok = MagicMock(); ok.status_code = 200
+    with patch("workflow_editor.llm.server_manager.requests.get", return_value=ok), \
+         patch.object(mgr, "start") as start:
+        assert mgr.ensure_running() is True
+        start.assert_not_called()
+
+
+def test_ensure_running_relaunches_when_dead(tmp_path):
+    # A crashed (process-dead) server → ensure_running delegates to start() and
+    # returns its verdict.
+    mgr = _mgr(tmp_path)
+    mgr._running = True
+    mgr._server_process = _dead_proc()
+    with patch.object(mgr, "start", return_value=True) as start:
+        assert mgr.ensure_running() is True
+        start.assert_called_once()
+
+
+def test_ensure_running_respects_retirement(tmp_path):
+    # A retired manager stays down: ensure_running calls start(), which refuses
+    # (returns False) — no relaunch on a single-use manager.
+    mgr = _mgr(tmp_path)
+    mgr.stop()  # retires
+    with patch("workflow_editor.llm.server_manager.subprocess.Popen") as popen:
+        assert mgr.ensure_running() is False
+        popen.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
 # Retirement — the prewarm/manager-swap orphan race + the synchronous-stop UI  #
 # freeze (BLOCKER A).                                                          #
 # --------------------------------------------------------------------------- #
@@ -431,6 +566,119 @@ def test_wait_for_server_aborts_when_retired_mid_wait(tmp_path):
     assert mgr._retired is True
     # Aborted within a couple of poll ticks, NOT after the 60s timeout.
     assert elapsed < 5.0
+
+
+# --------------------------------------------------------------------------- #
+# Auto-recovery backoff — give up after N consecutive failures; re-arm on a    #
+# live server or a manual action (no crash-loop relaunch-every-tick).          #
+# --------------------------------------------------------------------------- #
+
+class _FakeSM:
+    """A minimal server-manager stand-in for the MainWindow recovery seam."""
+    def __init__(self, alive=False, retired=False):
+        self._alive = alive
+        self._retired = retired
+        self.ensure_calls = 0
+
+    @property
+    def is_running(self):
+        return self._alive
+
+    def ensure_running(self):
+        self.ensure_calls += 1
+        return self._alive  # stays down unless a test flips _alive
+
+
+def _fake_window(sm):
+    """A bare object carrying just what the recovery methods touch, so the
+    MainWindow methods can be driven unbound (no Qt)."""
+    import types
+    from workflow_editor.main_window import MainWindow
+    w = types.SimpleNamespace()
+    w._server_manager = sm
+    w._server_recovering = False
+    w._server_recovery_attempts = 0
+    # The cap is a MainWindow class attribute the unbound method reads off self.
+    w._MAX_SERVER_RECOVERY_ATTEMPTS = MainWindow._MAX_SERVER_RECOVERY_ATTEMPTS
+    # status_bar.showMessage / _refresh_server_indicator are side-effect-only.
+    w.status_bar = MagicMock()
+    w._refresh_server_indicator = MagicMock()
+    return w
+
+
+def _run_tick_sync(w):
+    """Drive one _on_server_health_tick with the recovery thread executed
+    INLINE (so the failure-count increment is observable synchronously)."""
+    from workflow_editor.main_window import MainWindow
+
+    def _inline_thread(target, daemon=False):
+        t = MagicMock()
+        t.start.side_effect = target  # run the recover body on .start()
+        return t
+
+    with patch("workflow_editor.main_window.threading.Thread",
+               side_effect=_inline_thread):
+        MainWindow._on_server_health_tick(w)
+
+
+def test_auto_recovery_gives_up_after_three_failures():
+    # A server that stays down: each tick relaunches and increments the failure
+    # count; after MAX (3) consecutive failures we STOP spawning recoveries.
+    from workflow_editor.main_window import MainWindow
+    sm = _FakeSM(alive=False)
+    w = _fake_window(sm)
+
+    for _ in range(3):
+        _run_tick_sync(w)
+    # Three relaunch attempts, three failures recorded.
+    assert sm.ensure_calls == 3
+    assert w._server_recovery_attempts == 3
+    assert w._server_recovery_attempts >= MainWindow._MAX_SERVER_RECOVERY_ATTEMPTS
+
+    # A FOURTH tick must NOT relaunch — auto-recovery has given up.
+    _run_tick_sync(w)
+    assert sm.ensure_calls == 3  # unchanged: no new attempt
+
+
+def test_auto_recovery_resets_when_server_back_alive():
+    # After the give-up cap, the moment the server reads alive again the tick
+    # resets the counter so a FUTURE crash is auto-recovered.
+    from workflow_editor.main_window import MainWindow
+    sm = _FakeSM(alive=False)
+    w = _fake_window(sm)
+    for _ in range(3):
+        _run_tick_sync(w)
+    assert w._server_recovery_attempts == 3
+
+    # Server comes back: the alive branch resets the counter to 0.
+    sm._alive = True
+    _run_tick_sync(w)
+    assert w._server_recovery_attempts == 0
+    assert w._server_recovering is False
+
+    # It then crashes again — auto-recovery is re-armed (relaunch fires).
+    sm._alive = False
+    _run_tick_sync(w)
+    assert sm.ensure_calls == 4  # a fresh attempt after the reset
+
+
+def test_reset_server_recovery_rearms_after_giveup():
+    # A manual action (Restart backend / Start server) calls _reset_server_recovery
+    # which clears the give-up state so the next tick auto-recovers again.
+    from workflow_editor.main_window import MainWindow
+    sm = _FakeSM(alive=False)
+    w = _fake_window(sm)
+    for _ in range(3):
+        _run_tick_sync(w)
+    assert w._server_recovery_attempts == 3  # gave up
+
+    MainWindow._reset_server_recovery(w)
+    assert w._server_recovery_attempts == 0
+    assert w._server_recovering is False
+
+    # Next tick relaunches again (no longer capped).
+    _run_tick_sync(w)
+    assert sm.ensure_calls == 4
 
 
 def test_stop_manager_async_sets_retired_synchronously():

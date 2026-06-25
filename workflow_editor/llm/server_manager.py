@@ -144,31 +144,74 @@ class OpenCodeServerManager:
         """
         return self._config.server_url
     
+    def _process_is_alive_locked(self) -> bool:
+        """REAL process liveness — the caller MUST already hold ``self._lock``.
+
+        ``self._running`` alone is a stale flag: a server that CRASHES mid-session
+        leaves it True forever (the process object lingers) so the picker reports
+        "running" while nothing answers. The load-bearing check is
+        ``poll() is None`` — a crashed/exited process polls to its return code and
+        reads here as NOT alive, and we self-heal the stale state (drop the dead
+        process + flag) so a later ``start()`` relaunches instead of short-circuiting
+        on a corpse.
+        """
+        if not self._running or self._server_process is None:
+            return False
+        # poll() returns None only while the process is still running; any int
+        # (an exit code, incl. a crash signal) means it has terminated.
+        if self._server_process.poll() is not None:
+            log.warning("Server process terminated unexpectedly")
+            self._running = False
+            self._server_process = None
+            return False
+        return True
+
     @property
     def is_running(self) -> bool:
         """
         Check if the server is running.
-        
+
         This checks both the internal state AND verifies the process
         is still alive.
-        
+
         Returns:
             True if server process is running.
         """
         with self._lock:
-            if not self._running or self._server_process is None:
-                return False
-            
-            # Check if process is still alive
-            if self._server_process.poll() is not None:
-                # Process has terminated
-                log.warning("Server process terminated unexpectedly")
-                self._running = False
-                self._server_process = None
-                return False
-            
+            return self._process_is_alive_locked()
+
+    @property
+    def is_alive(self) -> bool:
+        """Strong, end-to-end liveness: OUR process is alive AND the HTTP
+        ``/health`` endpoint answers 200.
+
+        ``is_running`` only proves the OS process exists; a server can be a live
+        process yet wedged (not accepting requests). ``is_alive`` is the verdict
+        the app-level "running / down" signal and the auto-recovery poll trust —
+        a crashed OR hung server both read as NOT alive, triggering a relaunch.
+        The HTTP probe is fast (2s) and runs OUTSIDE the lock so a slow/hung
+        server never blocks ``stop()`` / ``start()`` on the lock.
+        """
+        if not self.is_running:
+            return False
+        return self.health_check()
+
+    def ensure_running(self) -> bool:
+        """Idempotent self-heal: return True if the server is already alive,
+        otherwise (re)launch it via ``start()`` and report the outcome.
+
+        This is the single auto-recovery seam — the app-level liveness poll and
+        the model picker both call it on a daemon thread when the server reads as
+        down. ``start()``'s own reuse-guard now consults REAL liveness, so a
+        crashed prior process is swept and relaunched rather than mistaken for a
+        still-running one. A retired manager stays retired (``start()`` refuses);
+        the caller must build a fresh manager in that case.
+        """
+        if self.is_alive:
             return True
-    
+        log.info("Server found down — attempting auto-recovery (relaunch)")
+        return self.start()
+
     # Number of fresh-port spawn attempts before giving up on a port conflict.
     # A Windows-side free-port probe and the WSL2 bind namespace can disagree
     # (C5): the probed port looks free on Windows yet is taken inside WSL. Each
@@ -201,8 +244,13 @@ class OpenCodeServerManager:
                 log.debug("start() on a retired manager; refusing to launch")
                 return False
 
-            # Our-own session reuse — process ownership IS the marker.
-            if self._running and self._server_process is not None:
+            # Our-own session reuse — but only if the process is ACTUALLY alive.
+            # _process_is_alive_locked() polls the process: a server that crashed
+            # mid-session no longer counts as "running", so we fall through and
+            # relaunch instead of returning True on a dead process (the bug where
+            # a crashed server was never auto-restarted). It also self-heals the
+            # stale flag/handle so the orphan-sweep + respawn below run cleanly.
+            if self._process_is_alive_locked():
                 log.debug("Server already running")
                 return True
 

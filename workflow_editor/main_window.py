@@ -187,6 +187,12 @@ class MainWindow(QMainWindow):
             # sets working_directory BEFORE start() (C3 race), registers the
             # live-targeting cleanup hook (C2), and starts on a daemon thread.
             self._prewarm_server()
+
+        # Begin polling server liveness so a crash mid-session is detected,
+        # auto-recovered, and reflected in the status indicator (not just the
+        # model picker). Started once the UI is up so the timer has an event
+        # loop to run on.
+        self._start_server_health_poll()
     
     def _process_cli_arguments(self):
         """Process command-line arguments to load project and/or test."""
@@ -381,6 +387,9 @@ class MainWindow(QMainWindow):
         sm = getattr(self, '_server_manager', None)
         if sm is None or not getattr(self, '_cli_args_processed', False):
             return
+        # A manual restart (Restart backend / project switch) clears any
+        # auto-recovery give-up state so the fresh manager is auto-recoverable.
+        self._reset_server_recovery()
         self._init_llm_backend()
     
     def _build_backend_config(self) -> BackendConfig:
@@ -929,6 +938,17 @@ class MainWindow(QMainWindow):
         # LLM status
         self.llm_status = QLabel("")
         self.status_bar.addPermanentWidget(self.llm_status)
+
+        # Always-visible OpenCode server health signal (running / down).
+        # A crashed mid-session server otherwise gave no at-a-glance cue —
+        # the user only found out when the model picker said "unreachable".
+        # _refresh_server_indicator (driven by a periodic poll) keeps this
+        # current and triggers auto-recovery when it reads down.
+        self.server_indicator = QLabel("")
+        self.server_indicator.setToolTip(
+            "OpenCode server health. A down server auto-recovers in the "
+            "background.")
+        self.status_bar.addPermanentWidget(self.server_indicator)
     
     def _update_project_rules_indicators(self):
         """Update project and rules indicators in status bar."""
@@ -1350,7 +1370,132 @@ class MainWindow(QMainWindow):
             self.llm_status.setText(f"LLM: OpenCode ({server_status})")
         else:
             self.llm_status.setText("LLM: Disabled")
+        # Keep the always-visible server signal in sync on every LLM-status
+        # refresh too (cheap; uses cached process state, no HTTP).
+        self._refresh_server_indicator()
     
+    def _start_server_health_poll(self):
+        """Poll OUR OpenCode server's liveness on a timer and auto-recover a
+        crash.
+
+        prewarm only fires on app-start / project-switch, so a server that
+        CRASHED mid-session was never noticed or relaunched — the user just hit
+        an 'unreachable' picker and had to restart the whole app. This timer
+        closes that gap: every few seconds it checks real liveness and, when
+        the server is down (and a manager exists, not retired), relaunches it on
+        a daemon thread via ensure_running(). The indicator is refreshed each
+        tick so the 'running / down' signal stays honest.
+        """
+        from PySide6.QtCore import QTimer
+        if getattr(self, '_server_health_timer', None) is not None:
+            return
+        self._server_health_timer = QTimer(self)
+        self._server_health_timer.setInterval(5000)
+        self._server_health_timer.timeout.connect(self._on_server_health_tick)
+        self._server_health_timer.start()
+
+    # Stop auto-recovering after this many consecutive failed relaunches so a
+    # crash-looping server doesn't relaunch every tick forever (log-spam + CPU).
+    _MAX_SERVER_RECOVERY_ATTEMPTS = 3
+
+    def _reset_server_recovery(self):
+        """Re-arm auto-recovery: clear the consecutive-failure counter (and any
+        in-flight flag). Called on every MANUAL recovery action (Restart
+        backend, project switch, settings Start server) so a user intervention
+        always lifts a prior give-up state."""
+        self._server_recovery_attempts = 0
+        self._server_recovering = False
+
+    def _on_server_health_tick(self):
+        """One liveness poll: refresh the indicator and, if the server is down,
+        kick off background auto-recovery.
+
+        is_running is a cheap process poll (no HTTP) — fine for a 5s tick. A
+        recovery in flight is gated by _server_recovering so we never stack
+        relaunch threads while one start() is still working.
+        """
+        sm = getattr(self, '_server_manager', None)
+        if sm is None:
+            self._refresh_server_indicator()
+            return
+        alive = sm.is_running
+        self._refresh_server_indicator(alive)
+        if alive or getattr(sm, '_retired', False):
+            self._server_recovering = False
+            # Server is back (or retired): a manual/auto recovery succeeded —
+            # clear the consecutive-failure count so auto-recovery is armed
+            # again for any FUTURE crash.
+            self._server_recovery_attempts = 0
+            return
+        # Server is DOWN. After N consecutive failed auto-recoveries we GIVE
+        # UP — a crash-looping server would otherwise relaunch every tick
+        # forever (log-spam + CPU at the bench). The indicator then tells the
+        # user to act; a manual Restart backend / Start server re-arms us.
+        if getattr(self, '_server_recovery_attempts', 0) >= self._MAX_SERVER_RECOVERY_ATTEMPTS:
+            return
+        # One recovery in flight at a time (gated by _server_recovering).
+        if getattr(self, '_server_recovering', False):
+            return
+        self._server_recovering = True
+        log.warning('OpenCode server detected down; auto-recovering...')
+        self.status_bar.showMessage('OpenCode server down — recovering…', 4000)
+
+        def _recover():
+            try:
+                sm.ensure_running()
+            except Exception:
+                log.debug('server auto-recovery failed', exc_info=True)
+            finally:
+                self._server_recovering = False
+                # Count this attempt as a FAILURE iff the server still isn't
+                # up afterwards; a success is reset to 0 by the tick's alive
+                # branch. Hitting the cap freezes further auto-recovery.
+                if not sm.is_running:
+                    self._server_recovery_attempts = (
+                        getattr(self, '_server_recovery_attempts', 0) + 1)
+
+        threading.Thread(target=_recover, daemon=True).start()
+
+    def _refresh_server_indicator(self, alive=None):
+        """Update the always-visible 'OpenCode: running / down' status label.
+
+        ``alive`` may be passed by the poll (avoids a redundant process poll);
+        otherwise we read it. When no OpenCode manager is configured the label
+        is blank (the backend isn't OpenCode, so 'down' would be misleading).
+        Colour follows a success / error palette.
+        """
+        if not hasattr(self, 'server_indicator'):
+            return
+        sm = getattr(self, '_server_manager', None)
+        if sm is None:
+            self.server_indicator.setText('')
+            self.server_indicator.setToolTip('')
+            return
+        if alive is None:
+            alive = sm.is_running
+        if getattr(self, '_server_recovering', False) and not alive:
+            self.server_indicator.setText('OpenCode: recovering…')
+            self.server_indicator.setStyleSheet('color: #b8860b;')  # amber
+            self.server_indicator.setToolTip('Relaunching the OpenCode server…')
+            return
+        if alive:
+            self.server_indicator.setText('OpenCode: running')
+            self.server_indicator.setStyleSheet('color: #2e7d32;')  # green
+            self.server_indicator.setToolTip('OpenCode server is running.')
+        elif getattr(self, '_server_recovery_attempts', 0) >= self._MAX_SERVER_RECOVERY_ATTEMPTS:
+            # Auto-recovery gave up after repeated failures — tell the user to
+            # act (Restart backend re-arms auto-recovery).
+            self.server_indicator.setText(
+                'OpenCode: down — auto-restart failed (use Restart backend)')
+            self.server_indicator.setStyleSheet('color: #c62828;')  # red
+            self.server_indicator.setToolTip(
+                'Auto-recovery gave up after repeated failures. Use Restart backend to try again.')
+        else:
+            self.server_indicator.setText('OpenCode: down')
+            self.server_indicator.setStyleSheet('color: #c62828;')  # red
+            self.server_indicator.setToolTip(
+                'OpenCode server is down — auto-recovery will relaunch it.')
+
     def _on_reset_session(self):
         """Reset all LLM sessions (clears conversation history and rules cache)."""
         # Cancel any in-flight work

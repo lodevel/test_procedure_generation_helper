@@ -91,3 +91,30 @@ def build_project_tools_mcp_block(
             "enabled": True,
         }
     }
+
+
+def build_dcdc_tools_mcp_block(
+    venv_python_win: str,
+    mcp_script_win: str,
+) -> dict:
+    """Return the ``mcp`` entry for the ``dcdc_tools`` local server.
+
+    Mirrors :func:`build_project_tools_mcp_block`: ``command[0]`` is the python
+    translated to its ``/mnt/c`` WSL path (OpenCode runs in WSL); the script
+    stays a Windows path (argv for the Windows python). The server exposes the
+    single deterministic ``generate_dcdc_test`` tool the LLM CALLS with the
+    params it extracted, so the procedure text is generated, not free-formed.
+    Unlike project_tools/pdf_tools, it takes NO per-project argv (the generator
+    is project-independent — it consumes only the params in each call). Merge the
+    returned dict into the master opencode.json's ``mcp`` object.
+    """
+    return {
+        "dcdc_tools": {
+            "type": "local",
+            "command": [
+                win_to_wsl_path(venv_python_win),
+                mcp_script_win,
+            ],
+            "enabled": True,
+        }
+    }

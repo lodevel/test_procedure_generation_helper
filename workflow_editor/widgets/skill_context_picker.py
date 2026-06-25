@@ -79,6 +79,12 @@ class _SourceTab(QWidget):
         for key, cb in self._checks.items():
             cb.setChecked(key in wanted)
 
+    def set_all_checked(self, checked: bool) -> None:
+        """Check (or uncheck) every item in this tab. Each checkbox emits its
+        ``toggled`` signal, so the picker's readout refreshes as usual."""
+        for cb in self._checks.values():
+            cb.setChecked(checked)
+
     def refresh(self) -> None:
         """Re-read the source's items, preserving the current selection where
         the same keys still exist."""
@@ -153,6 +159,21 @@ class SkillContextPicker(QWidget):
 
         outer = QVBoxLayout(self)
 
+        # Bulk-selection row: acts on the currently-visible tab (rules /
+        # documents / artifacts hold very different content, so per-tab is
+        # friendlier than a global toggle).
+        bulk_row = QHBoxLayout()
+        self._select_all_btn = QPushButton("Select all")
+        self._select_all_btn.clicked.connect(
+            lambda: self._set_current_tab_checked(True))
+        self._deselect_all_btn = QPushButton("Deselect all")
+        self._deselect_all_btn.clicked.connect(
+            lambda: self._set_current_tab_checked(False))
+        bulk_row.addWidget(self._select_all_btn)
+        bulk_row.addWidget(self._deselect_all_btn)
+        bulk_row.addStretch(1)
+        outer.addLayout(bulk_row)
+
         self._tabs = QTabWidget()
         for source in sources:
             tab = _SourceTab(source)
@@ -197,6 +218,13 @@ class SkillContextPicker(QWidget):
             self._readout_timer.start()
 
     # -- internals ------------------------------------------------------------
+
+    def _set_current_tab_checked(self, checked: bool) -> None:
+        """Check/uncheck every item in the currently-visible tab. The per-item
+        ``toggled`` signals drive the usual debounced readout refresh."""
+        tab = self._tabs.currentWidget()
+        if isinstance(tab, _SourceTab):
+            tab.set_all_checked(checked)
 
     def _add_documents_controls(self, tab: _SourceTab) -> None:
         tab.add_toolbar_button("Open folder", self._open_documents_dir)

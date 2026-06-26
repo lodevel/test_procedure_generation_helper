@@ -30,6 +30,7 @@ from PySide6.QtCore import Qt, QEvent
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QPushButton,
     QListWidget, QListWidgetItem, QTextEdit, QPlainTextEdit, QLineEdit, QWidget,
+    QCheckBox,
 )
 
 from .. import theme
@@ -81,6 +82,7 @@ class DcdcWizardDialog(QDialog):
         self._rows: list[IcRow] = []
         self._test_block: str = ""
         self._stream: str = ""
+        self._committed: list[tuple[str, str]] = []  # (speaker, text) transcript blocks
         # True only while the authoring skill is waiting on the user's answer —
         # the single source of truth for the answer box's enabled state (never
         # read the widget's own isEnabled(), which a busy-toggle would clobber).
@@ -112,6 +114,23 @@ class DcdcWizardDialog(QDialog):
         intro.setWordWrap(True)
         intro.setStyleSheet(f"color:{theme.muted_color()};")
         layout.addWidget(intro)
+
+        # Per-run tools (same as the skill chat). The skill needs the netlist
+        # (project tools) to FIND ICs, and web/save-datasheets to fetch a
+        # datasheet the project documents don't already have.
+        tog = QHBoxLayout()
+        self._web_cb = QCheckBox("🌐 Web")
+        self._web_cb.setToolTip("Let the skill search the web + read/fetch datasheet PDFs.")
+        self._save_cb = QCheckBox("💾 Save datasheets")
+        self._save_cb.setToolTip("Cache fetched datasheets into the project documents (needs 🌐).")
+        self._tools_cb = QCheckBox("🔧 Netlist / project tools")
+        self._tools_cb.setChecked(True)
+        self._tools_cb.setToolTip("Let the skill PULL the netlist / components / test points "
+                                  "(required to find ICs and map the rail).")
+        for cb in (self._web_cb, self._save_cb, self._tools_cb):
+            tog.addWidget(cb)
+        tog.addStretch()
+        layout.addLayout(tog)
 
         # Stage A — find ICs --------------------------------------------------
         a = QGroupBox("1 · Find power ICs")
@@ -205,7 +224,9 @@ class DcdcWizardDialog(QDialog):
             task=LLMTask.AD_HOC_CHAT,
             raw_prompt=prompt,
             system_prompt=session.system_prompt,
-            project_tools_enabled=True,
+            web_enabled=self._web_cb.isChecked(),
+            save_docs_enabled=self._save_cb.isChecked(),
+            project_tools_enabled=self._tools_cb.isChecked(),
             skill_servers_enabled=list((skill.metadata or {}).get("mcp_tools") or []),
         )
         self._stream = ""
@@ -220,6 +241,7 @@ class DcdcWizardDialog(QDialog):
 
     def _on_chunk(self, text: str) -> None:
         self._stream += text
+        self._repaint(live=self._stream)
 
     def _on_thinking_chunk(self, _text: str) -> None:
         # Reasoning chunks aren't shown in the transcript; the WorkTimer keeps
@@ -390,9 +412,16 @@ class DcdcWizardDialog(QDialog):
         self._answer_btn.setEnabled(not busy and self._awaiting_answer)
 
     def _append(self, speaker: str, text: str) -> None:
-        self._transcript.append(
-            f'<div style="margin:4px 0;"><b>{html.escape(speaker)}:</b> '
-            f'{html.escape(text).replace(chr(10), "<br>")}</div>')
+        self._committed.append((speaker, text))
+        self._repaint()
+
+    def _repaint(self, live: str = "") -> None:
+        blocks = list(self._committed)
+        if live:
+            blocks.append(("LLM (working…)", live))
+        self._transcript.setHtml("".join(
+            f'<div style="margin:4px 0;"><b>{html.escape(sp)}:</b> '
+            f'{html.escape(tx).replace(chr(10), "<br>")}</div>' for sp, tx in blocks))
         bar = self._transcript.verticalScrollBar()
         bar.setValue(bar.maximum())
 

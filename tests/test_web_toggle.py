@@ -49,7 +49,8 @@ def test_web_enabled_exposes_web_tools_and_read_pdf():
     body = _backend()._build_message_body("hi", _req(web_enabled=True))
     assert body["tools"] == {
         **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DOCS_ALWAYS_ON,
-        "webfetch": True, "websearch": True, "pdf_tools_read_pdf": True}
+        "webfetch": True, "websearch": True, "pdf_tools_read_pdf": True,
+        "pdf_tools_save_pdf": False}
 
 
 def test_web_disabled_sends_explicit_false():
@@ -58,14 +59,16 @@ def test_web_disabled_sends_explicit_false():
     body = _backend()._build_message_body("hi", _req(web_enabled=False))
     assert body["tools"] == {
         **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DOCS_ALWAYS_ON,
-        "webfetch": False, "websearch": False, "pdf_tools_read_pdf": False}
+        "webfetch": False, "websearch": False, "pdf_tools_read_pdf": False,
+        "pdf_tools_save_pdf": False}
 
 
 def test_default_request_has_web_off():
     body = _backend()._build_message_body("hi", LLMRequest(task=LLMTask.AD_HOC_CHAT))
     assert body["tools"] == {
         **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DOCS_ALWAYS_ON,
-        "webfetch": False, "websearch": False, "pdf_tools_read_pdf": False}
+        "webfetch": False, "websearch": False, "pdf_tools_read_pdf": False,
+        "pdf_tools_save_pdf": False}
 
 
 def test_project_tools_enabled_exposes_the_seven_tools():
@@ -100,6 +103,25 @@ def test_dcdc_tools_enabled_exposes_the_generator_tool():
     req_off = LLMRequest(task=LLMTask.AD_HOC_CHAT, raw_prompt="hi")
     body_off = be._build_message_body("hi", req_off)
     assert body_off["tools"]["dcdc_tools_generate_dcdc_test"] is False
+
+
+def test_save_pdf_rides_web_and_save_docs():
+    be = _backend()
+    # save_pdf WRITES a file, so it requires BOTH web (it fetches) and the
+    # per-chat save-docs toggle.
+    on = be._build_message_body("hi", LLMRequest(
+        task=LLMTask.AD_HOC_CHAT, raw_prompt="hi",
+        web_enabled=True, save_docs_enabled=True))
+    assert on["tools"]["pdf_tools_save_pdf"] is True
+    # save_docs without web -> still off (it can't fetch).
+    no_web = be._build_message_body("hi", LLMRequest(
+        task=LLMTask.AD_HOC_CHAT, raw_prompt="hi",
+        web_enabled=False, save_docs_enabled=True))
+    assert no_web["tools"]["pdf_tools_save_pdf"] is False
+    # web alone (save_docs defaults off) -> off; read_pdf still on.
+    web_only = be._build_message_body("hi", _req(web_enabled=True))
+    assert web_only["tools"]["pdf_tools_save_pdf"] is False
+    assert web_only["tools"]["pdf_tools_read_pdf"] is True
 
 
 def test_dcdc_tools_default_is_off():

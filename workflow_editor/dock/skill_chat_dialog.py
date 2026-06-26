@@ -146,6 +146,7 @@ class SkillChatDialog(QDialog):
         except Exception:
             log.exception("skill-chat could not read Settings defaults")
         self._web_default = bool(opencode_settings.get("web_default", False))
+        self._save_docs_default = bool(opencode_settings.get("save_docs_default", False))
         self._project_tools_default = bool(
             opencode_settings.get("project_tools_default", False))
 
@@ -232,9 +233,18 @@ class SkillChatDialog(QDialog):
         )
         self._project_tools_checkbox.setChecked(self._project_tools_default)
 
+        self._save_docs_checkbox = QCheckBox("💾 Save datasheets")
+        self._save_docs_checkbox.setToolTip(
+            "Let the model SAVE datasheets it downloads into the project's "
+            "documents folder (sandboxed) for reuse by future tests. Needs "
+            "🌐 web on. Off by default."
+        )
+        self._save_docs_checkbox.setChecked(self._save_docs_default)
+
         toggle_row = QHBoxLayout()
         toggle_row.addWidget(self._web_checkbox)
         toggle_row.addWidget(self._project_tools_checkbox)
+        toggle_row.addWidget(self._save_docs_checkbox)
         toggle_row.addStretch()
         layout.addLayout(toggle_row)
 
@@ -401,6 +411,7 @@ class SkillChatDialog(QDialog):
             # SKILL.md as the governing system prompt (not buried in the body).
             system_prompt=self._session.system_prompt,
             web_enabled=self._web_checkbox.isChecked(),
+            save_docs_enabled=self._save_docs_checkbox.isChecked(),
             project_tools_enabled=self._project_tools_checkbox.isChecked(),
             # A skill exposes ONLY its own tools: it declares the server(s) it
             # uses in frontmatter (e.g. dcdc_bringup -> `mcp_tools: [dcdc_tools]`);

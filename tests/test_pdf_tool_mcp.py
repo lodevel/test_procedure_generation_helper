@@ -170,3 +170,46 @@ def test_ping(server):
     _handshake(srv)
     resp = srv.request(7, "ping")
     assert resp["result"] == {}
+
+
+def test_save_pdf_advertised(server):
+    srv, _docs = server
+    _handshake(srv)
+    resp = srv.request(8, "tools/list")
+    names = {t["name"] for t in resp["result"]["tools"]}
+    assert "save_pdf" in names and "read_pdf" in names
+
+
+def test_safe_pdf_name_sandbox():
+    from workflow_editor.authoring import _pdf_tool_mcp as m
+    assert m._safe_pdf_name("../../etc/passwd") == "passwd.pdf"
+    assert m._safe_pdf_name("a/b\\c") == "c.pdf"            # basename only -> no traversal
+    assert m._safe_pdf_name("LT8609AJDDM#TRPBF") == "LT8609AJDDM_TRPBF.pdf"
+    assert m._safe_pdf_name("U86.pdf") == "U86.pdf"         # .pdf not doubled
+    assert m._safe_pdf_name("   ") is None
+    assert m._safe_pdf_name("///") is None
+
+
+def test_save_pdf_caches_and_guards(monkeypatch, tmp_path):
+    from pathlib import Path
+    from workflow_editor.authoring import _pdf_tool_mcp as m
+
+    def fake_fetch(url, *, save_to=None, **k):
+        if save_to is not None:
+            Path(save_to).parent.mkdir(parents=True, exist_ok=True)
+            Path(save_to).write_bytes(b"%PDF-1.4 fake")
+        return "DATASHEET TEXT"
+
+    monkeypatch.setattr(m, "fetch_and_extract", fake_fetch)
+    res = m._handle_save_pdf(
+        {"source": "http://x/d.pdf", "save_as": "U86"}, str(tmp_path))
+    text = res["content"][0]["text"]
+    assert "DATASHEET TEXT" in text
+    assert "Saved to the project documents as U86.pdf" in text
+    assert (tmp_path / "U86.pdf").exists()
+
+    # guards: a save_as is required, and only http(s) sources are fetched.
+    assert "save_as" in m._handle_save_pdf(
+        {"source": "http://x/d.pdf"}, str(tmp_path))["content"][0]["text"]
+    assert "http" in m._handle_save_pdf(
+        {"source": "local.pdf", "save_as": "U"}, str(tmp_path))["content"][0]["text"]

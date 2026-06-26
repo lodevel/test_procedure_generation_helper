@@ -979,6 +979,9 @@ class OpenCodeBackend(LLMBackend):
             "webfetch": request.web_enabled,
             "websearch": request.web_enabled,
             "pdf_tools_read_pdf": request.web_enabled,
+            # save_pdf WRITES the fetched datasheet into the documents folder, so
+            # it rides BOTH the web gate (it fetches) and the per-chat 💾 toggle.
+            "pdf_tools_save_pdf": request.web_enabled and request.save_docs_enabled,
             # Local document tools (sandboxed to the project's documents folder,
             # NO network) — ALWAYS available, even without the 🌐 web toggle, so
             # the LLM can discover + read attached datasheets. read_pdf above

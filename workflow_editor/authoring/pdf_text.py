@@ -92,6 +92,7 @@ def fetch_and_extract(
     *,
     max_download_bytes: int = 10_000_000,
     max_chars: int = DEFAULT_MAX_CHARS,
+    save_to: Optional[Path] = None,
 ) -> Optional[str]:
     """Download ``url`` and extract its PDF text, or ``None`` on any failure.
 
@@ -124,5 +125,16 @@ def fetch_and_extract(
     if not looks_like_pdf_type and not looks_like_pdf_header:
         log.info("URL is not a PDF (type=%r, no %%PDF header): %s", content_type, url)
         return None
+
+    # Optional cache-through: persist the fetched bytes (e.g. into the project's
+    # documents folder) so a future call can read it LOCALLY with no re-download.
+    # Best-effort — a write failure must never break the read.
+    if save_to is not None:
+        try:
+            save_to = Path(save_to)
+            save_to.parent.mkdir(parents=True, exist_ok=True)
+            save_to.write_bytes(data)
+        except OSError as exc:  # noqa: BLE001 — caching is best-effort
+            log.info("could not cache PDF to %s: %s", save_to, exc)
 
     return extract_pdf_bytes(data, max_chars)

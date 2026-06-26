@@ -104,6 +104,33 @@ def test_fetch_and_extract_pdf_body_recovers_string(monkeypatch, tmp_path):
     assert "NETWORK PDF OK" in text
 
 
+def test_fetch_and_extract_caches_to_save_to(monkeypatch, tmp_path):
+    """save_to persists the fetched PDF bytes (cache-through) and still extracts."""
+    src = tmp_path / "src.pdf"
+    make_pdf(src, "CACHED DATASHEET")
+    body = src.read_bytes()
+
+    class _FakeResp:
+        headers = {"Content-Type": "application/pdf"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self, n):
+            return body
+
+    monkeypatch.setattr(
+        pdf_text.urllib.request, "urlopen", lambda *a, **k: _FakeResp()
+    )
+    dest = tmp_path / "docs" / "U86.pdf"  # parent dir does not exist yet
+    text = pdf_text.fetch_and_extract("http://example.com/d.pdf", save_to=dest)
+    assert text is not None and "CACHED DATASHEET" in text
+    assert dest.exists() and dest.read_bytes() == body
+
+
 def test_fetch_and_extract_oversized_download_returns_none(monkeypatch, tmp_path):
     pdf = tmp_path / "big.pdf"
     make_pdf(pdf, "TOO BIG")

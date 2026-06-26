@@ -172,6 +172,12 @@ class LLMRequest:
     # the model gets NO project-data access unless the user explicitly opts in.
     project_tools_enabled: bool = False
 
+    # When True (the skill chat's 💾 toggle, AND web on), the OpenCode backend
+    # exposes save_pdf — fetch a web datasheet AND cache it into the project's
+    # documents folder for reuse. Off by default: it WRITES a file (sandboxed to
+    # the documents folder), so it is opt-in and rides the web gate too.
+    save_docs_enabled: bool = False
+
     # The skill-owned MCP servers the ACTIVE skill declares (its SKILL.md
     # frontmatter ``mcp_tools``, e.g. ``[dcdc_tools]``). The OpenCode backend
     # turns each declared server's tools ON and every OTHER registered skill tool

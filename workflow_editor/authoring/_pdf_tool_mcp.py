@@ -64,6 +64,32 @@ TOOLS = [
         },
     },
     {
+        "name": "save_pdf",
+        "description": (
+            "Fetch a datasheet PDF from a WEB URL, SAVE it into the project's "
+            "documents folder for reuse, and return its text. Use this (when "
+            "available) instead of read_pdf for a datasheet you want to KEEP: a "
+            "future test then reads it locally with list_documents / read_document, "
+            "no re-download. 'source' is an http(s) PDF URL; 'save_as' is the name "
+            "to store it under — use the part's EXACT MPN."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source": {
+                    "type": "string",
+                    "description": "An http(s) URL to the datasheet PDF.",
+                },
+                "save_as": {
+                    "type": "string",
+                    "description": "Filename to cache it under (the part's exact "
+                    "MPN). Stored as a sandboxed <name>.pdf in the documents folder.",
+                },
+            },
+            "required": ["source", "save_as"],
+        },
+    },
+    {
         "name": "list_documents",
         "description": (
             "List the files in the project's documents folder (datasheets, notes, "
@@ -154,6 +180,19 @@ def _resolve_local(source: str, documents_dir: str):
     return real
 
 
+def _safe_pdf_name(save_as):
+    """Sandbox a model-supplied cache name to a bare ``<name>.pdf`` filename.
+
+    basename only (strips any path -> no traversal), a safe charset, and a forced
+    ``.pdf`` suffix, so the cached file can only land directly in the documents
+    folder. Returns None when nothing usable remains (then we do not cache)."""
+    base = os.path.basename(str(save_as or "").strip())
+    if base.lower().endswith(".pdf"):
+        base = base[:-4]
+    safe = "".join(c if (c.isalnum() or c in "._-") else "_" for c in base).strip("._")
+    return (safe + ".pdf") if safe else None
+
+
 def _handle_read_pdf(arguments, documents_dir):
     source = (arguments or {}).get("source")
     if not isinstance(source, str) or not source.strip():
@@ -171,6 +210,38 @@ def _handle_read_pdf(arguments, documents_dir):
         )
     text = extract_pdf_text(resolved)
     return _text_result(text if text is not None else _UNREADABLE_MSG)
+
+
+def _handle_save_pdf(arguments, documents_dir):
+    """Fetch a web PDF, CACHE it into the documents folder, and return its text.
+
+    The cached datasheet then survives for future tests (read it locally via
+    list_documents / read_document, no web). Gated by the 'Save datasheets'
+    per-chat toggle; only http(s) sources are cached, under a sandboxed name."""
+    arguments = arguments or {}
+    source = arguments.get("source")
+    if not isinstance(source, str) or not source.strip():
+        return _text_result("save_pdf requires a non-empty 'source' URL.")
+    source = source.strip()
+    if not (source.startswith("http://") or source.startswith("https://")):
+        return _text_result(
+            "save_pdf only fetches http(s) URLs; for a local file use read_document."
+        )
+    save_name = _safe_pdf_name(arguments.get("save_as"))
+    if not save_name:
+        return _text_result(
+            "save_pdf requires a 'save_as' name (use the part's exact MPN)."
+        )
+    save_to = os.path.join(documents_dir, save_name)
+    text = fetch_and_extract(source, save_to=save_to)
+    if text is None:
+        return _text_result(_UNREADABLE_MSG)
+    if os.path.exists(save_to):
+        text += (
+            f"\n\n(Saved to the project documents as {save_name} — future tests "
+            f"can read it locally via list_documents / read_document, no web.)"
+        )
+    return _text_result(text)
 
 
 def _list_dir(directory, missing_msg, empty_msg, header):
@@ -259,6 +330,7 @@ def main(argv=None):
     # launched script); avoids triggering the heavy authoring/__init__ chain.
     dispatch = {
         "read_pdf": lambda a: _handle_read_pdf(a, documents_dir),
+        "save_pdf": lambda a: _handle_save_pdf(a, documents_dir),
         "read_document": lambda a: _handle_read_document(a, documents_dir),
         "list_documents": lambda a: _handle_list_documents(documents_dir),
         "list_rules": lambda a: _handle_list_rules(rules_dir),

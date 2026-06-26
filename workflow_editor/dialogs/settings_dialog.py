@@ -558,6 +558,14 @@ class SettingsDialog(QDialog):
             "model can still be flipped off per chat. Off by default.")
         opencode_layout.addRow("", self.web_default)
 
+        self.save_docs_default = QCheckBox(
+            "Save downloaded datasheets by default (skill chat)")
+        self.save_docs_default.setToolTip(
+            "Default state of the skill chat's 💾 Save datasheets toggle: when "
+            "on, downloaded datasheets are cached into the project documents "
+            "folder for reuse.")
+        opencode_layout.addRow("", self.save_docs_default)
+
         self.project_tools_default = QCheckBox(
             "Project data tools on by default (skill chat)")
         self.project_tools_default.setToolTip(
@@ -1150,6 +1158,7 @@ class SettingsDialog(QDialog):
         self.opencode_startup_timeout.setValue(opencode.get("startup_timeout", 60.0))
         # Skill-chat default toggles (both default off).
         self.web_default.setChecked(opencode.get("web_default", False))
+        self.save_docs_default.setChecked(opencode.get("save_docs_default", False))
         self.project_tools_default.setChecked(
             opencode.get("project_tools_default", False))
 
@@ -1190,6 +1199,7 @@ class SettingsDialog(QDialog):
                 "wsl_path": self.opencode_wsl_path.text(),
                 "startup_timeout": self.opencode_startup_timeout.value(),
                 "web_default": self.web_default.isChecked(),
+                "save_docs_default": self.save_docs_default.isChecked(),
                 "project_tools_default": self.project_tools_default.isChecked(),
             },
         }

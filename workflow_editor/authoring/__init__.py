@@ -18,7 +18,7 @@ from .netlist_text import (
     format_other_component_ids,
     format_netlist,
 )
-from .registry import discover_skills, load_skills
+from .registry import discover_skills, load_skills, load_wizards
 from .skill import Skill, SkillSource
 from .skill_chat import SkillChatSession, SkillTurn
 from .skill_loader import SkillLoadError, load_skill, split_frontmatter
@@ -32,6 +32,7 @@ __all__ = [
     "split_frontmatter",
     "discover_skills",
     "load_skills",
+    "load_wizards",
     # context picker
     "ContextItem",
     "ContextBundle",

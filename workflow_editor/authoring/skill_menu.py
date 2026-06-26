@@ -16,7 +16,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import QMessageBox
 
-from . import load_skills, locations
+from . import load_skills, load_wizards, locations
 from .context_sources import (
     ArtifactProvider,
     ArtifactsSource,
@@ -72,6 +72,21 @@ def _populate(main_window, menu) -> None:
         hint = QAction("(no skills found — add one via 'Open skills folder…')", menu)
         hint.setEnabled(False)
         menu.addAction(hint)
+
+    # The DCDC test wizard (Phase 1: single IC). Driven by the WIZARD-scoped
+    # skills (dcdc_finder + dcdc_authoring), discovered separately from the chat
+    # skills above so they never appear in the Skill-chat list.
+    try:
+        wiz_count = len(load_wizards(project_root=_project_root(main_window)))
+    except Exception:  # noqa: BLE001 — discovery must never break the menu
+        log.exception("wizard discovery failed")
+        wiz_count = 0
+    wiz_act = QAction("DCDC test wizard…", menu)
+    wiz_act.setEnabled(wiz_count > 0)
+    wiz_act.setToolTip("Find a power IC, build its scope test, validate it against "
+                       "the netlist, and add it to the project.")
+    wiz_act.triggered.connect(lambda: _launch_dcdc_wizard(main_window))
+    menu.addAction(wiz_act)
 
     menu.addSeparator()
     open_act = QAction("Open skills folder…", menu)
@@ -193,6 +208,18 @@ def _make_insert_callback(main_window):
             tabs.setCurrentWidget(tab)
 
     return insert
+
+
+def _launch_dcdc_wizard(main_window) -> None:
+    """Open the DCDC test wizard (modeless). Held on ``main_window`` so the GC
+    does not collect the window while it is open."""
+    from ..dock.dcdc_wizard_dialog import DcdcWizardDialog
+
+    dlg = DcdcWizardDialog(main_window, parent=main_window)
+    main_window._dcdc_wizard_dialog = dlg
+    dlg.show()
+    dlg.raise_()
+    dlg.activateWindow()
 
 
 def _launch_chat(main_window) -> None:

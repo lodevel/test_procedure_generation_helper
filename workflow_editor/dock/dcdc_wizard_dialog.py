@@ -83,7 +83,6 @@ class DcdcWizardDialog(QDialog):
         self._test_block: str = ""
         self._stream: str = ""
         self._committed: list[tuple[str, str]] = []  # (speaker, text) transcript blocks
-        self._board_ctx: Optional[str] = None  # cached pushed netlist+components text
         # True only while the authoring skill is waiting on the user's answer —
         # the single source of truth for the answer box's enabled state (never
         # read the widget's own isEnabled(), which a busy-toggle would clobber).
@@ -103,25 +102,6 @@ class DcdcWizardDialog(QDialog):
         pm = getattr(self._mw, "project_manager", None)
         root = getattr(pm, "project_root", None)
         return root
-
-    def _board_context(self) -> str:
-        """The pushed netlist + component-id context (loaded once, cached). Pushing
-        it — exactly like the skill chat's Artifacts picker — hands the model the
-        FULL connectivity in the prompt, instead of the project_tools netlist tool
-        result that OpenCode truncates before the U*/IC* rows (which lost the AUX
-        DC-DC modules)."""
-        if self._board_ctx is None:
-            self._board_ctx = ""
-            try:
-                from ..authoring.netlist_text import format_netlist, format_component_ids
-                from ..core import odb_inspect
-                board = odb_inspect.load_board(self._project_root)
-                if not board.get("error"):
-                    self._board_ctx = (
-                        format_component_ids(board) + "\n\n" + format_netlist(board))
-            except Exception:
-                log.exception("dcdc-wizard could not load the board for push-context")
-        return self._board_ctx
 
     # -- UI -------------------------------------------------------------------
 
@@ -293,7 +273,7 @@ class DcdcWizardDialog(QDialog):
         self._ic_list.clear()
         self._append("System", "Finding power ICs…")
         session = SkillChatSession(self._finder)
-        session.set_context(self._board_context())
+        session.set_context("")
         self._run(session, session.kickoff(), fresh=True, on_done=self._on_find_done)
 
     def _on_find_done(self, response) -> None:
@@ -326,7 +306,7 @@ class DcdcWizardDialog(QDialog):
         self._test_block = ""
         self._reset_downstream()
         self._auth_session = SkillChatSession(self._authoring)
-        self._auth_session.set_context(self._board_context())
+        self._auth_session.set_context("")
         prompt = self._auth_session.start_user_turn(_priming(self._picked))
         self._append("You", _priming(self._picked))
         self._run(self._auth_session, prompt, fresh=True, on_done=self._on_auth_done)

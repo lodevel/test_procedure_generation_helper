@@ -15,35 +15,51 @@ def _skill(prompt="You author a draft."):
     )
 
 
-def test_wire_is_context_plus_transcript_system_separate():
+def test_first_send_is_context_plus_message_system_separate():
     s = SkillChatSession(_skill("SYSTEM"), context_text="CONTEXT")
     wire = s.start_user_turn("hello")
-    # the skill prompt rides as the message system, NOT in the wire.
-    assert wire == "CONTEXT\n\nUser: hello"
+    # context leads the FIRST message; the user delta is raw (OpenCode role-tags
+    # it); the skill prompt rides as the message system, NOT in the wire.
+    assert wire == "CONTEXT\n\nhello"
     assert s.system_prompt == "SYSTEM"
     assert s.started is True
 
 
 def test_first_turn_without_context_omits_it():
     s = SkillChatSession(_skill("SYSTEM"))
-    assert s.start_user_turn("hello") == "User: hello"
+    assert s.start_user_turn("hello") == "hello"
     assert s.system_prompt == "SYSTEM"
 
 
-def test_later_turn_carries_full_transcript():
+def test_later_turn_sends_only_the_delta():
     s = SkillChatSession(_skill("SYSTEM"), context_text="CONTEXT")
     s.start_user_turn("first")
     s.record_assistant("a reply")
-    wire = s.start_user_turn("second")
-    # full transcript every turn — correct on a stateless backend.
-    assert wire == (
-        "CONTEXT\n\nUser: first\n\nAssistant: a reply\n\nUser: second"
-    )
+    # native session: OpenCode holds the history, so only the new message is sent.
+    assert s.start_user_turn("second") == "second"
+
+
+def test_changed_context_is_resent_then_drops_back_to_delta():
+    s = SkillChatSession(_skill("SYS"), context_text="CTX1")
+    s.start_user_turn("q1")
+    s.record_assistant("a1")
+    s.set_context("CTX2")                       # user checks new context mid-chat
+    assert s.start_user_turn("q2") == "CTX2\n\nq2"
+    s.record_assistant("a2")
+    assert s.start_user_turn("q3") == "q3"      # unchanged again -> delta only
+
+
+def test_unchanged_context_is_not_resent():
+    s = SkillChatSession(_skill("SYS"), context_text="CTX")
+    s.start_user_turn("q1")
+    s.record_assistant("a1")
+    s.set_context("CTX")                        # same value re-set -> not re-sent
+    assert s.start_user_turn("q2") == "q2"
 
 
 def test_empty_system_and_context_collapse_to_message():
     s = SkillChatSession(_skill(""), context_text="   ")
-    assert s.start_user_turn("just this") == "User: just this"
+    assert s.start_user_turn("just this") == "just this"
 
 
 def test_turns_recorded_in_order():
@@ -59,7 +75,7 @@ def test_turns_recorded_in_order():
 def test_set_context_before_first_turn_takes_effect():
     s = SkillChatSession(_skill("SYS"))
     s.set_context("LATE CONTEXT")
-    assert s.start_user_turn("hi") == "LATE CONTEXT\n\nUser: hi"
+    assert s.start_user_turn("hi") == "LATE CONTEXT\n\nhi"
 
 
 def test_started_false_before_any_turn():
@@ -71,16 +87,25 @@ def test_kickoff_is_context_only_system_separate():
     assert s.kickoff() == "CTX"             # context only; no "User:" line
     assert s.system_prompt == "SYS"         # the skill rides as system
     assert s.started is False               # records no turn
-    s.record_assistant("draft")             # the kickoff reply
+    s.record_assistant("draft")             # the kickoff reply commits the context
     assert s.started is True
-    # follow-ups carry the whole transcript, kickoff context included
-    assert s.start_user_turn("more") == "CTX\n\nAssistant: draft\n\nUser: more"
+    # context already delivered on kickoff -> the follow-up is a delta only
+    assert s.start_user_turn("more") == "more"
 
 
 def test_kickoff_falls_back_when_no_context():
     s = SkillChatSession(_skill("SYS"))
-    assert s.kickoff() == "Begin."          # never an empty user body
+    assert s.kickoff() == "Begin."          # never an empty body
     assert s.system_prompt == "SYS"
+
+
+def test_failed_first_send_resends_context():
+    s = SkillChatSession(_skill("SYS"), context_text="CTX")
+    assert s.start_user_turn("q1") == "CTX\n\nq1"
+    s.drop_last_user_turn()                 # send failed -> un-stage the user turn
+    assert s.turns == []
+    # the context rode the failed turn, so it is re-sent on the retry
+    assert s.start_user_turn("q1 again") == "CTX\n\nq1 again"
 
 
 def test_interpret_prefers_assistant_message():
@@ -105,7 +130,7 @@ def test_drop_last_user_turn():
     assert s.turns == []
     s.start_user_turn("q2")
     s.record_assistant("a2")
-    s.drop_last_user_turn()                      # last turn is assistant → no-op
+    s.drop_last_user_turn()                      # last turn is assistant -> no-op
     assert [t.role for t in s.turns] == ["user", "assistant"]
 
 

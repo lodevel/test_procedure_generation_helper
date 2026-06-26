@@ -314,9 +314,22 @@ class OpenCodeBackend(LLMBackend):
     def new_session(self) -> Optional[str]:
         """Start a FRESH session (new conversation) WITHOUT restarting the
         server — the cheap counterpart of :meth:`reset_session` (which stops +
-        starts the whole server). Used by the skill chat, which re-sends the full
-        transcript every turn and so wants the server holding no prior history."""
+        starts the whole server). Used when the caller WANTS a clean slate (the
+        skill chat's trash / skill-switch), discarding the server-side history."""
         self._session_id = self._create_session()
+        return self._session_id
+
+    def ensure_session(self) -> Optional[str]:
+        """Return the current session, creating one ONLY if none exists.
+
+        The persistent-session counterpart of :meth:`new_session`: a multi-turn
+        chat calls this before each send so OpenCode KEEPS one session and retains
+        the whole history — including MCP tool results (the netlist / BOM) — across
+        turns, instead of throwing it away every send. After a server restart the
+        same id stays valid (OpenCode persists sessions on disk), so this also
+        REATTACHES; it only mints a new session when there is genuinely none."""
+        if self._session_id is None:
+            self._session_id = self._create_session()
         return self._session_id
 
     def compact(self) -> bool:

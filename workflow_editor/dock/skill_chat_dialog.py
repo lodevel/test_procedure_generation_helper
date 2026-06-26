@@ -1,9 +1,11 @@
 """Skill-chat dialog — a modeless window that runs ONE skill conversation.
 
-A skill chat is a plain multi-turn conversation: the skill's ``SKILL.md`` system
-prompt plus the user's chosen context, then the whole transcript so far. Replies
-are prose (no JSON contract). When the operator likes a draft they click *Insert
-into procedure* and it is raw-appended to the procedure editor via a callback.
+A skill chat is a plain multi-turn conversation on a PERSISTENT OpenCode session:
+the skill's ``SKILL.md`` system prompt plus the user's chosen context on the first
+message, then only the NEW message each turn (OpenCode keeps the history, including
+MCP tool results). Replies are prose (no JSON contract). When the operator likes a
+draft they click *Insert into procedure* and it is raw-appended to the procedure
+editor via a callback.
 
 This module is the thin Qt controller; the brain lives elsewhere and is reused,
 not reimplemented:
@@ -20,11 +22,12 @@ not reimplemented:
 
 Backend ownership (controller contract): the dialog creates and owns a DEDICATED
 backend via ``backend_factory.create_backend(tab_id="skill_chat")`` so the skill
-chat has its OWN OpenCode session, independent of the dock chat. Because each
-turn re-sends the full transcript, the session is reset before every send (when
-the backend exposes ``reset_session``) so the server doesn't also prepend its own
-history and double-count it. Backends without a reset API are sent to as-is — for
-the stateless external API that is already correct.
+chat has its OWN OpenCode session, independent of the dock chat. The session is
+PERSISTENT: ``ensure_session`` before each send reuses it so OpenCode keeps the
+whole conversation (including MCP tool results) across turns and only the new
+message is sent; ``new_session`` is called solely to start over (trash /
+skill-switch). After a server restart the same session id reattaches (OpenCode
+persists sessions on disk).
 """
 
 from __future__ import annotations
@@ -287,10 +290,11 @@ class SkillChatDialog(QDialog):
         self._status.setStyleSheet(f"color:{theme.muted_color()}; font-size:9pt;")
         layout.addWidget(self._status)
 
-        # Context-usage readout. We show the LATEST turn's INPUT tokens as the
-        # current context size: the skill chat re-sends the whole transcript each
-        # turn, so the last input IS the live context — and this stays correct
-        # across any compaction, unlike a running sum (which would over-count).
+        # Context-usage readout. We show the LATEST turn's total tokens as the
+        # current context size: OpenCode holds the persistent session, so the last
+        # turn's reported usage IS the live context (system + history + tool
+        # results) — and this stays correct across any compaction, unlike a running
+        # sum (which would over-count).
         self._context_label = QLabel("")
         self._context_label.setStyleSheet(f"color:{theme.muted_color()}; font-size:9pt;")
         layout.addWidget(self._context_label)
@@ -323,27 +327,41 @@ class SkillChatDialog(QDialog):
 
         Mirrors :class:`TabContext`'s lazy-create-then-start pattern. The
         backend is cached for the dialog's lifetime so the OpenCode session is
-        stable across turns (we reset it per send, not recreate it)."""
+        stable across turns (reused per send via ``ensure_session``, not
+        recreated)."""
         if self._backend is None:
             self._backend = self._backend_factory.create_backend(tab_id="skill_chat")
             if hasattr(self._backend, "start"):
                 self._backend.start()
         return self._backend
 
-    def _reset_backend_session(self) -> None:
-        """Start a FRESH session before a send so the server doesn't double-count
-        history (each turn already carries the full transcript).
+    def _ensure_session(self) -> None:
+        """Make sure the cached backend has a LIVE session, creating one only if it
+        has none — the persistent-session counterpart of ``new_session``. The
+        session is REUSED across sends so OpenCode keeps the whole conversation
+        (incl. MCP tool results) instead of throwing it away each turn; after a
+        server restart the same id reattaches (OpenCode persists sessions on disk)."""
+        backend = self._backend
+        ensure = getattr(backend, "ensure_session", None) if backend else None
+        if callable(ensure):
+            try:
+                ensure()
+            except Exception:
+                log.exception("skill-chat ensure_session failed; sending anyway")
 
-        Prefers the cheap ``new_session`` (just re-POSTs /session); deliberately
-        does NOT use ``reset_session`` (it stops + restarts the whole server).
-        No-op for stateless backends (external API) — already correct there."""
+    def _new_backend_session(self) -> None:
+        """Start a FRESH server session to TRUE-reset the conversation (trash /
+        skill-switch), discarding OpenCode's history. Prefers the cheap
+        ``new_session`` (re-POSTs /session); never ``reset_session`` (which stops +
+        restarts the whole server). No-op when no backend exists yet — the next send
+        mints a fresh one."""
         backend = self._backend
         new_session = getattr(backend, "new_session", None) if backend else None
         if callable(new_session):
             try:
                 new_session()
             except Exception:
-                log.exception("skill-chat new_session failed; sending anyway")
+                log.exception("skill-chat new_session failed; continuing")
 
     # -- send path ------------------------------------------------------------
 
@@ -364,7 +382,8 @@ class SkillChatDialog(QDialog):
         message = self._input.toPlainText().strip()
         if not message:
             return
-        # Refresh the pushed context (only the first turn carries it).
+        # Refresh the pushed context (it rides the first send, and again only when
+        # the checked selection changes — see SkillChatSession._lead_context).
         self._session.set_context(assemble(self._picker.selections()).text)
         prompt = self._session.start_user_turn(message)
         self._input.clear()
@@ -382,7 +401,7 @@ class SkillChatDialog(QDialog):
     def _dispatch(self, prompt: str) -> None:
         """Send a built prompt on a worker thread (shared by Run + Send)."""
         backend = self._ensure_backend()
-        self._reset_backend_session()
+        self._ensure_session()
 
         request = LLMRequest(
             task=LLMTask.AD_HOC_CHAT,
@@ -507,6 +526,7 @@ class SkillChatDialog(QDialog):
             return
         self._skill = self._skills[index]
         self._session = SkillChatSession(self._skill)
+        self._new_backend_session()  # new skill → fresh OpenCode conversation
         self._latest_draft = ""
         self._stream_buffer = ""
         self._blocks = []
@@ -521,6 +541,7 @@ class SkillChatDialog(QDialog):
             self._worker.cancel()
             self._teardown_worker()
         self._session = SkillChatSession(self._skill)
+        self._new_backend_session()  # discard OpenCode's history too
         self._latest_draft = ""
         self._stream_buffer = ""
         self._blocks = []

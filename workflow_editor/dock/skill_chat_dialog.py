@@ -250,7 +250,9 @@ class SkillChatDialog(QDialog):
 
         # Input box (Enter sends, Shift+Enter newline — mirrors ChatPanel).
         self._input = QPlainTextEdit()
-        self._input.setPlaceholderText("Ask the skill for a draft or a change...")
+        self._input.setPlaceholderText(
+            "Optional: prime the skill before Run (e.g. 'build the test for U86'), "
+            "then refine over the next turns…")
         self._input.setFixedHeight(72)
         self._input.installEventFilter(self)
         layout.addWidget(self._input)
@@ -260,7 +262,9 @@ class SkillChatDialog(QDialog):
 
         self._run_btn = QPushButton("Run skill")
         self._run_btn.setToolTip(
-            "Start the skill using the checked context — no message needed.")
+            "Start the skill using the checked context. Type a message first to "
+            "PRIME it (e.g. which rail/IC to build) — or leave it empty to run "
+            "the skill from the top.")
         self._run_btn.clicked.connect(self._on_run)
         btn_row.addWidget(self._run_btn)
 
@@ -376,14 +380,22 @@ class SkillChatDialog(QDialog):
     # -- send path ------------------------------------------------------------
 
     def _on_run(self) -> None:
-        """Run the skill with NO typed message — just the skill prompt + the
-        checked context. The clean kickoff (no throwaway message needed)."""
+        """Start the skill with the checked context. If the user typed a PRIMING
+        message first, send THAT as the opening turn (e.g. "build the test for
+        U86" so the skill jumps straight in instead of surveying every IC); an
+        empty box is the bare kickoff (context + skill prompt only)."""
         if self._worker is not None or self._session.started:
             return
         self._session.set_context(assemble(self._picker.selections()).text)
-        prompt = self._session.kickoff()
         self._append_line(
             "System", f"Running '{self._skill.title or self._skill.skill_id}'…")
+        priming = self._input.toPlainText().strip()
+        if priming:
+            prompt = self._session.start_user_turn(priming)
+            self._input.clear()
+            self._append_line("You", priming)
+        else:
+            prompt = self._session.kickoff()
         self._dispatch(prompt)
 
     def _on_send(self) -> None:

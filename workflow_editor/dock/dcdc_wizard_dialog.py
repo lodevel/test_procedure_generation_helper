@@ -81,6 +81,10 @@ class DcdcWizardDialog(QDialog):
         self._rows: list[IcRow] = []
         self._test_block: str = ""
         self._stream: str = ""
+        # True only while the authoring skill is waiting on the user's answer —
+        # the single source of truth for the answer box's enabled state (never
+        # read the widget's own isEnabled(), which a busy-toggle would clobber).
+        self._awaiting_answer: bool = False
 
         self.setWindowTitle("DCDC test wizard")
         self.setModal(False)
@@ -207,6 +211,7 @@ class DcdcWizardDialog(QDialog):
         self._stream = ""
         self._worker = LLMWorker(backend, request, parent=self)
         self._worker.text_chunk.connect(self._on_chunk)
+        self._worker.thinking_chunk.connect(self._on_thinking_chunk)
         self._worker.finished.connect(on_done)
         self._worker.error.connect(self._on_error)
         self._set_busy(True)
@@ -215,6 +220,11 @@ class DcdcWizardDialog(QDialog):
 
     def _on_chunk(self, text: str) -> None:
         self._stream += text
+
+    def _on_thinking_chunk(self, _text: str) -> None:
+        # Reasoning chunks aren't shown in the transcript; the WorkTimer keeps
+        # the status line alive so the window doesn't look frozen.
+        pass
 
     def _teardown_worker(self) -> None:
         worker, self._worker = self._worker, None
@@ -302,11 +312,13 @@ class DcdcWizardDialog(QDialog):
         block = find_dcdc_test_block(text)
         if block:
             self._test_block = block
+            self._awaiting_answer = False
             self._answer.setEnabled(False)
             self._answer_btn.setEnabled(False)
             self._validate_and_offer()
         else:
             # No test yet → the skill asked a question; let the user answer.
+            self._awaiting_answer = True
             self._answer.setEnabled(True)
             self._answer_btn.setEnabled(True)
             self._answer.setFocus()
@@ -364,6 +376,7 @@ class DcdcWizardDialog(QDialog):
     # -- state / transcript ---------------------------------------------------
 
     def _reset_downstream(self) -> None:
+        self._awaiting_answer = False
         self._answer.setEnabled(False)
         self._answer_btn.setEnabled(False)
         self._name.setEnabled(False)
@@ -373,8 +386,8 @@ class DcdcWizardDialog(QDialog):
     def _set_busy(self, busy: bool) -> None:
         self._find_btn.setEnabled(not busy)
         self._build_btn.setEnabled(not busy and self._picked is not None)
-        self._answer.setEnabled(not busy and self._answer.isEnabled())
-        self._answer_btn.setEnabled(not busy and self._answer_btn.isEnabled())
+        self._answer.setEnabled(not busy and self._awaiting_answer)
+        self._answer_btn.setEnabled(not busy and self._awaiting_answer)
 
     def _append(self, speaker: str, text: str) -> None:
         self._transcript.append(

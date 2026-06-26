@@ -49,6 +49,7 @@ from ..widgets.skill_context_picker import SkillContextPicker
 from ..llm.backend_base import LLMRequest, LLMTask
 from ..llm.context_usage import format_context_usage, used_tokens
 from ..llm.worker import LLMWorker
+from ..widgets.work_timer import WorkTimer
 
 log = logging.getLogger(__name__)
 
@@ -303,6 +304,8 @@ class SkillChatDialog(QDialog):
         self._status = QLabel("")
         self._status.setStyleSheet(f"color:{theme.muted_color()}; font-size:9pt;")
         layout.addWidget(self._status)
+        self._work_timer = WorkTimer(
+            on_tick=lambda s: self._status.setText(f"Thinking… {s}"), parent=self)
 
         # Context-usage readout. We show the LATEST turn's total tokens as the
         # current context size: OpenCode holds the persistent session, so the last
@@ -438,7 +441,7 @@ class SkillChatDialog(QDialog):
 
         self._stream_buffer = ""
         self._set_busy(True)
-        self._status.setText("Thinking…")
+        self._work_timer.start()
         self._worker.start()
 
     def _on_text_chunk(self, text: str) -> None:
@@ -449,14 +452,14 @@ class SkillChatDialog(QDialog):
         self._repaint(live=("Assistant", self._stream_buffer))
 
     def _on_thinking_chunk(self, _text: str) -> None:
-        # Reasoning chunks are not displayed in the transcript; just keep the
-        # status line alive so the window doesn't look frozen.
-        self._status.setText("Thinking…")
+        # Reasoning chunks are not displayed in the transcript; the live
+        # work_timer keeps the status line updated while thinking.
+        pass
 
     def _on_finished(self, response) -> None:
         self._teardown_worker()
         self._set_busy(False)
-        self._status.setText("")
+        self._status.setText(f"Replied in {self._work_timer.stop()}")
 
         if not getattr(response, "success", False):
             # A genuine failure: the backend returns success=True for a prose
@@ -520,6 +523,7 @@ class SkillChatDialog(QDialog):
     def _on_error(self, message: str) -> None:
         self._teardown_worker()
         self._set_busy(False)
+        self._work_timer.stop()
         self._status.setText("")
         # The send failed/cancelled — drop the unanswered user turn.
         self._session.drop_last_user_turn()
@@ -584,6 +588,7 @@ class SkillChatDialog(QDialog):
             self._worker.cancel()
         self._teardown_worker()
         self._set_busy(False)
+        self._work_timer.stop()
         self._backend = None
         self._status.setText("Restarting backend…")
 

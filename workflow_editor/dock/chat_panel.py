@@ -20,6 +20,7 @@ from PySide6.QtCore import Qt, Signal, QEvent
 from typing import TYPE_CHECKING, List, Tuple, Optional
 
 from .. import theme
+from ..widgets.work_timer import WorkTimer
 from .chat_messages import MessageDetailDialog, MessageWidget, ProposalWidget
 from ..llm.context_usage import format_context_usage, latest_message_total
 
@@ -97,6 +98,7 @@ class ChatPanel(QWidget):
         # is forced unchecked + disabled but this remembers the user's
         # actual intent so a later set_validator_status(True) restores it.
         self._stored_auto_correct: bool = True
+        self._work_timer: Optional[WorkTimer] = None
 
         self._setup_ui()
     
@@ -530,6 +532,15 @@ class ChatPanel(QWidget):
             f"color: {theme.toggle_color()}; font-style: italic; font-size: 10px; padding: 2px 0;"
         )
         thinking_layout.addWidget(self._thinking_header)
+
+        # Show how long the model has been working, live in the header.
+        if self._work_timer is not None:
+            self._work_timer.stop()
+        self._work_timer = WorkTimer(
+            on_tick=lambda s: self._thinking_header.setText(f"💭 Thinking... {s}"),
+            parent=self,
+        )
+        self._work_timer.start()
         
         # Streaming thinking content area (hidden until content arrives)
         self._thinking_stream_label = QLabel("")
@@ -669,6 +680,9 @@ class ChatPanel(QWidget):
     
     def remove_thinking_message(self):
         """Remove the temporary thinking/streaming message."""
+        if self._work_timer is not None:
+            self._work_timer.stop()
+            self._work_timer = None
         if hasattr(self, '_thinking_widget') and self._thinking_widget:
             try:
                 # Try to remove widget (may fail if C++ object deleted)

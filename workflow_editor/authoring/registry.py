@@ -60,3 +60,10 @@ def discover_skills(
 def load_skills(project_root: Optional[Path] = None) -> list[Skill]:
     """Discover skills from the default roots for ``project_root``."""
     return discover_skills(locations.skill_roots(project_root))
+
+
+def load_wizards(project_root: Optional[Path] = None) -> list[Skill]:
+    """Discover wizards from the default roots for ``project_root`` — the
+    ``authoring_wizards`` SIBLING of each skill root. Mirrors
+    :func:`load_skills`; reuses :func:`discover_skills` unchanged."""
+    return discover_skills(locations.wizard_roots(project_root))

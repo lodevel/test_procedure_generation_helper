@@ -17,6 +17,7 @@ from .skill import SkillSource
 log = logging.getLogger(__name__)
 
 _SKILLS_SUBDIR = "authoring_skills"
+_WIZARDS_SUBDIR = "authoring_wizards"
 
 
 def local_skills_dir() -> Optional[Path]:
@@ -70,5 +71,31 @@ def skill_roots(
         (bundled_skills_dir(project_root), SkillSource.BUNDLED),
         (local_skills_dir(), SkillSource.LOCAL),
         (project_skills_dir(project_root), SkillSource.PROJECT),
+    ]
+    return [(d, src) for d, src in candidates if d is not None and d.is_dir()]
+
+
+def _as_wizards(d: Optional[Path]) -> Optional[Path]:
+    """Map an ``authoring_skills`` dir to its ``authoring_wizards`` SIBLING.
+
+    Wizards live in a parallel ``authoring_wizards/`` folder next to each
+    ``authoring_skills/`` the chat scanner reads, so the chat menu (which only
+    scans :func:`skill_roots`) never lists a wizard. Returns None for a None
+    input (an absent location tier)."""
+    return d.parent / _WIZARDS_SUBDIR if d else None
+
+
+def wizard_roots(
+    project_root: Optional[Path] = None,
+) -> list[tuple[Path, SkillSource]]:
+    """All EXISTING wizard roots, tagged by source — the ``authoring_wizards``
+    SIBLING of each :func:`skill_roots` dir. Identical shape to skill_roots;
+    order is irrelevant to precedence — the registry resolves that by
+    :class:`SkillSource`."""
+    candidates = [
+        (_as_wizards(builtin_skills_dir()), SkillSource.BUILTIN),
+        (_as_wizards(bundled_skills_dir(project_root)), SkillSource.BUNDLED),
+        (_as_wizards(local_skills_dir()), SkillSource.LOCAL),
+        (_as_wizards(project_skills_dir(project_root)), SkillSource.PROJECT),
     ]
     return [(d, src) for d, src in candidates if d is not None and d.is_dir()]

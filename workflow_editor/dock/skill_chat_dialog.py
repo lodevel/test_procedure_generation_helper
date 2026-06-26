@@ -532,6 +532,7 @@ class SkillChatDialog(QDialog):
         self._blocks = []
         self._insert_btn.setEnabled(False)
         self._transcript.clear()
+        self._context_label.setText("")  # new session → drop the previous skill's token readout
         self._header.setText(self._skill.when_to_use or "")
         self._set_busy(False)  # fresh session → Run re-enabled
 
@@ -548,6 +549,7 @@ class SkillChatDialog(QDialog):
         self._insert_btn.setEnabled(False)
         self._transcript.clear()
         self._status.setText("")
+        self._context_label.setText("")  # session destroyed → drop its stale token readout
         self._set_busy(False)  # fresh session → Run re-enabled, controls live
 
     def _on_restart_backend(self) -> None:

@@ -34,6 +34,7 @@ from ..llm.validator_dispatch import (
     validate_response,
 )
 from ..llm.worker import LLMWorker
+from ..llm.transcript_replay import serialize_transcript
 
 log = logging.getLogger(__name__)
 
@@ -241,6 +242,23 @@ class LLMTabMixin:
         )
         self._pending_request = request
 
+        # Carry a compact, text-only replay of the conversation SO FAR on the
+        # request so the backend can self-heal a lost server session: if the
+        # OpenCode server is replaced mid-chat it mints a fresh session and
+        # replays this preamble instead of failing the turn. Built from the
+        # in-memory transcript BEFORE the current user turn is appended below,
+        # and ONLY when there is prior history (skips the window fetch on the
+        # first send). Bounded to ~25% of the model's context window.
+        if self.tab_context.messages:
+            try:
+                window = self.tab_context.backend.get_context_window()
+            except Exception:
+                window = None
+            char_budget = int((window or 16000) * 4 * 0.25)
+            request.conversation_preamble = serialize_transcript(
+                self.tab_context.messages, char_budget
+            )
+
         prompt_builder = PromptBuilder(
             task_config_manager=self.task_config_manager,
             tab_id=self.tab_id,
@@ -338,9 +356,36 @@ class LLMTabMixin:
 
         # 5. Short-circuit on transport-level failure.
         if not response.success:
-            self._handle_unsuccessful_response(response, is_active)
+            # Special case: the backend recovered a lost server session this
+            # turn, but replaying the prior conversation overflowed the context
+            # window. The session IS valid now — guide the operator to resend a
+            # smaller message instead of showing a scary hard-failure dialog.
+            if (
+                getattr(response, "session_rehydrated", False)
+                and getattr(response, "context_exceeded", False)
+                and is_active
+            ):
+                self.main_window.dock.chat_panel.add_message(
+                    "system",
+                    "Reconnected to a new session (the previous one was lost), "
+                    "but replaying the prior conversation overflowed the context "
+                    "window. The session is ready — please resend your message.",
+                )
+            else:
+                self._handle_unsuccessful_response(response, is_active)
             run_state.reset_to_idle()
             return
+
+        # 5b. If the backend transparently recovered a lost server session for
+        # this turn, tell the operator plainly: the reply is genuine but any
+        # earlier server-side tool results (netlist/BOM) were NOT replayed.
+        if getattr(response, "session_rehydrated", False) and is_active:
+            self.main_window.dock.chat_panel.add_message(
+                "system",
+                "Reconnected to a new session (the previous one was lost). "
+                "Earlier tool results (netlist/BOM) were not replayed — "
+                "text only.",
+            )
 
         # 6. Drive the validator-in-the-loop FSM.
         #

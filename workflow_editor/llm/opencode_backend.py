@@ -341,6 +341,31 @@ class OpenCodeBackend(LLMBackend):
             self._session_id = self._create_session()
         return self._session_id
 
+    @staticmethod
+    def _is_session_not_found(response) -> bool:
+        """True iff a response is OpenCode's 'session lost' signal: HTTP 404 whose
+        JSON body name == 'NotFoundError'. Distinguishes a lost session (mint +
+        replay) from server-down (a RequestException, never a 404) and from a
+        model error (200 with an error body)."""
+        if getattr(response, "status_code", None) != 404:
+            return False
+        try:
+            return (response.json() or {}).get("name") == "NotFoundError"
+        except (ValueError, AttributeError):
+            return False
+
+    def _rehydrate_session(self) -> bool:
+        """Mint a FRESH server-side session after the old one was lost; return
+        True on success (new id replaces _session_id). Only mints — never
+        injects — so it cannot itself 404."""
+        new_id = self._create_session()
+        if new_id:
+            log.warning(f"Session lost; rehydrated with fresh session {new_id}")
+            self._session_id = new_id
+            return True
+        log.error("Session lost AND rehydrate failed: could not mint a new session")
+        return False
+
     def compact(self) -> bool:
         """Manually compact the active session — OpenCode summarizes the prior
         history in place, freeing context while keeping the SAME session id.
@@ -1035,15 +1060,41 @@ class OpenCodeBackend(LLMBackend):
                 json=body,
                 timeout=self.config.request_timeout,
             )
-            
+
+            # Lost server-side session (OpenCode replaced by a fresh instance) ->
+            # 404 NotFoundError. Self-heal ONCE: mint a fresh session and replay
+            # the client transcript carried on the request as a 'conversation so
+            # far' preamble prepended to this prompt, then retry. The preamble is
+            # CONSUMED (set None) BEFORE the retry so a second loss returns the
+            # error instead of looping -- the hard anti-loop guard. Gated on a
+            # non-empty preamble, so it only fires for the dock chat.
+            rehydrated = False
+            if (
+                self._is_session_not_found(response)
+                and request.conversation_preamble
+            ):
+                preamble = request.conversation_preamble
+                request.conversation_preamble = None  # consume -> single-shot
+                if self._rehydrate_session():
+                    rehydrated = True
+                    body = self._build_message_body(
+                        f"{preamble}\n\n{prompt}", request
+                    )
+                    response = requests.post(
+                        f"{self.config.server_url}/session/{self._session_id}/message",
+                        json=body,
+                        timeout=self.config.request_timeout,
+                    )
+
             log.debug(f"HTTP response: status={response.status_code}, content-length={len(response.text)}")
             log.debug(f"Response headers: {dict(response.headers)}")
-            
+
             if response.status_code != 200:
                 return LLMResponse(
                     success=False,
                     error_message=f"API error: {response.status_code} - {response.text}",
                     raw_response=response.text,
+                    session_rehydrated=rehydrated,
                 )
             
             # Parse response
@@ -1075,6 +1126,7 @@ class OpenCodeBackend(LLMBackend):
                                 error_message="Context length exceeded",
                                 context_exceeded=True,
                                 raw_response=raw_response,
+                                session_rehydrated=rehydrated,
                             )
             except (json.JSONDecodeError, KeyError):
                 pass  # Not a context error, continue normal parsing
@@ -1085,7 +1137,8 @@ class OpenCodeBackend(LLMBackend):
             llm_response = self._response_parser.parse(
                 raw_response, request.task, plain_text=request.raw_prompt is not None
             )
-            
+            llm_response.session_rehydrated = rehydrated
+
             # Extract and assign token usage using base class method
             try:
                 response_data = json.loads(raw_response)

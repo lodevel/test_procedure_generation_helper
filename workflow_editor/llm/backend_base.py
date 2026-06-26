@@ -73,7 +73,11 @@ class LLMResponse:
     success: bool = False
     error_message: str = ""
     context_exceeded: bool = False  # True if context length exceeded
-    
+    # True when the backend lost its server-side session (server replaced) and
+    # transparently minted a fresh one + replayed the client transcript for THIS
+    # turn. The dock surfaces a one-line 'reconnected, tool results not replayed'.
+    session_rehydrated: bool = False
+
     # Task info
     task: Optional[LLMTask] = None
     strict_mode: bool = False
@@ -190,6 +194,12 @@ class LLMRequest:
     # skill GOVERNS behaviour, instead of being buried in the user message under
     # OpenCode's default coding-agent prompt. ``None`` = no override.
     system_prompt: Optional[str] = None
+
+    # Compact, text-only replay of the conversation so far, set by the dock
+    # send-path. The OpenCode backend prepends it to the pending prompt ONLY
+    # when it must rehydrate a lost server session, then consumes it (sets None)
+    # so a re-loss can never loop. None = no replay / rehydration not armed.
+    conversation_preamble: Optional[str] = None
 
     # Additional context
     extra_context: dict[str, Any] = field(default_factory=dict)

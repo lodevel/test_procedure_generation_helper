@@ -10,7 +10,7 @@ Options:
     --rules-root <path>         Path to rules folder (optional)
     --test-name <name>          Name of test folder to open
     --test-dir <path>           Direct path to test folder (overrides --test-name)
-    --llm-backend <backend>     LLM backend: opencode|external|none
+    --llm-backend <backend>     LLM backend: opencode|none
     --llm-profile <name>        LLM profile name (optional)
 """
 
@@ -72,7 +72,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--llm-backend",
-        choices=["opencode", "external", "none"],
+        choices=["opencode", "none"],
         default=None,
         help="LLM backend to use"
     )

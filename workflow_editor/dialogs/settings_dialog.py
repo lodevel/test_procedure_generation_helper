@@ -199,15 +199,24 @@ def _build_project_tools_block(project_root: Optional[Path]) -> Optional[dict]:
     )
 
 
-def _build_dcdc_tools_block() -> dict:
-    """Build the ``dcdc_tools`` MCP block FRESH. Project-independent (the DCDC
-    generator consumes only per-call params), so no per-project argv."""
-    from ..llm.mcp_config import build_dcdc_tools_mcp_block
+def _build_skill_tools_blocks(project_root: Optional[Path]) -> dict:
+    """Build an MCP block for EVERY discovered tool folder (skill-owned + common),
+    auto-registered — no per-tool host code. One generic ``_skill_tools_mcp.py``
+    backs each folder, pointed at it via ``--tools-dir``. Discovery (BUILTIN/BUNDLED
+    tiers only; reserved infra names skipped) lives in ``authoring.tool_folders``."""
+    from ..llm.mcp_config import build_skill_tools_mcp_block
+    from ..authoring.tool_folders import discover_tool_folders
+    from ..authoring.locations import skill_roots
 
-    return build_dcdc_tools_mcp_block(
-        venv_python_win=_python_win(),
-        mcp_script_win=_mcp_script_win("_dcdc_tools_mcp.py"),
-    )
+    blocks: dict = {}
+    for tf in discover_tool_folders(skill_roots(project_root)):
+        blocks.update(build_skill_tools_mcp_block(
+            server_name=tf.server,
+            venv_python_win=_python_win(),
+            mcp_script_win=_mcp_script_win("_skill_tools_mcp.py"),
+            tools_dir_win=str(tf.path),
+        ))
+    return blocks
 
 
 def build_launch_config(
@@ -261,9 +270,12 @@ def build_launch_config(
     if proj_block:
         mcp.update(proj_block)
     try:
-        mcp.update(_build_dcdc_tools_block())
+        # Auto-discover + register every skill-owned / common tool folder. Infra
+        # blocks (pdf_tools/project_tools) are added FIRST and their names are
+        # reserved in tool_folders, so a tool folder can't shadow them.
+        mcp.update(_build_skill_tools_blocks(project_root))
     except Exception:
-        log.exception("Failed to build dcdc_tools MCP block")
+        log.exception("Failed to build skill-tools MCP blocks")
     data["mcp"] = mcp
 
     if launch_dir is None:

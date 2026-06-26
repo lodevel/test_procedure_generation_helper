@@ -358,10 +358,15 @@ class MainWindow(QMainWindow):
         try:
             from .dialogs.settings_dialog import (
                 build_launch_config, ensure_master_config)
+            from .authoring.tool_folders import build_skill_tools_universe
             _pr = getattr(self.project_manager, 'project_root', None)
             _seed = (_pr / 'opencode.json') if _pr else None
             ensure_master_config(seed_from=_seed)
+            # Compute the gate universe FIRST: if discovery throws, the except
+            # fires before opencode.json is written -> never registered-but-ungated.
+            _uni = build_skill_tools_universe(_pr)
             sm.config.working_directory = str(build_launch_config(_pr))
+            sm.config.skill_tools = _uni
         except Exception:
             log.warning('failed to build launch config for pre-warm',
                         exc_info=True)

@@ -27,9 +27,6 @@ _PROJECT_TOOLS_OFF = {
     "project_tools_list_test_points": False,
 }
 
-# The DCDC generator tool key, OFF by default (dcdc_tools_enabled defaults False).
-_DCDC_TOOLS_OFF = {"dcdc_tools_generate_dcdc_test": False}
-
 # Local document + rule tools — sandboxed, no network — are ALWAYS on (ungated).
 _DOCS_ALWAYS_ON = {
     "pdf_tools_list_documents": True, "pdf_tools_read_document": True,
@@ -48,9 +45,10 @@ def _req(web_enabled: bool) -> LLMRequest:
 
 
 def test_web_enabled_exposes_web_tools_and_read_pdf():
+    # skill_tools empty by default -> no skill-owned keys in the body.
     body = _backend()._build_message_body("hi", _req(web_enabled=True))
     assert body["tools"] == {
-        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DCDC_TOOLS_OFF, **_DOCS_ALWAYS_ON,
+        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DOCS_ALWAYS_ON,
         "webfetch": True, "websearch": True, "pdf_tools_read_pdf": True}
 
 
@@ -59,14 +57,14 @@ def test_web_disabled_sends_explicit_false():
     # skill keep web access if the launch config/agent enabled it.
     body = _backend()._build_message_body("hi", _req(web_enabled=False))
     assert body["tools"] == {
-        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DCDC_TOOLS_OFF, **_DOCS_ALWAYS_ON,
+        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DOCS_ALWAYS_ON,
         "webfetch": False, "websearch": False, "pdf_tools_read_pdf": False}
 
 
 def test_default_request_has_web_off():
     body = _backend()._build_message_body("hi", LLMRequest(task=LLMTask.AD_HOC_CHAT))
     assert body["tools"] == {
-        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DCDC_TOOLS_OFF, **_DOCS_ALWAYS_ON,
+        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DOCS_ALWAYS_ON,
         "webfetch": False, "websearch": False, "pdf_tools_read_pdf": False}
 
 
@@ -87,18 +85,27 @@ def test_project_tools_default_is_off():
 
 
 def test_dcdc_tools_enabled_exposes_the_generator_tool():
+    # Backend must have skill_tools set so the key is emitted at all.
+    be = OpenCodeBackend(OpenCodeConfig(skill_tools={"dcdc_tools": ["generate_dcdc_test"]}))
+    # ON: skill_servers_enabled declares dcdc_tools -> key is True.
     req = LLMRequest(
-        task=LLMTask.AD_HOC_CHAT, raw_prompt="hi", dcdc_tools_enabled=True)
-    body = _backend()._build_message_body("hi", req)
+        task=LLMTask.AD_HOC_CHAT, raw_prompt="hi",
+        skill_servers_enabled=["dcdc_tools"])
+    body = be._build_message_body("hi", req)
     assert body["tools"]["dcdc_tools_generate_dcdc_test"] is True
-    # independent of the other toggles
+    # independent of other toggles
     assert body["tools"]["webfetch"] is False
     assert body["tools"]["project_tools_list_components"] is False
+    # OFF: skill_servers_enabled empty (default) -> key present but False.
+    req_off = LLMRequest(task=LLMTask.AD_HOC_CHAT, raw_prompt="hi")
+    body_off = be._build_message_body("hi", req_off)
+    assert body_off["tools"]["dcdc_tools_generate_dcdc_test"] is False
 
 
 def test_dcdc_tools_default_is_off():
+    # With no skill_tools configured the key is absent (= also off).
     body = _backend()._build_message_body("hi", LLMRequest(task=LLMTask.AD_HOC_CHAT))
-    assert body["tools"]["dcdc_tools_generate_dcdc_test"] is False
+    assert body["tools"].get("dcdc_tools_generate_dcdc_test") is not True
 
 
 def test_local_document_and_rule_tools_always_on():

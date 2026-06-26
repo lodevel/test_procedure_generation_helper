@@ -104,8 +104,10 @@ def test_build_launch_config_no_project_drops_project_tools(config_dir):
     derived = json.loads((launch_dir / "opencode.json").read_text(encoding="utf-8"))
 
     mcp = derived["mcp"]
-    # pdf_tools + dcdc_tools always present; project_tools dropped (no tgz).
-    assert set(mcp.keys()) == {"pdf_tools", "dcdc_tools"}
+    # pdf_tools always present; project_tools dropped (no project / no tgz).
+    # Skill-tool blocks are discovered dynamically (BUILTIN tier) — not asserted
+    # as a fixed set here since discovery depends on the installed environment.
+    assert "pdf_tools" in mcp
     assert "project_tools" not in mcp
 
 
@@ -118,12 +120,25 @@ def test_build_launch_config_fresh_mcp_paths_with_project(config_dir, tmp_path):
     tgz = project / "board.tgz"
     tgz.write_bytes(b"fake-archive")
 
+    # Create a deterministic BUNDLED tool folder so we can assert its command.
+    myfix_dir = project / "bundle" / "authoring_skills" / "myfix"
+    myfix_dir.mkdir(parents=True)
+    (myfix_dir / "tools.json").write_text(
+        json.dumps({"server": "myfix_tools", "tools": ["t"]}), encoding="utf-8")
+    (myfix_dir / "tools.py").write_text(
+        'SERVER_NAME = "myfix_tools"\nTOOLS = [{"name": "t", "description": "d",'
+        ' "inputSchema": {"type": "object"}, "handler": lambda a: "ok"}]\n',
+        encoding="utf-8",
+    )
+
     launch_dir = sd.build_launch_config(project_root=project)
     derived = json.loads((launch_dir / "opencode.json").read_text(encoding="utf-8"))
     mcp = derived["mcp"]
 
-    # All three blocks present (project has a .tgz).
-    assert set(mcp.keys()) == {"pdf_tools", "project_tools", "dcdc_tools"}
+    # pdf_tools + project_tools + at least myfix_tools (BUNDLED) must be present.
+    assert "pdf_tools" in mcp
+    assert "project_tools" in mcp
+    assert "myfix_tools" in mcp
 
     py_win = _expected_python_win()
     py_wsl = win_to_wsl_path(py_win)
@@ -146,11 +161,13 @@ def test_build_launch_config_fresh_mcp_paths_with_project(config_dir, tmp_path):
     assert proj_cmd[2] == "--odb-tgz"
     assert proj_cmd[3] == str(tgz)
 
-    # dcdc_tools: project-independent, no per-project argv.
-    dcdc_cmd = mcp["dcdc_tools"]["command"]
-    assert dcdc_cmd[0] == py_wsl
-    assert dcdc_cmd[1] == _script_for("_dcdc_tools_mcp.py")
-    assert len(dcdc_cmd) == 2
+    # myfix_tools: generic _skill_tools_mcp.py with --tools-dir pointing at the
+    # BUNDLED folder; replaces the old hard-wired dcdc_tools / _dcdc_tools_mcp.py.
+    myfix_cmd = mcp["myfix_tools"]["command"]
+    assert myfix_cmd[0] == py_wsl
+    assert myfix_cmd[1] == _script_for("_skill_tools_mcp.py")
+    assert myfix_cmd[2] == "--tools-dir"
+    assert myfix_cmd[3] == str(myfix_dir)
 
 
 def test_build_launch_config_atomic_write_in_launch_dir(config_dir):
@@ -168,7 +185,8 @@ def test_build_launch_config_missing_master_still_writes(config_dir):
     assert not sd.get_opencode_master_path().exists()
     launch_dir = sd.build_launch_config(project_root=None)
     derived = json.loads((launch_dir / "opencode.json").read_text(encoding="utf-8"))
-    assert set(derived["mcp"].keys()) == {"pdf_tools", "dcdc_tools"}
+    # pdf_tools is always present; skill-tool blocks discovered dynamically.
+    assert "pdf_tools" in derived["mcp"]
 
 
 def test_build_launch_config_strips_model_defensively(config_dir):

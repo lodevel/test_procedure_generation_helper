@@ -96,28 +96,57 @@ def build_project_tools_mcp_block(
     }
 
 
-def build_dcdc_tools_mcp_block(
+def build_skill_tools_mcp_block(
+    server_name: str,
     venv_python_win: str,
     mcp_script_win: str,
+    tools_dir_win: str,
 ) -> dict:
-    """Return the ``mcp`` entry for the ``dcdc_tools`` local server.
+    """Return the ``mcp`` entry for ONE tool folder, served by the generic
+    ``_skill_tools_mcp.py`` (``--tools-dir`` the folder).
 
-    Mirrors :func:`build_project_tools_mcp_block`: ``command[0]`` is the python
-    translated to its ``/mnt/c`` WSL path (OpenCode runs in WSL); the script
-    stays a Windows path (argv for the Windows python). The server exposes the
-    single deterministic ``generate_dcdc_test`` tool the LLM CALLS with the
-    params it extracted, so the procedure text is generated, not free-formed.
-    Unlike project_tools/pdf_tools, it takes NO per-project argv (the generator
-    is project-independent — it consumes only the params in each call). Merge the
-    returned dict into the master opencode.json's ``mcp`` object.
+    Replaces the per-tool block builders for skill-owned + common tools: one
+    generic script backs every folder, varying only by ``--tools-dir``. Mirrors
+    :func:`build_project_tools_mcp_block`: ``command[0]`` is the python translated
+    to its ``/mnt/c`` WSL path (OpenCode runs in WSL); the script and the
+    ``--tools-dir`` value stay Windows paths (argv for the Windows python).
+
+    ``server_name`` is the block key — and is ALSO the per-request override
+    namespace (OpenCode names the tool ``<server_name>_<tool>``) and the gate
+    universe key, so block/override/universe can never drift. Merge the returned
+    dict into the master opencode.json's ``mcp`` object.
     """
     return {
-        "dcdc_tools": {
+        server_name: {
             "type": "local",
             "command": [
                 win_to_wsl_path(venv_python_win),
                 mcp_script_win,
+                "--tools-dir",
+                tools_dir_win,
             ],
             "enabled": True,
         }
+    }
+
+
+def skill_tool_overrides(active_servers, universe) -> dict:
+    """Per-request on/off for EVERY skill-owned tool in ``universe``.
+
+    OpenCode's tool override is ADDITIVE — a tool NOT listed keeps its registered
+    ``enabled`` default — so to scope tools to the active skill we must emit an
+    EXPLICIT bool for every tool of every registered skill-owned server: ``True``
+    for a server the active skill declared, ``False`` for all others (this is what
+    stops e.g. rail_check from seeing dcdc's tool).
+
+    ``universe`` is ``{server: [tool names]}`` (see
+    :func:`workflow_editor.authoring.tool_folders.build_skill_tools_universe`);
+    ``active_servers`` is the active skill's declared ``mcp_tools`` list. Keys are
+    ``f"{server}_{tool}"`` to match OpenCode's ``<server>_<tool>`` namespacing.
+    """
+    active = set(active_servers or ())
+    return {
+        f"{server}_{tool}": (server in active)
+        for server, tools in (universe or {}).items()
+        for tool in tools
     }

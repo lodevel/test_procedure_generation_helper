@@ -1,4 +1,4 @@
-"""End-to-end test of the _dcdc_tools_mcp stdio MCP server via a subprocess.
+"""End-to-end test of _skill_tools_mcp driving the dcdc_bringup tool folder.
 
 Speaks newline-delimited JSON-RPC over the server's stdin/stdout, exactly as the
 editor would, and verifies the handshake, the single advertised tool + its
@@ -6,22 +6,28 @@ inputSchema, and that ``tools/call generate_dcdc_test`` with the benchmark
 +MAIN_5V0 params returns the canonical procedure text (matching the deterministic
 generator), plus a missing-required-field validation path.
 
-The server is project-independent (no --odb-tgz / board needed): it imports the
-pure ``dcdc_test_generator`` and turns the call's params into text.
+Skipped when the parent repo's authoring_skills/dcdc_bringup folder is absent
+(i.e. the submodule is tested in isolation without the parent repo installed).
 """
 import json
 import os
 import subprocess
 import sys
+import threading
+from pathlib import Path
 
 import pytest
 
-# The server module file, found via the installed package (path-independent).
-import workflow_editor.authoring._dcdc_tools_mcp as _mcp_mod
+# The generic tool-folder MCP server (replaces the deleted _dcdc_tools_mcp).
+import workflow_editor.authoring._skill_tools_mcp as _mcp_mod
 # The pure generator, to compute the EXPECTED text the tool must reproduce.
 from workflow_editor.authoring import dcdc_test_generator as gen
 
 SERVER_PATH = os.path.abspath(_mcp_mod.__file__)
+
+# The dcdc_bringup tool folder lives in the PARENT repo:
+# __file__ -> tests/ -> test_procedure_generation_helper/ -> external/ -> test_procedure_gui/
+_DCDC_BRINGUP = Path(__file__).parents[3] / "authoring_skills" / "dcdc_bringup"
 
 
 # The benchmark +MAIN_5V0 params (always-on enable, power-good present), as the
@@ -47,9 +53,9 @@ MAIN_5V0_ARGS = {
 class _Server:
     """Line-oriented JSON-RPC client over a server subprocess."""
 
-    def __init__(self, cwd):
+    def __init__(self, tools_dir, cwd):
         self.proc = subprocess.Popen(
-            [sys.executable, SERVER_PATH],
+            [sys.executable, SERVER_PATH, "--tools-dir", str(tools_dir)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -65,8 +71,6 @@ class _Server:
     def read(self, timeout=15):
         # readline() on a piped subprocess can block; guard with a watchdog
         # thread that kills the process so the test fails fast instead of hanging.
-        import threading
-
         result = {}
 
         def _reader():
@@ -120,10 +124,12 @@ def _result_text(resp):
 
 @pytest.fixture
 def server(tmp_path):
+    if not _DCDC_BRINGUP.is_dir():
+        pytest.skip("parent repo dcdc skill not present")
     # Launch from an unrelated cwd to prove launch-location independence.
     other_cwd = tmp_path / "elsewhere"
     other_cwd.mkdir()
-    srv = _Server(other_cwd)
+    srv = _Server(_DCDC_BRINGUP, other_cwd)
     yield srv
     srv.close()
 
@@ -131,7 +137,9 @@ def server(tmp_path):
 def _handshake(srv):
     init = srv.request(1, "initialize", {"protocolVersion": "2024-11-05"})
     assert init["result"]["protocolVersion"] == "2024-11-05"
-    assert init["result"]["serverInfo"]["name"] == "dcdc-tools"
+    # serverInfo.name is now "dcdc_tools" (SERVER_NAME in tools.py),
+    # not the old hard-coded "dcdc-tools" from the deleted _dcdc_tools_mcp.py.
+    assert init["result"]["serverInfo"]["name"] == "dcdc_tools"
     srv.notify("notifications/initialized")  # no response expected
 
 

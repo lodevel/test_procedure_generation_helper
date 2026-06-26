@@ -93,10 +93,19 @@ class OpenCodeConfig:
     
     # Extra arguments
     extra_args: list[str] = None
+
+    # Per-request tool-gate universe: {server: [tool names]} for every discovered
+    # skill-owned / common tool folder. Set IN PLACE by main_window._prewarm_server
+    # (the SAME OpenCodeConfig object this backend holds), read in
+    # _build_message_body to force every non-active skill tool to an explicit
+    # False (OpenCode's tool override is additive).
+    skill_tools: dict = None
     
     def __post_init__(self):
         if self.extra_args is None:
             self.extra_args = []
+        if self.skill_tools is None:
+            self.skill_tools = {}
     
     @property
     def server_url(self) -> str:
@@ -993,11 +1002,19 @@ class OpenCodeBackend(LLMBackend):
             "project_tools_netlist": request.project_tools_enabled,
             "project_tools_get_bom": request.project_tools_enabled,
             "project_tools_list_test_points": request.project_tools_enabled,
-            # The DCDC generator tool (dcdc_tools MCP server). A skill opts in via
-            # its frontmatter mcp_tools; namespaced "<server>_<tool>" key — verify
-            # the exact key on a live model, like project_tools.
-            "dcdc_tools_generate_dcdc_test": request.dcdc_tools_enabled,
         }
+        # Skill-owned tools: force every registered skill tool to an explicit
+        # on/off (the active skill's servers -> True, all others -> False).
+        # OpenCode's tool override is ADDITIVE, so an un-listed tool keeps its
+        # enabled default and would leak across skills — this closes that hole.
+        from .mcp_config import skill_tool_overrides
+        # setdefault (NOT update): a skill tool key is added only if it does not
+        # already exist above — so a (trusted) tool folder whose <server>_<tool>
+        # flattens onto a built-in/infra key can never clobber it. The literal
+        # keys above are always the authority; skills only ADD their own tools.
+        for _k, _v in skill_tool_overrides(
+                request.skill_servers_enabled, self.config.skill_tools).items():
+            body["tools"].setdefault(_k, _v)
         # Message-level system prompt (e.g. the skill chat's SKILL.md) so the
         # caller's instructions GOVERN, rather than sitting in the user body.
         if request.system_prompt:

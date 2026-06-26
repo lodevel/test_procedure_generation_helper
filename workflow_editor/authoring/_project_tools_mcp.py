@@ -226,11 +226,6 @@ TOOLS = [
 
 # --- JSON-RPC framing helpers (mirror _pdf_tool_mcp) ---------------------------
 
-def _send(msg):
-    sys.stdout.write(json.dumps(msg) + "\n")
-    sys.stdout.flush()
-
-
 def _text_result(payload):
     """Wrap *payload* as an MCP text content result.
 
@@ -490,68 +485,10 @@ def main(argv=None):
     odb_tgz = _parse_odb_tgz(argv)
     board = _Board(odb_tgz)  # lazy: nothing parsed until a tool is called
 
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            req = json.loads(line)
-        except Exception:
-            continue
-        rid = req.get("id")
-        method = req.get("method")
-        # Notifications (no id) -> no response.
-        if rid is None:
-            continue
-        try:
-            if method == "initialize":
-                client_ver = (req.get("params") or {}).get(
-                    "protocolVersion", "2024-11-05"
-                )
-                _send({
-                    "jsonrpc": "2.0",
-                    "id": rid,
-                    "result": {
-                        "protocolVersion": client_ver,
-                        "capabilities": {"tools": {}},
-                        "serverInfo": SERVER_INFO,
-                    },
-                })
-            elif method == "tools/list":
-                _send({"jsonrpc": "2.0", "id": rid, "result": {"tools": TOOLS}})
-            elif method == "tools/call":
-                params = req.get("params") or {}
-                name = params.get("name")
-                handler = _DISPATCH.get(name)
-                if handler is None:
-                    _send({
-                        "jsonrpc": "2.0",
-                        "id": rid,
-                        "error": {
-                            "code": -32602,
-                            "message": f"unknown tool: {name}",
-                        },
-                    })
-                    continue
-                result = handler(board, params.get("arguments") or {})
-                _send({"jsonrpc": "2.0", "id": rid, "result": result})
-            elif method == "ping":
-                _send({"jsonrpc": "2.0", "id": rid, "result": {}})
-            else:
-                _send({
-                    "jsonrpc": "2.0",
-                    "id": rid,
-                    "error": {
-                        "code": -32601,
-                        "message": f"method not found: {method}",
-                    },
-                })
-        except Exception as exc:  # noqa: BLE001 — never let one request kill the loop
-            _send({
-                "jsonrpc": "2.0",
-                "id": rid,
-                "error": {"code": -32603, "message": f"internal error: {exc}"},
-            })
+    import _mcp_serve  # sibling module (authoring/ is sys.path[0] for the
+    # launched script); avoids triggering the heavy authoring/__init__ chain.
+    dispatch = {name: (lambda a, h=h: h(board, a)) for name, h in _DISPATCH.items()}
+    _mcp_serve.serve(SERVER_INFO, TOOLS, dispatch)
 
 
 if __name__ == "__main__":

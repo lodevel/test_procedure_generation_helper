@@ -45,11 +45,6 @@ if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
 
 
-def _send(msg):
-    sys.stdout.write(json.dumps(msg) + "\n")
-    sys.stdout.flush()
-
-
 def _die(message):
     sys.stderr.write("_skill_tools_mcp: " + message + "\n")
     sys.exit(2)
@@ -108,65 +103,9 @@ def main(argv=None):
     server_name, tools, dispatch = _load_tool_folder(args.tools_dir)
     server_info = {"name": server_name, "version": "1.0.0"}
 
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            req = json.loads(line)
-        except Exception:
-            continue
-        rid = req.get("id")
-        method = req.get("method")
-        # Notifications (no id) -> no response.
-        if rid is None:
-            continue
-        try:
-            if method == "initialize":
-                client_ver = (req.get("params") or {}).get(
-                    "protocolVersion", "2024-11-05")
-                _send({
-                    "jsonrpc": "2.0",
-                    "id": rid,
-                    "result": {
-                        "protocolVersion": client_ver,
-                        "capabilities": {"tools": {}},
-                        "serverInfo": server_info,
-                    },
-                })
-            elif method == "tools/list":
-                _send({"jsonrpc": "2.0", "id": rid, "result": {"tools": tools}})
-            elif method == "tools/call":
-                params = req.get("params") or {}
-                name = params.get("name")
-                handler = dispatch.get(name)
-                if handler is None:
-                    _send({
-                        "jsonrpc": "2.0",
-                        "id": rid,
-                        "error": {"code": -32602, "message": f"unknown tool: {name}"},
-                    })
-                    continue
-                result = handler(params.get("arguments") or {})
-                # A handler returns plain text; wrap it as MCP text content. A
-                # handler may also return a ready content dict/list (passthrough).
-                if isinstance(result, str):
-                    result = {"content": [{"type": "text", "text": result}]}
-                _send({"jsonrpc": "2.0", "id": rid, "result": result})
-            elif method == "ping":
-                _send({"jsonrpc": "2.0", "id": rid, "result": {}})
-            else:
-                _send({
-                    "jsonrpc": "2.0",
-                    "id": rid,
-                    "error": {"code": -32601, "message": f"method not found: {method}"},
-                })
-        except Exception as exc:  # noqa: BLE001 — never let one request kill the loop
-            _send({
-                "jsonrpc": "2.0",
-                "id": rid,
-                "error": {"code": -32603, "message": f"internal error: {exc}"},
-            })
+    import _mcp_serve  # sibling module (authoring/ is sys.path[0] for the
+    # launched script); avoids triggering the heavy authoring/__init__ chain.
+    _mcp_serve.serve(server_info, tools, dispatch)
 
 
 if __name__ == "__main__":

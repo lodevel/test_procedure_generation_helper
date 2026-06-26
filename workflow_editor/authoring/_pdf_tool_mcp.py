@@ -127,11 +127,6 @@ _UNREADABLE_MSG = (
 )
 
 
-def _send(msg):
-    sys.stdout.write(json.dumps(msg) + "\n")
-    sys.stdout.flush()
-
-
 def _text_result(text):
     return {"content": [{"type": "text", "text": text}]}
 
@@ -260,77 +255,16 @@ def main(argv=None):
     documents_dir = _parse_dir_arg(argv, "--documents-dir", os.getcwd())
     rules_dir = _parse_dir_arg(argv, "--rules-dir", os.getcwd())
 
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            req = json.loads(line)
-        except Exception:
-            continue
-        rid = req.get("id")
-        method = req.get("method")
-        # Notifications (no id) -> no response.
-        if rid is None:
-            continue
-        try:
-            if method == "initialize":
-                client_ver = (req.get("params") or {}).get(
-                    "protocolVersion", "2024-11-05"
-                )
-                _send({
-                    "jsonrpc": "2.0",
-                    "id": rid,
-                    "result": {
-                        "protocolVersion": client_ver,
-                        "capabilities": {"tools": {}},
-                        "serverInfo": SERVER_INFO,
-                    },
-                })
-            elif method == "tools/list":
-                _send({"jsonrpc": "2.0", "id": rid, "result": {"tools": TOOLS}})
-            elif method == "tools/call":
-                params = req.get("params") or {}
-                name = params.get("name")
-                args = params.get("arguments")
-                if name == "read_pdf":
-                    result = _handle_read_pdf(args, documents_dir)
-                elif name == "read_document":
-                    result = _handle_read_document(args, documents_dir)
-                elif name == "list_documents":
-                    result = _handle_list_documents(documents_dir)
-                elif name == "list_rules":
-                    result = _handle_list_rules(rules_dir)
-                elif name == "read_rule":
-                    result = _handle_read_rule(args, rules_dir)
-                else:
-                    _send({
-                        "jsonrpc": "2.0",
-                        "id": rid,
-                        "error": {
-                            "code": -32602,
-                            "message": f"unknown tool: {name}",
-                        },
-                    })
-                    continue
-                _send({"jsonrpc": "2.0", "id": rid, "result": result})
-            elif method == "ping":
-                _send({"jsonrpc": "2.0", "id": rid, "result": {}})
-            else:
-                _send({
-                    "jsonrpc": "2.0",
-                    "id": rid,
-                    "error": {
-                        "code": -32601,
-                        "message": f"method not found: {method}",
-                    },
-                })
-        except Exception as exc:  # noqa: BLE001 — never let one request kill the loop
-            _send({
-                "jsonrpc": "2.0",
-                "id": rid,
-                "error": {"code": -32603, "message": f"internal error: {exc}"},
-            })
+    import _mcp_serve  # sibling module (authoring/ is sys.path[0] for the
+    # launched script); avoids triggering the heavy authoring/__init__ chain.
+    dispatch = {
+        "read_pdf": lambda a: _handle_read_pdf(a, documents_dir),
+        "read_document": lambda a: _handle_read_document(a, documents_dir),
+        "list_documents": lambda a: _handle_list_documents(documents_dir),
+        "list_rules": lambda a: _handle_list_rules(rules_dir),
+        "read_rule": lambda a: _handle_read_rule(a, rules_dir),
+    }
+    _mcp_serve.serve(SERVER_INFO, TOOLS, dispatch)
 
 
 if __name__ == "__main__":

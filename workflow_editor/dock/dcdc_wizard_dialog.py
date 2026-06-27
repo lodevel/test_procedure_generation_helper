@@ -49,13 +49,19 @@ _STAGE_BUILD = "build"
 
 
 def _extract_test_point(block: str) -> str:
-    """Best-effort scrape of the rail's scope-probe pad from the generated test.
+    """Scrape the rail's scope-probe designator (scope CH1) from the generated test.
 
-    The generator names a test point in the steps; we look for a ``TP*`` token.
-    Empty when none is confidently found, so the TP check simply reports
-    'not provided' rather than false-failing on a parse miss."""
-    m = re.search(r"\bTP[A-Za-z0-9_]+\b", block or "")
-    return m.group(0) if m else ""
+    A board's test points are NOT necessarily ``TP*``: this board designates them by
+    the rail name (e.g. ``+AUX0_16V``), and the step reads ``Connect SCOPE1 CH1 to TP
+    +AUX0_16V`` — where ``TP`` is the WORD and ``+AUX0_16V`` is the designator. So
+    capture the token after the CH1 scope hookup's optional ``TP `` word, NOT a
+    ``TP\\w+`` literal. Empty when none found (the check then reports 'not provided'
+    rather than false-failing on a parse miss)."""
+    block = block or ""
+    m = re.search(r"SCOPE\w*\s+CH1\s+to\s+(?:TP\s+)?([^\s(]+)", block, re.IGNORECASE)
+    if not m:  # fallback: any scope channel's probe hookup
+        m = re.search(r"SCOPE\w*\s+CH\d+\s+to\s+(?:TP\s+)?([^\s(]+)", block, re.IGNORECASE)
+    return m.group(1).strip() if m else ""
 
 
 def _priming(row: IcRow) -> str:

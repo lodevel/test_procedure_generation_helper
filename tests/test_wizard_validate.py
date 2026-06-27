@@ -132,19 +132,27 @@ def test_odb_adapter_surfaces_loader_error():
     assert bd.node_exists("U1") is False
 
 
-def test_rail_net_name_is_a_valid_test_point():
-    """The rail NET is itself the probe point — a ``rail_test_point`` naming a net
-    (not a ``TP*`` refdes) must PASS. Regression: ``node_exists`` knew only
-    component refdeses, so a bare rail net (e.g. ``+AUX0_16V`` on KC30, with no
-    TP* pad) always failed the rail check."""
+def test_named_pad_and_pin_are_valid_references_but_bare_net_is_not():
+    """A board may designate a test point by the RAIL name — KC30 has a placed pad
+    whose refdes IS ``+AUX0_16V`` (not ``TP*``). Any placed component reference,
+    or a component PIN of one, is a valid probe point; a BARE net name (no placed
+    reference) is NOT."""
     board = {
-        "components": [{"refdes": "U11", "properties": {"NAME": "LMZM33604RLXR"}}],
-        "nets": [{"net": "+AUX0_16V", "nodes": [{"refdes": "U11", "pin": "24"}]}],
+        "components": [
+            {"refdes": "U11.1", "properties": {"NAME": "LMZM33604RLXR"}},
+            {"refdes": "+AUX0_16V", "properties": {}},      # TP pad named by the rail
+        ],
+        "nets": [
+            {"net": "+AUX0_16V", "nodes": [{"refdes": "U11.1", "pin": "24"}]},
+            {"net": "+RAW_ONLY", "nodes": [{"refdes": "U11.1", "pin": "25"}]},
+        ],
         "error": "",
     }
     bd = OdbBoardData(board)
-    assert bd.node_exists("+AUX0_16V") is True        # the rail net IS the test point
+    assert bd.node_exists("+AUX0_16V") is True     # the placed pad (a component)
+    assert bd.node_exists("U11.1.24") is True       # a component PIN ref ("go all the way")
+    assert bd.node_exists("+RAW_ONLY") is False     # a net with no placed pad is NOT a probe point
     by = _by_name(validate_params(
-        {"ic_refdes": "U11", "ic_part": "LMZM33604RLXR",
+        {"ic_refdes": "U11.1", "ic_part": "LMZM33604RLXR",
          "rail_test_point": "+AUX0_16V"}, bd))
     assert by[CHECK_RAIL_TP].passed is True

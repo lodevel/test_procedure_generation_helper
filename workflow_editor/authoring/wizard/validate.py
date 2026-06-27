@@ -10,8 +10,9 @@ loader from the integration map.
 DEFERRED (intentionally NOT checked here): that the test point sits on the
 correct rail net, the enable path, and the voltage source. Phase 1 confirms only
 that the IC refdes exists, its part number matches the board's component
-property, and the named rail test point (a NET name — the rail is its own probe
-point — or a ``TP*`` pad) exists in the netlist.
+property, and the named rail test point resolves to a placed reference — a
+``TP*`` pad, any other component (a board may name a test pad by its rail, e.g.
+``+AUX0_16V``), or a component pin.
 """
 from __future__ import annotations
 
@@ -47,10 +48,11 @@ class BoardData(Protocol):
         ...
 
     def node_exists(self, name: str) -> bool:
-        """True when ``name`` is a probe point on the board: a NET NAME (the rail
-        net is ITSELF the test point — you probe it directly; a dedicated ``TP*``
-        component is NOT required), a net-node refdes, or a placed component
-        refdes (an actual ``TP*`` pad)."""
+        """True when ``name`` is a placed PROBE-POINT REFERENCE on the board: a
+        ``TP*`` test-point refdes, ANY other placed component refdes (a board may
+        designate a test pad by the rail name, e.g. ``+AUX0_16V``), or a component
+        PIN of one (``U11.1.24``). A bare NET NAME is NOT a probe point — the
+        reference must resolve to a placed component."""
         ...
 
 
@@ -164,16 +166,14 @@ class OdbBoardData:
                 if isinstance(props, Mapping) else []
             )
             self._parts[refdes] = " ".join(vals)
-        # probe-point set: every NET NAME (the rail net is itself the test point —
-        # you probe it directly, no dedicated TP* component required) + every
-        # placed component refdes + every net-node refdes (a real TP* pad).
+        # probe-point set: every placed component refdes (a TP* pad OR any other
+        # component — a board may designate a test pad by the rail name) + every
+        # net-node refdes. A bare NET NAME is deliberately NOT here: the rail test
+        # point must resolve to a placed REFERENCE, not just a net.
         self._nodes: set[str] = set(self._parts)
         for net in self._board.get("nets") or ():
             if not isinstance(net, Mapping):
                 continue
-            net_name = str(net.get("net") or "")
-            if net_name:
-                self._nodes.add(net_name)
             for node in net.get("nodes") or ():
                 if isinstance(node, Mapping):
                     r = str(node.get("refdes") or "")
@@ -184,7 +184,18 @@ class OdbBoardData:
         return self._parts.get(str(refdes or ""))
 
     def node_exists(self, name: str) -> bool:
-        return str(name or "") in self._nodes
+        name = str(name or "")
+        if not name:
+            return False
+        if name in self._nodes:                 # TP* pad / any component / net-node refdes
+            return True
+        # "go all the way": a component PIN ref ('U11.1.24') is a valid probe point
+        # too — accept when stripping the trailing .pin yields a placed refdes.
+        if "." in name:
+            head = name.rsplit(".", 1)[0]
+            if head != name and head in self._nodes:
+                return True
+        return False
 
     @classmethod
     def from_project(cls, project_root) -> "OdbBoardData":

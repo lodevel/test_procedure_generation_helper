@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import html
 import logging
-import re
 from typing import Optional
 
 from PySide6.QtCore import Qt
@@ -84,19 +83,6 @@ _BADGE = {
 }
 
 
-def _extract_test_point(block: str) -> str:
-    """Scrape the rail's scope-probe designator (scope CH1) from the generated test.
-
-    A board's test points are NOT necessarily ``TP*``: this board designates them by
-    the rail name (e.g. ``+AUX0_16V``), and the step reads ``Connect SCOPE1 CH1 to TP
-    +AUX0_16V`` — where ``TP`` is the WORD and ``+AUX0_16V`` is the designator."""
-    block = block or ""
-    m = re.search(r"SCOPE\w*\s+CH1\s+to\s+(?:TP\s+)?([^\s(]+)", block, re.IGNORECASE)
-    if not m:
-        m = re.search(r"SCOPE\w*\s+CH\d+\s+to\s+(?:TP\s+)?([^\s(]+)", block, re.IGNORECASE)
-    return m.group(1).strip() if m else ""
-
-
 def _rail_priming(row: IcRow) -> str:
     """Turn-1 message: hand the per-IC skill its IC and ask ONLY for the rail."""
     return (f"Read the output rail of {row.refdes} — {row.part} ({row.kind}). "
@@ -136,6 +122,7 @@ class _IcState:
         self.key = row.refdes
         self.chat = chat
         self.phase = _PENDING
+        self.awaiting: Optional[str] = None   # "rail" | "build" — routes the next reply
         self.test_block = ""
         self.build_pending = False  # build requested while turn-1 rail-read still ran
         self.panel: Optional["_IcPanel"] = None  # set when P3 wraps it
@@ -326,11 +313,15 @@ class _RailRow(QWidget):
         self.badge.setStyleSheet(f"color:{theme.muted_color()}; font-size:9pt;")
         h.addWidget(self.badge)
 
+    def set_rail(self, rail: str) -> None:
+        """Overwrite the field with a freshly-read rail (auto-read or re-ask). Skips
+        while the operator is typing (focused). ``render`` NEVER touches the field, so a
+        manual correction survives every later refresh (the clobber bug's fix)."""
+        if rail and not self.rail_edit.hasFocus():
+            self.rail_edit.setText(rail)
+
     def render(self, scheduler) -> None:
         st = self.state
-        if st.phase == _RAILED and not self.rail_edit.hasFocus():
-            if st.row.rail and self.rail_edit.text().strip() != st.row.rail:
-                self.rail_edit.setText(st.row.rail)
         slot = scheduler.state_of(self.key)
         if st.phase == _PENDING and slot is SlotState.RUNNING:
             txt = "⏳ reading…"
@@ -399,6 +390,10 @@ class _RailPage(QWizardPage):
             self._list.setItemWidget(it, rr)
 
     def on_rail_update(self, key: str) -> None:
+        rr = self._rows.get(key)
+        state = self._wiz.sessions.get(key)
+        if rr is not None and state is not None:
+            rr.set_rail(state.row.rail)   # fill the field from the fresh read; render() won't
         self.refresh()
 
     def refresh(self) -> None:
@@ -781,8 +776,9 @@ class DcdcWizardDialog(QWizard):
 
     def start_rail_read(self, key: str) -> None:
         state = self.sessions.get(key)
-        if state is None or state.chat.is_busy:
-            return
+        if state is None or state.chat.is_busy \
+                or self._scheduler.state_of(key) is not SlotState.IDLE:
+            return    # already reading/queued — is_busy is False while merely QUEUED
         state.awaiting = "rail"
         state.phase = _PENDING
         state.chat.run_kickoff(priming=_rail_priming(state.row))
@@ -791,8 +787,9 @@ class DcdcWizardDialog(QWizard):
         """Re-run the rail-read (operator flagged it). Uses any text the operator
         typed in the rail field as a hint."""
         state = self.sessions.get(key)
-        if state is None or state.chat.is_busy:
-            return
+        if state is None or state.chat.is_busy \
+                or self._scheduler.state_of(key) is not SlotState.IDLE:
+            return    # a read is already running or queued — don't double-submit
         hint = ""
         rr = self._rail._rows.get(key)
         if rr is not None:
@@ -837,15 +834,24 @@ class DcdcWizardDialog(QWizard):
         state = self.sessions.pop(key, None)
         if state is None:
             return
+        # If it reached P3, detach its panel FIRST (the chat is the panel's child — pull
+        # it out so deleting the panel can't double-delete the chat).
+        if state.panel is not None:
+            state.chat.setParent(self._session_holder)
+            self._build._panels.pop(key, None)
+            state.panel.deleteLater()
+            state.panel = None
         for sig in (state.chat.busy_changed, state.chat.reply_finished,
                     state.chat.reply_failed):
             try:
                 sig.disconnect()
             except (RuntimeError, TypeError):
                 pass
-        self._scheduler.cancel(key)
+        self._scheduler.cancel(key)        # drop a QUEUED fire
         if state.chat.is_busy:
-            state.chat.stop()
+            state.chat.stop()              # stop a RUNNING worker
+        self._scheduler.complete(key)      # free its slot — busy_changed is now
+                                           # disconnected, so the normal complete() never runs
         try:
             state.chat.shutdown()
         except Exception:  # noqa: BLE001
@@ -869,30 +875,39 @@ class DcdcWizardDialog(QWizard):
         if state is None:
             return
         if state.awaiting == "rail":
+            state.awaiting = None
+            if state.phase not in _RAIL_PHASES:
+                return    # operator already confirmed/advanced this rail (typed + Next) —
+                          # a late auto-read must not clobber it
             rail = parse_rail_reply(text)
             state.row.rail = rail or state.row.rail
             state.phase = _RAILED if rail else _RAIL_FAILED
-            state.awaiting = None
             self._maybe_fire_pending_build(key)
             self._rail.on_rail_update(key)
         else:  # build (turn 2)
+            state.awaiting = None
             block = find_dcdc_test_block(text)
             if block:
-                state.test_block = block
+                state.test_block = block   # a refine updates the test even post-decision
                 if state.panel is not None:
                     state.panel.test_view.setPlainText(block)
                 if state.phase not in _TERMINAL:
                     state.phase = _READY
             elif state.phase not in _TERMINAL:
                 state.phase = _NEEDS_INPUT
-            state.awaiting = None
-            _alert()
+            if state.phase not in _TERMINAL:
+                _alert()               # don't beep on an already-decided session
             self._build.refresh()
 
     def _on_failed(self, key: str, reason: str) -> None:
         state = self.sessions.get(key)
-        if state is not None and state.panel is not None:
-            state.panel.status.setText(reason)
+        if state is not None:
+            if state.awaiting == "rail" and state.phase in _RAIL_PHASES:
+                state.phase = _RAIL_FAILED      # the rail-read failed → operator must fix it
+                state.build_pending = False     # no rail → nothing to auto-build
+            state.awaiting = None               # never strand the router on a dead turn
+            if state.panel is not None:
+                state.panel.status.setText(reason)
         self._refresh_pages()
 
     def _on_cap(self, n: int) -> None:
@@ -928,11 +943,24 @@ class DcdcWizardDialog(QWizard):
     def target(self):
         return getattr(self._mw, "project_manager", None) or self.project_root
 
-    def closeEvent(self, event):  # noqa: N802
+    def _teardown_all(self) -> None:
+        """Idempotent teardown of EVERY embedded chat (classifier + per-IC sessions) so no
+        private OpenCode session leaks. Runs on BOTH closeEvent (the X) AND done()
+        (Finish/Cancel) — a modeless QWizard's done() does NOT dispatch a closeEvent."""
+        if getattr(self, "_torn", False):
+            return
+        self._torn = True
         try:
             self._classify.shutdown()
         except Exception:  # noqa: BLE001
             log.exception("dcdc-wizard: classify shutdown failed")
         for key in list(self.sessions):
             self.drop_session(key)
+
+    def done(self, result):  # noqa: N802 — Finish / Cancel (no closeEvent fires)
+        self._teardown_all()
+        super().done(result)
+
+    def closeEvent(self, event):  # noqa: N802
+        self._teardown_all()
         super().closeEvent(event)

@@ -24,12 +24,23 @@ def app():
     return QApplication.instance() or QApplication([])
 
 
+class _StubSignal:
+    def connect(self, *a):
+        pass
+
+    def disconnect(self):
+        pass
+
+
 class _StubChat:
     """Stands in for SkillChatWidget's drive surface — no LLM, no QThread."""
 
     def __init__(self):
         self.is_busy = False
         self.sent = []
+        self.busy_changed = _StubSignal()
+        self.reply_finished = _StubSignal()
+        self.reply_failed = _StubSignal()
 
     def run_kickoff(self, priming=""):
         self.sent.append(("kick", priming))
@@ -44,6 +55,9 @@ class _StubChat:
         pass
 
     def setParent(self, parent):
+        pass
+
+    def deleteLater(self):
         pass
 
 
@@ -148,3 +162,62 @@ def test_panel_adopts_then_releases_the_chat_reparent(wiz):
     assert panel is not None and chat.parent() is panel
     wiz._build._drop_panel("U5")                 # release: chat → holder, session kept
     assert "U5" in wiz.sessions and chat.parent() is wiz._session_holder
+
+
+def test_inline_rail_edit_survives_a_refresh(wiz):
+    """An operator's manual rail correction must NOT be clobbered when a later refresh
+    fires (e.g. another IC's rail-read completes)."""
+    from workflow_editor.dock.dcdc_wizard_dialog import _RailRow
+    st = _session(wiz, "U5"); st.row.rail = "+CAP_30V"; st.phase = _RAILED
+    rr = _RailRow(st, lambda k: None)
+    wiz._rail._rows = {"U5": rr}
+    rr.set_rail("+CAP_30V")                       # initial read fills the field
+    rr.rail_edit.setText("+CAP_30V_FIX")          # operator corrects it
+    wiz._rail.refresh()                            # a full refresh (another IC updated)
+    assert rr.rail_edit.text() == "+CAP_30V_FIX"  # preserved, not reverted
+
+
+def test_reask_reply_overwrites_the_field(wiz):
+    """A re-ask that returns a corrected rail DOES update the field (the operator asked
+    for a re-read)."""
+    from workflow_editor.dock.dcdc_wizard_dialog import _RailRow
+    st = _session(wiz, "U5"); st.row.rail = "+CAP_30V"; st.phase = _RAILED
+    rr = _RailRow(st, lambda k: None)
+    wiz._rail._rows = {"U5": rr}
+    rr.set_rail("+CAP_30V")
+    st.row.rail = "+IN_28V"                        # re-ask produced a different rail
+    wiz._rail.on_rail_update("U5")
+    assert rr.rail_edit.text() == "+IN_28V"
+
+
+# --- review-fix regressions (capped / raced / failed paths) ----------------- #
+
+def test_drop_session_frees_a_running_slot(wiz):
+    """#1 BLOCKER: de-selecting an IC whose rail-read is RUNNING must free its slot —
+    busy_changed is disconnected first, so the normal complete() path can't run."""
+    from workflow_editor.dock.dcdc_wizard_dialog import SlotState
+    st = _session(wiz, "U5")
+    wiz._scheduler.submit("U5", lambda: None)          # take the slot
+    assert wiz._scheduler.state_of("U5") is SlotState.RUNNING
+    st.chat.is_busy = True
+    wiz.drop_session("U5")
+    assert wiz._scheduler.state_of("U5") is SlotState.IDLE
+    assert wiz._scheduler.running_count == 0           # not stranded
+
+
+def test_on_failed_clears_awaiting_and_marks_rail_failed(wiz):
+    """#4: a failed turn-1 read clears awaiting + marks RAIL_FAILED + drops a deferred
+    build (else the router strands and the deferred build never fires)."""
+    st = _session(wiz, "U5")
+    st.awaiting = "rail"; st.phase = _PENDING; st.build_pending = True
+    wiz._on_failed("U5", "backend error")
+    assert st.awaiting is None and st.phase == _RAIL_FAILED and not st.build_pending
+
+
+def test_late_rail_reply_does_not_clobber_confirmed_rail(wiz):
+    """#5: operator typed a rail + advanced (phase RAILED, via P2 validatePage) while
+    turn-1 was still streaming; the late auto-read must be ignored."""
+    st = _session(wiz, "U5")
+    st.row.rail = "+CAP_30V_TYPED"; st.phase = _RAILED; st.awaiting = "rail"
+    wiz._on_reply("U5", "U5 -> +SOMETHING_ELSE")
+    assert st.row.rail == "+CAP_30V_TYPED" and st.awaiting is None

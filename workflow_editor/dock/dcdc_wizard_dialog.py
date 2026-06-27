@@ -12,12 +12,12 @@ Flow:
   Validate basic existence checks vs the netlist (ic_refdes / ic_part / TP)
   Stage C  name (``PSU - <rail>``) + materialize a REAL project test
 
-Reuses the skill-run machinery exactly like :class:`SkillChatDialog`:
-``SkillChatSession`` (prompt assembly), ``backend_factory.create_backend`` (one
-dedicated backend; a fresh OpenCode session per skill, reused across the
-authoring Q&A turns), ``LLMWorker`` (off-UI-thread send) and ``WorkTimer`` (the
-live elapsed indicator). The full multi-pane parallel wizard is a later phase;
-this proves one correct, written test end-to-end.
+The chat sub-panel IS the real skill chat: an embedded
+:class:`~workflow_editor.dock.skill_chat_widget.SkillChatWidget` (the SAME widget
+the Skills-menu *Skill chat* hosts), so the wizard inherits its transcript,
+input, toggles, and Stop/Trash/Restart/timer/token controls. The wizard keeps
+only its STAGE brain (find -> pick -> build -> validate -> create) and drives the
+widget through ``set_skill`` / ``run_kickoff``, reacting to ``reply_finished``.
 """
 from __future__ import annotations
 
@@ -26,25 +26,26 @@ import logging
 import re
 from typing import Optional
 
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QPushButton,
-    QListWidget, QListWidgetItem, QTextEdit, QPlainTextEdit, QLineEdit, QWidget,
-    QCheckBox,
+    QListWidget, QListWidgetItem, QLineEdit,
 )
 
 from .. import theme
-from ..authoring import SkillChatSession
-from ..authoring import registry
+from ..authoring import registry, skill_menu
 from ..authoring.wizard.list_parse import parse_finder_list, IcRow
 from ..authoring.wizard.done_signal import find_dcdc_test_block
 from ..authoring.wizard.validate import validate_params, OdbBoardData, Check
 from ..authoring.test_materializer import materialize_test
-from ..llm.backend_base import LLMRequest, LLMTask
-from ..llm.worker import LLMWorker
-from ..widgets.work_timer import WorkTimer
+from .skill_chat_widget import SkillChatWidget
 
 log = logging.getLogger(__name__)
+
+# Stage of the wizard — routes the single ``reply_finished`` seam.
+_STAGE_IDLE = "idle"
+_STAGE_FIND = "find"
+_STAGE_BUILD = "build"
 
 
 def _extract_test_point(block: str) -> str:
@@ -75,23 +76,27 @@ class DcdcWizardDialog(QDialog):
         self._finder = wizards.get("dcdc_finder")
         self._authoring = wizards.get("dcdc_authoring")
 
-        self._backend = None
-        self._worker: Optional[LLMWorker] = None
-        self._auth_session: Optional[SkillChatSession] = None  # multi-turn authoring
         self._picked: Optional[IcRow] = None
         self._rows: list[IcRow] = []
         self._test_block: str = ""
-        self._stream: str = ""
-        self._committed: list[tuple[str, str]] = []  # (speaker, text) transcript blocks
-        # True only while the authoring skill is waiting on the user's answer —
-        # the single source of truth for the answer box's enabled state (never
-        # read the widget's own isEnabled(), which a busy-toggle would clobber).
-        self._awaiting_answer: bool = False
+        self._stage: str = _STAGE_IDLE
+        # Context sources for the embedded chat's PICKER — the SAME rules /
+        # documents / artifacts (incl. the netlist) the Skills-menu chat offers, so
+        # the OPERATOR includes the board data themselves (pull via tools and/or
+        # include via the picker — never an auto-push).
+        try:
+            self._sources, self._documents_dir = skill_menu._build_sources(
+                self._mw, self._project_root)
+        except Exception:
+            log.exception("dcdc-wizard could not build context sources")
+            self._sources, self._documents_dir = [], None
+        # True once a validated test is ready to materialize — gates Stage C's
+        # Create/name through the busy toggle without clobbering them on idle.
+        self._can_create: bool = False
 
         self.setWindowTitle("DCDC test wizard")
         self.setModal(False)
         self.resize(840, 720)
-        self._timer = WorkTimer(on_tick=lambda s: self._status.setText(f"Working… {s}"))
         self._setup_ui()
         if not (self._finder and self._authoring):
             self._fail("Wizard skills not found (need dcdc_finder + dcdc_authoring "
@@ -115,23 +120,6 @@ class DcdcWizardDialog(QDialog):
         intro.setStyleSheet(f"color:{theme.muted_color()};")
         layout.addWidget(intro)
 
-        # Per-run tools (same as the skill chat). The skill needs the netlist
-        # (project tools) to FIND ICs, and web/save-datasheets to fetch a
-        # datasheet the project documents don't already have.
-        tog = QHBoxLayout()
-        self._web_cb = QCheckBox("🌐 Web")
-        self._web_cb.setToolTip("Let the skill search the web + read/fetch datasheet PDFs.")
-        self._save_cb = QCheckBox("💾 Save datasheets")
-        self._save_cb.setToolTip("Cache fetched datasheets into the project documents (needs 🌐).")
-        self._tools_cb = QCheckBox("🔧 Netlist / project tools")
-        self._tools_cb.setChecked(True)
-        self._tools_cb.setToolTip("Let the skill PULL the netlist / components / test points "
-                                  "(required to find ICs and map the rail).")
-        for cb in (self._web_cb, self._save_cb, self._tools_cb):
-            tog.addWidget(cb)
-        tog.addStretch()
-        layout.addLayout(tog)
-
         # Stage A — find ICs --------------------------------------------------
         a = QGroupBox("1 · Find power ICs")
         al = QVBoxLayout(a)
@@ -144,30 +132,36 @@ class DcdcWizardDialog(QDialog):
         al.addWidget(self._ic_list)
         layout.addWidget(a)
 
-        # Stage B — author the test ------------------------------------------
+        # Stage B — author the test (the embedded REAL skill chat) ------------
         b = QGroupBox("2 · Build the test for the selected IC")
         bl = QVBoxLayout(b)
         self._build_btn = QPushButton("⚙️ Build test")
         self._build_btn.setEnabled(False)
         self._build_btn.clicked.connect(self._on_build)
         bl.addWidget(self._build_btn)
-        self._transcript = QTextEdit()
-        self._transcript.setReadOnly(True)
-        self._transcript.setPlaceholderText(
-            "The authoring conversation appears here. If the skill asks a "
-            "question, answer it below; when it emits the test it is shown here.")
-        bl.addWidget(self._transcript)
-        ans_row = QHBoxLayout()
-        self._answer = QLineEdit()
-        self._answer.setPlaceholderText("Answer the skill's question…")
-        self._answer.setEnabled(False)
-        self._answer.returnPressed.connect(self._on_answer)
-        self._answer_btn = QPushButton("Send")
-        self._answer_btn.setEnabled(False)
-        self._answer_btn.clicked.connect(self._on_answer)
-        ans_row.addWidget(self._answer)
-        ans_row.addWidget(self._answer_btn)
-        bl.addLayout(ans_row)
+        # The chat sub-panel: the SAME widget the Skills-menu chat hosts, pinned
+        # programmatically (no skill combo) and kicked off by the stage buttons
+        # (no Run button). It owns the transcript, input/Send, the web/save/
+        # project-tools toggles, the CONTEXT PICKER (rules / documents / artifacts,
+        # incl. the netlist) and the Stop/Trash/Restart/timer/token controls — so
+        # the operator includes board data EXACTLY like the skill chat (pull via
+        # the 🔧 tools and/or include via the picker; never an auto-push).
+        self._chat = SkillChatWidget(
+            [self._finder, self._authoring],
+            self._backend_factory,
+            sources=self._sources,
+            documents_dir=self._documents_dir,
+            backend_tab_id="dcdc_wizard",
+            show_skill_selector=False,
+            show_run_button=False,
+            parent=self,
+        )
+        self._chat.set_input_placeholder(
+            "Answer the skill's question here, then press Enter…")
+        self._chat.reply_finished.connect(self._on_reply)
+        self._chat.reply_failed.connect(self._on_reply_failed)
+        self._chat.busy_changed.connect(self._on_busy)
+        bl.addWidget(self._chat, stretch=1)
         layout.addWidget(b, stretch=1)
 
         # Validation ----------------------------------------------------------
@@ -196,154 +190,77 @@ class DcdcWizardDialog(QDialog):
         self._status.setStyleSheet(f"color:{theme.muted_color()}; font-size:9pt;")
         layout.addWidget(self._status)
 
-    # -- backend / run --------------------------------------------------------
-
-    def _ensure_backend(self):
-        if self._backend is None:
-            self._backend = self._backend_factory.create_backend(tab_id="dcdc_wizard")
-            if hasattr(self._backend, "start"):
-                self._backend.start()
-        return self._backend
-
-    def _run(self, session: SkillChatSession, prompt: str, fresh: bool, on_done) -> None:
-        """Send one turn off the UI thread. ``fresh`` mints a new OpenCode session
-        (a new skill / a new build); otherwise the session is reused (Q&A turns)."""
-        if self._worker is not None:
-            return
-        backend = self._ensure_backend()
-        try:
-            if fresh and hasattr(backend, "new_session"):
-                backend.new_session()
-            elif hasattr(backend, "ensure_session"):
-                backend.ensure_session()
-        except Exception:
-            log.exception("dcdc-wizard session setup failed; sending anyway")
-
-        skill = session.skill
-        request = LLMRequest(
-            task=LLMTask.AD_HOC_CHAT,
-            raw_prompt=prompt,
-            system_prompt=session.system_prompt,
-            web_enabled=self._web_cb.isChecked(),
-            save_docs_enabled=self._save_cb.isChecked(),
-            project_tools_enabled=self._tools_cb.isChecked(),
-            skill_servers_enabled=list((skill.metadata or {}).get("mcp_tools") or []),
-        )
-        self._stream = ""
-        self._worker = LLMWorker(backend, request, parent=self)
-        self._worker.text_chunk.connect(self._on_chunk)
-        self._worker.thinking_chunk.connect(self._on_thinking_chunk)
-        self._worker.finished.connect(on_done)
-        self._worker.error.connect(self._on_error)
-        self._set_busy(True)
-        self._timer.start()
-        self._worker.start()
-
-    def _on_chunk(self, text: str) -> None:
-        self._stream += text
-        self._repaint(live=self._stream)
-
-    def _on_thinking_chunk(self, _text: str) -> None:
-        # Reasoning chunks aren't shown in the transcript; the WorkTimer keeps
-        # the status line alive so the window doesn't look frozen.
-        pass
-
-    def _teardown_worker(self) -> None:
-        worker, self._worker = self._worker, None
-        if worker is not None:
-            worker.deleteLater()
-
-    def _finish_common(self) -> None:
-        self._teardown_worker()
-        self._set_busy(False)
-        self._status.setText(f"Done in {self._timer.stop()}")
-
-    def _on_error(self, message: str) -> None:
-        self._timer.stop()
-        self._teardown_worker()
-        self._set_busy(False)
-        self._status.setText("")
-        self._append("System", message)
-
     # -- Stage A: find --------------------------------------------------------
 
     def _on_find(self) -> None:
-        if not self._finder or self._worker is not None:
+        if not self._finder or self._chat.is_busy:
             return
+        self._stage = _STAGE_FIND
         self._ic_list.clear()
-        self._append("System", "Finding power ICs…")
-        session = SkillChatSession(self._finder)
-        session.set_context("")
-        self._run(session, session.kickoff(), fresh=True, on_done=self._on_find_done)
-
-    def _on_find_done(self, response) -> None:
-        self._finish_common()
-        if not getattr(response, "success", False):
-            self._append("System", "Finder failed: "
-                         + (getattr(response, "error_message", "") or "unknown error"))
-            return
-        text = SkillChatSession.interpret(response)
-        self._rows = parse_finder_list(text)
-        if not self._rows:
-            self._append("Finder", text or "(no list returned)")
-            self._append("System", "No power ICs parsed from the reply.")
-            return
-        for row in self._rows:
-            QListWidgetItem(f"{row.refdes} — {row.part} ({row.kind}) → {row.rail}",
-                            self._ic_list)
-        self._append("System", f"Found {len(self._rows)} power IC(s) — pick one.")
-
-    def _on_pick_changed(self) -> None:
-        idx = self._ic_list.currentRow()
-        self._picked = self._rows[idx] if 0 <= idx < len(self._rows) else None
-        self._build_btn.setEnabled(self._picked is not None and self._worker is None)
+        self._rows = []
+        self._picked = None
+        self._build_btn.setEnabled(False)
+        self._reset_downstream()
+        self._chat.set_skill(self._finder)
+        self._status.setText("Finding power ICs…")
+        self._chat.run_kickoff()
 
     # -- Stage B: author ------------------------------------------------------
 
     def _on_build(self) -> None:
-        if not self._picked or self._worker is not None:
+        if not self._picked or self._chat.is_busy:
             return
+        self._stage = _STAGE_BUILD
         self._test_block = ""
         self._reset_downstream()
-        self._auth_session = SkillChatSession(self._authoring)
-        self._auth_session.set_context("")
-        prompt = self._auth_session.start_user_turn(_priming(self._picked))
-        self._append("You", _priming(self._picked))
-        self._run(self._auth_session, prompt, fresh=True, on_done=self._on_auth_done)
+        self._chat.set_skill(self._authoring)
+        self._status.setText("Building the test…")
+        self._chat.run_kickoff(priming=_priming(self._picked))
 
-    def _on_answer(self) -> None:
-        msg = self._answer.text().strip()
-        if not msg or self._worker is not None or self._auth_session is None:
-            return
-        self._answer.clear()
-        prompt = self._auth_session.start_user_turn(msg)
-        self._append("You", msg)
-        self._run(self._auth_session, prompt, fresh=False, on_done=self._on_auth_done)
+    def _on_pick_changed(self) -> None:
+        idx = self._ic_list.currentRow()
+        self._picked = self._rows[idx] if 0 <= idx < len(self._rows) else None
+        self._build_btn.setEnabled(self._picked is not None and not self._chat.is_busy)
 
-    def _on_auth_done(self, response) -> None:
-        self._finish_common()
-        if not getattr(response, "success", False):
-            self._auth_session.drop_last_user_turn()
-            self._append("System", "Build failed: "
-                         + (getattr(response, "error_message", "") or "unknown error"))
-            return
-        text = SkillChatSession.interpret(response)
-        self._auth_session.record_assistant(text)
-        self._append("Authoring", text)
+    # -- the single reply seam ------------------------------------------------
 
-        block = find_dcdc_test_block(text)
-        if block:
-            self._test_block = block
-            self._awaiting_answer = False
-            self._answer.setEnabled(False)
-            self._answer_btn.setEnabled(False)
-            self._validate_and_offer()
-        else:
-            # No test yet → the skill asked a question; let the user answer.
-            self._awaiting_answer = True
-            self._answer.setEnabled(True)
-            self._answer_btn.setEnabled(True)
-            self._answer.setFocus()
+    def _on_reply(self, text: str) -> None:
+        """One authoritative-reply seam routed by stage: parse the finder list,
+        or detect the generated test block (else the skill asked a question and
+        the widget's input is live for the user to answer)."""
+        if self._stage == _STAGE_FIND:
+            self._rows = parse_finder_list(text)
+            if not self._rows:
+                self._status.setText("No power ICs parsed from the reply.")
+                return
+            for row in self._rows:
+                QListWidgetItem(
+                    f"{row.refdes} — {row.part} ({row.kind}) → {row.rail}",
+                    self._ic_list)
+            self._status.setText(f"Found {len(self._rows)} power IC(s) — pick one.")
+        elif self._stage == _STAGE_BUILD:
+            block = find_dcdc_test_block(text)
+            if block:
+                self._test_block = block
+                self._validate_and_offer()
+            else:
+                # No test yet → the skill asked a question; the widget already
+                # re-enabled its input for the user to answer via Send.
+                self._status.setText(
+                    "The skill asked a question — answer it in the chat, then "
+                    "press Enter.")
+
+    def _on_reply_failed(self, reason: str) -> None:
+        self._status.setText(reason)
+
+    def _on_busy(self, busy: bool) -> None:
+        """Gate the wizard's own stage buttons while the chat is in flight (the
+        widget self-disables its Run/Send/Stop). Create/name re-enable on idle
+        only when a validated test is ready (``_can_create``)."""
+        self._find_btn.setEnabled(not busy and bool(self._finder and self._authoring))
+        self._build_btn.setEnabled(not busy and self._picked is not None)
+        self._create_btn.setEnabled(not busy and self._can_create)
+        self._name.setEnabled(not busy and self._can_create)
 
     # -- Validation + Stage C -------------------------------------------------
 
@@ -364,6 +281,7 @@ class DcdcWizardDialog(QDialog):
         # Prefill the test name + enable Stage C (the user is the gate — a failed
         # existence check warns, it does not block writing).
         self._name.setText(f"PSU - {row.rail}")
+        self._can_create = True
         self._name.setEnabled(True)
         self._create_btn.setEnabled(True)
 
@@ -385,45 +303,23 @@ class DcdcWizardDialog(QDialog):
             result = materialize_test(target, name, self._test_block)
         except Exception:
             log.exception("dcdc-wizard materialize failed")
-            self._append("System", "Create failed — see logs.")
+            self._status.setText("Create failed — see logs.")
             return
         if result.created:
             kind = "with procedure.json" if result.json_written else "(text only — generate JSON in the editor)"
-            self._append("System", f"Created '{name}' {kind}: {result.path}")
+            self._can_create = False
             self._create_btn.setEnabled(False)
-            self._status.setText(result.message)
+            self._status.setText(f"Created '{name}' {kind}: {result.path}")
         else:
-            self._append("System", f"Not created: {result.message}")
+            self._status.setText(f"Not created: {result.message}")
 
-    # -- state / transcript ---------------------------------------------------
+    # -- state ----------------------------------------------------------------
 
     def _reset_downstream(self) -> None:
-        self._awaiting_answer = False
-        self._answer.setEnabled(False)
-        self._answer_btn.setEnabled(False)
+        self._can_create = False
         self._name.setEnabled(False)
         self._create_btn.setEnabled(False)
         self._checks_label.setText("Build a test to validate it.")
-
-    def _set_busy(self, busy: bool) -> None:
-        self._find_btn.setEnabled(not busy)
-        self._build_btn.setEnabled(not busy and self._picked is not None)
-        self._answer.setEnabled(not busy and self._awaiting_answer)
-        self._answer_btn.setEnabled(not busy and self._awaiting_answer)
-
-    def _append(self, speaker: str, text: str) -> None:
-        self._committed.append((speaker, text))
-        self._repaint()
-
-    def _repaint(self, live: str = "") -> None:
-        blocks = list(self._committed)
-        if live:
-            blocks.append(("LLM (working…)", live))
-        self._transcript.setHtml("".join(
-            f'<div style="margin:4px 0;"><b>{html.escape(sp)}:</b> '
-            f'{html.escape(tx).replace(chr(10), "<br>")}</div>' for sp, tx in blocks))
-        bar = self._transcript.verticalScrollBar()
-        bar.setValue(bar.maximum())
 
     def _fail(self, message: str) -> None:
         self._status.setText(message)
@@ -432,14 +328,7 @@ class DcdcWizardDialog(QDialog):
     # -- cleanup --------------------------------------------------------------
 
     def closeEvent(self, event):  # noqa: N802 — Qt override
-        if self._worker is not None:
-            self._worker.cancel()
-            self._worker.wait(2000)
-            self._teardown_worker()
-        if self._backend is not None and hasattr(self._backend, "stop"):
-            try:
-                self._backend.stop()
-            except Exception:
-                log.exception("dcdc-wizard backend stop failed")
-            self._backend = None
+        """Tear down the embedded chat's worker + dedicated backend (an embedded
+        QWidget's own closeEvent never fires)."""
+        self._chat.shutdown()
         super().closeEvent(event)

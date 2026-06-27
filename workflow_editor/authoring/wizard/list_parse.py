@@ -50,7 +50,7 @@ class IcRow:
 # them. The `(LDO|DC-DC)` class and the arrow are the load-bearing anchors that
 # tell a real worklist row from prose — a line lacking either never matches.
 _LINE_RE = re.compile(
-    r"(?P<refdes>(?:U|IC)\d+\w*)"          # refdes: U86, IC3, U1A
+    r"(?P<refdes>(?:U|IC)\d+\w*(?:\.\w+)?)"  # refdes: U86, IC3, U1A, U11.1, U34.3
     r"\s*[—–\-]+\s*"             # separator: em / en dash or hyphen
     r"(?P<part>.+?)"                       # part (non-greedy up to the class)
     r"\s*\(\s*(?P<kind>LDO|DC[-/]?DC)\s*\)"  # class: (LDO) / (DC-DC) / (DCDC)

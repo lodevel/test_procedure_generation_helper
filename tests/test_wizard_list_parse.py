@@ -93,3 +93,22 @@ def test_empty_input_returns_empty_list():
     assert parse_finder_list("") == []
     assert parse_finder_list(None) == []  # type: ignore[arg-type]
     assert parse_finder_list("   \n\n\t") == []
+
+
+def test_dotted_subinstance_refdes_and_spaced_parts():
+    """Real KC30 finder output: multi-output modules carry a ``.N`` sub-instance
+    refdes (U11.1, U34.3), part numbers contain spaces (``TDN 1-2411WISM``) and a
+    ``#`` (``LT8609AJDDM#TRPBF``), and a rail may be an anonymous net (NetC231.1_2).
+    The earlier regex stopped refdes at ``\\w*`` and dropped every dotted row —
+    losing the AUX modules + the TDN. All must parse."""
+    reply = (
+        "1. U5 — RBBA3000-50 (DC-DC) → +CAP_30V\n"
+        "2. U11.1 — LMZM33604RLXR (DC-DC) → +AUX0_16V\n"
+        "3. U11.2 — LMZM33604RLXR (DC-DC) → +AUX1_16V\n"
+        "8. U34.1 — TDN 1-2411WISM (DC-DC) → NetC231.1_2\n"
+        "13. U86 — LT8609AJDDM#TRPBF (DC-DC) → +MAIN_5V0\n"
+    )
+    rows = parse_finder_list(reply)
+    assert [r.refdes for r in rows] == ["U5", "U11.1", "U11.2", "U34.1", "U86"]
+    assert rows[3] == IcRow("U34.1", "TDN 1-2411WISM", "DC-DC", "NetC231.1_2")
+    assert rows[4].part == "LT8609AJDDM#TRPBF"

@@ -10,7 +10,8 @@ loader from the integration map.
 DEFERRED (intentionally NOT checked here): that the test point sits on the
 correct rail net, the enable path, and the voltage source. Phase 1 confirms only
 that the IC refdes exists, its part number matches the board's component
-property, and the named test-point node exists in the netlist.
+property, and the named rail test point (a NET name — the rail is its own probe
+point — or a ``TP*`` pad) exists in the netlist.
 """
 from __future__ import annotations
 
@@ -46,8 +47,10 @@ class BoardData(Protocol):
         ...
 
     def node_exists(self, name: str) -> bool:
-        """True when ``name`` appears as a node in the netlist (a net-node refdes
-        or a placed component refdes)."""
+        """True when ``name`` is a probe point on the board: a NET NAME (the rail
+        net is ITSELF the test point — you probe it directly; a dedicated ``TP*``
+        component is NOT required), a net-node refdes, or a placed component
+        refdes (an actual ``TP*`` pad)."""
         ...
 
 
@@ -161,11 +164,16 @@ class OdbBoardData:
                 if isinstance(props, Mapping) else []
             )
             self._parts[refdes] = " ".join(vals)
-        # node set: every placed component refdes + every net-node refdes
+        # probe-point set: every NET NAME (the rail net is itself the test point —
+        # you probe it directly, no dedicated TP* component required) + every
+        # placed component refdes + every net-node refdes (a real TP* pad).
         self._nodes: set[str] = set(self._parts)
         for net in self._board.get("nets") or ():
             if not isinstance(net, Mapping):
                 continue
+            net_name = str(net.get("net") or "")
+            if net_name:
+                self._nodes.add(net_name)
             for node in net.get("nodes") or ():
                 if isinstance(node, Mapping):
                     r = str(node.get("refdes") or "")

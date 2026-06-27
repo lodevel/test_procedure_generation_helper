@@ -130,3 +130,21 @@ def test_odb_adapter_surfaces_loader_error():
     assert bd.error == "No project open."
     assert bd.component_part("U1") is None
     assert bd.node_exists("U1") is False
+
+
+def test_rail_net_name_is_a_valid_test_point():
+    """The rail NET is itself the probe point — a ``rail_test_point`` naming a net
+    (not a ``TP*`` refdes) must PASS. Regression: ``node_exists`` knew only
+    component refdeses, so a bare rail net (e.g. ``+AUX0_16V`` on KC30, with no
+    TP* pad) always failed the rail check."""
+    board = {
+        "components": [{"refdes": "U11", "properties": {"NAME": "LMZM33604RLXR"}}],
+        "nets": [{"net": "+AUX0_16V", "nodes": [{"refdes": "U11", "pin": "24"}]}],
+        "error": "",
+    }
+    bd = OdbBoardData(board)
+    assert bd.node_exists("+AUX0_16V") is True        # the rail net IS the test point
+    by = _by_name(validate_params(
+        {"ic_refdes": "U11", "ic_part": "LMZM33604RLXR",
+         "rail_test_point": "+AUX0_16V"}, bd))
+    assert by[CHECK_RAIL_TP].passed is True

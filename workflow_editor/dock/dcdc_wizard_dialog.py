@@ -40,6 +40,7 @@ from ..authoring.wizard.list_parse import parse_finder_list, IcRow
 from ..authoring.wizard.done_signal import find_dcdc_test_block
 from ..authoring.wizard.validate import validate_params, OdbBoardData, Check
 from ..authoring.wizard.scheduler import ConcurrencyScheduler, SlotState
+from ..authoring.wizard import finder_cache
 from ..authoring.test_materializer import (
     materialize_test, update_existing_test, list_existing_tests,
 )
@@ -175,9 +176,15 @@ class _FindPage(QWizardPage):
             show_run_button=False,
         )
         rl.addWidget(self.chat, 1)
+        btn_row = QHBoxLayout()
         self._find_btn = QPushButton("🔍 Search ICs")
         self._find_btn.clicked.connect(self._on_search)
-        rl.addWidget(self._find_btn)
+        btn_row.addWidget(self._find_btn)
+        self._restart_btn = QPushButton("♻️ Restart analysis")
+        self._restart_btn.setToolTip("Wipe the cached IC list and re-run the finder.")
+        self._restart_btn.clicked.connect(self._on_restart)
+        btn_row.addWidget(self._restart_btn)
+        rl.addLayout(btn_row)
         split.addWidget(right)
         split.setSizes([300, 540])
 
@@ -190,16 +197,31 @@ class _FindPage(QWizardPage):
             self.chat.set_status("Wizard skills not found (need dcdc_finder + "
                                  "dcdc_authoring under authoring_wizards/).")
 
+    def initializePage(self) -> None:  # noqa: N802 — Qt override
+        # On open, show the CACHED IC list (when the board is unchanged) so the slow
+        # finder needn't re-run; the operator re-picks + rebuilds. Only when nothing
+        # is populated yet (a fresh session) — never clobber a live search.
+        if self._ic_list.count() == 0:
+            cached = finder_cache.load(self._wiz.project_root)
+            if cached:
+                self._populate(cached)
+                self.chat.set_status(
+                    f"Loaded {len(cached)} cached IC(s) — 'Restart analysis' to refresh.")
+
     def _on_search(self) -> None:
         if self.chat.is_busy:
             return
         self._ic_list.clear()
-        self.chat.set_skill(self._wiz.finder)
+        self.chat.set_skill(self._wiz.finder)   # fresh session each search
         self.chat.set_status("Finding power ICs…")
         self.chat.run_kickoff()
 
-    def _on_reply(self, text: str) -> None:
-        rows = parse_finder_list(text)
+    def _on_restart(self) -> None:
+        """Wipe the cached list and re-run the finder from scratch."""
+        finder_cache.clear(self._wiz.project_root)
+        self._on_search()
+
+    def _populate(self, rows: list) -> None:
         self._ic_list.clear()
         for r in rows:
             it = QListWidgetItem(f"{r.refdes} — {r.part} ({r.kind}) → {r.rail}")
@@ -207,10 +229,16 @@ class _FindPage(QWizardPage):
             it.setCheckState(Qt.CheckState.Checked)   # default ON; untick to skip
             it.setData(Qt.ItemDataRole.UserRole, r)
             self._ic_list.addItem(it)
+        self.completeChanged.emit()
+
+    def _on_reply(self, text: str) -> None:
+        rows = parse_finder_list(text)
+        self._populate(rows)
+        if rows:
+            finder_cache.save(self._wiz.project_root, rows)   # cache for next open
         self.chat.set_status(
             f"Found {len(rows)} power IC(s) — untick any you don't want, then Next."
             if rows else "No power ICs parsed — refine in the chat and search again.")
-        self.completeChanged.emit()
 
     def checked_rows(self) -> list:
         out = []
@@ -245,7 +273,6 @@ class _BuildPage(QWizardPage):
         self.setSubTitle("Builds run in parallel up to the cap; the rest queue. "
                          "Validate or abandon each — answers respect the cap too.")
         self._panels: dict[str, _IcPanel] = {}
-        self._built_keys: tuple = ()
         self._scheduler = ConcurrencyScheduler(_PARALLEL_DEFAULT)
 
         top = QHBoxLayout()
@@ -276,20 +303,42 @@ class _BuildPage(QWizardPage):
     # -- lifecycle ------------------------------------------------------------
 
     def initializePage(self) -> None:  # noqa: N802 — Qt override
-        keys = tuple(r.refdes for r in self._wiz.checked)
-        if keys == self._built_keys and self._panels:
-            return  # same selection → keep the in-progress builds
-        self._teardown_panels()
-        self._wiz.accepted.clear()  # a changed selection invalidates prior accepts
-        self._built_keys = keys
-        for row in self._wiz.checked:
+        """INCREMENTAL: a changed IC selection (e.g. Back to tick a forgotten IC)
+        adds only the new builds and drops only the de-selected ones — every
+        unaffected build keeps running and every prior accept survives. Same
+        scheduler instance throughout, so kept builds keep their slots."""
+        new_rows = list(self._wiz.checked)
+        new_set = {r.refdes for r in new_rows}
+        if set(self._panels) == new_set and self._panels:
+            return  # selection unchanged → keep everything exactly as-is
+        # Drop de-selected ICs only (frees their slots, forgets their accept).
+        for key in list(self._panels):
+            if key not in new_set:
+                self._teardown_one(key)
+                self._wiz.accepted.pop(key, None)
+        # Add newly-checked ICs.
+        added = [r for r in new_rows if r.refdes not in self._panels]
+        for row in added:
             self._add_panel(row)
-        # Kick every build off through the scheduler (cap fire now, rest queue).
-        for row in self._wiz.checked:
+        self._rebuild_layout([r.refdes for r in new_rows])
+        # Kick off ONLY the new builds; kept ones keep their in-flight state.
+        for row in added:
             self._panels[row.refdes].chat.run_kickoff(priming=_priming(row))
         self._refresh()
-        if self._ic_list.count():
+        if self._ic_list.count() and self._ic_list.currentRow() < 0:
             self._ic_list.setCurrentRow(0)
+
+    def _rebuild_layout(self, order: list) -> None:
+        """Re-seat the list + stack in checked ``order``, REUSING surviving panel
+        widgets (removed ones were already deleteLater'd, so detaching them from
+        the stack here is safe)."""
+        while self._stack.count():
+            self._stack.removeWidget(self._stack.widget(0))
+        self._ic_list.clear()
+        self._panels = {k: self._panels[k] for k in order}
+        for key in order:
+            self._stack.addWidget(self._panels[key])
+            self._ic_list.addItem(QListWidgetItem(key))
 
     def _add_panel(self, row: IcRow) -> None:
         key = row.refdes
@@ -312,10 +361,7 @@ class _BuildPage(QWizardPage):
         chat.reply_finished.connect(lambda t, k=key: self._on_reply(k, t))
         chat.reply_failed.connect(lambda r, k=key: self._on_failed(k, r))
         chat.busy_changed.connect(lambda b, k=key: self._on_busy(k, b))
-        self._panels[key] = panel
-        self._stack.addWidget(panel)
-        item = QListWidgetItem(key)
-        self._ic_list.addItem(item)
+        self._panels[key] = panel  # layout is (re)built by _rebuild_layout
 
     # -- scheduler gate + completion -----------------------------------------
 
@@ -435,27 +481,36 @@ class _BuildPage(QWizardPage):
 
     # -- teardown -------------------------------------------------------------
 
-    def _teardown_panels(self) -> None:
-        for panel in self._panels.values():
-            # Disconnect FIRST: if a worker thread outlives the 2 s shutdown wait,
-            # a late busy_changed/reply_* must NOT run page logic against the new
-            # scheduler/panels we're about to build.
-            for sig in (panel.chat.busy_changed, panel.chat.reply_finished,
-                        panel.chat.reply_failed):
-                try:
-                    sig.disconnect()
-                except (RuntimeError, TypeError):
-                    pass
+    def _teardown_one(self, key: str) -> None:
+        """Fully drop ONE panel: disconnect its signals FIRST (so a late worker
+        signal — if a thread outlives the 2 s shutdown wait — can't run page logic
+        against the rebuilt page), cancel/stop its build (freeing its slot), shut
+        the chat down, and delete the widget. Used by incremental-remove + close."""
+        panel = self._panels.pop(key, None)
+        if panel is None:
+            return
+        for sig in (panel.chat.busy_changed, panel.chat.reply_finished,
+                    panel.chat.reply_failed):
             try:
-                panel.chat.shutdown()
-            except Exception:  # noqa: BLE001
-                log.exception("dcdc-wizard: build panel shutdown failed")
+                sig.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+        self._scheduler.cancel(key)            # drop it if still queued
+        if panel.chat.is_busy:
+            panel.chat.stop()                  # stop a running turn → frees its slot
+        try:
+            panel.chat.shutdown()
+        except Exception:  # noqa: BLE001
+            log.exception("dcdc-wizard: build panel shutdown failed")
+        panel.deleteLater()
+
+    def _teardown_panels(self) -> None:
+        """Full teardown (dialog close): drop every panel + reset the scheduler."""
+        for key in list(self._panels):
+            self._teardown_one(key)
         while self._stack.count():
-            w = self._stack.widget(0)
-            self._stack.removeWidget(w)
-            w.deleteLater()
+            self._stack.removeWidget(self._stack.widget(0))
         self._ic_list.clear()
-        self._panels.clear()
         self._scheduler = ConcurrencyScheduler(self._cap_spin.value())
 
     def shutdown(self) -> None:

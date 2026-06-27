@@ -231,7 +231,26 @@ def materialize_test(
             None, False, False, f"Could not create test folder '{candidate}'."
         )
 
-    # --- write procedure_text.md (completed document; body verbatim) ------
+    return _write_documents(
+        folder, procedure_text, project_root,
+        name=candidate, test_id=test_id, is_new=True)
+
+
+def _write_documents(
+    folder: Path,
+    procedure_text: str,
+    project_root: Optional[Path],
+    *,
+    name: str,
+    is_new: bool,
+    test_id: Optional[str] = None,
+) -> MaterializeResult:
+    """Write ``procedure_text.md`` (body verbatim, completed) + best-effort
+    ``procedure.json`` into an EXISTING ``folder``. Shared by create-new
+    (:func:`materialize_test`) and update-existing (:func:`update_existing_test`)
+    so the document-completion + parser path can't drift between them. Never
+    writes an empty/placeholder json (see the module docstring)."""
+    test_id = test_id or _make_test_id(folder.name)
     final_text = _ensure_parseable_document(procedure_text or "", test_id, project_root)
 
     from workflow_editor.core.artifact_manager import ArtifactManager, ArtifactType
@@ -241,9 +260,9 @@ def materialize_test(
     am.set_content(ArtifactType.PROCEDURE_TEXT, final_text)
     am.save_artifact(ArtifactType.PROCEDURE_TEXT)
 
-    # --- best-effort procedure.json ---------------------------------------
+    verb = "Created" if is_new else "Updated"
     json_written = False
-    message = f"Created test '{candidate}' (procedure_text.md only)."
+    message = f"{verb} test '{name}' (procedure_text.md only)."
     try:
         from workflow_editor.llm import pack_parsers
 
@@ -251,9 +270,37 @@ def materialize_test(
         am.set_json_from_dict(procedure_json)
         am.save_artifact(ArtifactType.PROCEDURE_JSON)
         json_written = True
-        message = f"Created test '{candidate}' with procedure_text.md + procedure.json."
+        message = f"{verb} test '{name}' with procedure_text.md + procedure.json."
     except Exception as exc:  # noqa: BLE001 — ParserUnavailable/ParseFailure/etc.
         # Keep the test text-only; do NOT write an empty/placeholder json.
         log.debug("procedure.json skipped during materialize: %s", exc)
 
     return MaterializeResult(folder, True, json_written, message)
+
+
+def update_existing_test(
+    project_or_tests_dir: object, name: str, procedure_text: str
+) -> MaterializeResult:
+    """Overwrite an EXISTING test's ``procedure_text.md`` (+ best-effort json) with
+    the authored body — the wizard's P3 *update* target. Fails cleanly when no test
+    named ``name`` exists (the dropdown only offers real ones, but guard anyway)."""
+    tests_dir, project_root, _create = _resolve_target(project_or_tests_dir)
+    if tests_dir is None:
+        return MaterializeResult(None, False, False, "No tests/ directory available.")
+    folder = tests_dir / name
+    if not folder.is_dir():
+        return MaterializeResult(None, False, False, f"Test '{name}' not found.")
+    return _write_documents(
+        folder, procedure_text, project_root, name=name, is_new=False)
+
+
+def list_existing_tests(project_or_tests_dir: object) -> list:
+    """Existing test-folder names under the project's ``tests/`` dir (sorted) — the
+    P3 'update an existing test' dropdown choices. Empty list on any failure."""
+    tests_dir, _root, _create = _resolve_target(project_or_tests_dir)
+    if tests_dir is None:
+        return []
+    try:
+        return sorted(p.name for p in tests_dir.iterdir() if p.is_dir())
+    except Exception:  # noqa: BLE001
+        return []

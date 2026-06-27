@@ -116,6 +116,7 @@ class SkillChatWidget(QWidget):
         backend_tab_id: str = "skill_chat",
         show_skill_selector: bool = True,
         show_run_button: bool = True,
+        dispatch_gate=None,
         parent=None,
     ) -> None:
         """
@@ -135,6 +136,13 @@ class SkillChatWidget(QWidget):
                 when the host switches the skill programmatically.
             show_run_button: Show the *Run skill* button. False when the host
                 drives the kickoff from its own stage buttons.
+            dispatch_gate: Optional ``gate(fire, *, interactive)`` callable. When
+                set, EVERY fire (kickoff + user send) is routed through it instead
+                of firing immediately — the DCDC wizard's concurrency scheduler,
+                which calls ``fire`` now (slot free) or stores it to fire later
+                (queued). ``interactive`` is True for a user answer (may jump the
+                queue), False for an initial build. None → fire at once (the
+                Skills-menu chat path, unchanged).
             parent: Parent widget.
         """
         super().__init__(parent)
@@ -144,6 +152,7 @@ class SkillChatWidget(QWidget):
         self._backend_tab_id = backend_tab_id
         self._show_skill_selector = show_skill_selector
         self._show_run_button = show_run_button
+        self._dispatch_gate = dispatch_gate
         self._session = SkillChatSession(self._skill)
 
         # Lazily-created dedicated backend + the in-flight worker.
@@ -402,6 +411,13 @@ class SkillChatWidget(QWidget):
         send path instead of ``assemble(picker.selections())``."""
         self._pushed_context = text or ""
 
+    def resolved_context(self) -> str:
+        """The context string this widget would send right now — the picker's
+        assembled selection (when it has a picker) or the host's pushed string.
+        Hosts read this to PROPAGATE one widget's chosen context to another: the
+        DCDC wizard hands P1's picker selection to every per-IC build chat."""
+        return self._resolve_context()
+
     def run_kickoff(self, priming: str = "") -> None:
         """Start the skill with the resolved context (Run path). A non-empty
         ``priming`` is sent as the opening turn (e.g. "build the test for U86" so
@@ -418,7 +434,7 @@ class SkillChatWidget(QWidget):
             self._append_line("You", priming)
         else:
             prompt = self._session.kickoff()
-        self._dispatch(prompt)
+        self._dispatch(prompt, interactive=False)  # an initial build (not a user answer)
 
     def send_user_turn(self, text: str) -> None:
         """Send a refine turn (programmatic twin of ``_on_send`` minus reading the
@@ -433,7 +449,7 @@ class SkillChatWidget(QWidget):
         self._session.set_context(self._resolve_context())
         prompt = self._session.start_user_turn(text)
         self._append_line("You", text)
-        self._dispatch(prompt)
+        self._dispatch(prompt, interactive=True)  # a user answer/refine: may jump the queue
 
     def clear(self) -> None:
         """Trash: cancel any in-flight send, start a FRESH session (same skill),
@@ -467,6 +483,12 @@ class SkillChatWidget(QWidget):
             except Exception:
                 log.exception("skill-chat backend stop failed")
             self._backend = None
+
+    def stop(self) -> None:
+        """Public Stop: cancel the in-flight turn (host-facing). The wizard's
+        *Abandon* calls this to halt a running build. No-op when idle or merely
+        queued (no worker yet) — the host cancels the queued fire on its side."""
+        self._on_stop()
 
     def set_input_placeholder(self, text: str) -> None:
         """Tailor the input box's prompt hint (host-facing convenience)."""
@@ -566,8 +588,29 @@ class SkillChatWidget(QWidget):
         self._input.clear()
         self.send_user_turn(message)
 
-    def _dispatch(self, prompt: str) -> None:
-        """Send a built prompt on a worker thread (shared by Run + Send)."""
+    def _dispatch(self, prompt: str, *, interactive: bool = True) -> None:
+        """Fire a built turn (shared by Run + Send). With a ``dispatch_gate`` set
+        (the wizard's scheduler) the actual fire is routed through it — run now or
+        queued — and the widget LOCKS immediately (``_set_busy`` disables input +
+        Send) so no second turn is submitted while one is pending; with no gate it
+        fires at once (the Skills-menu chat path)."""
+        self._set_busy(True)  # pending OR running: lock the UI, block a re-submit
+        try:
+            if self._dispatch_gate is not None:
+                self._dispatch_gate(lambda: self._really_dispatch(prompt),
+                                    interactive=interactive)
+            else:
+                self._really_dispatch(prompt)
+        except Exception:
+            # A synchronous dispatch/setup failure (the scheduler already released
+            # any slot it took) must not leave the widget locked with no worker.
+            log.exception("skill-chat dispatch failed")
+            self._set_busy(False)
+            self._status.setText("Failed to start — see logs.")
+
+    def _really_dispatch(self, prompt: str) -> None:
+        """Build the worker and start streaming — the actual fire, run immediately
+        or released later by the gate. Assumes the UI is already locked busy."""
         backend = self._ensure_backend()
         self._ensure_session()
 
@@ -592,7 +635,6 @@ class SkillChatWidget(QWidget):
         self._worker.error.connect(self._on_error)
 
         self._stream_buffer = ""
-        self._set_busy(True)
         self._work_timer.start()
         self._worker.start()
 

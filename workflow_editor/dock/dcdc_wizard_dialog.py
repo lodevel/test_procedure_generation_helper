@@ -190,14 +190,6 @@ class _FindPage(QWizardPage):
 
         lay = QVBoxLayout(self)
         lay.addWidget(split)
-        cm_row = QHBoxLayout()
-        cm_row.addWidget(QLabel("Common instructions for all builds:"))
-        self._common = QLineEdit()
-        self._common.setPlaceholderText(
-            "shared answer prepended to every build — e.g. use P4/P2 as the PSU "
-            "connectors, 10 A limit")
-        cm_row.addWidget(self._common, 1)
-        lay.addLayout(cm_row)
 
         self.chat.reply_finished.connect(self._on_reply)
         if not (wiz.finder and wiz.authoring):
@@ -263,7 +255,6 @@ class _FindPage(QWizardPage):
         # Hand the checked rows + the chat's chosen context to the wizard for P2.
         self._wiz.checked = self.checked_rows()
         self._wiz.context = self.chat.resolved_context()
-        self._wiz.common_message = self._common.text().strip()
         return True
 
     def shutdown(self) -> None:
@@ -279,12 +270,18 @@ class _BuildPage(QWizardPage):
         super().__init__()
         self._wiz = wiz
         self.setTitle("2 · Build the tests")
-        self.setSubTitle("Builds run in parallel up to the cap; the rest queue. "
-                         "Validate or abandon each — answers respect the cap too.")
+        self.setSubTitle("Set the common instructions, then 🔨 Build all. Builds run "
+                         "in parallel up to the cap; validate / abandon each (switchable "
+                         "until Finish).")
         self._panels: dict[str, _IcPanel] = {}
         self._scheduler = ConcurrencyScheduler(_PARALLEL_DEFAULT)
 
         top = QHBoxLayout()
+        self._build_btn = QPushButton("🔨 Build all")
+        self._build_btn.setToolTip("Launch the not-yet-started builds with the common "
+                                   "instructions below.")
+        self._build_btn.clicked.connect(self._on_build_all)
+        top.addWidget(self._build_btn)
         top.addWidget(QLabel("Parallel builds:"))
         self._cap_spin = QSpinBox()
         self._cap_spin.setRange(1, _PARALLEL_MAX)
@@ -297,6 +294,14 @@ class _BuildPage(QWizardPage):
         self._summary.setStyleSheet(f"color:{theme.muted_color()};")
         top.addWidget(self._summary, 1)
 
+        cm_row = QHBoxLayout()
+        cm_row.addWidget(QLabel("Common instructions for all builds:"))
+        self._common = QLineEdit()
+        self._common.setPlaceholderText(
+            "shared answer prepended to every build — e.g. use P4/P2 as the PSU "
+            "connectors, 10 A limit")
+        cm_row.addWidget(self._common, 1)
+
         split = QSplitter(Qt.Orientation.Horizontal)
         self._ic_list = QListWidget()
         self._ic_list.currentRowChanged.connect(self._on_select)
@@ -307,17 +312,28 @@ class _BuildPage(QWizardPage):
 
         lay = QVBoxLayout(self)
         lay.addLayout(top)
+        lay.addLayout(cm_row)
         lay.addWidget(split, 1)
 
     # -- lifecycle ------------------------------------------------------------
 
     def _priming_for(self, row: IcRow) -> str:
-        """The IC's opening message + the shared 'common instructions' (e.g. P4/P2
-        PSU connectors, 10 A limit) so every build gets the standard answers up
-        front instead of each one stopping to ask."""
+        """The IC's opening message + the shared 'common instructions' from THIS
+        page's box (e.g. P4/P2 PSU connectors, 10 A limit) so every build gets the
+        standard answers up front instead of each one stopping to ask."""
         base = _priming(row)
-        cm = (self._wiz.common_message or "").strip()
+        cm = (self._common.text() or "").strip()
         return f"{base}\n\n{cm}" if cm else base
+
+    def _on_build_all(self) -> None:
+        """Launch every NOT-yet-started (pending) build with the common message.
+        Already running / built / decided panels are left untouched."""
+        launched = 0
+        for panel in self._panels.values():
+            if panel.phase == _PENDING:
+                panel.chat.run_kickoff(priming=self._priming_for(panel.row))
+                launched += 1
+        self._refresh()
 
     def initializePage(self) -> None:  # noqa: N802 — Qt override
         """INCREMENTAL: a changed IC selection (e.g. Back to tick a forgotten IC)
@@ -338,9 +354,8 @@ class _BuildPage(QWizardPage):
         for row in added:
             self._add_panel(row)
         self._rebuild_layout([r.refdes for r in new_rows])
-        # Kick off ONLY the new builds; kept ones keep their in-flight state.
-        for row in added:
-            self._panels[row.refdes].chat.run_kickoff(priming=self._priming_for(row))
+        # NEW builds arrive PENDING — the operator sets the common instructions then
+        # clicks "🔨 Build all" to launch them; kept builds keep their in-flight state.
         self._refresh()
         if self._ic_list.count() and self._ic_list.currentRow() < 0:
             self._ic_list.setCurrentRow(0)
@@ -397,16 +412,17 @@ class _BuildPage(QWizardPage):
 
     def _on_reply(self, key: str, text: str) -> None:
         panel = self._panels.get(key)
-        if panel is None or panel.phase in _TERMINAL:
+        if panel is None:
             return
         block = find_dcdc_test_block(text)
         if block:
-            panel.test_block = block
+            panel.test_block = block          # a refine updates the test even post-decision
             panel.test_view.setPlainText(block)
-            panel.phase = _READY
             panel.validate_btn.setEnabled(True)
-            panel.status.setText("Test ready — Validate or refine in the chat.")
-        else:
+            if panel.phase not in _TERMINAL:   # don't override the user's accept/abandon
+                panel.phase = _READY
+                panel.status.setText("Test ready — Validate / Abandon, or refine in chat.")
+        elif panel.phase not in _TERMINAL:
             panel.phase = _NEEDS_INPUT
             panel.status.setText("The skill asked a question — answer it in the chat.")
         _alert()
@@ -421,21 +437,20 @@ class _BuildPage(QWizardPage):
     # -- user actions ---------------------------------------------------------
 
     def _on_validate(self, key: str) -> None:
+        """ACCEPT (snapshot the current test). NOT final — Abandon stays live and a
+        chat refine can still update the test, so you can switch until Finish."""
         panel = self._panels.get(key)
         if panel is None or not panel.test_block:
             return
-        # Stop any queued/running refine so it can't run a turn AFTER acceptance
-        # (it would burn a slot and mutate the now-accepted panel's session).
-        self._scheduler.cancel(key)
-        if panel.chat.is_busy:
-            panel.chat.stop()
         panel.phase = _ACCEPTED
         self._wiz.accepted[key] = (panel.row, panel.test_block)
-        self._lock_panel(panel)
+        panel.status.setText("Accepted — Abandon to drop it, or refine + re-Validate.")
         self._refresh()
         self.completeChanged.emit()
 
     def _on_abandon(self, key: str) -> None:
+        """ABANDON — drop the accept + stop any in-flight build (frees its slot).
+        Reversible: Validate re-accepts while a test still exists."""
         panel = self._panels.get(key)
         if panel is None:
             return
@@ -444,14 +459,9 @@ class _BuildPage(QWizardPage):
         if panel.chat.is_busy:
             panel.chat.stop()                 # stop a running turn → frees its slot
         self._wiz.accepted.pop(key, None)
-        self._lock_panel(panel)
+        panel.status.setText("Abandoned — Validate to re-accept (if a test exists).")
         self._refresh()
         self.completeChanged.emit()
-
-    def _lock_panel(self, panel: _IcPanel) -> None:
-        panel.validate_btn.setEnabled(False)
-        panel.abandon_btn.setEnabled(False)
-        panel.chat.setEnabled(False)
 
     # -- capacity -------------------------------------------------------------
 
@@ -483,7 +493,9 @@ class _BuildPage(QWizardPage):
             badge = self._badge_of(panel)
             counts[badge] = counts.get(badge, 0) + 1
             icon, label = _BADGE.get(badge, ("•", badge))
-            self._ic_list.item(i).setText(f"{icon} {key} — {label}")
+            r = panel.row
+            self._ic_list.item(i).setText(
+                f"{icon} {key}  {r.part} → {r.rail}  [{label}]")
         order = ["running", "queued", _NEEDS_INPUT, _READY, _ACCEPTED, _ABANDONED]
         parts = [f"{_BADGE[k][0]} {counts[k]} {_BADGE[k][1]}" for k in order if counts.get(k)]
         self._summary.setText("   ".join(parts))

@@ -1,7 +1,9 @@
 """Tests for the DCDC finder worklist parser (wizard/list_parse.py)."""
 from __future__ import annotations
 
-from workflow_editor.authoring.wizard.list_parse import IcRow, parse_finder_list
+from workflow_editor.authoring.wizard.list_parse import (
+    IcRow, parse_finder_list, parse_classifier_list, parse_rail_reply,
+)
 
 
 # A realistic finder reply: intro prose, a header, a numbered list mixing LDO and
@@ -112,3 +114,51 @@ def test_dotted_subinstance_refdes_and_spaced_parts():
     assert [r.refdes for r in rows] == ["U5", "U11.1", "U11.2", "U34.1", "U86"]
     assert rows[3] == IcRow("U34.1", "TDN 1-2411WISM", "DC-DC", "NetC231.1_2")
     assert rows[4].part == "LT8609AJDDM#TRPBF"
+
+
+# --- V2 classifier output (NO rail) ----------------------------------------- #
+
+def test_classifier_list_parses_without_rail():
+    reply = (
+        "I walked the whole BOM. Power ICs:\n"
+        "1. U5 — RBBA3000-50 (DC-DC)\n"
+        "2. `U86` — LMZM33604RLXR (LDO)\n"
+        "3. U11.1 — TPS62933 (DCDC)\n"
+        "U7 is the MCU (excluded).\n"
+    )
+    rows = parse_classifier_list(reply)
+    assert rows == [
+        IcRow("U5", "RBBA3000-50", "DC-DC", ""),
+        IcRow("U86", "LMZM33604RLXR", "LDO", ""),
+        IcRow("U11.1", "TPS62933", "DC-DC", ""),
+    ]
+
+
+def test_classifier_tolerates_a_finder_style_line_dropping_rail():
+    # A line that DOES carry a rail still parses; the rail is dropped (read later).
+    assert parse_classifier_list("U5 — RBBA3000 (DC-DC) → +CAP_30V") == [
+        IcRow("U5", "RBBA3000", "DC-DC", "")]
+
+
+def test_classifier_dedups_repeated_refdes():
+    assert parse_classifier_list("U5 — X (LDO)\nU5 — X (LDO)") == [IcRow("U5", "X", "LDO", "")]
+
+
+def test_classifier_empty_and_excluded():
+    assert parse_classifier_list("") == []
+    assert parse_classifier_list(None) == []  # type: ignore[arg-type]
+    assert parse_classifier_list("U7 — STM32 (MCU)") == []   # non LDO/DC-DC class
+
+
+# --- V2 per-IC turn-1 rail reply -------------------------------------------- #
+
+def test_rail_reply_extracts_net_after_arrow():
+    assert parse_rail_reply("U5 → +CAP_30V ; pin 11 is +Vout on +IN_28V.4") == "+CAP_30V"
+    assert parse_rail_reply("U5 -> +IN_28V.4") == "+IN_28V.4"
+    assert parse_rail_reply("`U86` → `+MAIN_5V0`") == "+MAIN_5V0"
+
+
+def test_rail_reply_empty_when_no_arrow():
+    assert parse_rail_reply("no arrow here") == ""
+    assert parse_rail_reply("") == ""
+    assert parse_rail_reply(None) == ""  # type: ignore[arg-type]

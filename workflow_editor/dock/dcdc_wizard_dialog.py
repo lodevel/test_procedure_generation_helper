@@ -190,6 +190,14 @@ class _FindPage(QWizardPage):
 
         lay = QVBoxLayout(self)
         lay.addWidget(split)
+        cm_row = QHBoxLayout()
+        cm_row.addWidget(QLabel("Common instructions for all builds:"))
+        self._common = QLineEdit()
+        self._common.setPlaceholderText(
+            "shared answer prepended to every build — e.g. use P4/P2 as the PSU "
+            "connectors, 10 A limit")
+        cm_row.addWidget(self._common, 1)
+        lay.addLayout(cm_row)
 
         self.chat.reply_finished.connect(self._on_reply)
         if not (wiz.finder and wiz.authoring):
@@ -255,6 +263,7 @@ class _FindPage(QWizardPage):
         # Hand the checked rows + the chat's chosen context to the wizard for P2.
         self._wiz.checked = self.checked_rows()
         self._wiz.context = self.chat.resolved_context()
+        self._wiz.common_message = self._common.text().strip()
         return True
 
     def shutdown(self) -> None:
@@ -302,6 +311,14 @@ class _BuildPage(QWizardPage):
 
     # -- lifecycle ------------------------------------------------------------
 
+    def _priming_for(self, row: IcRow) -> str:
+        """The IC's opening message + the shared 'common instructions' (e.g. P4/P2
+        PSU connectors, 10 A limit) so every build gets the standard answers up
+        front instead of each one stopping to ask."""
+        base = _priming(row)
+        cm = (self._wiz.common_message or "").strip()
+        return f"{base}\n\n{cm}" if cm else base
+
     def initializePage(self) -> None:  # noqa: N802 — Qt override
         """INCREMENTAL: a changed IC selection (e.g. Back to tick a forgotten IC)
         adds only the new builds and drops only the de-selected ones — every
@@ -323,7 +340,7 @@ class _BuildPage(QWizardPage):
         self._rebuild_layout([r.refdes for r in new_rows])
         # Kick off ONLY the new builds; kept ones keep their in-flight state.
         for row in added:
-            self._panels[row.refdes].chat.run_kickoff(priming=_priming(row))
+            self._panels[row.refdes].chat.run_kickoff(priming=self._priming_for(row))
         self._refresh()
         if self._ic_list.count() and self._ic_list.currentRow() < 0:
             self._ic_list.setCurrentRow(0)
@@ -632,6 +649,7 @@ class DcdcWizardDialog(QWizard):
         # Shared state across pages.
         self.checked: list = []
         self.context: str = ""
+        self.common_message: str = ""   # appended to EVERY build's priming
         self.accepted: dict = {}   # refdes -> (IcRow, test_block)
 
         self.setWindowTitle("DCDC test wizard")

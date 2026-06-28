@@ -39,15 +39,19 @@ def install_skills_menu(main_window) -> None:
     """Add a **Skills** menu to ``main_window``, repopulated each time it opens
     (so freshly-dropped skills appear without a restart)."""
     mb = main_window.menuBar()
-    menu = mb.addMenu("S&kills")
-    # Keep Help rightmost (standard convention): move the Skills menu just before it.
     help_act = next((a for a in mb.actions()
                      if a.menu() is not None and a.text().replace("&", "") == "Help"), None)
-    if help_act is not None:
-        mb.removeAction(menu.menuAction())
-        mb.insertMenu(help_act, menu)
-    menu.aboutToShow.connect(lambda: _populate(main_window, menu))
-    _populate(main_window, menu)
+
+    def _add_before_help(title, populate):
+        menu = mb.addMenu(title)
+        if help_act is not None:                 # keep Help rightmost (convention)
+            mb.removeAction(menu.menuAction())
+            mb.insertMenu(help_act, menu)
+        menu.aboutToShow.connect(lambda: populate(main_window, menu))
+        populate(main_window, menu)
+
+    _add_before_help("S&kills", _populate)
+    _add_before_help("&Wizards", _populate_wizards)
 
 
 # --------------------------------------------------------------------------- #
@@ -80,21 +84,7 @@ def _populate(main_window, menu) -> None:
         hint.setEnabled(False)
         menu.addAction(hint)
 
-    # The DCDC test wizard (Phase 1: single IC). Driven by the WIZARD-scoped
-    # skills (dcdc_classifier + dcdc_authoring), discovered separately from the chat
-    # skills above so they never appear in the Skill-chat list.
-    try:
-        wiz_count = len(load_wizards(project_root=_project_root(main_window)))
-    except Exception:  # noqa: BLE001 — discovery must never break the menu
-        log.exception("wizard discovery failed")
-        wiz_count = 0
-    wiz_act = QAction("DCDC test wizard…", menu)
-    wiz_act.setEnabled(wiz_count > 0)
-    wiz_act.setToolTip("Find a power IC, build its scope test, validate it against "
-                       "the netlist, and add it to the project.")
-    wiz_act.triggered.connect(lambda: _launch_dcdc_wizard(main_window))
-    menu.addAction(wiz_act)
-
+    # (Wizards live in their OWN top-level menu now — see _populate_wizards.)
     menu.addSeparator()
     open_act = QAction("Open skills folder…", menu)
     open_act.triggered.connect(lambda: _open_skills_folder(main_window))
@@ -227,6 +217,47 @@ def _launch_dcdc_wizard(main_window) -> None:
     dlg.show()
     dlg.raise_()
     dlg.activateWindow()
+
+
+def _dcdc_available(main_window) -> bool:
+    """The DCDC wizard needs its wizard-scoped skills (dcdc_classifier + dcdc_authoring)."""
+    try:
+        return len(load_wizards(project_root=_project_root(main_window))) > 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+# Wizard FLOWS are a discoverable LIST (like skills) under the top-level Wizards menu —
+# adding a wizard = appending here, never a per-wizard menu or a hardcoded item.
+_WIZARD_FLOWS = [
+    {
+        "label": "DCDC test wizard…",
+        "tooltip": ("Find a power IC, build its scope test, validate it against the "
+                    "netlist, and add it to the project."),
+        "available": _dcdc_available,
+        "launch": _launch_dcdc_wizard,
+    },
+]
+
+
+def _populate_wizards(main_window, menu) -> None:
+    """Render the Wizards menu from ``_WIZARD_FLOWS`` (repopulated on open)."""
+    menu.clear()
+    if not _WIZARD_FLOWS:
+        act = QAction("(no wizards available)", menu)
+        act.setEnabled(False)
+        menu.addAction(act)
+        return
+    for flow in _WIZARD_FLOWS:
+        act = QAction(flow["label"], menu)
+        try:
+            act.setEnabled(flow["available"](main_window))
+        except Exception:  # noqa: BLE001 — availability must never break the menu
+            log.exception("wizard availability check failed")
+            act.setEnabled(False)
+        act.setToolTip(flow["tooltip"])
+        act.triggered.connect(lambda _=False, f=flow: f["launch"](main_window))
+        menu.addAction(act)
 
 
 def _launch_chat(main_window) -> None:

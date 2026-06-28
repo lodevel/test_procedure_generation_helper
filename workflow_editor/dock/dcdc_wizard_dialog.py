@@ -7,7 +7,7 @@ FOUR pages, Next → Next → Next → Finish:
                 rail) on the left. Next unlocks once ≥1 IC is checked.
   P2 Rail-ID  — the HUMAN GATE on the rail-read. One HEADLESS per-IC session reads
                 each IC's rail (turn 1); the list fills in progressively
-                (``→ ⏳ reading…`` → ``→ +CAP_30V``). The operator REVIEWS each rail
+                (``→ ⏳ reading…`` → ``→ +SYS_12V``). The operator REVIEWS each rail
                 and can CORRECT a bad one (edit inline, or re-ask the session), then
                 ticks which to build. Next unlocks once every checked IC has a rail.
   P3 Build    — the SAME per-IC sessions (re-parented in) build the test (turn 2),
@@ -85,7 +85,7 @@ _BADGE = {
 
 def _rail_priming(row: IcRow, common: str = "") -> str:
     """Turn-1 message: hand the per-IC skill its IC and ask ONLY for the rail. The shared
-    'common instructions' (e.g. 'the input bus is +CAP_30V') ride along so every rail-read
+    'common instructions' (e.g. 'the input bus is +SYS_12V') ride along so every rail-read
     gets the same standing hints — the P2 twin of the P3 build common."""
     base = (f"Read the output rail of {row.refdes} — {row.part} ({row.kind}). "
             f"This is TURN 1: reply with ONLY the rail as `{row.refdes} → <rail>`. "
@@ -387,7 +387,7 @@ class _RailPage(QWizardPage):
         cm_row.addWidget(QLabel("Common instructions for all rail-reads:"))
         self._common = QLineEdit()
         self._common.setPlaceholderText(
-            "shared hint prepended to every rail-read — e.g. the input bus is +CAP_30V")
+            "shared hint prepended to every rail-read — e.g. the input bus is +SYS_12V")
         cm_row.addWidget(self._common, 1)
         split = QSplitter(Qt.Orientation.Horizontal)
         self._ic_list = QListWidget()

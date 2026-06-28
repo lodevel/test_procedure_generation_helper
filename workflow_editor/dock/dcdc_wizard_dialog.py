@@ -75,7 +75,7 @@ _BADGE = {
     "queued": ("⏳", "queued"),
     _PENDING: ("•", "pending"),
     _RAILED: ("🔌", "railed"),
-    _RAIL_FAILED: ("⚠️", "rail?"),
+    _RAIL_FAILED: ("⚠️", "unsure — see chat"),
     _NEEDS_INPUT: ("❓", "needs input"),
     _READY: ("📋", "ready"),
     _ACCEPTED: ("✅", "accepted"),

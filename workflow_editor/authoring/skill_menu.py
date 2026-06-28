@@ -74,7 +74,7 @@ def _populate(main_window, menu) -> None:
         menu.addAction(hint)
 
     # The DCDC test wizard (Phase 1: single IC). Driven by the WIZARD-scoped
-    # skills (dcdc_finder + dcdc_authoring), discovered separately from the chat
+    # skills (dcdc_classifier + dcdc_authoring), discovered separately from the chat
     # skills above so they never appear in the Skill-chat list.
     try:
         wiz_count = len(load_wizards(project_root=_project_root(main_window)))

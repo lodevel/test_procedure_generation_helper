@@ -525,6 +525,16 @@ class SettingsDialog(QDialog):
         self.opencode_startup_timeout.setToolTip("Timeout for backend startup")
         opencode_layout.addRow("Startup Timeout:", self.opencode_startup_timeout)
 
+        self.wizard_max_sessions = QSpinBox()
+        self.wizard_max_sessions.setRange(1, 16)
+        self.wizard_max_sessions.setValue(5)
+        self.wizard_max_sessions.setToolTip(
+            "Max concurrent LLM sessions the DCDC wizard runs in parallel "
+            "(per-IC rail-reads / builds); the wizard Parallel spin-box "
+            "defaults to this.")
+        opencode_layout.addRow(
+            "Wizard max concurrent sessions:", self.wizard_max_sessions)
+
         # The editor's MASTER blueprint (master.json) — providers only, project
         # agnostic. The per-launch opencode.json is DERIVED from it (MCP built
         # fresh) at each launch. Generated once from the project; user-editable.
@@ -1162,6 +1172,11 @@ class SettingsDialog(QDialog):
         self.project_tools_default.setChecked(
             opencode.get("project_tools_default", False))
 
+        # Wizard settings
+        wizard = self._settings.get("wizard", {})
+        self.wizard_max_sessions.setValue(
+            int(wizard.get("max_concurrent_sessions", 5)))
+
 
         # Update visibility
         self._on_backend_changed(self.backend_combo.currentText())
@@ -1201,6 +1216,9 @@ class SettingsDialog(QDialog):
                 "web_default": self.web_default.isChecked(),
                 "save_docs_default": self.save_docs_default.isChecked(),
                 "project_tools_default": self.project_tools_default.isChecked(),
+            },
+            "wizard": {
+                "max_concurrent_sessions": self.wizard_max_sessions.value(),
             },
         }
         

@@ -76,6 +76,18 @@ def _session(wiz, refdes, part="X", kind="DC-DC"):
     return st
 
 
+def _real_session(wiz, refdes, rail=""):
+    """A session backed by a REAL SkillChatWidget — needed wherever a panel/host adds the
+    chat to its layout (re-parent paths)."""
+    from workflow_editor.dock.skill_chat_widget import SkillChatWidget
+    chat = SkillChatWidget([], None, backend_tab_id=f"t_{refdes}",
+                           show_skill_selector=False, show_run_button=False,
+                           parent=wiz._session_holder)
+    st = _IcState(IcRow(refdes, "X", "DC-DC", rail), chat)
+    wiz.sessions[refdes] = st
+    return st
+
+
 def test_four_pages(wiz):
     assert len(wiz.pageIds()) == 4
 
@@ -167,27 +179,58 @@ def test_panel_adopts_then_releases_the_chat_reparent(wiz):
 def test_inline_rail_edit_survives_a_refresh(wiz):
     """An operator's manual rail correction must NOT be clobbered when a later refresh
     fires (e.g. another IC's rail-read completes)."""
-    from workflow_editor.dock.dcdc_wizard_dialog import _RailRow
-    st = _session(wiz, "U5"); st.row.rail = "+CAP_30V"; st.phase = _RAILED
-    rr = _RailRow(st, lambda k: None)
-    wiz._rail._rows = {"U5": rr}
-    rr.set_rail("+CAP_30V")                       # initial read fills the field
-    rr.rail_edit.setText("+CAP_30V_FIX")          # operator corrects it
-    wiz._rail.refresh()                            # a full refresh (another IC updated)
-    assert rr.rail_edit.text() == "+CAP_30V_FIX"  # preserved, not reverted
+    from workflow_editor.dock.dcdc_wizard_dialog import _RailHost
+    st = _real_session(wiz, "U5", "+CAP_30V"); st.phase = _RAILED
+    host = _RailHost(st, lambda k: None)
+    wiz._rail._hosts = {"U5": host}
+    host.set_rail("+CAP_30V")                        # initial read fills the field
+    host.rail_edit.setText("+CAP_30V_FIX")           # operator corrects it
+    wiz._rail.refresh()                              # a full refresh (another IC updated)
+    assert host.rail_edit.text() == "+CAP_30V_FIX"  # preserved, not reverted
 
 
 def test_reask_reply_overwrites_the_field(wiz):
-    """A re-ask that returns a corrected rail DOES update the field (the operator asked
-    for a re-read)."""
-    from workflow_editor.dock.dcdc_wizard_dialog import _RailRow
-    st = _session(wiz, "U5"); st.row.rail = "+CAP_30V"; st.phase = _RAILED
-    rr = _RailRow(st, lambda k: None)
-    wiz._rail._rows = {"U5": rr}
-    rr.set_rail("+CAP_30V")
-    st.row.rail = "+IN_28V"                        # re-ask produced a different rail
+    """A re-ask that returns a corrected rail DOES update the field."""
+    from workflow_editor.dock.dcdc_wizard_dialog import _RailHost
+    st = _real_session(wiz, "U5", "+CAP_30V"); st.phase = _RAILED
+    host = _RailHost(st, lambda k: None)
+    wiz._rail._hosts = {"U5": host}
+    host.set_rail("+CAP_30V")
+    st.row.rail = "+IN_28V"                           # re-ask produced a different rail
     wiz._rail.on_rail_update("U5")
-    assert rr.rail_edit.text() == "+IN_28V"
+    assert host.rail_edit.text() == "+IN_28V"
+
+
+def test_p2_does_not_auto_read_until_the_trigger(wiz):
+    """P2 creates sessions/hosts on entry but does NOT start the reads — the operator
+    presses 🔌 Read rails."""
+    from workflow_editor.dock.dcdc_wizard_dialog import SlotState
+    wiz.checked = [IcRow("U5", "X", "DC-DC", "")]
+    wiz._rail.initializePage()
+    assert "U5" in wiz.sessions and "U5" in wiz._rail._hosts
+    assert wiz._scheduler.state_of("U5") is SlotState.IDLE        # not auto-started
+    assert wiz.sessions["U5"].phase == _PENDING
+
+
+def test_chat_reparents_p2_host_to_p3_panel_and_back(wiz):
+    """The one per-IC chat ping-pongs: P2 host → P3 panel → back to P2 host."""
+    from workflow_editor.dock.dcdc_wizard_dialog import _RailHost
+    st = _real_session(wiz, "U5", "+CAP_30V"); st.phase = _RAILED
+    host = _RailHost(st, lambda k: None)
+    wiz._rail._hosts = {"U5": host}; host.adopt_chat()
+    assert st.chat.parent() is host
+    wiz.picked = [st.row]
+    wiz._build.initializePage()                       # P3 adopts the chat
+    assert st.chat.parent() is wiz._build._panels["U5"]
+    host.adopt_chat()                                 # back to P2
+    assert st.chat.parent() is host
+
+
+def test_is_rail_turn_uses_awaiting_then_active_page(wiz):
+    st = _session(wiz, "U5")
+    st.awaiting = "rail"; assert wiz._is_rail_turn(st) is True
+    st.awaiting = "build"; assert wiz._is_rail_turn(st) is False
+    st.awaiting = None; assert wiz._is_rail_turn(st) is False     # default page P1, not P2
 
 
 # --- review-fix regressions (capped / raced / failed paths) ----------------- #

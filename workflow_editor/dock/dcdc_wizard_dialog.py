@@ -167,6 +167,10 @@ class _IcPanel(QWidget):
         row_btns.addWidget(self.abandon_btn)
         lay.addLayout(row_btns)
 
+    def adopt_chat(self) -> None:
+        """Re-parent the chat back into THIS panel (it may currently sit in P2's host)."""
+        self.layout().insertWidget(0, self.chat)
+
 
 # =========================================================================== #
 # P1 — Classify power ICs                                                      #
@@ -201,12 +205,10 @@ class _ClassifyPage(QWizardPage):
         rl.addWidget(self.chat, 1)
         btn_row = QHBoxLayout()
         self._find_btn = QPushButton("🔍 Classify ICs")
+        self._find_btn.setToolTip("List the board's power ICs (re-runs fresh each time).")
         self._find_btn.clicked.connect(self._on_search)
         btn_row.addWidget(self._find_btn)
-        self._restart_btn = QPushButton("♻️ Restart")
-        self._restart_btn.setToolTip("Wipe the cached IC list and re-run the classifier.")
-        self._restart_btn.clicked.connect(self._on_restart)
-        btn_row.addWidget(self._restart_btn)
+        btn_row.addStretch(1)
         rl.addLayout(btn_row)
         split.addWidget(right)
         split.setSizes([300, 540])
@@ -214,6 +216,8 @@ class _ClassifyPage(QWizardPage):
         lay.addWidget(split)
 
         self.chat.reply_finished.connect(self._on_reply)
+        # Next stays GREYED while the classifier runs — re-evaluate isComplete on busy change.
+        self.chat.busy_changed.connect(lambda *_: self.completeChanged.emit())
         if not (wiz.classifier and wiz.authoring):
             self._find_btn.setEnabled(False)
             self.chat.set_status("Wizard skills not found (need dcdc_classifier + "
@@ -230,20 +234,18 @@ class _ClassifyPage(QWizardPage):
     def _on_search(self) -> None:
         if self.chat.is_busy:
             return
+        finder_cache.clear(self._wiz.project_root)   # one button: always a fresh run
         self._ic_list.clear()
-        self.chat.set_skill(self._wiz.classifier)   # fresh session each run
+        self.chat.set_skill(self._wiz.classifier)    # fresh session
         self.chat.set_status("Classifying power ICs…")
         self.chat.run_kickoff()
-
-    def _on_restart(self) -> None:
-        finder_cache.clear(self._wiz.project_root)
-        self._on_search()
+        self.completeChanged.emit()                  # grey Next while it runs
 
     def _populate(self, rows: list) -> None:
         self._ic_list.clear()
-        for r in rows:
+        for n, r in enumerate(rows, 1):
             r.rail = ""   # classifier rows carry no rail; read on P2
-            it = QListWidgetItem(f"{r.refdes} — {r.part} ({r.kind})")
+            it = QListWidgetItem(f"{n}. {r.refdes} — {r.part} ({r.kind})")
             it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             it.setCheckState(Qt.CheckState.Checked)
             it.setData(Qt.ItemDataRole.UserRole, r)
@@ -268,7 +270,8 @@ class _ClassifyPage(QWizardPage):
         return out
 
     def isComplete(self) -> bool:  # noqa: N802
-        return bool(self.checked_rows())
+        # Next stays greyed until classification FINISHES (chat not busy) and ≥1 IC is ticked.
+        return bool(self.checked_rows()) and not self.chat.is_busy
 
     def validatePage(self) -> bool:  # noqa: N802
         self._wiz.checked = self.checked_rows()
@@ -283,153 +286,193 @@ class _ClassifyPage(QWizardPage):
 # P2 — Rail identification (the human gate) + pick                             #
 # =========================================================================== #
 
-class _RailRow(QWidget):
-    """One IC's row on P2: a checkbox, its refdes/part label, an EDITABLE rail field
-    (auto-filled by the turn-1 read; the operator overrides a bad one here) and a
-    re-ask (↻) button (re-run the rail-read). A status badge shows reading/railed."""
+class _RailHost(QWidget):
+    """One IC's rail-ID surface on P2 (master-detail, mirroring P3's build panel): its
+    CHAT (re-ask / discuss the rail in conversation), an EDITABLE rail field (override a
+    bad read), and a Re-read button. The chat is the wizard-owned ``SkillChatWidget`` —
+    adopted here on P2, re-parented into P3's panel for the build."""
 
-    def __init__(self, state: _IcState, on_reask, parent=None):
+    def __init__(self, state: _IcState, on_reread, parent=None):
         super().__init__(parent)
         self.state = state
         self.key = state.key
-        h = QHBoxLayout(self)
-        h.setContentsMargins(4, 2, 4, 2)
-        self.check = QCheckBox()
-        self.check.setChecked(True)
-        h.addWidget(self.check)
-        self.label = QLabel(f"{state.row.refdes} — {state.row.part} ({state.row.kind})")
-        h.addWidget(self.label, 3)
-        h.addWidget(QLabel("→"))
+        self.chat = state.chat
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.chat, 1)            # adopts (re-parents) the chat into this host
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Rail:"))
         self.rail_edit = QLineEdit()
-        self.rail_edit.setPlaceholderText("⏳ reading…")
-        h.addWidget(self.rail_edit, 2)
-        self.reask_btn = QPushButton("↻")
-        self.reask_btn.setFixedWidth(32)
-        self.reask_btn.setToolTip("Re-ask the finder to re-read this rail "
-                                  "(flag a wrong +Vin/+Vout).")
-        self.reask_btn.clicked.connect(lambda: on_reask(self.key))
-        h.addWidget(self.reask_btn)
-        self.badge = QLabel("")
-        self.badge.setStyleSheet(f"color:{theme.muted_color()}; font-size:9pt;")
-        h.addWidget(self.badge)
+        self.rail_edit.setPlaceholderText("read automatically — edit to correct a wrong one")
+        row.addWidget(self.rail_edit, 1)
+        self.reread_btn = QPushButton("↻ Re-read")
+        self.reread_btn.setToolTip("Re-run the rail-read for this IC (flag a wrong +Vin/+Vout).")
+        self.reread_btn.clicked.connect(lambda: on_reread(self.key))
+        row.addWidget(self.reread_btn)
+        self.status = QLabel("")
+        self.status.setStyleSheet(f"color:{theme.muted_color()}; font-size:9pt;")
+        row.addWidget(self.status)
+        lay.addLayout(row)
+
+    def adopt_chat(self) -> None:
+        """Re-parent the chat back into THIS host (it may currently sit in P3's panel or
+        the holder). Idempotent — addWidget is a no-op when already parented here."""
+        self.layout().insertWidget(0, self.chat)
 
     def set_rail(self, rail: str) -> None:
-        """Overwrite the field with a freshly-read rail (auto-read or re-ask). Skips
-        while the operator is typing (focused). ``render`` NEVER touches the field, so a
-        manual correction survives every later refresh (the clobber bug's fix)."""
+        """Fill the field from a fresh read (auto or re-read). Skips while the operator is
+        typing; the wizard is the ONLY writer, so a manual correction survives refreshes."""
         if rail and not self.rail_edit.hasFocus():
             self.rail_edit.setText(rail)
 
-    def render(self, scheduler) -> None:
-        st = self.state
-        slot = scheduler.state_of(self.key)
-        if st.phase == _PENDING and slot is SlotState.RUNNING:
-            txt = "⏳ reading…"
-        elif st.phase == _PENDING and slot is SlotState.QUEUED:
-            txt = "⏳ queued"
-        elif st.phase == _RAIL_FAILED:
-            txt = "⚠️ couldn't read — type the rail"
-        elif st.phase == _RAILED:
-            txt = "🔌 railed"
-        else:
-            txt = ""
-        self.badge.setText(txt)
-
 
 class _RailPage(QWizardPage):
+    """Master-detail (mirrors P3): a CHECKABLE list of ICs on the left, the selected IC's
+    rail-read CHAT + editable rail on the right. A '🔌 Read rails' trigger starts the
+    reads (NO auto-start)."""
+
     def __init__(self, wiz: "DcdcWizardDialog"):
         super().__init__()
         self._wiz = wiz
         self.setTitle("2 · Identify the rails")
-        self.setSubTitle("Each IC's output rail is read automatically. REVIEW each — fix a "
-                         "wrong one (edit it, or ↻ re-ask) — then tick which to build.")
-        self._rows: dict[str, _RailRow] = {}
+        self.setSubTitle("Press 🔌 Read rails, then REVIEW each — fix a wrong rail (edit the "
+                         "field or chat with that IC) — and tick which to build.")
+        self._hosts: dict[str, _RailHost] = {}
         top = QHBoxLayout()
-        top.addWidget(QLabel("Parallel rail-reads:"))
+        self._read_btn = QPushButton("🔌 Read rails")
+        self._read_btn.setToolTip("Start reading every IC's rail (capped).")
+        self._read_btn.clicked.connect(self._on_read_all)
+        top.addWidget(self._read_btn)
+        top.addWidget(QLabel("Parallel:"))
         self._cap_spin = QSpinBox()
         self._cap_spin.setRange(1, _PARALLEL_MAX)
         self._cap_spin.setValue(_PARALLEL_DEFAULT)
-        self._cap_spin.setToolTip("Max rail-reads streaming at once.")
         self._cap_spin.valueChanged.connect(self._wiz._on_cap)
         top.addWidget(self._cap_spin)
         self._summary = QLabel("")
         self._summary.setStyleSheet(f"color:{theme.muted_color()};")
         top.addWidget(self._summary, 1)
-        self._list = QListWidget()
+        split = QSplitter(Qt.Orientation.Horizontal)
+        self._ic_list = QListWidget()
+        self._ic_list.currentRowChanged.connect(self._on_select)
+        self._ic_list.itemChanged.connect(lambda *_: self.completeChanged.emit())
+        split.addWidget(self._ic_list)
+        self._stack = QStackedWidget()
+        split.addWidget(self._stack)
+        split.setSizes([280, 600])
         lay = QVBoxLayout(self)
         lay.addLayout(top)
-        lay.addWidget(self._list, 1)
+        lay.addWidget(split, 1)
 
     def initializePage(self) -> None:  # noqa: N802
-        """Create a session + fire the rail-read for every checked IC that doesn't
-        have one yet (incremental: Back to P1 to add/remove keeps the rest)."""
+        """Create a session + host per checked IC. NO auto-read — the operator presses
+        Read rails. Incremental: Back to P1 to add/remove keeps the rest + their reads."""
         checked = list(self._wiz.checked)
         keys = [r.refdes for r in checked]
-        for key in list(self._rows):                 # drop de-selected
+        for key in list(self._hosts):                 # drop de-selected
             if key not in keys:
                 self._wiz.drop_session(key)
-                row = self._rows.pop(key)
-                row.deleteLater()
-        for row in checked:                           # add newly-selected
-            if row.refdes not in self._rows:
+                self._hosts.pop(key).deleteLater()
+        for row in checked:                            # add newly-selected (no read yet)
+            if row.refdes not in self._hosts:
                 state = self._wiz.create_session(row)
-                rr = _RailRow(state, self._wiz.reask_rail)
-                self._rows[row.refdes] = rr
-                self._wiz.start_rail_read(row.refdes)
+                self._hosts[row.refdes] = _RailHost(state, self._wiz.reask_rail)
         self._reorder(keys)
         self.refresh()
+        if self._ic_list.count() and self._ic_list.currentRow() < 0:
+            self._ic_list.setCurrentRow(0)
 
     def _reorder(self, keys: list) -> None:
-        self._list.clear()
-        self._rows = {k: self._rows[k] for k in keys if k in self._rows}
+        """Re-seat the list (checkable LABELS) + the stack (panels), RE-ADOPTING each chat
+        into its host (it may have moved to P3). Clearing the LABEL list never deletes the
+        host panels (they live in the stack) — robust to Back/Next, unlike setItemWidget."""
+        while self._stack.count():
+            self._stack.removeWidget(self._stack.widget(0))
+        self._ic_list.blockSignals(True)
+        self._ic_list.clear()
+        self._hosts = {k: self._hosts[k] for k in keys if k in self._hosts}
         for key in keys:
-            rr = self._rows[key]
-            it = QListWidgetItem()
-            it.setSizeHint(rr.sizeHint())
-            self._list.addItem(it)
-            self._list.setItemWidget(it, rr)
+            host = self._hosts[key]
+            host.adopt_chat()                          # bring the chat back from P3 if needed
+            self._stack.addWidget(host)
+            it = QListWidgetItem(key)
+            it.setData(Qt.ItemDataRole.UserRole, key)
+            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            it.setCheckState(Qt.CheckState.Checked)
+            self._ic_list.addItem(it)
+        self._ic_list.blockSignals(False)
 
-    def on_rail_update(self, key: str) -> None:
-        rr = self._rows.get(key)
-        state = self._wiz.sessions.get(key)
-        if rr is not None and state is not None:
-            rr.set_rail(state.row.rail)   # fill the field from the fresh read; render() won't
+    def _on_read_all(self) -> None:
+        for key in self._hosts:
+            self._wiz.start_rail_read(key)
         self.refresh()
 
+    def _on_select(self, idx: int) -> None:
+        if 0 <= idx < self._stack.count():
+            self._stack.setCurrentIndex(idx)
+
+    def on_rail_update(self, key: str) -> None:
+        host = self._hosts.get(key)
+        state = self._wiz.sessions.get(key)
+        if host is not None and state is not None:
+            host.set_rail(state.row.rail)              # fill the field from the fresh read
+        self.refresh()
+
+    def _badge_of(self, state: _IcState) -> str:
+        slot = self._wiz._scheduler.state_of(state.key)
+        if slot is SlotState.RUNNING:
+            return "running"
+        if slot is SlotState.QUEUED:
+            return "queued"
+        if state.phase in (_RAILED, _RAIL_FAILED):
+            return state.phase
+        return _PENDING
+
     def refresh(self) -> None:
-        for rr in self._rows.values():
-            rr.render(self._wiz._scheduler)
         counts: dict[str, int] = {}
-        for st in self._wiz.sessions.values():
-            slot = self._wiz._scheduler.state_of(st.key)
-            k = ("running" if slot is SlotState.RUNNING
-                 else "queued" if slot is SlotState.QUEUED else st.phase)
-            counts[k] = counts.get(k, 0) + 1
+        for i, (key, host) in enumerate(self._hosts.items()):
+            state = self._wiz.sessions.get(key)
+            if state is None:
+                continue
+            badge = self._badge_of(state)
+            counts[badge] = counts.get(badge, 0) + 1
+            icon, label = _BADGE.get(badge, ("•", badge))
+            if i < self._ic_list.count():
+                rail = state.row.rail or "…"
+                self._ic_list.item(i).setText(
+                    f"{i + 1}. {icon} {key}  {state.row.part} → {rail}")
+            host.status.setText(label)
         order = ["running", "queued", _RAILED, _RAIL_FAILED]
         self._summary.setText("   ".join(
             f"{_BADGE[k][0]} {counts[k]} {_BADGE[k][1]}" for k in order if counts.get(k)))
 
     def isComplete(self) -> bool:  # noqa: N802
-        """Next once EVERY checked row has a rail (typed or read)."""
+        """Next once EVERY checked IC has a rail (read or typed)."""
         any_checked = False
-        for rr in self._rows.values():
-            if rr.check.isChecked():
-                any_checked = True
-                if not rr.rail_edit.text().strip():
-                    return False
+        for i in range(self._ic_list.count()):
+            it = self._ic_list.item(i)
+            if it.checkState() != Qt.CheckState.Checked:
+                continue
+            any_checked = True
+            host = self._hosts.get(it.data(Qt.ItemDataRole.UserRole))
+            if host is None or not host.rail_edit.text().strip():
+                return False
         return any_checked
 
     def validatePage(self) -> bool:  # noqa: N802
-        """Apply each picked row's (possibly-edited) rail and hand the picked set on."""
+        """Apply each picked IC's (possibly-edited) rail and hand the picked set on."""
         picked = []
-        for key, rr in self._rows.items():
-            if not rr.check.isChecked():
+        for i in range(self._ic_list.count()):
+            it = self._ic_list.item(i)
+            if it.checkState() != Qt.CheckState.Checked:
                 continue
+            key = it.data(Qt.ItemDataRole.UserRole)
             state = self._wiz.sessions.get(key)
-            if state is None:
+            host = self._hosts.get(key)
+            if state is None or host is None:
                 continue
-            state.row.rail = rr.rail_edit.text().strip()
-            state.phase = _RAILED            # normalise: it now has a confirmed rail
+            state.row.rail = host.rail_edit.text().strip()
+            state.phase = _RAILED
             picked.append(state.row)
         self._wiz.picked = picked
         return True
@@ -530,6 +573,7 @@ class _BuildPage(QWizardPage):
         self._panels = {k: self._panels[k] for k in keys if k in self._panels}
         for key in keys:
             if key in self._panels:
+                self._panels[key].adopt_chat()     # re-adopt the chat back from P2's host
                 self._stack.addWidget(self._panels[key])
                 self._ic_list.addItem(QListWidgetItem(key))
 
@@ -870,22 +914,33 @@ class DcdcWizardDialog(QWizard):
             self._maybe_fire_pending_build(key)
         self._refresh_pages()
 
+    def _is_rail_turn(self, state: _IcState) -> bool:
+        """Which reply to expect. The explicit fires set ``awaiting``; a reply to a message
+        the operator TYPED (awaiting cleared) is routed by the active page — typing in the
+        P2 chat is a rail re-read, typing in the P3 chat is a build refine."""
+        if state.awaiting == "rail":
+            return True
+        if state.awaiting == "build":
+            return False
+        return self.currentPage() is self._rail
+
     def _on_reply(self, key: str, text: str) -> None:
         state = self.sessions.get(key)
         if state is None:
             return
-        if state.awaiting == "rail":
-            state.awaiting = None
-            if state.phase not in _RAIL_PHASES:
-                return    # operator already confirmed/advanced this rail (typed + Next) —
-                          # a late auto-read must not clobber it
+        rail_turn = self._is_rail_turn(state)
+        state.awaiting = None
+        if rail_turn:
+            # ignore a LATE auto-read that landed after the operator advanced off P2 (typed
+            # a rail + Next) — but an active P2 re-ask/re-type IS honoured even when RAILED
+            if state.phase not in _RAIL_PHASES and self.currentPage() is not self._rail:
+                return
             rail = parse_rail_reply(text)
             state.row.rail = rail or state.row.rail
             state.phase = _RAILED if rail else _RAIL_FAILED
             self._maybe_fire_pending_build(key)
             self._rail.on_rail_update(key)
         else:  # build (turn 2)
-            state.awaiting = None
             block = find_dcdc_test_block(text)
             if block:
                 state.test_block = block   # a refine updates the test even post-decision

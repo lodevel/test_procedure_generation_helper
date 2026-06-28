@@ -38,7 +38,14 @@ _AUTHORING_GUIDE = "authoring-a-skill.md"  # under the editor's docs/ folder
 def install_skills_menu(main_window) -> None:
     """Add a **Skills** menu to ``main_window``, repopulated each time it opens
     (so freshly-dropped skills appear without a restart)."""
-    menu = main_window.menuBar().addMenu("S&kills")
+    mb = main_window.menuBar()
+    menu = mb.addMenu("S&kills")
+    # Keep Help rightmost (standard convention): move the Skills menu just before it.
+    help_act = next((a for a in mb.actions()
+                     if a.menu() is not None and a.text().replace("&", "") == "Help"), None)
+    if help_act is not None:
+        mb.removeAction(menu.menuAction())
+        mb.insertMenu(help_act, menu)
     menu.aboutToShow.connect(lambda: _populate(main_window, menu))
     _populate(main_window, menu)
 

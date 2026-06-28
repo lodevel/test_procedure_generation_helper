@@ -149,7 +149,10 @@ TOOLS = [
 ]
 
 _UNREADABLE_MSG = (
-    "Could not read the PDF (no text layer, unreachable, or not a PDF)."
+    "Could not read the PDF (no text layer, unreachable, or not a PDF — e.g. a "
+    "pinout DIAGRAM has no text layer). Do NOT guess its contents: try save_pdf or "
+    "a different source/URL, and if it stays unreadable, ASK the user rather than "
+    "proceeding on a guess."
 )
 
 

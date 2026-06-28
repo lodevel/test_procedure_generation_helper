@@ -128,8 +128,10 @@ TOOLS = [
             "refdes (e.g. 'U18') to get just that IC's sheet (~2k tokens), which on a "
             "vector schematic carries the pin FUNCTIONS (VIN+/VOUT+ with their pin "
             "NUMBERS) the netlist lacks; join those pin numbers to the netlist pads to "
-            "resolve the IC's input vs output deterministically. Also finds a pinout "
-            "page in a datasheet (search the MPN or 'pinout'). 'name' is a PDF in the "
+            "resolve the IC's input vs output deterministically. A refdes query also "
+            "matches its SUB-PARTS (`U18` -> `U18A`/`U18B`), which may sit on different "
+            "sheets — all come back, so assemble the full pinout across them. Also finds a "
+            "pinout page in a datasheet (search the MPN or 'pinout'). 'name' is a PDF in the "
             "documents folder (see list_documents); 'query' is the text to find. Pages "
             "come back most-mentions first, capped — refine the query if too many match."
         ),
@@ -358,15 +360,18 @@ def _handle_search_document(arguments, documents_dir):
     if pages is None:
         return _text_result(_UNREADABLE_MSG)
     q = query.strip()
-    if re.fullmatch(r"[\w.+\-]+", q):       # word-like (refdes / MPN) → whole token
-        pat = re.compile(r"(?<!\w)" + re.escape(q) + r"(?!\w)", re.I)
+    if re.fullmatch(r"[\w.+\-]+", q):       # word-like (refdes / MPN)
+        # token start (not preceded by a word char) and NOT followed by a DIGIT, so 'U18'
+        # matches 'U18', 'U18A', 'U18.1' (a part split into sub-parts across sheets) but
+        # NOT 'U180' (a different refdes).
+        pat = re.compile(r"(?<!\w)" + re.escape(q) + r"(?![0-9])", re.I)
     else:
         pat = re.compile(re.escape(q), re.I)
     hits = [(i, len(pat.findall(t))) for i, t in enumerate(pages) if pat.search(t)]
     if not hits:
         return _text_result(f"'{q}' not found in {name} ({len(pages)} page(s) searched).")
     hits.sort(key=lambda h: (-h[1], h[0]))
-    MAX_PAGES, MAX_CHARS = 3, 12000
+    MAX_PAGES, MAX_CHARS = 5, 12000          # headroom for a part split across sub-part sheets
     out = [f"'{q}' found on {len(hits)} page(s) {[i + 1 for i, _ in hits]}; "
            f"showing the top {min(MAX_PAGES, len(hits))} by mention count."]
     for i, cnt in hits[:MAX_PAGES]:

@@ -54,6 +54,29 @@ log = logging.getLogger(__name__)
 
 _PARALLEL_DEFAULT = 5
 _PARALLEL_MAX = 16
+
+
+def _load_saved_cap() -> int:
+    """Persisted max concurrent LLM sessions (settings ``wizard.max_concurrent_sessions``),
+    clamped to ``[1, _PARALLEL_MAX]``; defaults to ``_PARALLEL_DEFAULT``."""
+    try:
+        from ..dialogs.settings_dialog import load_settings
+        n = int(load_settings().get("wizard", {}).get(
+            "max_concurrent_sessions", _PARALLEL_DEFAULT))
+    except Exception:  # noqa: BLE001 — settings unreadable → fall back to the default
+        n = _PARALLEL_DEFAULT
+    return max(1, min(_PARALLEL_MAX, n))
+
+
+def _save_cap(n: int) -> None:
+    """Persist the max concurrent LLM sessions to settings (best-effort)."""
+    try:
+        from ..dialogs.settings_dialog import load_settings, save_settings
+        s = load_settings()
+        s.setdefault("wizard", {})["max_concurrent_sessions"] = int(n)
+        save_settings(s)
+    except Exception:  # noqa: BLE001 — persistence is best-effort
+        log.exception("dcdc-wizard: could not persist max_concurrent_sessions")
 _NEW_TEST = "➕ New test"
 
 # Per-IC settled phases (the scheduler supplies the transient running/queued). The
@@ -382,7 +405,8 @@ class _RailPage(QWizardPage):
         top.addWidget(QLabel("Parallel:"))
         self._cap_spin = QSpinBox()
         self._cap_spin.setRange(1, _PARALLEL_MAX)
-        self._cap_spin.setValue(_PARALLEL_DEFAULT)
+        self._cap_spin.setValue(_load_saved_cap())
+        self._cap_spin.setToolTip("Max concurrent LLM sessions — remembered across runs.")
         self._cap_spin.valueChanged.connect(self._wiz._on_cap)
         top.addWidget(self._cap_spin)
         self._summary = QLabel("")
@@ -830,7 +854,7 @@ class DcdcWizardDialog(QWizard):
             self.sources, self.documents_dir = [], None
 
         # Shared state + per-IC sessions.
-        self._scheduler = ConcurrencyScheduler(_PARALLEL_DEFAULT)
+        self._scheduler = ConcurrencyScheduler(_load_saved_cap())
         self.sessions: dict[str, _IcState] = {}
         self._net_names: Optional[list] = None   # lazy board net list (P2 rail dropdown)
         self._session_holder = QWidget()         # hidden parent for chats before P3
@@ -1073,6 +1097,7 @@ class DcdcWizardDialog(QWizard):
                 sp.blockSignals(True)
                 sp.setValue(n)
                 sp.blockSignals(False)
+        _save_cap(self._scheduler.capacity)        # remember it across runs
         self._refresh_pages()
 
     def _refresh_pages(self) -> None:

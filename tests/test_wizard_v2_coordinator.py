@@ -41,6 +41,7 @@ class _StubChat:
         self.busy_changed = _StubSignal()
         self.reply_finished = _StubSignal()
         self.reply_failed = _StubSignal()
+        self.conversation_reset = _StubSignal()
 
     def run_kickoff(self, priming=""):
         self.sent.append(("kick", priming))
@@ -210,6 +211,30 @@ def test_p2_does_not_auto_read_until_the_trigger(wiz):
     assert "U5" in wiz.sessions and "U5" in wiz._rail._hosts
     assert wiz._scheduler.state_of("U5") is SlotState.IDLE        # not auto-started
     assert wiz.sessions["U5"].phase == _PENDING
+
+
+def test_per_ic_read_or_reread_kicks_off_first_then_reasks(wiz):
+    """The per-IC button: first press kicks off (run_kickoff), then re-asks (a turn)."""
+    st = _session(wiz, "U5", "RBBA3000-50")
+    assert not st.rail_read_started
+    wiz.read_or_reread("U5")                                      # 1st press → kickoff
+    assert st.rail_read_started
+    assert any(s[0] == "kick" for s in st.chat.sent)
+    wiz.read_or_reread("U5")                                      # 2nd press → re-ask
+    assert any(s[0] == "turn" for s in st.chat.sent)
+
+
+def test_trash_resets_ic_back_to_read_rail(wiz):
+    """A trashed chat (conversation_reset) resets that IC so its next action is Read rail."""
+    st = _session(wiz, "U5", "RBBA3000-50")
+    st.rail_read_started = True
+    st.phase = _RAILED
+    st.row.rail = "+CAP_30V"
+    st.test_block = "T"
+    wiz._on_chat_reset("U5")                                      # the trash handler
+    assert not st.rail_read_started
+    assert st.phase == _PENDING
+    assert st.row.rail == "" and st.test_block == ""
 
 
 def test_chat_reparents_p2_host_to_p3_panel_and_back(wiz):

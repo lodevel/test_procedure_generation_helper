@@ -129,6 +129,7 @@ class _IcState:
         self.awaiting: Optional[str] = None   # "rail" | "build" — routes the next reply
         self.test_block = ""
         self.build_pending = False  # build requested while turn-1 rail-read still ran
+        self.rail_read_started = False  # turn-1 kickoff has fired (per-IC btn: Read rail→Re-read)
         self.panel: Optional["_IcPanel"] = None  # set when P3 wraps it
 
 
@@ -307,7 +308,7 @@ class _RailHost(QWidget):
     bad read), and a Re-read button. The chat is the wizard-owned ``SkillChatWidget`` —
     adopted here on P2, re-parented into P3's panel for the build."""
 
-    def __init__(self, state: _IcState, on_reread, net_names, parent=None):
+    def __init__(self, state: _IcState, on_read, net_names, parent=None):
         super().__init__(parent)
         self.state = state
         self.key = state.key
@@ -332,9 +333,12 @@ class _RailHost(QWidget):
         self.rail_combo.setToolTip("The rail net — read automatically; type to FILTER the "
                                    "board's nets and pick the right one.")
         row.addWidget(self.rail_combo, 1)
-        self.reread_btn = QPushButton("↻ Re-read")
-        self.reread_btn.setToolTip("Re-run the rail-read for this IC (flag a wrong +Vin/+Vout).")
-        self.reread_btn.clicked.connect(lambda: on_reread(self.key))
+        # Adaptive per-IC action: "🔌 Read rail" on the FIRST press (kicks off this IC's
+        # rail-read), then "↻ Re-read" once read. refresh() flips the label by state.
+        self.reread_btn = QPushButton("🔌 Read rail")
+        self.reread_btn.setToolTip("Read THIS IC's rail; press again to re-read (flag a wrong "
+                                   "+Vin/+Vout).")
+        self.reread_btn.clicked.connect(lambda: on_read(self.key))
         row.addWidget(self.reread_btn)
         self.status = QLabel("")
         self.status.setStyleSheet(f"color:{theme.muted_color()}; font-size:9pt;")
@@ -366,8 +370,9 @@ class _RailPage(QWizardPage):
         super().__init__()
         self._wiz = wiz
         self.setTitle("2 · Identify the rails")
-        self.setSubTitle("Press 🔌 Read rails, then REVIEW each — fix a wrong rail (edit the "
-                         "field or chat with that IC) — and tick which to build.")
+        self.setSubTitle("Press 🔌 Read rails (all) — or 🔌 Read rail on one IC — then REVIEW "
+                         "each, fix a wrong rail (edit the field or chat with that IC), and "
+                         "tick which to build.")
         self._hosts: dict[str, _RailHost] = {}
         top = QHBoxLayout()
         self._read_btn = QPushButton("🔌 Read rails")
@@ -415,7 +420,7 @@ class _RailPage(QWizardPage):
             if row.refdes not in self._hosts:
                 state = self._wiz.create_session(row)
                 self._hosts[row.refdes] = _RailHost(
-                    state, self._wiz.reask_rail, self._wiz.net_names())
+                    state, self._wiz.read_or_reread, self._wiz.net_names())
         self._reorder(keys)
         self.refresh()
         if self._ic_list.count() and self._ic_list.currentRow() < 0:
@@ -481,6 +486,7 @@ class _RailPage(QWizardPage):
                 self._ic_list.item(i).setText(
                     f"{i + 1}. {icon} {key}  {state.row.part} → {rail}")
             host.status.setText(label)
+            host.reread_btn.setText("↻ Re-read" if state.rail_read_started else "🔌 Read rail")
         order = ["running", "queued", _RAILED, _RAIL_FAILED]
         self._summary.setText("   ".join(
             f"{_BADGE[k][0]} {counts[k]} {_BADGE[k][1]}" for k in order if counts.get(k)))
@@ -856,7 +862,17 @@ class DcdcWizardDialog(QWizard):
         chat.busy_changed.connect(lambda b, k=row.refdes: self._on_busy(k, b))
         chat.reply_finished.connect(lambda t, k=row.refdes: self._on_reply(k, t))
         chat.reply_failed.connect(lambda r, k=row.refdes: self._on_failed(k, r))
+        chat.conversation_reset.connect(lambda k=row.refdes: self._on_chat_reset(k))
         return state
+
+    def read_or_reread(self, key: str) -> None:
+        """The per-IC button: the FIRST press kicks off this IC's rail-read (deterministic
+        run_kickoff); after that it re-asks via a follow-up turn. This is also the path that
+        re-initiates a chat the operator trashed (reset clears rail_read_started)."""
+        state = self.sessions.get(key)
+        if state is None:
+            return
+        (self.reask_rail if state.rail_read_started else self.start_rail_read)(key)
 
     def start_rail_read(self, key: str) -> None:
         state = self.sessions.get(key)
@@ -865,6 +881,7 @@ class DcdcWizardDialog(QWizard):
             return    # already reading/queued — is_busy is False while merely QUEUED
         state.awaiting = "rail"
         state.phase = _PENDING
+        state.rail_read_started = True
         common = self._rail._common.text().strip() if self._rail is not None else ""
         state.chat.run_kickoff(priming=_rail_priming(state.row, common))
 
@@ -887,6 +904,24 @@ class DcdcWizardDialog(QWizard):
             msg += f" The operator suggests it may be `{hint}` — verify."
         state.chat.send_user_turn(msg)
         self._rail.refresh()
+
+    def _on_chat_reset(self, key: str) -> None:
+        """A per-IC chat was TRASHED (fresh session) — reset this IC's wizard state to match,
+        so its next action is a clean '🔌 Read rail' again (no stale rail / phase / build)."""
+        state = self.sessions.get(key)
+        if state is None:
+            return
+        self._scheduler.cancel(key)            # drop any queued fire for this IC
+        state.rail_read_started = False
+        state.awaiting = None
+        state.phase = _PENDING
+        state.test_block = ""
+        state.build_pending = False
+        state.row.rail = ""
+        rr = self._rail._hosts.get(key) if self._rail is not None else None
+        if rr is not None:
+            rr.rail_combo.setCurrentText("")
+        self._refresh_pages()
 
     def request_build(self, key: str) -> None:
         """Fire turn-2 build now, or defer it (``build_pending``) if the turn-1
@@ -927,7 +962,7 @@ class DcdcWizardDialog(QWizard):
             state.panel.deleteLater()
             state.panel = None
         for sig in (state.chat.busy_changed, state.chat.reply_finished,
-                    state.chat.reply_failed):
+                    state.chat.reply_failed, state.chat.conversation_reset):
             try:
                 sig.disconnect()
             except (RuntimeError, TypeError):

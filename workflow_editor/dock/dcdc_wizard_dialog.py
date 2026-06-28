@@ -34,7 +34,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QWizard, QWizardPage, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QListWidget, QListWidgetItem, QLineEdit, QComboBox, QSpinBox,
-    QTextEdit, QSplitter, QStackedWidget, QWidget, QGroupBox, QCheckBox,
+    QTextEdit, QSplitter, QStackedWidget, QWidget, QGroupBox, QCheckBox, QCompleter,
 )
 
 from .. import theme
@@ -83,11 +83,15 @@ _BADGE = {
 }
 
 
-def _rail_priming(row: IcRow) -> str:
-    """Turn-1 message: hand the per-IC skill its IC and ask ONLY for the rail."""
-    return (f"Read the output rail of {row.refdes} — {row.part} ({row.kind}). "
+def _rail_priming(row: IcRow, common: str = "") -> str:
+    """Turn-1 message: hand the per-IC skill its IC and ask ONLY for the rail. The shared
+    'common instructions' (e.g. 'the input bus is +CAP_30V') ride along so every rail-read
+    gets the same standing hints — the P2 twin of the P3 build common."""
+    base = (f"Read the output rail of {row.refdes} — {row.part} ({row.kind}). "
             f"This is TURN 1: reply with ONLY the rail as `{row.refdes} → <rail>`. "
             f"Do NOT build the test yet.")
+    common = (common or "").strip()
+    return f"{base}\n\n{common}" if common else base
 
 
 def _build_priming(row: IcRow, common: str) -> str:
@@ -303,7 +307,7 @@ class _RailHost(QWidget):
     bad read), and a Re-read button. The chat is the wizard-owned ``SkillChatWidget`` —
     adopted here on P2, re-parented into P3's panel for the build."""
 
-    def __init__(self, state: _IcState, on_reread, parent=None):
+    def __init__(self, state: _IcState, on_reread, net_names, parent=None):
         super().__init__(parent)
         self.state = state
         self.key = state.key
@@ -313,9 +317,21 @@ class _RailHost(QWidget):
         lay.addWidget(self.chat, 1)            # adopts (re-parents) the chat into this host
         row = QHBoxLayout()
         row.addWidget(QLabel("Rail:"))
-        self.rail_edit = QLineEdit()
-        self.rail_edit.setPlaceholderText("read automatically — edit to correct a wrong one")
-        row.addWidget(self.rail_edit, 1)
+        # A filterable dropdown CONSTRAINED to the board's real nets: read automatically,
+        # type any substring to filter, pick the right net (no free-text typos).
+        self.rail_combo = QComboBox()
+        self.rail_combo.setEditable(True)
+        self.rail_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.rail_combo.addItem("")
+        self.rail_combo.addItems(net_names or [])
+        self.rail_combo.setCurrentText("")
+        comp = self.rail_combo.completer()
+        if comp is not None:
+            comp.setFilterMode(Qt.MatchFlag.MatchContains)
+            comp.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.rail_combo.setToolTip("The rail net — read automatically; type to FILTER the "
+                                   "board's nets and pick the right one.")
+        row.addWidget(self.rail_combo, 1)
         self.reread_btn = QPushButton("↻ Re-read")
         self.reread_btn.setToolTip("Re-run the rail-read for this IC (flag a wrong +Vin/+Vout).")
         self.reread_btn.clicked.connect(lambda: on_reread(self.key))
@@ -330,11 +346,15 @@ class _RailHost(QWidget):
         the holder). Idempotent — addWidget is a no-op when already parented here."""
         self.layout().insertWidget(0, self.chat)
 
+    def rail_value(self) -> str:
+        return self.rail_combo.currentText().strip()
+
     def set_rail(self, rail: str) -> None:
         """Fill the field from a fresh read (auto or re-read). Skips while the operator is
         typing; the wizard is the ONLY writer, so a manual correction survives refreshes."""
-        if rail and not self.rail_edit.hasFocus():
-            self.rail_edit.setText(rail)
+        le = self.rail_combo.lineEdit()
+        if rail and not (le is not None and le.hasFocus()):
+            self.rail_combo.setCurrentText(rail)
 
 
 class _RailPage(QWizardPage):
@@ -363,6 +383,12 @@ class _RailPage(QWizardPage):
         self._summary = QLabel("")
         self._summary.setStyleSheet(f"color:{theme.muted_color()};")
         top.addWidget(self._summary, 1)
+        cm_row = QHBoxLayout()
+        cm_row.addWidget(QLabel("Common instructions for all rail-reads:"))
+        self._common = QLineEdit()
+        self._common.setPlaceholderText(
+            "shared hint prepended to every rail-read — e.g. the input bus is +CAP_30V")
+        cm_row.addWidget(self._common, 1)
         split = QSplitter(Qt.Orientation.Horizontal)
         self._ic_list = QListWidget()
         self._ic_list.currentRowChanged.connect(self._on_select)
@@ -373,6 +399,7 @@ class _RailPage(QWizardPage):
         split.setSizes([280, 600])
         lay = QVBoxLayout(self)
         lay.addLayout(top)
+        lay.addLayout(cm_row)
         lay.addWidget(split, 1)
 
     def initializePage(self) -> None:  # noqa: N802
@@ -387,7 +414,8 @@ class _RailPage(QWizardPage):
         for row in checked:                            # add newly-selected (no read yet)
             if row.refdes not in self._hosts:
                 state = self._wiz.create_session(row)
-                self._hosts[row.refdes] = _RailHost(state, self._wiz.reask_rail)
+                self._hosts[row.refdes] = _RailHost(
+                    state, self._wiz.reask_rail, self._wiz.net_names())
         self._reorder(keys)
         self.refresh()
         if self._ic_list.count() and self._ic_list.currentRow() < 0:
@@ -466,7 +494,7 @@ class _RailPage(QWizardPage):
                 continue
             any_checked = True
             host = self._hosts.get(it.data(Qt.ItemDataRole.UserRole))
-            if host is None or not host.rail_edit.text().strip():
+            if host is None or not host.rail_value():
                 return False
         return any_checked
 
@@ -482,7 +510,7 @@ class _RailPage(QWizardPage):
             host = self._hosts.get(key)
             if state is None or host is None:
                 continue
-            state.row.rail = host.rail_edit.text().strip()
+            state.row.rail = host.rail_value()
             state.phase = _RAILED
             picked.append(state.row)
         self._wiz.picked = picked
@@ -781,6 +809,7 @@ class DcdcWizardDialog(QWizard):
         # Shared state + per-IC sessions.
         self._scheduler = ConcurrencyScheduler(_PARALLEL_DEFAULT)
         self.sessions: dict[str, _IcState] = {}
+        self._net_names: Optional[list] = None   # lazy board net list (P2 rail dropdown)
         self._session_holder = QWidget()         # hidden parent for chats before P3
         self._session_holder.hide()
         self.checked: list = []                  # P1 → P2 (classified + checked)
@@ -836,7 +865,8 @@ class DcdcWizardDialog(QWizard):
             return    # already reading/queued — is_busy is False while merely QUEUED
         state.awaiting = "rail"
         state.phase = _PENDING
-        state.chat.run_kickoff(priming=_rail_priming(state.row))
+        common = self._rail._common.text().strip() if self._rail is not None else ""
+        state.chat.run_kickoff(priming=_rail_priming(state.row, common))
 
     def reask_rail(self, key: str) -> None:
         """Re-run the rail-read (operator flagged it). Uses any text the operator
@@ -846,9 +876,9 @@ class DcdcWizardDialog(QWizard):
                 or self._scheduler.state_of(key) is not SlotState.IDLE:
             return    # a read is already running or queued — don't double-submit
         hint = ""
-        rr = self._rail._rows.get(key)
+        rr = self._rail._hosts.get(key)
         if rr is not None:
-            hint = rr.rail_edit.text().strip()
+            hint = rr.rail_value()
         state.awaiting = "rail"
         state.phase = _PENDING
         msg = (f"Re-read the output rail of {state.row.refdes}. Double-check +Vin vs "
@@ -1008,6 +1038,22 @@ class DcdcWizardDialog(QWizard):
 
     def target(self):
         return getattr(self._mw, "project_manager", None) or self.project_root
+
+    def net_names(self) -> list:
+        """All board net names (lazy-loaded once) for the P2 rail dropdown — constrains the
+        operator's manual rail choice to real nets. Empty on any failure (the combobox then
+        behaves as a plain free-text field)."""
+        if self._net_names is None:
+            self._net_names = []
+            try:
+                from ..core import odb_inspect
+                board = odb_inspect.load_board(self.project_root)
+                self._net_names = sorted(
+                    {(n.get("net") or "").strip() for n in (board.get("nets") or [])}
+                    - {""})
+            except Exception:  # noqa: BLE001
+                log.exception("dcdc-wizard: net-list load failed")
+        return self._net_names
 
     def _teardown_all(self) -> None:
         """Idempotent teardown of EVERY embedded chat (classifier + per-IC sessions) so no

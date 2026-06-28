@@ -181,24 +181,24 @@ def test_inline_rail_edit_survives_a_refresh(wiz):
     fires (e.g. another IC's rail-read completes)."""
     from workflow_editor.dock.dcdc_wizard_dialog import _RailHost
     st = _real_session(wiz, "U5", "+CAP_30V"); st.phase = _RAILED
-    host = _RailHost(st, lambda k: None)
+    host = _RailHost(st, lambda k: None, ["+CAP_30V", "+IN_28V", "DISCH_16V"])
     wiz._rail._hosts = {"U5": host}
     host.set_rail("+CAP_30V")                        # initial read fills the field
-    host.rail_edit.setText("+CAP_30V_FIX")           # operator corrects it
+    host.rail_combo.setCurrentText("+CAP_30V_FIX")   # operator corrects it
     wiz._rail.refresh()                              # a full refresh (another IC updated)
-    assert host.rail_edit.text() == "+CAP_30V_FIX"  # preserved, not reverted
+    assert host.rail_value() == "+CAP_30V_FIX"      # preserved, not reverted
 
 
 def test_reask_reply_overwrites_the_field(wiz):
     """A re-ask that returns a corrected rail DOES update the field."""
     from workflow_editor.dock.dcdc_wizard_dialog import _RailHost
     st = _real_session(wiz, "U5", "+CAP_30V"); st.phase = _RAILED
-    host = _RailHost(st, lambda k: None)
+    host = _RailHost(st, lambda k: None, ["+CAP_30V", "+IN_28V", "DISCH_16V"])
     wiz._rail._hosts = {"U5": host}
     host.set_rail("+CAP_30V")
     st.row.rail = "+IN_28V"                           # re-ask produced a different rail
     wiz._rail.on_rail_update("U5")
-    assert host.rail_edit.text() == "+IN_28V"
+    assert host.rail_value() == "+IN_28V"
 
 
 def test_p2_does_not_auto_read_until_the_trigger(wiz):
@@ -216,7 +216,7 @@ def test_chat_reparents_p2_host_to_p3_panel_and_back(wiz):
     """The one per-IC chat ping-pongs: P2 host → P3 panel → back to P2 host."""
     from workflow_editor.dock.dcdc_wizard_dialog import _RailHost
     st = _real_session(wiz, "U5", "+CAP_30V"); st.phase = _RAILED
-    host = _RailHost(st, lambda k: None)
+    host = _RailHost(st, lambda k: None, ["+CAP_30V", "+IN_28V", "DISCH_16V"])
     wiz._rail._hosts = {"U5": host}; host.adopt_chat()
     assert st.chat.parent() is host
     wiz.picked = [st.row]

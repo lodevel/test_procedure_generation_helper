@@ -251,6 +251,20 @@ def test_chat_reparents_p2_host_to_p3_panel_and_back(wiz):
     assert st.chat.parent() is host
 
 
+def test_chats_survive_next_then_back_via_showevent(wiz):
+    """Next (P2->P3) re-parents the chat into P3; Back (->P2) must re-claim it. QWizard does
+    NOT re-run P2.initializePage on Back, so P2.showEvent does the re-adopt — without it the
+    chats vanish from P2 (the reported bug)."""
+    from PySide6.QtGui import QShowEvent
+    st = _real_session(wiz, "U5", "+CAP_30V"); st.phase = _RAILED
+    wiz.checked = [st.row]; wiz._rail.initializePage()
+    host = wiz._rail._hosts["U5"]
+    wiz.picked = [st.row]; wiz._build.initializePage()        # Next: P3 panel takes the chat
+    assert st.panel.isAncestorOf(st.chat)
+    wiz._rail.showEvent(QShowEvent())                         # Back: P2 shown -> re-claim
+    assert host.isAncestorOf(st.chat)                         # chat is back in P2's host
+
+
 def test_is_rail_turn_uses_awaiting_then_active_page(wiz):
     st = _session(wiz, "U5")
     st.awaiting = "rail"; assert wiz._is_rail_turn(st) is True

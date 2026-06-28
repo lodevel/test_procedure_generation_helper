@@ -426,6 +426,15 @@ class _RailPage(QWizardPage):
         if self._ic_list.count() and self._ic_list.currentRow() < 0:
             self._ic_list.setCurrentRow(0)
 
+    def showEvent(self, ev) -> None:  # noqa: N802
+        """Re-claim the chats back from P3 EVERY time P2 is shown. QWizard does NOT re-run
+        initializePage on Back, so without this the chats (re-parented into P3's panels on the
+        forward trip) stay there and P2's host layouts show empty."""
+        super().showEvent(ev)
+        for host in self._hosts.values():
+            host.adopt_chat()
+        self.refresh()
+
     def _reorder(self, keys: list) -> None:
         """Re-seat the list (checkable LABELS) + the stack (panels), RE-ADOPTING each chat
         into its host (it may have moved to P3). Clearing the LABEL list never deletes the
@@ -585,6 +594,14 @@ class _BuildPage(QWizardPage):
         self.refresh()
         if self._ic_list.count() and self._ic_list.currentRow() < 0:
             self._ic_list.setCurrentRow(0)
+
+    def showEvent(self, ev) -> None:  # noqa: N802
+        """Re-claim the chats back from P2 every time P3 is shown (QWizard skips initializePage
+        on Back — the same gap as P2)."""
+        super().showEvent(ev)
+        for panel in self._panels.values():
+            panel.adopt_chat()
+        self.refresh()
 
     def _sync_cap(self) -> None:
         self._cap_spin.blockSignals(True)

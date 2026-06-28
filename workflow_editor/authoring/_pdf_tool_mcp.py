@@ -30,6 +30,7 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from workflow_editor.authoring.pdf_text import (  # noqa: E402
+    extract_pdf_pages,
     extract_pdf_text,
     fetch_and_extract,
 )
@@ -116,6 +117,35 @@ TOOLS = [
                 }
             },
             "required": ["name"],
+        },
+    },
+    {
+        "name": "search_document",
+        "description": (
+            "Find a term in a multi-page LOCAL PDF and return ONLY the page(s) it "
+            "appears on — a Ctrl-F that hands back the matching SHEET, not the whole "
+            "document. Best use: a big multi-sheet SCHEMATIC — search a component "
+            "refdes (e.g. 'U18') to get just that IC's sheet (~2k tokens), which on a "
+            "vector schematic carries the pin FUNCTIONS (VIN+/VOUT+ with their pin "
+            "NUMBERS) the netlist lacks; join those pin numbers to the netlist pads to "
+            "resolve the IC's input vs output deterministically. Also finds a pinout "
+            "page in a datasheet (search the MPN or 'pinout'). 'name' is a PDF in the "
+            "documents folder (see list_documents); 'query' is the text to find. Pages "
+            "come back most-mentions first, capped — refine the query if too many match."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Filename of a PDF in the documents folder.",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Text to find — a refdes ('U18'), an MPN, or 'pinout'.",
+                },
+            },
+            "required": ["name", "query"],
         },
     },
     {
@@ -311,6 +341,44 @@ def _handle_read_document(arguments, documents_dir):
     return _text_result(text if text is not None else _UNREADABLE_MSG)
 
 
+def _handle_search_document(arguments, documents_dir):
+    """Ctrl-F a documents-folder PDF: return only the page(s) the query is on."""
+    import re
+    arguments = arguments or {}
+    name = arguments.get("name")
+    query = arguments.get("query")
+    if not isinstance(name, str) or not name.strip():
+        return _text_result("search_document requires a 'name' (a PDF in the documents folder).")
+    if not isinstance(query, str) or not query.strip():
+        return _text_result("search_document requires a 'query' string to find.")
+    resolved = _resolve_local(name.strip(), documents_dir)
+    if resolved is None:
+        return _text_result("Access denied: that path is outside the documents folder.")
+    pages = extract_pdf_pages(resolved)
+    if pages is None:
+        return _text_result(_UNREADABLE_MSG)
+    q = query.strip()
+    if re.fullmatch(r"[\w.+\-]+", q):       # word-like (refdes / MPN) → whole token
+        pat = re.compile(r"(?<!\w)" + re.escape(q) + r"(?!\w)", re.I)
+    else:
+        pat = re.compile(re.escape(q), re.I)
+    hits = [(i, len(pat.findall(t))) for i, t in enumerate(pages) if pat.search(t)]
+    if not hits:
+        return _text_result(f"'{q}' not found in {name} ({len(pages)} page(s) searched).")
+    hits.sort(key=lambda h: (-h[1], h[0]))
+    MAX_PAGES, MAX_CHARS = 3, 12000
+    out = [f"'{q}' found on {len(hits)} page(s) {[i + 1 for i, _ in hits]}; "
+           f"showing the top {min(MAX_PAGES, len(hits))} by mention count."]
+    for i, cnt in hits[:MAX_PAGES]:
+        body = pages[i][:MAX_CHARS]
+        if len(pages[i]) > MAX_CHARS:
+            body += "\n[... page truncated]"
+        out.append(f"\n===== page {i + 1} — {cnt} mention(s) =====\n{body}")
+    if len(hits) > MAX_PAGES:
+        out.append(f"\n(+{len(hits) - MAX_PAGES} more page(s); refine the query to narrow.)")
+    return _text_result("\n".join(out))
+
+
 def _parse_dir_arg(argv, flag, default):
     """Tiny manual argv parse for ``<flag> <path>`` or ``<flag>=<path>``."""
     i = 0
@@ -335,6 +403,7 @@ def main(argv=None):
         "read_pdf": lambda a: _handle_read_pdf(a, documents_dir),
         "save_pdf": lambda a: _handle_save_pdf(a, documents_dir),
         "read_document": lambda a: _handle_read_document(a, documents_dir),
+        "search_document": lambda a: _handle_search_document(a, documents_dir),
         "list_documents": lambda a: _handle_list_documents(documents_dir),
         "list_rules": lambda a: _handle_list_rules(rules_dir),
         "read_rule": lambda a: _handle_read_rule(a, rules_dir),

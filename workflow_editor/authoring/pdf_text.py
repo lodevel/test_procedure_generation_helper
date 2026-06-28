@@ -14,7 +14,7 @@ import io
 import logging
 import urllib.request
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 log = logging.getLogger(__name__)
 
@@ -85,6 +85,35 @@ def extract_pdf_text(path: Path, max_chars: int = DEFAULT_MAX_CHARS) -> Optional
         log.info("could not read PDF %s: %s", path, exc)
         return None
     return extract_pdf_bytes(data, max_chars)
+
+
+def extract_pdf_pages(path: Path) -> Optional[List[str]]:
+    """Return the PDF's text PER PAGE (one entry per page), or ``None`` if it
+    can't be decoded.
+
+    Same ``None``-on-unreadable contract as :func:`extract_pdf_text`. Used by the
+    ``search_document`` tool to hand back only the page(s) a term appears on — e.g.
+    the single schematic SHEET a refdes is drawn on, instead of the whole multi-sheet
+    document. A page with no text layer yields ``""`` (kept, so indices stay aligned
+    with the real page numbers).
+    """
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        log.warning("pypdf not installed; cannot decode PDF pages")
+        return None
+    try:
+        reader = PdfReader(str(path))
+    except Exception as exc:  # encrypted / malformed / not really a PDF
+        log.info("could not open PDF %s: %s", path, exc)
+        return None
+    pages: List[str] = []
+    for page in reader.pages:
+        try:
+            pages.append((page.extract_text() or "").strip())
+        except Exception:  # a single bad page shouldn't drop the rest
+            pages.append("")
+    return pages
 
 
 def fetch_and_extract(

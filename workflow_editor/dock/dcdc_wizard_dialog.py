@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
 from .. import theme
 from ..authoring import registry, skill_menu
 from ..authoring.wizard.list_parse import (
-    parse_classifier_list, parse_rail_reply, IcRow,
+    parse_classifier_list, parse_rail_reply, parse_rail_probe, IcRow,
 )
 from ..authoring.wizard.done_signal import find_dcdc_test_block
 from ..authoring.wizard.scheduler import ConcurrencyScheduler, SlotState
@@ -153,6 +153,7 @@ class _IcState:
         self.test_block = ""
         self.build_pending = False  # build requested while turn-1 rail-read still ran
         self.rail_read_started = False  # turn-1 kickoff has fired (per-IC btn: Read rail→Re-read)
+        self.probe_hint = ""            # display-only TP hint shown when the netname is generic
         self.panel: Optional["_IcPanel"] = None  # set when P3 wraps it
 
 
@@ -516,8 +517,9 @@ class _RailPage(QWizardPage):
             icon, label = _BADGE.get(badge, ("•", badge))
             if i < self._ic_list.count():
                 rail = state.row.rail or "…"
+                hint = f"  ({state.probe_hint})" if state.probe_hint else ""
                 self._ic_list.item(i).setText(
-                    f"{i + 1}. {icon} {key}  {state.row.part} → {rail}")
+                    f"{i + 1}. {icon} {key}  {state.row.part} → {rail}{hint}")
             host.status.setText(label)
             host.reread_btn.setText("↻ Re-read" if state.rail_read_started else "🔌 Read rail")
         order = ["running", "queued", _RAILED, _RAIL_FAILED]
@@ -1054,6 +1056,7 @@ class DcdcWizardDialog(QWizard):
                 return
             rail = parse_rail_reply(text)
             state.row.rail = rail or state.row.rail
+            state.probe_hint = parse_rail_probe(text)   # display-only hint (generic netname)
             state.phase = _RAILED if rail else _RAIL_FAILED
             self._maybe_fire_pending_build(key)
             self._rail.on_rail_update(key)

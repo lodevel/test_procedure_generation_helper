@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from workflow_editor.authoring.wizard.list_parse import (
-    IcRow, parse_finder_list, parse_classifier_list, parse_rail_reply,
+    IcRow, parse_finder_list, parse_classifier_list, parse_rail_reply, parse_rail_probe,
 )
 
 
@@ -162,3 +162,12 @@ def test_rail_reply_empty_when_no_arrow():
     assert parse_rail_reply("no arrow here") == ""
     assert parse_rail_reply("") == ""
     assert parse_rail_reply(None) == ""  # type: ignore[arg-type]
+
+
+def test_rail_probe_hint():
+    # the rail VALUE stays the netname; the probe is a separate, optional hint
+    assert parse_rail_reply("U18 → NetC100_2 (probe: DISCH_16V)") == "NetC100_2"
+    assert parse_rail_probe("U18 → NetC100_2 (probe: DISCH_16V)") == "DISCH_16V"
+    assert parse_rail_probe("U18 -> NetC100_2 (probe=DISCH_16V)") == "DISCH_16V"  # ':' or '='
+    assert parse_rail_probe("U5 → +MAIN_5V0") == ""        # no hint for a good netname
+    assert parse_rail_probe("") == ""

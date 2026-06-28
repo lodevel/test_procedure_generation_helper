@@ -26,7 +26,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-__all__ = ["IcRow", "parse_finder_list", "parse_classifier_list", "parse_rail_reply"]
+__all__ = ["IcRow", "parse_finder_list", "parse_classifier_list", "parse_rail_reply",
+           "parse_rail_probe"]
 
 
 @dataclass
@@ -120,6 +121,11 @@ _RAIL_REPLY_RE = re.compile(
     r"(?:→|⟶|➔|➜|-{1,}>|=+>)\s*(?P<rail>[^\s,;)]+)",
 )
 
+# An OPTIONAL probe-point HINT a turn-1 reply may append when the netname is generic:
+# `<refdes> → <netname> (probe: <TP>)`. Display-only — the rail VALUE stays the netname.
+_RAIL_PROBE_RE = re.compile(
+    r"\(\s*probe\s*[:=]\s*(?P<probe>[^)]+?)\s*\)", re.IGNORECASE)
+
 
 def parse_classifier_list(text: str) -> list[IcRow]:
     """Extract the V2 classifier rows (refdes + part + kind, NO rail) from a
@@ -156,3 +162,13 @@ def parse_rail_reply(text: str) -> str:
         return ""
     m = _RAIL_REPLY_RE.search(text)
     return _clean(m.group("rail")) if m else ""
+
+
+def parse_rail_probe(text: str) -> str:
+    """Extract the OPTIONAL probe-point hint a turn-1 reply appends when the rail's
+    netname is generic — ``<refdes> → <netname> (probe: <TP>)``. Returns the TP label,
+    cleaned; ``""`` when none. Display-only — the rail VALUE is still ``parse_rail_reply``."""
+    if not text:
+        return ""
+    m = _RAIL_PROBE_RE.search(text)
+    return _clean(m.group("probe")) if m else ""

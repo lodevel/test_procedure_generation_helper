@@ -107,6 +107,15 @@ def test_rail_reply_without_a_net_marks_failed(wiz):
     assert st.phase == _RAIL_FAILED and st.row.rail == ""
 
 
+def test_rail_reply_captures_probe_hint_for_a_generic_netname(wiz):
+    """A generic netname + a (probe: TP) hint: rail VALUE = the netname, hint stored for P2 display."""
+    st = _session(wiz, "U18", "I1C2W010A120V-000-R")
+    st.awaiting = "rail"; st.phase = _PENDING
+    wiz._on_reply("U18", "U18 → NetC100_2 (probe: DISCH_16V)")
+    assert st.row.rail == "NetC100_2"      # the true net is the value
+    assert st.probe_hint == "DISCH_16V"    # the TP rides along as a display hint
+
+
 def test_build_reply_ready_then_switchable_validate_abandon(wiz):
     st = _session(wiz, "U5", "RBBA3000-50")
     st.row.rail = "+CAP_30V"; st.phase = _RAILED; st.awaiting = "build"

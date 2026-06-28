@@ -144,18 +144,17 @@ class _IcPanel(QWidget):
         self.key = state.key
         self.chat = state.chat
 
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(self.chat, stretch=1)        # re-parents the chat into this panel
-
+        # VSCode-style: the TEST fills the centre (the main area) with Validate/Abandon
+        # below it; the chat docks NARROW on the RIGHT (Copilot-style).
+        centre = QWidget()
+        cl = QVBoxLayout(centre)
+        cl.setContentsMargins(0, 0, 0, 0)
         self.test_view = QTextEdit()
         self.test_view.setReadOnly(True)
         self.test_view.setPlaceholderText("The generated test appears here once built.")
-        self.test_view.setMaximumHeight(170)
         if state.test_block:
             self.test_view.setPlainText(state.test_block)
-        lay.addWidget(self.test_view)
-
+        cl.addWidget(self.test_view, 1)
         row_btns = QHBoxLayout()
         self.status = QLabel("")
         self.status.setStyleSheet(f"color:{theme.muted_color()}; font-size:9pt;")
@@ -165,11 +164,23 @@ class _IcPanel(QWidget):
         self.abandon_btn = QPushButton("🚫 Abandon")
         row_btns.addWidget(self.validate_btn)
         row_btns.addWidget(self.abandon_btn)
-        lay.addLayout(row_btns)
+        cl.addLayout(row_btns)
+
+        self._split = QSplitter(Qt.Orientation.Horizontal)
+        self._split.addWidget(centre)
+        self._split.addWidget(self.chat)            # right: the chat (narrower)
+        self._split.setStretchFactor(0, 1)
+        self._split.setStretchFactor(1, 0)
+        self._split.setSizes([560, 320])
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self._split)
 
     def adopt_chat(self) -> None:
-        """Re-parent the chat back into THIS panel (it may currently sit in P2's host)."""
-        self.layout().insertWidget(0, self.chat)
+        """Re-parent the chat back into THIS panel's split, on the right (it may currently
+        sit in P2's host). addWidget re-parents + re-appends to the right of the centre."""
+        self._split.addWidget(self.chat)
+        self._split.setSizes([560, 320])
 
 
 # =========================================================================== #

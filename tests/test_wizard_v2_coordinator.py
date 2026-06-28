@@ -171,7 +171,7 @@ def test_panel_adopts_then_releases_the_chat_reparent(wiz):
     wiz.picked = [row]
     wiz._build.initializePage()                  # builds the panel + re-parents the chat
     panel = wiz._build._panels.get("U5")
-    assert panel is not None and chat.parent() is panel
+    assert panel is not None and panel.isAncestorOf(chat)   # chat lives in the panel's split
     wiz._build._drop_panel("U5")                 # release: chat → holder, session kept
     assert "U5" in wiz.sessions and chat.parent() is wiz._session_holder
 
@@ -220,8 +220,8 @@ def test_chat_reparents_p2_host_to_p3_panel_and_back(wiz):
     wiz._rail._hosts = {"U5": host}; host.adopt_chat()
     assert st.chat.parent() is host
     wiz.picked = [st.row]
-    wiz._build.initializePage()                       # P3 adopts the chat
-    assert st.chat.parent() is wiz._build._panels["U5"]
+    wiz._build.initializePage()                       # P3 adopts the chat (into its split)
+    assert wiz._build._panels["U5"].isAncestorOf(st.chat)
     host.adopt_chat()                                 # back to P2
     assert st.chat.parent() is host
 

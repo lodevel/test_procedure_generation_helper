@@ -239,6 +239,26 @@ def _text_result(payload):
     return {"content": [{"type": "text", "text": text}]}
 
 
+def _components_result(rows):
+    """``list_components`` result hardened against the tool-output SIZE CAP.
+
+    Two changes vs a plain ``indent=2`` dump: (1) a loud ``count=`` header goes
+    FIRST so it survives even when the body is cut, telling the model how many
+    rows to expect; (2) the body is COMPACT JSON (no indent) so far more rows fit
+    before the cap truncates. The model compares the rows it actually received
+    against ``count`` to detect a dropped tail (the classifier's completeness
+    check) and re-pulls in refdes chunks if short.
+    """
+    note = (
+        f"count={len(rows)} components. If FEWER component rows follow than this "
+        f"count, the reply was TRUNCATED by the tool-output size cap — re-pull in "
+        f"refdes chunks (refdes_prefix='U1', then 'U2', ...) or with fewer fields "
+        f"until you have all {len(rows)}. Never classify from a partial list."
+    )
+    body = json.dumps({"components": rows}, separators=(",", ":"))
+    return _text_result(note + "\n" + body)
+
+
 # --- CLI shelling + per-process board cache -----------------------------------
 
 class _CliError(Exception):
@@ -346,7 +366,7 @@ def _tool_list_components(board, args):
     try:
         rows = board.components(
             fields=fields, filter_kv=filter_kv, refdes_prefix=refdes_prefix)
-        return _text_result({"count": len(rows), "components": rows})
+        return _components_result(rows)
     except _CliError as exc:
         return _err_result(exc)
 

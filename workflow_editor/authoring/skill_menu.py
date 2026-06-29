@@ -122,7 +122,7 @@ def _open_skills_folder(main_window) -> None:
 # launching a skill                                                           #
 # --------------------------------------------------------------------------- #
 
-def _build_sources(main_window, root: Optional[Path]):
+def build_sources(main_window, root: Optional[Path]):
     """Build the picker's (Rules, Documents, Artifacts) sources + the documents
     dir, all bound to the live project. Returns ``(sources, documents_dir)``."""
     pm = main_window.project_manager
@@ -304,7 +304,7 @@ def _launch_chat(main_window) -> None:
             "in the built-in library.",
         )
         return
-    sources, documents_dir = _build_sources(main_window, root)
+    sources, documents_dir = build_sources(main_window, root)
     dialog = SkillChatDialog(
         skills=skills,
         sources=sources,

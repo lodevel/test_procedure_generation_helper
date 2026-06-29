@@ -429,13 +429,14 @@ class _RailPage(QWizardPage):
         super().__init__()
         self._wiz = wiz
         self.setTitle("2 · Identify the rails")
-        self.setSubTitle("Press 🔌 Read rails (all) — or 🔌 Read rail on one IC — then REVIEW "
+        self.setSubTitle("Press 🔌 Read checked rails — or 🔌 Read rail on one IC — then REVIEW "
                          "each, fix a wrong rail (edit the field or chat with that IC), and "
                          "tick which to build.")
         self._hosts: dict[str, _RailHost] = {}
         top = QHBoxLayout()
-        self._read_btn = QPushButton("🔌 Read rails")
-        self._read_btn.setToolTip("Start reading every IC's rail (capped).")
+        self._read_btn = QPushButton("🔌 Read checked rails")
+        self._read_btn.setToolTip("Start reading the CHECKED ICs' rails (capped) — "
+                                  "untick an IC to skip its read.")
         self._read_btn.clicked.connect(self._on_read_all)
         top.addWidget(self._read_btn)
         top.addWidget(QLabel("Parallel:"))
@@ -521,8 +522,15 @@ class _RailPage(QWizardPage):
         self._ic_list.blockSignals(False)
 
     def _on_read_all(self) -> None:
-        for key in self._hosts:
-            self._wiz.start_rail_read(key)
+        # Read only the CHECKED ICs (untick to skip an IC's read); per-IC "Read rail"
+        # still reads one regardless.
+        for i in range(self._ic_list.count()):
+            it = self._ic_list.item(i)
+            if it.checkState() != Qt.CheckState.Checked:
+                continue
+            key = it.data(Qt.ItemDataRole.UserRole)
+            if key in self._hosts:
+                self._wiz.start_rail_read(key)
         self.refresh()
 
     def _on_select(self, idx: int) -> None:

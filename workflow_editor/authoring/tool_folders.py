@@ -146,5 +146,6 @@ def build_skill_tools_universe(project_root: Optional[Path] = None) -> dict[str,
     """
     return {
         tf.server: list(tf.tools)
-        for tf in discover_tool_folders(locations.skill_roots(project_root))
+        for tf in discover_tool_folders(
+            locations.skill_roots(project_root) + locations.tool_roots(project_root))
     }

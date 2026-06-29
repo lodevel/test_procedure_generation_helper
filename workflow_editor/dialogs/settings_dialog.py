@@ -206,10 +206,10 @@ def _build_skill_tools_blocks(project_root: Optional[Path]) -> dict:
     tiers only; reserved infra names skipped) lives in ``authoring.tool_folders``."""
     from ..llm.mcp_config import build_skill_tools_mcp_block
     from ..authoring.tool_folders import discover_tool_folders
-    from ..authoring.locations import skill_roots
+    from ..authoring.locations import skill_roots, tool_roots
 
     blocks: dict = {}
-    for tf in discover_tool_folders(skill_roots(project_root)):
+    for tf in discover_tool_folders(skill_roots(project_root) + tool_roots(project_root)):
         blocks.update(build_skill_tools_mcp_block(
             server_name=tf.server,
             venv_python_win=_python_win(),

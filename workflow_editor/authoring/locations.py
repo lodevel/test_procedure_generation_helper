@@ -61,6 +61,16 @@ def builtin_wizards_dir() -> Optional[Path]:
     return get_builtin_wizards_dir()
 
 
+def builtin_tools_dir() -> Optional[Path]:
+    """``packages/builtin/tools`` — shared author-tool servers (committed)."""
+    try:
+        from project_services.config_manager import get_builtin_tools_dir
+    except Exception:
+        log.debug("project_services.config_manager unavailable; no builtin tools dir")
+        return None
+    return get_builtin_tools_dir()
+
+
 def local_skills_dir() -> Optional[Path]:
     """``packages/local/skills`` — gitignored drop-in (all projects on this install)."""
     base = _local_packages_dir()
@@ -126,5 +136,19 @@ def wizard_roots(
         (bundled_wizards_dir(project_root), SkillSource.BUNDLED),
         (local_wizards_dir(), SkillSource.LOCAL),
         (project_wizards_dir(project_root), SkillSource.PROJECT),
+    ]
+    return [(d, src) for d, src in candidates if d is not None and d.is_dir()]
+
+
+def tool_roots(
+    project_root: Optional[Path] = None,
+) -> list[tuple[Path, SkillSource]]:
+    """All EXISTING SHARED author-tool roots, tagged by source. Only the BUILTIN
+    tier hosts shared tools — :func:`discover_tool_folders` executes code from
+    BUILTIN/BUNDLED tiers only, so LOCAL/PROJECT tool folders would never run and
+    are not advertised here. Skill-LOCAL tools still live inside a skill folder and
+    are found via :func:`skill_roots`; passing both lists to discovery is additive."""
+    candidates = [
+        (builtin_tools_dir(), SkillSource.BUILTIN),
     ]
     return [(d, src) for d, src in candidates if d is not None and d.is_dir()]

@@ -6,7 +6,7 @@ inputSchema, and that ``tools/call generate_dcdc_test`` with the benchmark
 +MAIN_5V0 params returns the canonical procedure text (matching the deterministic
 generator), plus a missing-required-field validation path.
 
-Skipped when the parent repo's authoring_skills/dcdc_bringup folder is absent
+Skipped when the parent repo's packages/builtin/tools/dcdc_tools folder is absent
 (i.e. the submodule is tested in isolation without the parent repo installed).
 """
 import json
@@ -25,9 +25,9 @@ from workflow_editor.authoring import dcdc_test_generator as gen
 
 SERVER_PATH = os.path.abspath(_mcp_mod.__file__)
 
-# The dcdc_bringup tool folder lives in the PARENT repo:
+# The dcdc_tools tool folder lives in the PARENT repo:
 # __file__ -> tests/ -> test_procedure_generation_helper/ -> external/ -> test_procedure_gui/
-_DCDC_BRINGUP = Path(__file__).parents[3] / "authoring_skills" / "dcdc_bringup"
+_DCDC_TOOLS = Path(__file__).parents[3] / "packages" / "builtin" / "tools" / "dcdc_tools"
 
 
 # The benchmark +MAIN_5V0 params (always-on enable, power-good present), as the
@@ -124,12 +124,12 @@ def _result_text(resp):
 
 @pytest.fixture
 def server(tmp_path):
-    if not _DCDC_BRINGUP.is_dir():
+    if not _DCDC_TOOLS.is_dir():
         pytest.skip("parent repo dcdc skill not present")
     # Launch from an unrelated cwd to prove launch-location independence.
     other_cwd = tmp_path / "elsewhere"
     other_cwd.mkdir()
-    srv = _Server(_DCDC_BRINGUP, other_cwd)
+    srv = _Server(_DCDC_TOOLS, other_cwd)
     yield srv
     srv.close()
 

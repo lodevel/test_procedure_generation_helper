@@ -136,23 +136,15 @@ def _alert() -> None:
         pass
 
 
-def _add_list_controls(list_widget: QListWidget) -> QWidget:
-    """A controls row for a checkable IC list: Select all / Deselect all (over the
-    currently VISIBLE rows) plus a live filter box (hides non-matching rows). Returns a
-    container widget to drop into the page layout DIRECTLY ABOVE ``list_widget``."""
+def _add_list_controls(list_widget: QListWidget, checkable: bool = True) -> QWidget:
+    """A controls row for an IC list: a live filter box (hides non-matching rows), plus —
+    only when ``checkable`` — Select all / Deselect all (over the currently VISIBLE rows).
+    On a SELECTION-only list (P3 build) pass ``checkable=False``: otherwise Select-all's
+    ``setCheckState`` would CONJURE phantom checkboxes on items that never had one. Returns
+    a container widget to drop into the page layout DIRECTLY ABOVE ``list_widget``."""
     bar = QWidget()
     h = QHBoxLayout(bar)
     h.setContentsMargins(0, 0, 0, 0)
-    sel = QPushButton("Select all")
-    desel = QPushButton("Deselect all")
-    filt = QLineEdit()
-    filt.setPlaceholderText("filter…")
-
-    def _set_all(state: Qt.CheckState) -> None:
-        for i in range(list_widget.count()):
-            it = list_widget.item(i)
-            if not it.isHidden():
-                it.setCheckState(state)
 
     def _filter(text: str) -> None:
         t = text.lower()
@@ -160,11 +152,22 @@ def _add_list_controls(list_widget: QListWidget) -> QWidget:
             it = list_widget.item(i)
             it.setHidden(t not in it.text().lower())
 
-    sel.clicked.connect(lambda: _set_all(Qt.CheckState.Checked))
-    desel.clicked.connect(lambda: _set_all(Qt.CheckState.Unchecked))
+    if checkable:
+        def _set_all(state: Qt.CheckState) -> None:
+            for i in range(list_widget.count()):
+                it = list_widget.item(i)
+                if not it.isHidden():
+                    it.setCheckState(state)
+        sel = QPushButton("Select all")
+        desel = QPushButton("Deselect all")
+        sel.clicked.connect(lambda: _set_all(Qt.CheckState.Checked))
+        desel.clicked.connect(lambda: _set_all(Qt.CheckState.Unchecked))
+        h.addWidget(sel)
+        h.addWidget(desel)
+
+    filt = QLineEdit()
+    filt.setPlaceholderText("filter…")
     filt.textChanged.connect(_filter)
-    h.addWidget(sel)
-    h.addWidget(desel)
     h.addWidget(filt, 1)
     return bar
 
@@ -648,7 +651,7 @@ class _BuildPage(QWizardPage):
         list_col = QWidget()
         lcl = QVBoxLayout(list_col)
         lcl.setContentsMargins(0, 0, 0, 0)
-        lcl.addWidget(_add_list_controls(self._ic_list))
+        lcl.addWidget(_add_list_controls(self._ic_list, checkable=False))
         lcl.addWidget(self._ic_list, 1)
         split.addWidget(list_col)
         self._stack = QStackedWidget()

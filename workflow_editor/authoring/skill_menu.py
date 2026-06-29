@@ -16,7 +16,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import QInputDialog, QMessageBox
 
-from . import load_skills, load_wizards, locations
+from . import load_skills, load_wizards, locations, wizard_flows
 from .context_sources import (
     ArtifactProvider,
     ArtifactsSource,
@@ -207,19 +207,39 @@ def _make_insert_callback(main_window):
     return insert
 
 
-def _launch_dcdc_wizard(main_window) -> None:
-    """Open the DCDC test wizard (modeless). Held on ``main_window`` so the GC
-    does not collect the window while it is open."""
-    from ..dock.dcdc_wizard_dialog import DcdcWizardDialog
-
-    dlg = DcdcWizardDialog(main_window, parent=main_window)
-    # On Finish (Accept), refresh the main window so the new tests appear without
-    # a project reload.
-    dlg.finished.connect(lambda result: _refresh_main_after_wizard(main_window, result))
-    main_window._dcdc_wizard_dialog = dlg
-    dlg.show()
-    dlg.raise_()
-    dlg.activateWindow()
+def _launch_wizard_flow(main_window, flow) -> None:
+    """Resolve + launch a wizard FLOW's entry-point (a class or callable). A class is
+    constructed as a modeless dialog held on ``main_window._wizard_dialogs`` (so the
+    GC doesn't collect it) with its Finish wired to the main-window refresh; a
+    callable owns its own wiring. Resolve/import errors are surfaced to the user."""
+    import inspect
+    from PySide6.QtWidgets import QMessageBox
+    try:
+        entry = wizard_flows.resolve_launch(flow)
+    except Exception:  # noqa: BLE001 — a bad/stale launch must not crash the menu
+        log.exception("wizard launch failed for flow %r", getattr(flow, "flow_id", "?"))
+        QMessageBox.warning(
+            main_window, "Wizards",
+            "Could not launch this wizard — its code could not be loaded (see logs). "
+            "If it was just installed, rebuild and re-apply the bundle.",
+        )
+        return
+    if inspect.isclass(entry):
+        dlg = entry(main_window, parent=main_window)
+        # On Finish (Accept), refresh the main window so new tests appear without a reload.
+        dlg.finished.connect(lambda result: _refresh_main_after_wizard(main_window, result))
+        refs = getattr(main_window, "_wizard_dialogs", None)
+        if refs is None:
+            refs = []
+            main_window._wizard_dialogs = refs
+        refs.append(dlg)
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+    elif callable(entry):
+        entry(main_window)
+    else:
+        log.error("wizard flow entry is neither class nor callable: %r", entry)
 
 
 def _refresh_main_after_wizard(main_window, result) -> None:
@@ -232,39 +252,16 @@ def _refresh_main_after_wizard(main_window, result) -> None:
         pass
 
 
-def _dcdc_available(main_window) -> bool:
-    """The DCDC wizard needs its wizard-scoped skills (dcdc_classifier + dcdc_authoring)."""
-    try:
-        return len(load_wizards(project_root=_project_root(main_window))) > 0
-    except Exception:  # noqa: BLE001
-        return False
-
-
-# Wizard FLOWS are a discoverable LIST (like skills) under the top-level Wizards menu —
-# adding a wizard = appending here, never a per-wizard menu or a hardcoded item.
-_WIZARD_FLOWS = [
-    {
-        "label": "DCDC test wizard…",
-        "tooltip": ("Find a power IC, build its scope test, validate it against the "
-                    "netlist, and add it to the project."),
-        "available": _dcdc_available,
-        "launch": _launch_dcdc_wizard,
-    },
-]
-
-
 def _available_flows(main_window) -> list:
-    """The subset of ``_WIZARD_FLOWS`` whose ``available`` check passes."""
-    out = []
-    for flow in _WIZARD_FLOWS:
-        try:
-            ok = flow["available"](main_window)
-        except Exception:  # noqa: BLE001 — availability must never break the menu
-            log.exception("wizard availability check failed")
-            ok = False
-        if ok:
-            out.append(flow)
-    return out
+    """The launchable wizard flows for the current project — data-driven via
+    :func:`wizard_flows.discover_flows` (groups wizard skills by ``flow:``, takes the
+    head declaring ``launch:``, gates on ``requires``). Replaces the old hardcoded
+    ``_WIZARD_FLOWS``; never raises."""
+    try:
+        return wizard_flows.discover_flows(_project_root(main_window))
+    except Exception:  # noqa: BLE001 — discovery must never break the menu
+        log.exception("wizard flow discovery failed")
+        return []
 
 
 def _choose_and_launch_wizard(main_window) -> None:
@@ -272,15 +269,15 @@ def _choose_and_launch_wizard(main_window) -> None:
     available = _available_flows(main_window)
     if not available:
         return
-    labels = [f["label"] for f in available]
+    labels = [f.label for f in available]
     choice, ok = QInputDialog.getItem(
         main_window, "Wizards", "Choose a wizard to run:", labels, 0, False
     )
     if not ok:
         return
-    flow = next((f for f in available if f["label"] == choice), None)
+    flow = next((f for f in available if f.label == choice), None)
     if flow is not None:
-        flow["launch"](main_window)
+        _launch_wizard_flow(main_window, flow)
 
 
 def _populate_wizards(main_window, menu) -> None:

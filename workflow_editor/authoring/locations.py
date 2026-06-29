@@ -111,6 +111,13 @@ def bundled_wizards_dir(project_root: Optional[Path]) -> Optional[Path]:
     return Path(project_root) / "bundle" / _PROJECT_WIZARDS_SUBDIR
 
 
+def bundled_tools_dir(project_root: Optional[Path]) -> Optional[Path]:
+    """``<project>/bundle/tools`` — shared author-tools shipped inside an applied bundle."""
+    if not project_root:
+        return None
+    return Path(project_root) / "bundle" / "tools"
+
+
 def skill_roots(
     project_root: Optional[Path] = None,
 ) -> list[tuple[Path, SkillSource]]:
@@ -150,5 +157,6 @@ def tool_roots(
     are found via :func:`skill_roots`; passing both lists to discovery is additive."""
     candidates = [
         (builtin_tools_dir(), SkillSource.BUILTIN),
+        (bundled_tools_dir(project_root), SkillSource.BUNDLED),
     ]
     return [(d, src) for d, src in candidates if d is not None and d.is_dir()]

@@ -8,6 +8,7 @@ build, no Qt.
 import json
 
 from project_services.bundle_generator import (
+    _dirs_with,
     bundle_skills_for_registry,
     copy_pack_skills,
     copy_skill_dirs,
@@ -154,3 +155,29 @@ def test_enabled_pack_roots_resolves_only_enabled(tmp_path):
     # p1 + p3 resolve to the existing dir; p2 disabled; p4 missing dir dropped.
     assert all(r.name == "fake_pack" for r in roots)
     assert len(roots) == 2
+
+
+def test_copy_skill_dirs_honors_dest_subdir(tmp_path):
+    # The one copy serves skills, wizards AND tools via dest_subdir (P3).
+    wz = _local_skill(tmp_path / "src", "wz1")
+    out = tmp_path / "bundle"
+    copy_skill_dirs([wz], out, dest_subdir="authoring_wizards")
+    assert (out / "authoring_wizards" / "wz1" / "SKILL.md").is_file()
+    tl = tmp_path / "src" / "tl1"
+    tl.mkdir()
+    (tl / "tools.json").write_text('{"server":"s","tools":["t"]}', encoding="utf-8")
+    copy_skill_dirs([tl], out, dest_subdir="tools")
+    assert (out / "tools" / "tl1" / "tools.json").is_file()
+    # default subdir is still authoring_skills
+    copy_skill_dirs([wz], out)
+    assert (out / "authoring_skills" / "wz1" / "SKILL.md").is_file()
+
+
+def test_dirs_with_marker_selects_by_file(tmp_path):
+    # builtin_wizard_dirs / builtin_tool_dirs are _dirs_with over the right marker.
+    (tmp_path / "a").mkdir(); (tmp_path / "a" / "SKILL.md").write_text("x")
+    (tmp_path / "b").mkdir()  # no marker -> excluded
+    (tmp_path / "c").mkdir(); (tmp_path / "c" / "tools.json").write_text("{}")
+    assert [d.name for d in _dirs_with(tmp_path, ("SKILL.md", "skill.md"))] == ["a"]
+    assert [d.name for d in _dirs_with(tmp_path, ("tools.json",))] == ["c"]
+    assert _dirs_with(tmp_path / "missing", ("SKILL.md",)) == []

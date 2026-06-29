@@ -46,3 +46,25 @@ def test_no_root_or_no_archive_is_safe(tmp_path):
     # no .tgz -> empty signature, but save+load still round-trips (sig "" == "")
     finder_cache.save(tmp_path, ROWS)
     assert finder_cache.load(tmp_path) == ROWS
+
+
+def test_cache_lives_under_dot_cache_not_project_root(tmp_path):
+    _tgz(tmp_path)
+    finder_cache.save(tmp_path, ROWS)
+    assert (tmp_path / ".cache" / "dcdc_classifier" / "finder.json").is_file()
+    assert not (tmp_path / ".dcdc_finder_cache.json").exists()   # not in the root
+
+
+def test_legacy_root_dotfile_is_migrated(tmp_path):
+    import json
+    _tgz(tmp_path)
+    sig = finder_cache.board_signature(tmp_path)
+    # an old-style cache sitting loose in the project root
+    (tmp_path / ".dcdc_finder_cache.json").write_text(json.dumps(
+        {"signature": sig,
+         "rows": [{"refdes": "U9", "part": "P", "kind": "LDO", "rail": "+3V3"}]}))
+    got = finder_cache.load(tmp_path)                       # read via legacy fallback
+    assert got and got[0].refdes == "U9"
+    finder_cache.save(tmp_path, ROWS)                       # migrates -> drops legacy
+    assert not (tmp_path / ".dcdc_finder_cache.json").exists()
+    assert (tmp_path / ".cache" / "dcdc_classifier" / "finder.json").is_file()

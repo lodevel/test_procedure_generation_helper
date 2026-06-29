@@ -14,7 +14,7 @@ from typing import Optional
 
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QAction, QDesktopServices
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QInputDialog, QMessageBox
 
 from . import load_skills, load_wizards, locations
 from .context_sources import (
@@ -213,10 +213,23 @@ def _launch_dcdc_wizard(main_window) -> None:
     from ..dock.dcdc_wizard_dialog import DcdcWizardDialog
 
     dlg = DcdcWizardDialog(main_window, parent=main_window)
+    # On Finish (Accept), refresh the main window so the new tests appear without
+    # a project reload.
+    dlg.finished.connect(lambda result: _refresh_main_after_wizard(main_window, result))
     main_window._dcdc_wizard_dialog = dlg
     dlg.show()
     dlg.raise_()
     dlg.activateWindow()
+
+
+def _refresh_main_after_wizard(main_window, result) -> None:
+    from PySide6.QtWidgets import QDialog
+    if result != QDialog.DialogCode.Accepted:
+        return
+    try:
+        main_window._refresh_after_open()
+    except Exception:  # noqa: BLE001 — best-effort; never crash on close
+        pass
 
 
 def _dcdc_available(main_window) -> bool:
@@ -240,24 +253,46 @@ _WIZARD_FLOWS = [
 ]
 
 
-def _populate_wizards(main_window, menu) -> None:
-    """Render the Wizards menu from ``_WIZARD_FLOWS`` (repopulated on open)."""
-    menu.clear()
-    if not _WIZARD_FLOWS:
-        act = QAction("(no wizards available)", menu)
-        act.setEnabled(False)
-        menu.addAction(act)
-        return
+def _available_flows(main_window) -> list:
+    """The subset of ``_WIZARD_FLOWS`` whose ``available`` check passes."""
+    out = []
     for flow in _WIZARD_FLOWS:
-        act = QAction(flow["label"], menu)
         try:
-            act.setEnabled(flow["available"](main_window))
+            ok = flow["available"](main_window)
         except Exception:  # noqa: BLE001 — availability must never break the menu
             log.exception("wizard availability check failed")
-            act.setEnabled(False)
-        act.setToolTip(flow["tooltip"])
-        act.triggered.connect(lambda _=False, f=flow: f["launch"](main_window))
-        menu.addAction(act)
+            ok = False
+        if ok:
+            out.append(flow)
+    return out
+
+
+def _choose_and_launch_wizard(main_window) -> None:
+    """Prompt the user to pick one of the available wizards, then launch it."""
+    available = _available_flows(main_window)
+    if not available:
+        return
+    labels = [f["label"] for f in available]
+    choice, ok = QInputDialog.getItem(
+        main_window, "Wizards", "Choose a wizard to run:", labels, 0, False
+    )
+    if not ok:
+        return
+    flow = next((f for f in available if f["label"] == choice), None)
+    if flow is not None:
+        flow["launch"](main_window)
+
+
+def _populate_wizards(main_window, menu) -> None:
+    """Render the Wizards menu as a single chooser (repopulated on open)."""
+    menu.clear()
+    action = QAction("Choose a wizard…", menu)
+    available = _available_flows(main_window)
+    if not available:
+        action.setEnabled(False)
+    else:
+        action.triggered.connect(lambda: _choose_and_launch_wizard(main_window))
+    menu.addAction(action)
 
 
 def _launch_chat(main_window) -> None:

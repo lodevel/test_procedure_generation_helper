@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QApplication, QWizard, QWizardPage, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QListWidget, QListWidgetItem, QLineEdit, QComboBox, QSpinBox,
     QTextEdit, QSplitter, QStackedWidget, QWidget, QGroupBox, QCheckBox, QCompleter,
+    QProgressDialog,
 )
 
 from .. import theme
@@ -135,6 +136,39 @@ def _alert() -> None:
         pass
 
 
+def _add_list_controls(list_widget: QListWidget) -> QWidget:
+    """A controls row for a checkable IC list: Select all / Deselect all (over the
+    currently VISIBLE rows) plus a live filter box (hides non-matching rows). Returns a
+    container widget to drop into the page layout DIRECTLY ABOVE ``list_widget``."""
+    bar = QWidget()
+    h = QHBoxLayout(bar)
+    h.setContentsMargins(0, 0, 0, 0)
+    sel = QPushButton("Select all")
+    desel = QPushButton("Deselect all")
+    filt = QLineEdit()
+    filt.setPlaceholderText("filter…")
+
+    def _set_all(state: Qt.CheckState) -> None:
+        for i in range(list_widget.count()):
+            it = list_widget.item(i)
+            if not it.isHidden():
+                it.setCheckState(state)
+
+    def _filter(text: str) -> None:
+        t = text.lower()
+        for i in range(list_widget.count()):
+            it = list_widget.item(i)
+            it.setHidden(t not in it.text().lower())
+
+    sel.clicked.connect(lambda: _set_all(Qt.CheckState.Checked))
+    desel.clicked.connect(lambda: _set_all(Qt.CheckState.Unchecked))
+    filt.textChanged.connect(_filter)
+    h.addWidget(sel)
+    h.addWidget(desel)
+    h.addWidget(filt, 1)
+    return bar
+
+
 # =========================================================================== #
 # Per-IC session state (wizard-owned; the chat persists rail-read → build)     #
 # =========================================================================== #
@@ -229,6 +263,7 @@ class _ClassifyPage(QWizardPage):
         ll.addWidget(QLabel("Power ICs (tick the ones to build):"))
         self._ic_list = QListWidget()
         self._ic_list.itemChanged.connect(lambda *_: self.completeChanged.emit())
+        ll.addWidget(_add_list_controls(self._ic_list))
         ll.addWidget(self._ic_list, 1)
         split.addWidget(left)
         right = QWidget()
@@ -423,7 +458,12 @@ class _RailPage(QWizardPage):
         self._ic_list = QListWidget()
         self._ic_list.currentRowChanged.connect(self._on_select)
         self._ic_list.itemChanged.connect(lambda *_: self.completeChanged.emit())
-        split.addWidget(self._ic_list)
+        list_col = QWidget()
+        lcl = QVBoxLayout(list_col)
+        lcl.setContentsMargins(0, 0, 0, 0)
+        lcl.addWidget(_add_list_controls(self._ic_list))
+        lcl.addWidget(self._ic_list, 1)
+        split.addWidget(list_col)
         self._stack = QStackedWidget()
         split.addWidget(self._stack)
         split.setSizes([280, 600])
@@ -597,7 +637,12 @@ class _BuildPage(QWizardPage):
         split = QSplitter(Qt.Orientation.Horizontal)
         self._ic_list = QListWidget()
         self._ic_list.currentRowChanged.connect(self._on_select)
-        split.addWidget(self._ic_list)
+        list_col = QWidget()
+        lcl = QVBoxLayout(list_col)
+        lcl.setContentsMargins(0, 0, 0, 0)
+        lcl.addWidget(_add_list_controls(self._ic_list))
+        lcl.addWidget(self._ic_list, 1)
+        split.addWidget(list_col)
         self._stack = QStackedWidget()
         split.addWidget(self._stack)
         split.setSizes([240, 600])
@@ -810,8 +855,17 @@ class _CreatePage(QWizardPage):
 
     def validatePage(self) -> bool:  # noqa: N802
         results, ok = [], True
-        for rec in self._rows:
+        prog = QProgressDialog("Creating tests…", None, 0, len(self._rows), self)
+        prog.setWindowModality(Qt.WindowModality.WindowModal)
+        prog.setMinimumDuration(0)
+        prog.show()
+        for i, rec in enumerate(self._rows):
             row, block = rec["row"], rec["block"]
+            prog.setLabelText(
+                f"Creating test {i+1}/{len(self._rows)}: "
+                + (rec["name"].text().strip() or ("PSU - " + rec["row"].rail)))
+            prog.setValue(i)
+            QApplication.processEvents()
             if rec["combo"].currentIndex() == 0:
                 res = materialize_test(self._wiz.target(), rec["name"].text().strip()
                                        or f"PSU - {row.rail}", block)
@@ -821,6 +875,7 @@ class _CreatePage(QWizardPage):
             ok = ok and res.created
             colour = theme.chat_assistant_border() if res.created else "#c0392b"
             results.append(f'<div style="color:{colour};">{html.escape(res.message)}</div>')
+        prog.setValue(len(self._rows))
         self._status.setText("".join(results))
         return ok
 

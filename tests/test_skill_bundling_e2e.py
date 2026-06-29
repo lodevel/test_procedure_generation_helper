@@ -15,6 +15,7 @@ from project_services.bundle_generator import (
     discover_bundleable_skills,
     discover_bundleable_wizards,
     enabled_pack_roots,
+    wizard_flow,
 )
 from workflow_editor.authoring import SkillSource, load_skills
 
@@ -200,3 +201,18 @@ def test_discover_bundleable_wizards_builtin_pack_local(tmp_path):
     assert by_id["lib_wiz"]["source"] == "builtin"
     assert by_id["pack_wiz"]["source"] == "pack:fake_pack"
     assert by_id["local_wiz"]["source"] == "local"
+
+
+def test_wizard_flow_groups_stages_by_flow(tmp_path):
+    # stages sharing flow:dcdc are ONE user-facing wizard; a standalone wizard -> None
+    for sid in ("stage_a", "stage_b"):
+        d = tmp_path / "wizards" / sid
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text(
+            f"---\nname: {sid}\nflow: dcdc\n---\nbody", encoding="utf-8")
+    solo = tmp_path / "wizards" / "solo"
+    solo.mkdir(parents=True)
+    (solo / "SKILL.md").write_text("---\nname: solo\n---\nbody", encoding="utf-8")
+    assert wizard_flow(tmp_path / "wizards" / "stage_a") == "dcdc"
+    assert wizard_flow(tmp_path / "wizards" / "stage_b") == "dcdc"
+    assert wizard_flow(solo) is None

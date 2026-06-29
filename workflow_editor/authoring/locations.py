@@ -1,10 +1,16 @@
-"""Resolve the directories skills are discovered from — the three location
-tiers (bundled / local / project).
+"""Resolve the directories skills and wizards are discovered from — the four
+location tiers (builtin / bundled / local / project).
 
 Thin wiring over the repo-root path helpers in ``project_services`` (the single
 source for those dirs — not re-derived here). The discovery LOGIC lives in
 :mod:`.registry` and takes roots explicitly, so it stays testable without any of
 these app/project paths.
+
+Layout: app-level artifacts live under ``packages/{builtin,local}/{skills,wizards}``;
+the project-level tiers keep ``authoring_skills/`` + ``authoring_wizards/`` (in the
+project root and inside an applied bundle). The two naming schemes are kept
+DECOUPLED on purpose — collapsing them onto one shared constant would silently
+empty one set of tiers.
 """
 from __future__ import annotations
 
@@ -16,29 +22,27 @@ from .skill import SkillSource
 
 log = logging.getLogger(__name__)
 
-_SKILLS_SUBDIR = "authoring_skills"
-_WIZARDS_SUBDIR = "authoring_wizards"
+# packages/{builtin,local}/<subdir> — the consolidated app-level layout.
+_SKILLS_SUBDIR = "skills"
+_WIZARDS_SUBDIR = "wizards"
+# Project + bundled tiers keep the original naming — do NOT unify with the above.
+_PROJECT_SKILLS_SUBDIR = "authoring_skills"
+_PROJECT_WIZARDS_SUBDIR = "authoring_wizards"
 
 
-def local_skills_dir() -> Optional[Path]:
-    """Install-wide drop-in dir (all projects): the existing ``local_packages``
-    folder, under an identifying ``authoring_skills/`` subfolder — the same
-    place local pack sources are dropped.
-
-    Returns None when ``project_services`` can't be imported (e.g. the editor
-    run fully standalone)."""
+def _local_packages_dir() -> Optional[Path]:
+    """The gitignored drop-in root ``packages/local`` (None when project_services
+    can't be imported, e.g. the editor run fully standalone)."""
     try:
         from project_services.config_manager import get_local_packages_dir
     except Exception:
-        log.debug("project_services.config_manager unavailable; no local skills dir")
+        log.debug("project_services.config_manager unavailable; no local packages dir")
         return None
-    return get_local_packages_dir() / _SKILLS_SUBDIR
+    return get_local_packages_dir()
 
 
 def builtin_skills_dir() -> Optional[Path]:
-    """Built-in library (committed, ships with the app): ``<repo>/authoring_skills``.
-
-    Returns None when ``project_services`` can't be imported (fully standalone)."""
+    """``packages/builtin/skills`` — committed, ships with the app."""
     try:
         from project_services.config_manager import get_builtin_skills_dir
     except Exception:
@@ -47,18 +51,54 @@ def builtin_skills_dir() -> Optional[Path]:
     return get_builtin_skills_dir()
 
 
+def builtin_wizards_dir() -> Optional[Path]:
+    """``packages/builtin/wizards`` — committed, ships with the app."""
+    try:
+        from project_services.config_manager import get_builtin_wizards_dir
+    except Exception:
+        log.debug("project_services.config_manager unavailable; no builtin wizards dir")
+        return None
+    return get_builtin_wizards_dir()
+
+
+def local_skills_dir() -> Optional[Path]:
+    """``packages/local/skills`` — gitignored drop-in (all projects on this install)."""
+    base = _local_packages_dir()
+    return base / _SKILLS_SUBDIR if base else None
+
+
+def local_wizards_dir() -> Optional[Path]:
+    """``packages/local/wizards`` — gitignored drop-in."""
+    base = _local_packages_dir()
+    return base / _WIZARDS_SUBDIR if base else None
+
+
 def project_skills_dir(project_root: Optional[Path]) -> Optional[Path]:
     """``<project>/authoring_skills`` — skills scoped to one project."""
     if not project_root:
         return None
-    return Path(project_root) / _SKILLS_SUBDIR
+    return Path(project_root) / _PROJECT_SKILLS_SUBDIR
+
+
+def project_wizards_dir(project_root: Optional[Path]) -> Optional[Path]:
+    """``<project>/authoring_wizards`` — wizards scoped to one project."""
+    if not project_root:
+        return None
+    return Path(project_root) / _PROJECT_WIZARDS_SUBDIR
 
 
 def bundled_skills_dir(project_root: Optional[Path]) -> Optional[Path]:
-    """``<project>/bundle/authoring_skills`` — skills shipped with a pack."""
+    """``<project>/bundle/authoring_skills`` — skills shipped inside an applied bundle."""
     if not project_root:
         return None
-    return Path(project_root) / "bundle" / _SKILLS_SUBDIR
+    return Path(project_root) / "bundle" / _PROJECT_SKILLS_SUBDIR
+
+
+def bundled_wizards_dir(project_root: Optional[Path]) -> Optional[Path]:
+    """``<project>/bundle/authoring_wizards`` — wizards shipped inside an applied bundle."""
+    if not project_root:
+        return None
+    return Path(project_root) / "bundle" / _PROJECT_WIZARDS_SUBDIR
 
 
 def skill_roots(
@@ -75,27 +115,16 @@ def skill_roots(
     return [(d, src) for d, src in candidates if d is not None and d.is_dir()]
 
 
-def _as_wizards(d: Optional[Path]) -> Optional[Path]:
-    """Map an ``authoring_skills`` dir to its ``authoring_wizards`` SIBLING.
-
-    Wizards live in a parallel ``authoring_wizards/`` folder next to each
-    ``authoring_skills/`` the chat scanner reads, so the chat menu (which only
-    scans :func:`skill_roots`) never lists a wizard. Returns None for a None
-    input (an absent location tier)."""
-    return d.parent / _WIZARDS_SUBDIR if d else None
-
-
 def wizard_roots(
     project_root: Optional[Path] = None,
 ) -> list[tuple[Path, SkillSource]]:
-    """All EXISTING wizard roots, tagged by source — the ``authoring_wizards``
-    SIBLING of each :func:`skill_roots` dir. Identical shape to skill_roots;
-    order is irrelevant to precedence — the registry resolves that by
+    """All EXISTING wizard roots, tagged by source. Identical shape to
+    :func:`skill_roots`; precedence is resolved by the registry by
     :class:`SkillSource`."""
     candidates = [
-        (_as_wizards(builtin_skills_dir()), SkillSource.BUILTIN),
-        (_as_wizards(bundled_skills_dir(project_root)), SkillSource.BUNDLED),
-        (_as_wizards(local_skills_dir()), SkillSource.LOCAL),
-        (_as_wizards(project_skills_dir(project_root)), SkillSource.PROJECT),
+        (builtin_wizards_dir(), SkillSource.BUILTIN),
+        (bundled_wizards_dir(project_root), SkillSource.BUNDLED),
+        (local_wizards_dir(), SkillSource.LOCAL),
+        (project_wizards_dir(project_root), SkillSource.PROJECT),
     ]
     return [(d, src) for d, src in candidates if d is not None and d.is_dir()]

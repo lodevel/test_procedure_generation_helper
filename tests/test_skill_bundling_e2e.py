@@ -13,6 +13,7 @@ from project_services.bundle_generator import (
     copy_pack_skills,
     copy_skill_dirs,
     discover_bundleable_skills,
+    discover_bundleable_wizards,
     enabled_pack_roots,
 )
 from workflow_editor.authoring import SkillSource, load_skills
@@ -181,3 +182,21 @@ def test_dirs_with_marker_selects_by_file(tmp_path):
     assert [d.name for d in _dirs_with(tmp_path, ("SKILL.md", "skill.md"))] == ["a"]
     assert [d.name for d in _dirs_with(tmp_path, ("tools.json",))] == ["c"]
     assert _dirs_with(tmp_path / "missing", ("SKILL.md",)) == []
+
+
+def test_discover_bundleable_wizards_builtin_pack_local(tmp_path):
+    # wizards are selectable like skills: builtin lib + pack-embedded + local drop-in
+    builtin = tmp_path / "builtin_wizards"
+    _local_skill(builtin, "lib_wiz")
+    pack = tmp_path / "fake_pack"
+    pw = pack / "authoring_wizards" / "pack_wiz"
+    pw.mkdir(parents=True)
+    (pw / "SKILL.md").write_text("---\nname: P\n---\nb", encoding="utf-8")
+    reg = _registry_for(tmp_path)
+    local = tmp_path / "local_pkgs" / "wizards"
+    _local_skill(local, "local_wiz")
+    by_id = {w["id"]: w for w in discover_bundleable_wizards(
+        reg, local_base=local, builtin_base=builtin)}
+    assert by_id["lib_wiz"]["source"] == "builtin"
+    assert by_id["pack_wiz"]["source"] == "pack:fake_pack"
+    assert by_id["local_wiz"]["source"] == "local"

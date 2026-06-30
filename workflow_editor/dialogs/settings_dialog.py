@@ -228,9 +228,9 @@ def build_launch_config(
     at via ``OPENCODE_CONFIG`` / launched from).
 
     Reads ``master.json`` (providers + general, no model/mcp), deep-copies it, and
-    BUILDS the 3 MCP blocks FRESH — ``pdf_tools`` (documents/rules) and
-    ``dcdc_tools`` always present, ``project_tools`` only when the project has a
-    ``*.tgz`` board archive. Every path (venv python via ``sys.executable``,
+    BUILDS the MCP blocks FRESH — ``pdf_tools`` (documents/rules) always present,
+    ``project_tools`` only when the project has a ``*.tgz`` board archive, plus one
+    block per discovered tool folder (e.g. ``dcdc_tools``). Every path (venv python via ``sys.executable``,
     scripts via ``__file__``, documents/rules/tgz under ``project_root``) is
     computed at RUNTIME, so the derived config self-heals on reinstall/move and
     follows the active project. The result is written ATOMICALLY (temp file in the

@@ -20,7 +20,7 @@ catch-all, so one bad request never kills the loop).
 
 Like the sibling servers it bootstraps ``sys.path`` from its own location before
 loading ``tools.py`` — so a tool folder's ``tools.py`` can ``import
-workflow_editor.authoring.*`` (e.g. the dcdc generator) regardless of where the
+workflow_editor.authoring.*`` regardless of where the
 folder physically lives or the launch cwd.
 
 DRIFT GUARD (fail-closed): the served ``TOOLS`` names and ``SERVER_NAME`` MUST

@@ -734,7 +734,47 @@ class MainWindow(QMainWindow):
         return Path.home() / f"procedure{suffix}"
 
     def _on_export_markdown(self):
-        """File → Export → Markdown: write the procedure as a .md document."""
+        """File -> Export -> Markdown: the SELECTED tests' text concatenated, or a
+        quick single-procedure dump when no project is open."""
+        root = getattr(self.project_manager, "project_root", None)
+        if root is None:
+            self._export_markdown_single()
+            return
+        folders = self.project_manager.enumerate_test_folders()
+        if not folders:
+            QMessageBox.information(self, "Export to Markdown",
+                                    "This project has no test folders.")
+            return
+        from .dialogs.test_selection_dialog import TestSelectionDialog
+        sel = TestSelectionDialog(folders, require="text", parent=self)
+        if sel.exec() != QDialog.Accepted:
+            return
+        selected = sel.selected_folders()
+        if not selected:
+            QMessageBox.information(self, "Export to Markdown", "No tests selected.")
+            return
+        default = self._export_default_path(".md")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Tests to Markdown", str(default),
+            "Markdown (*.md);;All Files (*)")
+        if not path:
+            return
+        try:
+            parts = []
+            for f in selected:
+                txt = (f.path / "procedure_text.md").read_text(encoding="utf-8")
+                parts.append(f"# {f.name}\n\n{txt.strip()}\n")
+            Path(path).write_text("\n\n".join(parts), encoding="utf-8")
+        except Exception as e:
+            log.exception("Markdown export failed")
+            QMessageBox.critical(self, "Export Failed",
+                                 f"Could not write Markdown:\n{e}")
+            return
+        self.status_bar.showMessage(
+            f"Exported {len(selected)} test(s) to Markdown -> {path}", 5000)
+
+    def _export_markdown_single(self):
+        """Quick dump of the open procedure's text (used when no project is open)."""
         text = self._current_procedure_text()
         if not text:
             QMessageBox.information(
@@ -756,10 +796,66 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Export Failed",
                                  f"Could not write Markdown:\n{e}")
             return
-        self.status_bar.showMessage(f"Exported Markdown \u2192 {path}", 5000)
+        self.status_bar.showMessage(f"Exported Markdown -> {path}", 5000)
 
     def _on_export_word(self):
-        """File → Export → Word: write the procedure as a .docx document."""
+        """File -> Export -> Word: the FULL report (.docx) over the SELECTED tests
+        (same engine as the main app), or a quick single-procedure dump when no
+        project is open."""
+        root = getattr(self.project_manager, "project_root", None)
+        if root is None:
+            self._export_word_single()
+            return
+        folders = self.project_manager.enumerate_test_folders()
+        if not folders:
+            QMessageBox.information(self, "Export to Word",
+                                    "This project has no test folders.")
+            return
+        from .dialogs.test_selection_dialog import TestSelectionDialog
+        sel = TestSelectionDialog(folders, require="json", parent=self)
+        if sel.exec() != QDialog.Accepted:
+            return
+        selected = sel.selected_folders()
+        if not selected:
+            QMessageBox.information(self, "Export to Word", "No tests selected.")
+            return
+        from project_services.report_export import (
+            create_default_sidecar, save_sidecar, sidecar_path_for)
+        from project_services.word_export_dialog import WordExportDialog
+        from .core.full_report import export_full_report, FullReportError
+
+        export_folder = Path(root) / "exports"
+        export_folder.mkdir(parents=True, exist_ok=True)
+        sidecar = create_default_sidecar()
+        dlg = WordExportDialog(sidecar, Path(root), export_folder,
+                               default_docx_name="test_report.docx", parent=self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        output_path = dlg.get_output_path()
+        sidecar = dlg.get_sidecar()
+        try:
+            save_sidecar(sidecar_path_for(output_path), sidecar)
+            export_full_report(Path(root), [f.path for f in selected],
+                               output_path, sidecar=sidecar)
+        except FullReportError as e:
+            QMessageBox.warning(self, "Export to Word", str(e))
+            return
+        except ImportError as e:
+            QMessageBox.warning(
+                self, "Word Export Unavailable",
+                "The full report needs the 'docxtpl' package in this "
+                f"environment.\n\n{e}")
+            return
+        except Exception as e:
+            log.exception("Full report export failed")
+            QMessageBox.critical(self, "Export Failed",
+                                 f"Could not generate the Word report:\n{e}")
+            return
+        self.status_bar.showMessage(
+            f"Exported {len(selected)}-test report -> {output_path}", 5000)
+
+    def _export_word_single(self):
+        """Quick dump of the open procedure as a plain .docx (used when no project)."""
         text = self._current_procedure_text()
         if not text:
             QMessageBox.information(
@@ -784,7 +880,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Export Failed",
                                  f"Could not write Word document:\n{e}")
             return
-        self.status_bar.showMessage(f"Exported Word \u2192 {path}", 5000)
+        self.status_bar.showMessage(f"Exported Word -> {path}", 5000)
 
     def _setup_central_widget(self):
         """Setup central widget with tabs."""

@@ -833,10 +833,21 @@ class MainWindow(QMainWindow):
             return
         output_path = dlg.get_output_path()
         sidecar = dlg.get_sidecar()
+        from PySide6.QtWidgets import QApplication, QProgressDialog
+        prog = QProgressDialog("Generating board images...", "Cancel", 0, 0, self)
+        prog.setWindowModality(Qt.WindowModal)
+        prog.setMinimumDuration(0)
+
+        def _img_progress(done, total):
+            prog.setMaximum(max(total, 1))
+            prog.setValue(done)
+            QApplication.processEvents()
+            return not prog.wasCanceled()
+
         try:
             save_sidecar(sidecar_path_for(output_path), sidecar)
             export_full_report(Path(root), [f.path for f in selected],
-                               output_path, sidecar=sidecar)
+                               output_path, sidecar=sidecar, progress=_img_progress)
         except FullReportError as e:
             QMessageBox.warning(self, "Export to Word", str(e))
             return
@@ -851,6 +862,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Export Failed",
                                  f"Could not generate the Word report:\n{e}")
             return
+        finally:
+            prog.close()
         self.status_bar.showMessage(
             f"Exported {len(selected)}-test report -> {output_path}", 5000)
 

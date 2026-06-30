@@ -16,6 +16,8 @@ from pathlib import Path
 
 from project_services import pack_extractors, report_export
 
+from . import odb_inspect
+
 
 class FullReportError(Exception):
     """Report could not be produced (no readable tests, or no template)."""
@@ -28,8 +30,16 @@ def export_full_report(
     *,
     sidecar: dict | None = None,
     template_path: Path | None = None,
+    generate_images: bool = True,
+    progress=None,
 ) -> Path:
     """Render a .docx report for ``test_folders`` (each must hold a procedure.json).
+
+    When ``generate_images`` is set, any missing board images are rendered into the
+    shared ``.media_cache`` first (via the editor's ODB tooling), so they EMBED in
+    the document exactly like the main app — cache-first, and a no-op when there is
+    no ODB archive/CLI. ``progress(done, total) -> bool`` is called during image
+    generation; return ``False`` to cancel.
 
     Returns the written path. Raises :class:`FullReportError` when nothing is
     exportable or no template is found.
@@ -54,6 +64,26 @@ def export_full_report(
             "No Word template found in the project's config/templates/exports/ "
             "directory.")
 
+    if generate_images:
+        _generate_images(project_root, procedures, progress)
+
     report_export.render_report(
         Path(template_path), sidecar, procedures, project_root, Path(output_path))
     return Path(output_path)
+
+
+def _generate_images(project_root: Path, procedures: list, progress=None) -> None:
+    """Render every referenced component/pin image into the shared ``.media_cache``
+    via ``odb_inspect.render_target`` (cache-first; graceful no-op without ODB/CLI)
+    so they embed in the report — the editor's equivalent of the main app's ODB
+    pre-step. Reuses the shared ref collector so the ref shape can't drift."""
+    refs = report_export._collect_all_media_refs(procedures, project_root)
+    total = len(refs)
+    for i, ref in enumerate(refs, start=1):
+        component = ref.get("component") or ""
+        pin = ref.get("pin")
+        if component:
+            odb_inspect.render_target(
+                project_root, component, str(pin) if pin is not None else None)
+        if progress is not None and not progress(i, total):
+            break  # operator cancelled

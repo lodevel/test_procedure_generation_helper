@@ -696,6 +696,13 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self._on_about)
         help_menu.addAction(about_action)
 
+        # Packages menu — install skill / wizard / report / grammar
+        # packages (shared project_services flow; same dialog as the main app).
+        packages_menu = menubar.addMenu("&Packages")
+        install_pkg_action = QAction("&Install Package...", self)
+        install_pkg_action.triggered.connect(self._on_install_package)
+        packages_menu.addAction(install_pkg_action)
+
         # Skills menu (authoring skill-chat); logic lives in
         # authoring.skill_menu so this mixed-EOL file gains only a call.
         from .authoring.skill_menu import install_skills_menu
@@ -724,6 +731,11 @@ class MainWindow(QMainWindow):
                 if txt and txt.strip():
                     return txt
         return None
+
+    def _on_install_package(self):
+        """Packages -> Install Package: the shared project_services dialog."""
+        from project_services.install_helper_dialog import InstallPackageDialog
+        InstallPackageDialog(self).exec()
 
     def _export_default_path(self, suffix: str) -> Path:
         """Default save location/name for an export with *suffix* (e.g. '.md')."""

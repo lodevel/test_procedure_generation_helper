@@ -60,6 +60,8 @@ def apply_app_theme(
     if app is None:
         return theme_id
 
+    _set_pride_fx(app, theme_id in (PRIDE_THEME_ID, PRIDE_DARK_THEME_ID))
+
     if theme_id in (PRIDE_THEME_ID, PRIDE_DARK_THEME_ID):
         dark = theme_id == PRIDE_DARK_THEME_ID
         _remember_original_palette(app)
@@ -2718,3 +2720,15 @@ def _pride_app_stylesheet(dark: bool) -> str:
     override = _PRIDE_OVERRIDE_DARK if dark else _PRIDE_OVERRIDE_LIGHT
     return base + override
 
+
+def _set_pride_fx(app: QApplication, on: bool) -> None:
+    """Enable/disable the playful Pride cursor + click sparkles.
+
+    Cosmetic only and fully guarded — it must never affect theming, so any
+    failure in the effects module is swallowed here.
+    """
+    try:
+        from . import pride_fx
+        pride_fx.set_enabled(app, on)
+    except Exception:
+        pass

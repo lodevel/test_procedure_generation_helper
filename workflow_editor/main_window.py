@@ -822,7 +822,16 @@ class MainWindow(QMainWindow):
         from project_services.report_export import (
             create_default_sidecar, save_sidecar, sidecar_path_for)
         from project_services.word_export_dialog import WordExportDialog
-        from .core.full_report import export_full_report, FullReportError
+        from .core.full_report import (
+            export_full_report, has_active_bundle, FullReportError)
+
+        if not has_active_bundle(root):
+            if QMessageBox.question(
+                self, "No active bundle",
+                "This project has no active bundle, so the report will contain "
+                "metadata only — no test steps or expected results.\n\n"
+                "Export anyway?") != QMessageBox.StandardButton.Yes:
+                return
 
         export_folder = Path(root) / "exports"
         export_folder.mkdir(parents=True, exist_ok=True)

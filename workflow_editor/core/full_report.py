@@ -23,6 +23,17 @@ class FullReportError(Exception):
     """Report could not be produced (no readable tests, or no template)."""
 
 
+def has_active_bundle(project_root) -> bool:
+    """True when the project has an active bundle. Without one the pack extractors
+    return empty, so the Word report would contain metadata only (no steps/expected)
+    — the caller should warn before exporting."""
+    try:
+        from project_services import bundle_registry
+        return bundle_registry.read_active_bundle(Path(project_root)) is not None
+    except Exception:
+        return False
+
+
 def export_full_report(
     project_root: Path,
     test_folders: list[Path],

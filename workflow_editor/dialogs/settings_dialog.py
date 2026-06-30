@@ -585,6 +585,15 @@ class SettingsDialog(QDialog):
             "default.")
         opencode_layout.addRow("", self.project_tools_default)
 
+        self.fold_system_into_prompt = QCheckBox(
+            "Fold skill into prompt (models with no system role, e.g. Gemma)")
+        self.fold_system_into_prompt.setToolTip(
+            "Gemma and similar models have no system role in their chat "
+            "template, so the skill (sent as the message system prompt) is "
+            "silently dropped and the model never sees it. Enable this to fold "
+            "the skill into the user message instead. Leave OFF for GPT/Claude.")
+        opencode_layout.addRow("", self.fold_system_into_prompt)
+
         layout.addWidget(self.opencode_group)
         
         # Test Connection button
@@ -1171,6 +1180,8 @@ class SettingsDialog(QDialog):
         self.save_docs_default.setChecked(opencode.get("save_docs_default", False))
         self.project_tools_default.setChecked(
             opencode.get("project_tools_default", False))
+        self.fold_system_into_prompt.setChecked(
+            opencode.get("fold_system_into_prompt", False))
 
         # Wizard settings
         wizard = self._settings.get("wizard", {})
@@ -1216,6 +1227,7 @@ class SettingsDialog(QDialog):
                 "web_default": self.web_default.isChecked(),
                 "save_docs_default": self.save_docs_default.isChecked(),
                 "project_tools_default": self.project_tools_default.isChecked(),
+                "fold_system_into_prompt": self.fold_system_into_prompt.isChecked(),
             },
             "wizard": {
                 "max_concurrent_sessions": self.wizard_max_sessions.value(),

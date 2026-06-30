@@ -78,6 +78,12 @@ class OpenCodeConfig:
     # Model settings (optional override)
     model: Optional[str] = None  # e.g., "anthropic/claude-3-5-sonnet"
 
+    # Models whose chat template has no system role (e.g. Gemma) silently
+    # drop body["system"]; when True the backend folds the system prompt into
+    # the leading user part so the skill still governs. Default False keeps the
+    # real-system-role path (OpenAI/Anthropic) byte-identical.
+    fold_system_into_prompt: bool = False
+
     # Working directory for the spawned `opencode serve` (a Windows path;
     # wsl.exe translates it). Set to the open project so OpenCode loads THAT
     # project's opencode.json (its providers/model) instead of the home/global
@@ -1046,7 +1052,14 @@ class OpenCodeBackend(LLMBackend):
         # Message-level system prompt (e.g. the skill chat's SKILL.md) so the
         # caller's instructions GOVERN, rather than sitting in the user body.
         if request.system_prompt:
-            body["system"] = request.system_prompt
+            if self.config.fold_system_into_prompt:
+                # Gemma & co. have no system role in their chat template, so
+                # OpenCode/vLLM silently drop body["system"]. Fold the skill
+                # into the leading user part instead, so it still governs.
+                body["parts"][0]["text"] = (
+                    f"{request.system_prompt}\n\n{prompt}")
+            else:
+                body["system"] = request.system_prompt
         return body
 
     def _send_via_api(self, prompt: str, request: LLMRequest) -> LLMResponse:

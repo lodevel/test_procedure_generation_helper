@@ -440,6 +440,7 @@ class MainWindow(QMainWindow):
                 wsl_path=config_dict.get("wsl_path") or "wsl",
                 startup_timeout=config_dict.get("startup_timeout", 60.0),
                 request_timeout=common_llm.get("request_timeout", 120.0),
+                fold_system_into_prompt=config_dict.get("fold_system_into_prompt", False),
             )
             return BackendConfig(
                 backend_type=BACKEND_TYPE_OPENCODE,

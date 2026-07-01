@@ -101,28 +101,19 @@ Format as markdown with:
 """,
         
         LLMTask.REVIEW_TEXT_PROCEDURE: """
-Task: Review procedure text for correctness and completeness.
+Task: Rewrite the procedure text into valid, canonical, rule-compliant form.
 
-A review checks GRAMMAR, wording, and format — it does NOT rewrite the
-procedure's logic or structure. Identify:
-- Ambiguous or unclear steps
-- Missing equipment specifications
-- Missing measurement parameters
-- Rule violations (if rules provided)
+The canonical-format rules are provided above. Apply them fully: fix every grammar,
+wording, equipment, verb, and format problem so the whole procedure is valid. Preserve
+the operator's intent and the ORDER of the operations; otherwise rewrite freely -- split
+multi-action steps, fix verbs, renumber, and add the ## Equipment the rules require.
 
-Report issues in validation.issues[] with severity, code, message, location, and suggested_fix.
-If you find issues, include a procedure_text proposal that fixes ONLY grammar and wording — never the logic.
+Put the complete rewritten procedure in the procedure_text proposal, and list what you
+changed or could not resolve in validation.issues[]. If the procedure is already valid,
+return no proposal.
 
-PRESERVATION RULE — a review must never delete content, only fix wording or flag
-issues. Keep every numbered step and every line beginning with "@" exactly as in
-the input. If a step or directive looks wrong, leave it in place and add a
-validation.issues[] entry explaining the problem. Do not remove, merge, or reorder
-steps.
-
-You may ask clarifying questions if needed.
-
-IMPORTANT: In your response, ONLY include a 'procedure_text' proposal if needed.
-Do NOT generate 'procedure_json' or 'test_code' proposals for this task.
+IMPORTANT: ONLY include a 'procedure_text' proposal. Do NOT generate 'procedure_json'
+or 'test_code' proposals for this task.
 """,
         
         LLMTask.DERIVE_JSON_FROM_TEXT: """

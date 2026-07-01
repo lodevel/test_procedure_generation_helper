@@ -249,7 +249,11 @@ class LLMTabMixin:
         # in-memory transcript BEFORE the current user turn is appended below,
         # and ONLY when there is prior history (skips the window fetch on the
         # first send). Bounded to ~25% of the model's context window.
-        if self.tab_context.messages:
+        # A review/rewrite is a ONE-SHOT on the current procedure, not a chat.
+        # Replaying prior turns feeds the model earlier review turns + its own
+        # "I preserved the steps" replies, which it then imitates. Retry feedback
+        # rides request.user_message separately, so retries keep working.
+        if self.tab_context.messages and task != LLMTask.REVIEW_TEXT_PROCEDURE:
             try:
                 window = self.tab_context.backend.get_context_window()
             except Exception:

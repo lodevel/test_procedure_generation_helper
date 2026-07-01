@@ -141,7 +141,7 @@ def main() -> int:
     log.info("MainWindow created successfully")
     
     log.info("Showing main window")
-    window.show()
+    window.showMaximized()
     
     # Run event loop
     log.info("Starting Qt event loop")

@@ -452,6 +452,16 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         if task == LLMTask.AD_HOC_CHAT and user_message:
             return user_message
 
+        # Built-in tasks are ALSO configurable (they live in the same tasks list),
+        # so source the chat message from the configured task's name — editing the
+        # button in the Template Manager then updates this message too, not just
+        # custom tasks. Falls through to the static map only when unconfigured.
+        manager = self.task_config_manager
+        if manager:
+            tc = manager.get_task_config(self.tab_id, task.value)
+            if tc and tc.name:
+                return tc.name
+
         task_descriptions = {
             LLMTask.REVIEW_TEXT_PROCEDURE: "Review procedure text for quality",
             LLMTask.AD_HOC_CHAT: "General assistance",

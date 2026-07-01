@@ -517,6 +517,18 @@ QLineEdit:read-only {
 }
 
 /* ---- Combo boxes (incl. editable line edit + popup) ------ */
+/* Inline (double-click) cell editors inherit the standalone-field padding
+   (6px top/bottom + borders), which is too tall for an item-view row and
+   crops the editor. Trim it (higher-specificity descendant rule) so the
+   editor fills the cell and glyphs / spin arrows are not clipped. */
+QAbstractItemView QLineEdit,
+QAbstractItemView QSpinBox,
+QAbstractItemView QDoubleSpinBox,
+QAbstractItemView QComboBox {
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+
 QComboBox {
     background-color: #ffffff;
     border: 1px solid #d5dce8;
@@ -1429,6 +1441,18 @@ QLineEdit:read-only {
 }
 
 /* ---- Combo boxes (incl. editable line edit + popup) ------ */
+/* Inline (double-click) cell editors inherit the standalone-field padding
+   (6px top/bottom + borders), which is too tall for an item-view row and
+   crops the editor. Trim it (higher-specificity descendant rule) so the
+   editor fills the cell and glyphs / spin arrows are not clipped. */
+QAbstractItemView QLineEdit,
+QAbstractItemView QSpinBox,
+QAbstractItemView QDoubleSpinBox,
+QAbstractItemView QComboBox {
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+
 QComboBox {
     background-color: #252b35;
     border: 1px solid #465263;

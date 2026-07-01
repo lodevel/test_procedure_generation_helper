@@ -176,6 +176,11 @@ class LLMRequest:
     # the model gets NO project-data access unless the user explicitly opts in.
     project_tools_enabled: bool = False
 
+    # When True, exposes the run_skill recursion tool (skill-invokes-skill)
+    # for THIS request. Set True only when the active skill declares ``run_skill``
+    # in its SKILL.md ``mcp_tools``. Off by default: recursion is opt-in.
+    run_skill_enabled: bool = False
+
     # When True (the skill chat's 💾 toggle, AND web on), the OpenCode backend
     # exposes save_pdf — fetch a web datasheet AND cache it into the project's
     # documents folder for reuse. Off by default: it WRITES a file (sandboxed to

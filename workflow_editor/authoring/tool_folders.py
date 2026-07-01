@@ -41,7 +41,7 @@ _SERVER_RE = re.compile(r"^[a-z0-9_]+$")
 # _build_message_body (docs/rules always-on, read_pdf web-gated, project_tools
 # checkbox). A tool folder must not claim one of these names (it would overwrite
 # the infra block / inherit its always-on keys = privilege escalation).
-_RESERVED_INFRA = frozenset({"pdf_tools", "project_tools"})
+_RESERVED_INFRA = frozenset({"pdf_tools", "project_tools", "run_skill"})
 
 # Only these tiers are trusted to ship executable tools.
 _TRUSTED_SOURCES = (SkillSource.BUILTIN, SkillSource.BUNDLED)

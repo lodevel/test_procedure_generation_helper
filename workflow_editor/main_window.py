@@ -365,7 +365,14 @@ class MainWindow(QMainWindow):
             # Compute the gate universe FIRST: if discovery throws, the except
             # fires before opencode.json is written -> never registered-but-ungated.
             _uni = build_skill_tools_universe(_pr)
-            sm.config.working_directory = str(build_launch_config(_pr))
+            # Mint the run_skill HMAC secret ONCE per process (skip if already set
+            # so a re-prewarm on the same config reuses it); pass it into the launch
+            # config so the run_skill MCP block + the token-mint share one secret.
+            if not getattr(sm.config, 'run_skill_secret', None):
+                import secrets as _secrets
+                sm.config.run_skill_secret = _secrets.token_hex()
+            sm.config.working_directory = str(build_launch_config(
+                _pr, run_skill_secret=sm.config.run_skill_secret))
             sm.config.skill_tools = _uni
         except Exception:
             log.warning('failed to build launch config for pre-warm',

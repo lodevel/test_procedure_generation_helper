@@ -219,9 +219,47 @@ def _build_skill_tools_blocks(project_root: Optional[Path]) -> dict:
     return blocks
 
 
+def _build_run_skill_block(project_root, launch_dir, run_skill_secret):
+    """Build the ``run_skill`` infra MCP block, or ``None`` when there is no
+    secret (recursion then stays unavailable). Passes the launch pid-file (the
+    server reads the live server port from it at call time), the skill roots in
+    precedence order (to resolve a child skill_id), the skill-tools universe file
+    (so the child force-scopes to its OWN declared tools), and the HMAC secret via
+    the block environment."""
+    if not run_skill_secret:
+        return None
+    from ..llm.mcp_config import build_run_skill_mcp_block
+    from ..authoring.locations import skill_roots
+    from ..authoring.tool_folders import build_skill_tools_universe
+    # Sort roots by SkillSource (ASCENDING) so the child resolves the same body
+    # the registry would (highest source wins), not by list order.
+    roots = [str(pth) for pth, _src in
+             sorted(skill_roots(project_root), key=lambda ps: ps[1])]
+    # Persist the skill-tools gate universe beside the config so the child can
+    # force every NON-declared skill tool off (mirrors the parent gating).
+    universe_file = ""
+    try:
+        _uni = build_skill_tools_universe(project_root)
+        if _uni:
+            _uf = Path(launch_dir) / "run_skill_universe.json"
+            _uf.write_text(json.dumps(_uni), encoding="utf-8")
+            universe_file = str(_uf)
+    except Exception:
+        log.exception("Failed to write run_skill universe file")
+    return build_run_skill_mcp_block(
+        venv_python_win=_python_win(),
+        mcp_script_win=_mcp_script_win("_run_skill_mcp.py"),
+        server_port_file_win=str(Path(launch_dir) / "opencode.pid"),
+        skill_roots_win=roots,
+        secret=run_skill_secret,
+        universe_file_win=universe_file,
+    )
+
+
 def build_launch_config(
     project_root: Optional[Path] = None,
     launch_dir: Optional[Path] = None,
+    run_skill_secret: Optional[str] = None,
 ) -> Path:
     """Derive the per-launch ``opencode.json`` from the MASTER blueprint and the
     CURRENT project, returning the LAUNCH DIR (what ``opencode serve`` is pointed
@@ -257,6 +295,11 @@ def build_launch_config(
     data.pop("small_model", None)
     data.pop("mcp", None)
 
+    if launch_dir is None:
+        launch_dir = get_opencode_launch_dir()
+    else:
+        launch_dir.mkdir(parents=True, exist_ok=True)
+
     mcp: dict = {}
     try:
         mcp.update(_build_pdf_tools_block(project_root))
@@ -269,6 +312,14 @@ def build_launch_config(
         log.exception("Failed to build project_tools MCP block")
     if proj_block:
         mcp.update(proj_block)
+    run_skill_block = None
+    try:
+        run_skill_block = _build_run_skill_block(
+            project_root, launch_dir, run_skill_secret)
+    except Exception:
+        log.exception("Failed to build run_skill MCP block")
+    if run_skill_block:
+        mcp.update(run_skill_block)
     try:
         # Auto-discover + register every skill-owned / common tool folder. Infra
         # blocks (pdf_tools/project_tools) are added FIRST and their names are
@@ -278,10 +329,6 @@ def build_launch_config(
         log.exception("Failed to build skill-tools MCP blocks")
     data["mcp"] = mcp
 
-    if launch_dir is None:
-        launch_dir = get_opencode_launch_dir()
-    else:
-        launch_dir.mkdir(parents=True, exist_ok=True)
     target = launch_dir / "opencode.json"
     payload = json.dumps(data, indent=2)
     # Atomic write: temp in the SAME dir as target so os.replace stays on one

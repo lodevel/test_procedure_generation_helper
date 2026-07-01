@@ -96,6 +96,46 @@ def build_project_tools_mcp_block(
     }
 
 
+def build_run_skill_mcp_block(
+    venv_python_win: str,
+    mcp_script_win: str,
+    server_port_file_win: str,
+    skill_roots_win: list,
+    secret: str,
+    universe_file_win: str = "",
+    max_depth: int = 3,
+) -> dict:
+    """Return the ``mcp`` entry for the ``run_skill`` infra server (skill-invokes-skill).
+
+    Mirrors :func:`build_project_tools_mcp_block` but carries the extra host state
+    run_skill needs: ``--server-port-file`` (the launch pid-file — the server reads
+    its own port from it at call time, because the port is OS-assigned AFTER this
+    config is written), one ``--skill-root`` per root (ASCENDING precedence, to
+    resolve a child ``skill_id``), ``--max-depth``, and the HMAC secret via the block
+    ``environment`` (OpenCode delivers it as ``RUN_SKILL_SECRET`` — verified honored).
+    A blank secret makes every call fail-closed. Merge into the master opencode.json's
+    ``mcp`` object.
+    """
+    cmd = [
+        win_to_wsl_path(venv_python_win),   # OpenCode runs in WSL
+        mcp_script_win,                     # Windows argv for the Windows python
+        "--server-port-file", server_port_file_win,
+        "--max-depth", str(max_depth),
+    ]
+    if universe_file_win:
+        cmd += ["--universe-file", universe_file_win]
+    for root in skill_roots_win:
+        cmd += ["--skill-root", root]
+    return {
+        "run_skill": {
+            "type": "local",
+            "command": cmd,
+            "enabled": True,
+            "environment": {"RUN_SKILL_SECRET": secret},
+        }
+    }
+
+
 def build_skill_tools_mcp_block(
     server_name: str,
     venv_python_win: str,

@@ -106,6 +106,12 @@ class OpenCodeConfig:
     # _build_message_body to force every non-active skill tool to an explicit
     # False (OpenCode's tool override is additive).
     skill_tools: dict = None
+
+    # Per-process HMAC secret signing the run_skill chain-token. Minted ONCE in
+    # main_window._prewarm_server and carried on this shared OpenCodeConfig to both
+    # the token-mint (skill_chat_widget) and the run_skill MCP subprocess (block
+    # environment). None/blank = run_skill refuses every call (fail-closed).
+    run_skill_secret: Optional[str] = None
     
     def __post_init__(self):
         if self.extra_args is None:
@@ -1036,6 +1042,10 @@ class OpenCodeBackend(LLMBackend):
             "project_tools_netlist": request.project_tools_enabled,
             "project_tools_get_bom": request.project_tools_enabled,
             "project_tools_list_test_points": request.project_tools_enabled,
+            # run_skill (infra): the recursion tool, gated by ONE per-request bool
+            # (True only for a skill declaring `mcp_tools: [run_skill]`). A literal
+            # key here is authoritative -- the setdefault loop below cannot clobber it.
+            "run_skill_run_skill": request.run_skill_enabled,
         }
         # Skill-owned tools: force every registered skill tool to an explicit
         # on/off (the active skill's servers -> True, all others -> False).

@@ -614,19 +614,46 @@ class SkillChatWidget(QWidget):
         backend = self._ensure_backend()
         self._ensure_session()
 
+        _declared = list(
+            (getattr(self._skill, "metadata", None) or {}).get("mcp_tools") or [])
+
+        # run_skill (skill-invokes-skill) is opt-in: a skill must declare it in
+        # `mcp_tools`. When it does, mint this (depth-0) session's HMAC chain-token
+        # from the per-process secret and prepend a [HOST] preamble handing it to
+        # the model; the run_skill MCP server verifies that token. No secret (server
+        # down / non-OpenCode backend) -> stay off (the server would refuse anyway).
+        _sys = self._session.system_prompt
+        _run_skill = False
+        if "run_skill" in _declared:
+            _secret = getattr(getattr(backend, "config", None), "run_skill_secret", None)
+            if _secret:
+                from ..authoring import rs_core
+                _tok = rs_core.sign(
+                    {"depth": 0, "visited": [self._skill.skill_id]}, _secret.encode())
+                _sys = (f"[HOST] Your run_skill chain_token is: {_tok}\n"
+                        f"[HOST] If (and only if) you call run_skill, pass this exact "
+                        f"chain_token as the chain_token argument.\n\n{_sys}")
+                _run_skill = True
+            else:
+                log.warning(
+                    "skill %r declares run_skill but no signing secret is available "
+                    "(OpenCode backend not pre-warmed?); recursion is unavailable.",
+                    getattr(self._skill, "skill_id", "?"))
+
         request = LLMRequest(
             task=LLMTask.AD_HOC_CHAT,
             raw_prompt=prompt,
-            # SKILL.md as the governing system prompt (not buried in the body).
-            system_prompt=self._session.system_prompt,
+            # SKILL.md as the governing system prompt (not buried in the body);
+            # carries the [HOST] run_skill token preamble when recursion is enabled.
+            system_prompt=_sys,
             web_enabled=self._web_checkbox.isChecked(),
             save_docs_enabled=self._save_docs_checkbox.isChecked(),
             project_tools_enabled=self._project_tools_checkbox.isChecked(),
             # A skill exposes ONLY its own tools: it declares the server(s) it
             # uses in frontmatter (e.g. dcdc_bringup -> `mcp_tools: [dcdc_tools]`);
             # the backend turns those on and every other skill tool explicitly off.
-            skill_servers_enabled=list(
-                (getattr(self._skill, "metadata", None) or {}).get("mcp_tools") or []),
+            skill_servers_enabled=_declared,
+            run_skill_enabled=_run_skill,
         )
         self._worker = LLMWorker(backend, request, parent=self)
         self._worker.text_chunk.connect(self._on_text_chunk)

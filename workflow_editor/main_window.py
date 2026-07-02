@@ -13,7 +13,7 @@ import threading
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QStatusBar, QMenuBar, QMenu, QToolBar, QMessageBox, QLabel, QDockWidget,
-    QFileDialog, QDialog
+    QFileDialog, QDialog, QTextBrowser
 )
 from PySide6.QtCore import Qt, Signal, Slot, QFileSystemWatcher
 from PySide6.QtGui import QAction, QKeySequence, QShortcut, QCursor
@@ -689,6 +689,10 @@ class MainWindow(QMainWindow):
         syntax_action.setShortcut("F1")
         syntax_action.triggered.connect(self._on_syntax_reference)
         help_menu.addAction(syntax_action)
+
+        export_kw_action = QAction("Word Export &Keywords...", self)
+        export_kw_action.triggered.connect(self._on_export_keywords)
+        help_menu.addAction(export_kw_action)
 
         about_action = QAction("&About", self)
         about_action.triggered.connect(self._on_about)
@@ -2418,6 +2422,48 @@ class MainWindow(QMainWindow):
         rules_root = (self.project_manager.rules_root
                       if self.project_manager is not None else None)
         SyntaxReferenceDialog.show_reference(rules_root, self)
+
+    def _on_export_keywords(self):
+        """Show the Word-export template variable reference.
+
+        Single-sourced from the main app's canonical
+        ``test_procedure_gui/help/word_export_keywords.md`` (the editor
+        exports the SAME report, so the variables are identical). Resolved
+        via the installed package first, then the monorepo-relative path;
+        bare-editor installs without the main app get a pointer instead of
+        a stale duplicated copy.
+        """
+        md = None
+        try:
+            from test_procedure_gui import help as _help_pkg  # type: ignore
+            _p = Path(_help_pkg.__file__).parent / "word_export_keywords.md"
+            md = _p.read_text(encoding="utf-8") if _p.exists() else None
+        except Exception:
+            md = None
+        if md is None:
+            _p = (Path(__file__).resolve().parents[3]
+                  / "src" / "test_procedure_gui" / "help"
+                  / "word_export_keywords.md")
+            try:
+                md = _p.read_text(encoding="utf-8") if _p.exists() else None
+            except Exception:
+                md = None
+        if md is None:
+            QMessageBox.information(
+                self, "Word Export Keywords",
+                "The template-variable reference ships with the main "
+                "application: open it there via Help \u2192 Documentation (F1) "
+                "\u2192 Word Export Keywords.")
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Word Export Keywords")
+        dlg.resize(760, 600)
+        lay = QVBoxLayout(dlg)
+        browser = QTextBrowser(dlg)
+        browser.setOpenExternalLinks(True)
+        browser.document().setMarkdown(md)
+        lay.addWidget(browser)
+        dlg.exec()
 
     def _on_about(self):
         """Show about dialog."""

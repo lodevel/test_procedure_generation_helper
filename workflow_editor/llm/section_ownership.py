@@ -31,18 +31,19 @@ OWNER_LLM: str = "llm"
 
 #: Full set of recognised section names (lowercase) for the default ruleset.
 CANONICAL_SECTIONS: frozenset[str] = frozenset(
-    {"test_id", "description", "meta", "equipment", "steps", "expected"}
+    {"test_id", "title", "description", "meta", "equipment", "steps", "expected"}
 )
 
 #: Default emit order of procedure sections (matches the DSL); fallback when a
 #: SectionOwnership has no declared ``section_order``.
 CANONICAL_SECTION_ORDER: tuple[str, ...] = (
-    "test_id", "description", "meta", "equipment", "steps", "expected",
+    "test_id", "title", "description", "meta", "equipment", "steps", "expected",
 )
 
 #: Human-facing heading label per section, for prompts/UI.
 SECTION_HEADINGS: dict[str, str] = {
     "test_id": "# <TEST_ID> (title line)",
+    "title": "## Title",
     "description": "description paragraph (under the title)",
     "meta": "## Meta",
     "equipment": "## Equipment",
@@ -53,6 +54,7 @@ SECTION_HEADINGS: dict[str, str] = {
 #: Baked-in default used when the bundle has no ``section_ownership.json``.
 DEFAULT_OWNERSHIP: dict[str, str] = {
     "test_id": OWNER_PARSER,
+    "title": OWNER_PARSER,
     "description": OWNER_PARSER,
     "meta": OWNER_PARSER,
     "equipment": OWNER_LLM,

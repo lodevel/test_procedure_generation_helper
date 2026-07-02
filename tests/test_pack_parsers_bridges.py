@@ -66,6 +66,7 @@ class GetSectionOwnershipTests(unittest.TestCase):
             ownership,
             {
                 "test_id": "parser",
+                "title": "parser",
                 "description": "parser",
                 "meta": "parser",
                 "equipment": "llm",

@@ -56,7 +56,7 @@ class ResolveDefaultMapTests(unittest.TestCase):
     def test_parser_sections(self) -> None:
         self.assertEqual(
             self.ownership.parser_sections,
-            frozenset({"test_id", "description", "meta"}),
+            frozenset({"test_id", "title", "description", "meta"}),
         )
 
     def test_union_equals_canonical(self) -> None:
@@ -66,11 +66,12 @@ class ResolveDefaultMapTests(unittest.TestCase):
         )
 
     def test_section_order_is_canonical_six(self) -> None:
-        # Backward-compat: the default map's universe == the canonical six in
-        # the declared (insertion) order.
+        # Backward-compat: the default map's universe == the canonical sections
+        # in the declared (insertion) order (now includes the optional
+        # front-matter ``title`` section).
         self.assertEqual(
             self.ownership.section_order,
-            ("test_id", "description", "meta", "equipment", "steps", "expected"),
+            ("test_id", "title", "description", "meta", "equipment", "steps", "expected"),
         )
 
     def test_owner_of_llm_section(self) -> None:
@@ -132,14 +133,14 @@ class ResolveTaskOverrideTests(unittest.TestCase):
         self.assertEqual(o.llm_sections | o.parser_sections, CANONICAL_SECTIONS)
 
     def test_default_override_steps_backward_compat(self) -> None:
-        # Spec backward-compat case: universe = the six, llm = {steps},
-        # parser = the other five.
+        # Spec backward-compat case: universe = the canonical sections,
+        # llm = {steps}, parser = all the others.
         o = resolve(DEFAULT_OWNERSHIP, {"steps"})
         self.assertEqual(o.llm_sections, frozenset({"steps"}))
         self.assertEqual(o.parser_sections, CANONICAL_SECTIONS - {"steps"})
         self.assertEqual(
             o.section_order,
-            ("test_id", "description", "meta", "equipment", "steps", "expected"),
+            ("test_id", "title", "description", "meta", "equipment", "steps", "expected"),
         )
 
 

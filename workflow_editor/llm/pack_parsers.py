@@ -1147,35 +1147,42 @@ def validate(
 def get_section_ownership(
     project_root: Optional[Path] = None,
 ) -> dict[str, str]:
-    """Return the bundle's declared default section→owner map (``parser``/``llm``).
+    """Return the EFFECTIVE section→owner map (``parser``/``llm``).
 
-    The editable ``<project_root>/bundle/rules/section_ownership.json`` side-car
-    is authoritative when present; the wheel's baked-in map is the FALLBACK.
+    Resolution chain (section ownership is project CONFIGURATION, not a
+    bundle property):
 
-    - ``project_root`` given: read the side-car first
-      (:func:`section_ownership.load_bundle_ownership`). A loaded dict (including
-      an explicit ``{}`` "LLM owns nothing") is returned as-is. Only when the
-      side-car is absent or invalid (``None``) do we fall through to the wheel
-      subprocess, which raises :class:`ParserUnavailable` on failure.
-    - ``project_root`` is None (editor / no project): the in-process wheel
-      default, unchanged.
+    1. ``<project_root>/config/section_ownership.json`` — project-config
+       OVERRIDE (survives bundle reinstall/upgrade, rides template export);
+       layered per-section over the base below.
+    2. ``<project_root>/bundle/rules/section_ownership.json`` — the pack's
+       declaration copied at build (:func:`section_ownership.load_bundle_ownership`).
+       A loaded dict (including an explicit ``{}`` "LLM owns nothing") is
+       the base as-is.
+    3. Wheel default (subprocess) only when the side-car is absent or
+       invalid; raises :class:`ParserUnavailable` on failure.
+
+    ``project_root`` is None (editor / no project): the in-process wheel
+    default, unchanged.
     """
     if project_root is None:
         return _inproc_import_wheel().section_ownership()
 
+    override = section_ownership.load_config_override(project_root)
     loaded = section_ownership.load_bundle_ownership(project_root / "bundle")
-    if loaded is not None:
-        return loaded
-
-    project_python = _resolve_project_python(project_root)
-    result = _subprocess_call(
-        project_python,
-        {"op": "section_ownership"},
-        timeout=_timeout(),
-    )
-    if not result.get("ok"):
-        raise ParserUnavailable(result.get("error", "subprocess error"))
-    return result["ownership"]
+    if loaded is None:
+        project_python = _resolve_project_python(project_root)
+        result = _subprocess_call(
+            project_python,
+            {"op": "section_ownership"},
+            timeout=_timeout(),
+        )
+        if not result.get("ok"):
+            raise ParserUnavailable(result.get("error", "subprocess error"))
+        loaded = result["ownership"]
+    # Override layers over whichever base won (bundle side-car OR wheel
+    # default); it never shrinks the section universe on its own.
+    return {**loaded, **override} if override else loaded
 
 
 def reconstruct_text(

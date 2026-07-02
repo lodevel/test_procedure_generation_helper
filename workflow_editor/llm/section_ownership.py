@@ -66,6 +66,12 @@ DEFAULT_OWNERSHIP: dict[str, str] = {
 #: reference it without hard-coding the string.
 OWNERSHIP_REL_PATH = "rules/section_ownership.json"
 
+#: Relative path inside a PROJECT directory of the project-config ownership
+#: OVERRIDE.  Section ownership is configuration: this file survives bundle
+#: reinstall/upgrade and participates in template export, unlike the bundle's
+#: own side-car (the pack's read-only declaration).
+CONFIG_OVERRIDE_REL_PATH = "config/section_ownership.json"
+
 
 # ---------------------------------------------------------------------------
 # Result type
@@ -196,17 +202,15 @@ def resolve(
 # ---------------------------------------------------------------------------
 
 
-def load_bundle_ownership(bundle_dir: Path) -> dict[str, str] | None:
-    """Read ``<bundle_dir>/rules/section_ownership.json``.
+def _load_flat_map(path: Path) -> dict[str, str] | None:
+    """Read one ownership JSON file into a flat ``{section: owner}`` dict.
 
-    Returns the parsed flat ``{str: str}`` dict — which **may be ``{}``** for
-    a valid but empty file — or ``None`` when the file is absent, unreadable,
-    not valid JSON, not a JSON object, or contains non-string keys/values.
-    ``None`` signals *unknown* so the caller can fall back to
-    :data:`DEFAULT_OWNERSHIP`; an empty dict ``{}`` means the bundle
-    explicitly owns zero LLM sections.
+    Shared body of :func:`load_bundle_ownership` and
+    :func:`load_config_override` — same validation/flattening for both
+    tiers. Returns the flat dict (which **may be ``{}``**) or ``None``
+    when the file is absent, unreadable, not valid JSON, not a JSON
+    object, or contains non-string keys / invalid value shapes.
     """
-    path = bundle_dir / OWNERSHIP_REL_PATH
     if not path.exists():
         log.debug("section_ownership: %s not found; will use default", path)
         return None
@@ -247,6 +251,32 @@ def load_bundle_ownership(bundle_dir: Path) -> dict[str, str] | None:
             )
             return None
     return flat
+
+
+def load_bundle_ownership(bundle_dir: Path) -> dict[str, str] | None:
+    """Read ``<bundle_dir>/rules/section_ownership.json``.
+
+    Returns the parsed flat ``{str: str}`` dict — which **may be ``{}``** for
+    a valid but empty file — or ``None`` when the file is absent, unreadable,
+    not valid JSON, not a JSON object, or contains non-string keys/values.
+    ``None`` signals *unknown* so the caller can fall back to
+    :data:`DEFAULT_OWNERSHIP`; an empty dict ``{}`` means the bundle
+    explicitly owns zero LLM sections.
+    """
+    return _load_flat_map(bundle_dir / OWNERSHIP_REL_PATH)
+
+
+def load_config_override(project_root: Path) -> dict[str, str] | None:
+    """Read ``<project_root>/config/section_ownership.json`` — the
+    project-config ownership OVERRIDE tier.
+
+    Section ownership is configuration consumed by the editor/parser:
+    the override survives bundle reinstall/upgrade and rides template
+    export. Same validation/flattening as :func:`load_bundle_ownership`;
+    ``None`` = no override (fall through to the bundle side-car / wheel
+    default).
+    """
+    return _load_flat_map(project_root / CONFIG_OVERRIDE_REL_PATH)
 
 
 def supports_section_ownership(bundle_dir: Path) -> bool:

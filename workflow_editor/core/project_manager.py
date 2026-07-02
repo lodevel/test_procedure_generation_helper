@@ -380,6 +380,25 @@ class ProjectManager:
         
         try:
             new_folder.mkdir(parents=True)
+            # Seed the canonical artifacts so the new test starts with
+            # id == sanitized folder name (folder is the source of truth;
+            # save-time enforcement keeps it that way afterwards).
+            from .test_id import sanitize_test_id
+            test_id = sanitize_test_id(new_folder.name)
+            (new_folder / "procedure_text.md").write_text(
+                f"# {test_id}\n", encoding="utf-8"
+            )
+            starter = {
+                "id": test_id,
+                "description": "",
+                "equipment": [],
+                "steps": [],
+                "expected": [],
+            }
+            (new_folder / "procedure.json").write_text(
+                json.dumps(starter, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
             return new_folder
         except OSError:
             return None

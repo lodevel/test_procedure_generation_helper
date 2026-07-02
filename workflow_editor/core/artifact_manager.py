@@ -23,6 +23,7 @@ from typing import Optional, Any
 
 import re
 from .sync_utils import normalize_for_hash
+from .test_id import sanitize_test_id, force_text_id_line, force_json_id
 
 
 class ArtifactType(Enum):
@@ -138,12 +139,35 @@ class ArtifactManager:
         artifact = self._get_artifact(artifact_type)
         if artifact.file_path is None:
             raise ValueError(f"No file path set for {artifact_type}")
-        
+
+        # Enforce test id == sanitized folder name (folder is the single
+        # source of truth). Rewrite the '# <id>' header line of the text
+        # and the top-level "id" of the JSON so a hand-authored id can
+        # never drift from the folder. Mirror the correction back into
+        # artifact.content so the editor matches disk.
+        artifact.content = self._enforce_folder_id(artifact_type, artifact.content)
+
         self._atomic_write(artifact.file_path, artifact.content)
         artifact.mark_clean()
         artifact.mark_needs_resync()  # Mark for resync so LLM sees manual changes
         artifact.last_modified = datetime.now()
     
+    def _enforce_folder_id(self, artifact_type: ArtifactType, content: str) -> str:
+        """Force the procedure id to the sanitized folder name.
+
+        Applies to the PROCEDURE_TEXT header line and the PROCEDURE_JSON
+        top-level "id". No-op when no test_dir is set or for other
+        artifact types. Never raises: invalid JSON is left untouched.
+        """
+        if self.test_dir is None:
+            return content
+        folder_id = sanitize_test_id(self.test_dir.name)
+        if artifact_type == ArtifactType.PROCEDURE_TEXT:
+            return force_text_id_line(content, folder_id)
+        if artifact_type == ArtifactType.PROCEDURE_JSON:
+            return force_json_id(content, folder_id)
+        return content
+
     def save_all(self) -> list[ArtifactType]:
         """Save all dirty artifacts. Returns list of saved artifact types."""
         saved = []

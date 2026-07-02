@@ -30,10 +30,34 @@ from workflow_editor.llm.section_ownership import (  # noqa: E402
     OWNER_PARSER,
     SectionOwnership,
     for_bundle,
+    heading_label,
     load_bundle_ownership,
     resolve,
     supports_section_ownership,
 )
+
+
+# ---------------------------------------------------------------------------
+# heading_label() tests
+# ---------------------------------------------------------------------------
+
+
+class HeadingLabelTests(unittest.TestCase):
+    """Canonical sections keep their labels; unknown ones derive a heading."""
+
+    def test_known_sections_use_canonical_labels(self) -> None:
+        self.assertEqual(heading_label("test_id"), "# <TEST_ID>")
+        self.assertEqual(heading_label("title"), "## Title")
+        self.assertEqual(heading_label("equipment"), "## Equipment")
+
+    def test_known_section_case_insensitive(self) -> None:
+        self.assertEqual(heading_label("Equipment"), "## Equipment")
+
+    def test_unknown_section_derives_heading(self) -> None:
+        self.assertEqual(heading_label("power_stage"), "## Power stage")
+
+    def test_unknown_single_word(self) -> None:
+        self.assertEqual(heading_label("intro"), "## Intro")
 
 
 # ---------------------------------------------------------------------------

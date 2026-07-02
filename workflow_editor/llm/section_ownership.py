@@ -51,6 +51,19 @@ SECTION_HEADINGS: dict[str, str] = {
     "expected": "## Expected",
 }
 
+def heading_label(section: str) -> str:
+    """Display heading for *section* (prompts/UI only — never parsed back).
+
+    Canonical sections map through :data:`SECTION_HEADINGS`; a bundle-declared
+    section outside it gets a derived label: ``"## "`` + the key with
+    underscores as spaces, capitalised (``power_stage`` -> ``## Power stage``).
+    """
+    known = SECTION_HEADINGS.get(str(section).strip().lower())
+    if known is not None:
+        return known
+    return "## " + str(section).strip().replace("_", " ").capitalize()
+
+
 #: Baked-in default used when the bundle has no ``section_ownership.json``.
 DEFAULT_OWNERSHIP: dict[str, str] = {
     "test_id": OWNER_PARSER,

@@ -92,14 +92,15 @@ def render_section_emit_list(ownership: SectionOwnership) -> str:
     parser-owned ones as must-not-emit / auto-preserved.
 
     Iterates ``ownership.section_order`` (the bundle's declared universe);
-    labels each section via :data:`SECTION_HEADINGS` falling back to the raw
-    key for sections with no canonical heading. An old/blank SectionOwnership
+    labels each section via :func:`section_ownership.heading_label` (canonical
+    heading, or a derived ``## Name`` label for a bundle-declared section
+    outside the default ruleset). An old/blank SectionOwnership
     with an empty ``section_order`` falls back to ``CANONICAL_SECTION_ORDER``."""
     order = ownership.section_order or section_ownership.CANONICAL_SECTION_ORDER
     owned: list[str] = []
     parser_owned: list[str] = []
     for section in order:
-        heading = section_ownership.SECTION_HEADINGS.get(section, section)
+        heading = section_ownership.heading_label(section)
         if section in ownership.llm_sections:
             owned.append(heading)
         else:

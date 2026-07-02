@@ -55,8 +55,9 @@ class RenderSectionEmitListDefaultTests(unittest.TestCase):
 
     def test_do_not_emit_references_parser_sections(self) -> None:
         # The parser-owned identity sections must be in the do-not-emit block.
-        self.assertIn("# <TEST_ID> (title line)", self.rendered)
-        self.assertIn("description paragraph (under the title)", self.rendered)
+        self.assertIn("# <TEST_ID>", self.rendered)
+        self.assertIn("## Title", self.rendered)
+        self.assertIn("## Description", self.rendered)
         self.assertIn("## Meta", self.rendered)
 
     def test_has_author_only_lead_in(self) -> None:
@@ -122,36 +123,42 @@ class GetContractOverrideTests(unittest.TestCase):
 
 
 class RenderSectionEmitListCustomUniverseTests(unittest.TestCase):
-    """Emit-list iterates the bundle's declared section_order, labelling unknown
-    sections by their raw key (no SECTION_HEADINGS entry)."""
+    """Emit-list iterates the bundle's declared section_order, labelling
+    sections with no SECTION_HEADINGS entry via a derived ``## Name`` heading
+    (heading_label), never the raw key."""
 
-    CUSTOM = {"intro": "parser", "body": "llm", "outro": "llm"}
+    CUSTOM = {"intro": "parser", "body": "llm", "power_stage": "llm"}
 
     def setUp(self) -> None:
         self.rendered = render_section_emit_list(resolve(self.CUSTOM))
 
     def test_lists_custom_owned_in_order(self) -> None:
         # Authored owned sections are the custom llm keys, in declared order.
-        body = self.rendered.index("body")
-        outro = self.rendered.index("outro")
-        self.assertLess(body, outro)
+        body = self.rendered.index("## Body")
+        power = self.rendered.index("## Power stage")
+        self.assertLess(body, power)
         self.assertIn("Author ONLY these sections", self.rendered)
 
-    def test_labels_are_raw_keys(self) -> None:
-        # No SECTION_HEADINGS entry → raw key used verbatim.
-        for key in ("intro", "body", "outro"):
+    def test_labels_are_derived_headings(self) -> None:
+        # No SECTION_HEADINGS entry → derived '## Name' label, not the raw key.
+        for key, label in (
+            ("intro", "## Intro"),
+            ("body", "## Body"),
+            ("power_stage", "## Power stage"),
+        ):
             self.assertNotIn(key, SECTION_HEADINGS)
-            self.assertIn(key, self.rendered)
+            self.assertIn(label, self.rendered)
+        self.assertNotIn("power_stage", self.rendered)
 
     def test_no_canonical_sections_leak(self) -> None:
         self.assertNotIn("## Equipment", self.rendered)
         self.assertNotIn("## Steps", self.rendered)
-        self.assertNotIn("# <TEST_ID> (title line)", self.rendered)
+        self.assertNotIn("# <TEST_ID>", self.rendered)
 
     def test_parser_section_in_do_not_emit(self) -> None:
         marker = "Do NOT emit these"
         do_not_emit = self.rendered[self.rendered.index(marker):]
-        self.assertIn("intro", do_not_emit)
+        self.assertIn("## Intro", do_not_emit)
 
 
 class RenderSectionEmitListEmptyOrderFallbackTests(unittest.TestCase):

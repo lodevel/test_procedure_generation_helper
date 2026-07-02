@@ -1,307 +1,349 @@
-﻿"""Tests for PromptBuilder."""
+﻿"""Tests for PromptBuilder (task #22: capability-gated task prompts).
+
+The editor ships NO task prompt text. Task prompts come exclusively from
+the effective bundle/project config (TaskConfigManager). A task without a
+non-empty prompt_template is NOT invocable: PromptBuilder raises
+TaskPromptNotDeclaredError instead of silently substituting text.
+AD_HOC_CHAT is the one grammar-neutral, editor-native exception.
+"""
 import pytest
-from pathlib import Path
-from workflow_editor.llm import PromptBuilder, LLMTask, LLMRequest
-from workflow_editor.core.task_config import ChatConfig, TaskConfigManager, TaskConfig
+from workflow_editor.llm import (
+    PromptBuilder,
+    LLMTask,
+    LLMRequest,
+    NoneBackend,
+    TaskPromptNotDeclaredError,
+)
+from workflow_editor.llm.prompt_builder import AD_HOC_CHAT_DEFAULT_PROMPT
+from workflow_editor.core.task_config import ChatConfig, TaskConfig, TaskConfigManager
 
-class TestPromptBuilderInstructions:
-    def test_all_tasks_have_instructions(self):
-        builder = PromptBuilder()
-        for task in LLMTask:
-            assert task in builder.DEFAULT_PROMPTS
-            instruction = builder.DEFAULT_PROMPTS[task]
-            assert len(instruction.strip()) > 50
-    
-    def test_output_format_in_prompt(self, sample_llm_request_minimal):
-        builder = PromptBuilder()
-        prompt = builder.build(sample_llm_request_minimal)
-        assert 'response format' in prompt.lower()
-        assert 'proposals' in prompt
 
-class TestPromptBuilderStructure:
-    def test_minimal_prompt(self, sample_llm_request_minimal):
+def _manager_with_prompt(tmp_path, tab_id, task_id, prompt):
+    """TaskConfigManager (legacy single-file mode) with one declared prompt."""
+    manager = TaskConfigManager(tmp_path / "cfg.json")
+    assert manager.update_task_config(
+        tab_id=tab_id, task_id=task_id, prompt_template=prompt, enabled=True
+    )
+    return manager
+
+
+def _request(task, **overrides):
+    kwargs = dict(
+        task=task, strict_mode=True,
+        procedure_json=None, test_code=None, procedure_text=None,
+        rules_content=None, session_summary=None, user_message=None,
+    )
+    kwargs.update(overrides)
+    return LLMRequest(**kwargs)
+
+
+class TestNoEditorBakedPrompts:
+    """The grammar-opinionated editor defaults are gone for good."""
+
+    def test_default_prompt_dicts_deleted(self):
+        assert not hasattr(PromptBuilder, "DEFAULT_PROMPTS")
+        assert not hasattr(PromptBuilder, "DEFAULT_TASK_INSTRUCTIONS")
+        assert not hasattr(PromptBuilder, "get_default_prompts")
+
+    def test_output_format_survives(self):
+        # The output format is grammar-neutral plumbing and stays.
+        fmt = PromptBuilder.get_default_output_format()
+        assert "llm_turn" in fmt
+        assert "proposals" in fmt
+
+
+class TestUndeclaredTaskRaises:
+    """A task whose prompt_template is not declared by the effective
+    config must fail loudly — never run with substituted text."""
+
+    def test_no_manager_raises(self):
         builder = PromptBuilder()
-        prompt = builder.build(sample_llm_request_minimal)
-        assert builder.DEFAULT_PROMPTS[LLMTask.GENERATE_CODE_FROM_JSON] in prompt
-        assert 'response format' in prompt.lower()
-    
-    def test_strict_mode_in_prompt(self):
-        request = LLMRequest(
-            task=LLMTask.GENERATE_CODE_FROM_JSON, strict_mode=True,
-            procedure_json='{}', test_code=None, procedure_text=None,
-            rules_content=None, session_summary=None, user_message=None
+        with pytest.raises(TaskPromptNotDeclaredError):
+            builder.build(_request(LLMTask.GENERATE_CODE_FROM_JSON))
+
+    def test_manager_without_template_raises(self, tmp_path):
+        # Fresh manager: editor defaults declare the task ids but ship
+        # prompt_template=null everywhere -> not invocable.
+        manager = TaskConfigManager(tmp_path / "cfg.json")
+        builder = PromptBuilder(task_config_manager=manager, tab_id="text_json")
+        with pytest.raises(TaskPromptNotDeclaredError):
+            builder.build(_request(LLMTask.DERIVE_JSON_FROM_TEXT))
+
+    def test_blank_template_raises(self, tmp_path):
+        manager = _manager_with_prompt(
+            tmp_path, "text_json", LLMTask.DERIVE_JSON_FROM_TEXT.value, "   \n  "
         )
+        builder = PromptBuilder(task_config_manager=manager, tab_id="text_json")
+        with pytest.raises(TaskPromptNotDeclaredError):
+            builder.build(_request(LLMTask.DERIVE_JSON_FROM_TEXT))
+
+    def test_error_message_is_clear(self):
         builder = PromptBuilder()
-        prompt = builder.build(request)
-        assert 'strict' in prompt.lower()
-    
-    def test_force_mode_in_prompt(self):
-        request = LLMRequest(
-            task=LLMTask.GENERATE_CODE_FROM_JSON, strict_mode=False,
-            procedure_json='{}', test_code=None, procedure_text=None,
-            rules_content=None, session_summary=None, user_message=None
+        with pytest.raises(TaskPromptNotDeclaredError, match="not declared by the active bundle"):
+            builder.build(_request(LLMTask.REVIEW_JSON))
+
+
+class TestDeclaredTaskResolves:
+    """Declared prompt_template drives the built prompt."""
+
+    def test_config_prompt_in_built_prompt(self, tmp_path):
+        custom = "CUSTOM TEST PROMPT: Do something special"
+        manager = _manager_with_prompt(
+            tmp_path, "text_json", LLMTask.DERIVE_JSON_FROM_TEXT.value, custom
         )
-        builder = PromptBuilder()
-        prompt = builder.build(request)
-        assert 'force' in prompt.lower()
+        builder = PromptBuilder(task_config_manager=manager, tab_id="text_json")
+        prompt = builder.build(
+            _request(LLMTask.DERIVE_JSON_FROM_TEXT, procedure_text="Sample text")
+        )
+        assert custom in prompt
+        assert "response format" in prompt.lower()
+        assert "proposals" in prompt
+
+    def test_strict_mode_in_prompt(self, tmp_path):
+        manager = _manager_with_prompt(
+            tmp_path, "json_code", LLMTask.GENERATE_CODE_FROM_JSON.value, "GEN CODE"
+        )
+        builder = PromptBuilder(task_config_manager=manager, tab_id="json_code")
+        prompt = builder.build(
+            _request(LLMTask.GENERATE_CODE_FROM_JSON, strict_mode=True, procedure_json="{}")
+        )
+        assert "strict" in prompt.lower()
+
+    def test_force_mode_in_prompt(self, tmp_path):
+        manager = _manager_with_prompt(
+            tmp_path, "json_code", LLMTask.GENERATE_CODE_FROM_JSON.value, "GEN CODE"
+        )
+        builder = PromptBuilder(task_config_manager=manager, tab_id="json_code")
+        prompt = builder.build(
+            _request(LLMTask.GENERATE_CODE_FROM_JSON, strict_mode=False, procedure_json="{}")
+        )
+        assert "force" in prompt.lower()
+
 
 class TestPromptBuilderArtifacts:
-    def test_json_artifact_in_prompt(self, sample_json_artifact):
-        request = LLMRequest(
-            task=LLMTask.GENERATE_CODE_FROM_JSON, strict_mode=True,
-            procedure_json=sample_json_artifact, test_code=None, procedure_text=None,
-            rules_content=None, session_summary=None, user_message=None
-        )
-        builder = PromptBuilder()
-        prompt = builder.build(request)
-        assert '```json' in prompt
-        assert sample_json_artifact in prompt
-    
-    def test_session_context_included(self):
-        request = LLMRequest(
-            task=LLMTask.GENERATE_CODE_FROM_JSON, strict_mode=True,
-            procedure_json='{}', test_code=None, procedure_text=None,
-            rules_content=None, session_summary='Previous: LED test', user_message=None
-        )
-        builder = PromptBuilder()
-        prompt = builder.build(request)
-        assert 'Previous: LED test' in prompt
-    
-    def test_rules_included(self):
-        request = LLMRequest(
-            task=LLMTask.GENERATE_CODE_FROM_JSON, strict_mode=True,
-            procedure_json='{}', test_code=None, procedure_text=None,
-            rules_content='Rule 1: Use fixtures', session_summary=None, user_message=None
-        )
-        builder = PromptBuilder()
-        prompt = builder.build(request)
-        assert 'Rule 1: Use fixtures' in prompt
+    """Artifact/session/rules sections (grammar-neutral plumbing).
 
-class TestPromptBuilderTaskConfigIntegration:
-    """Test TaskConfigManager integration."""
-    
-    def test_custom_prompt_from_task_config_manager(self, tmp_path):
-        """Test that custom prompts are loaded from TaskConfigManager."""
-        # Setup a TaskConfigManager with a custom prompt
-        config_file = tmp_path / "test_config.json"
-        manager = TaskConfigManager(config_file)
-        
-        # Update a task with a custom prompt
-        custom_prompt = "CUSTOM TEST PROMPT: Do something special"
-        manager.update_task_config(
-            tab_id="text_json",
-            task_id=LLMTask.DERIVE_JSON_FROM_TEXT.value,
-            button_label="Test Label",
-            prompt_template=custom_prompt,
-            enabled=True
+    Uses AD_HOC_CHAT so no declared task prompt is needed."""
+
+    def test_json_artifact_in_prompt(self, sample_json_artifact):
+        builder = PromptBuilder()
+        prompt = builder.build(
+            _request(LLMTask.AD_HOC_CHAT, procedure_json=sample_json_artifact)
         )
-        
-        # Create PromptBuilder with TaskConfigManager
-        builder = PromptBuilder(
-            task_config_manager=manager,
-            tab_id="text_json"
+        assert "```json" in prompt
+        assert sample_json_artifact in prompt
+
+    def test_session_context_included(self):
+        builder = PromptBuilder()
+        prompt = builder.build(
+            _request(LLMTask.AD_HOC_CHAT, session_summary="Previous: LED test")
         )
-        
-        # Build a request
-        request = LLMRequest(
-            task=LLMTask.DERIVE_JSON_FROM_TEXT,
-            strict_mode=True,
-            procedure_json=None,
-            test_code=None,
-            procedure_text="Sample text",
-            rules_content=None,
-            session_summary=None,
-            user_message=None
+        assert "Previous: LED test" in prompt
+
+    def test_rules_included(self):
+        builder = PromptBuilder()
+        prompt = builder.build(
+            _request(LLMTask.AD_HOC_CHAT, rules_content="Rule 1: Use fixtures")
         )
-        
-        prompt = builder.build(request)
-        assert custom_prompt in prompt
-        assert "CUSTOM TEST PROMPT" in prompt
-    
-    def test_fallback_to_default_when_no_custom_prompt(self, tmp_path):
-        """Test that DEFAULT_PROMPTS is used when TaskConfig has no custom prompt."""
-        config_file = tmp_path / "test_config.json"
-        manager = TaskConfigManager(config_file)
-        
-        # Create PromptBuilder with TaskConfigManager
-        builder = PromptBuilder(
-            task_config_manager=manager,
-            tab_id="text_json"
-        )
-        
-        # Build a request for a task with no custom prompt
-        request = LLMRequest(
-            task=LLMTask.DERIVE_JSON_FROM_TEXT,
-            strict_mode=True,
-            procedure_json=None,
-            test_code=None,
-            procedure_text="Sample text",
-            rules_content=None,
-            session_summary=None,
-            user_message=None
-        )
-        
-        prompt = builder.build(request)
-        
-        # Should contain the default prompt
-        default_prompt = builder.DEFAULT_PROMPTS[LLMTask.DERIVE_JSON_FROM_TEXT]
-        assert default_prompt in prompt
-    
-    def test_backward_compatibility_with_custom_prompts_dict(self):
-        """Test backward compatibility with deprecated custom_prompts parameter."""
+        assert "Rule 1: Use fixtures" in prompt
+
+
+class TestDeprecatedCustomPromptsDict:
+    """Backward compatibility: the deprecated custom_prompts dict still
+    resolves, and the config layer still wins over it."""
+
+    def test_custom_prompts_dict_resolves(self):
         custom_prompt = "LEGACY CUSTOM PROMPT"
         builder = PromptBuilder(
-            custom_prompts={
-                LLMTask.GENERATE_CODE_FROM_JSON.value: custom_prompt
-            }
+            custom_prompts={LLMTask.GENERATE_CODE_FROM_JSON.value: custom_prompt}
         )
-        
-        request = LLMRequest(
-            task=LLMTask.GENERATE_CODE_FROM_JSON,
-            strict_mode=True,
-            procedure_json="{}",
-            test_code=None,
-            procedure_text=None,
-            rules_content=None,
-            session_summary=None,
-            user_message=None
+        prompt = builder.build(
+            _request(LLMTask.GENERATE_CODE_FROM_JSON, procedure_json="{}")
         )
-        
-        prompt = builder.build(request)
         assert custom_prompt in prompt
-    
-    def test_task_config_manager_without_tab_id_uses_defaults(self, tmp_path):
-        """Test that providing task_config_manager without tab_id falls back to defaults."""
-        config_file = tmp_path / "test_config.json"
-        manager = TaskConfigManager(config_file)
-        
-        # Should not raise — tab_id=None means TaskConfigManager won't be queried
-        builder = PromptBuilder(task_config_manager=manager, tab_id=None)
-        assert builder._tab_id is None
-    
+
     def test_priority_order_task_config_over_custom_prompts(self, tmp_path):
-        """Test that TaskConfigManager takes priority over deprecated custom_prompts."""
-        config_file = tmp_path / "test_config.json"
-        manager = TaskConfigManager(config_file)
-        
-        # Set custom prompt in TaskConfigManager
         tcm_prompt = "FROM TASK CONFIG MANAGER"
-        manager.update_task_config(
-            tab_id="json_code",
-            task_id=LLMTask.GENERATE_CODE_FROM_JSON.value,
-            button_label="Test",
-            prompt_template=tcm_prompt,
-            enabled=True
+        manager = _manager_with_prompt(
+            tmp_path, "json_code", LLMTask.GENERATE_CODE_FROM_JSON.value, tcm_prompt
         )
-        
-        # Also provide deprecated custom_prompts
         legacy_prompt = "FROM LEGACY CUSTOM PROMPTS"
         builder = PromptBuilder(
             task_config_manager=manager,
             tab_id="json_code",
-            custom_prompts={
-                LLMTask.GENERATE_CODE_FROM_JSON.value: legacy_prompt
-            }
+            custom_prompts={LLMTask.GENERATE_CODE_FROM_JSON.value: legacy_prompt},
         )
-        
-        request = LLMRequest(
-            task=LLMTask.GENERATE_CODE_FROM_JSON,
-            strict_mode=True,
-            procedure_json="{}",
-            test_code=None,
-            procedure_text=None,
-            rules_content=None,
-            session_summary=None,
-            user_message=None
+        prompt = builder.build(
+            _request(LLMTask.GENERATE_CODE_FROM_JSON, procedure_json="{}")
         )
-        
-        prompt = builder.build(request)
-
-        # Should use TaskConfigManager prompt, not legacy
         assert tcm_prompt in prompt
         assert legacy_prompt not in prompt
 
+    def test_task_config_manager_without_tab_id(self, tmp_path):
+        manager = TaskConfigManager(tmp_path / "cfg.json")
+        builder = PromptBuilder(task_config_manager=manager, tab_id=None)
+        assert builder._tab_id is None
+        # Without a tab_id the manager is never queried -> undeclared.
+        with pytest.raises(TaskPromptNotDeclaredError):
+            builder.build(_request(LLMTask.DERIVE_JSON_FROM_TEXT))
 
-class TestPromptBuilderChatConfigWiring:
-    """Phase 4.5: chat_config.system_prompt is actually consulted at
-    runtime for AD_HOC_CHAT. Previously stored but not applied — a
-    bug that should never have shipped."""
+
+class TestAdHocChatEditorNative:
+    """AD_HOC_CHAT stays editor-native (grammar-neutral): chat works with
+    no bundle at all, and chat_config.system_prompt overrides."""
+
+    def test_chat_resolves_without_any_config(self):
+        # The settings-dialog Test Connection path: bare backend builder,
+        # no manager. Must not raise.
+        builder = PromptBuilder()
+        prompt = builder.build(_request(LLMTask.AD_HOC_CHAT, user_message="hi"))
+        assert "Respond CONSERVATIVELY" in prompt
 
     def test_chat_config_system_prompt_wins_over_default(self, tmp_path):
-        """When the tab's chat_config has a custom system_prompt, it
-        replaces the DEFAULT_PROMPTS[AD_HOC_CHAT] text for AD_HOC_CHAT
-        requests on that tab."""
         manager = TaskConfigManager(tmp_path / "fallback.json")
         custom = "BE TERSE. Only answer the user's literal question."
         manager.set_chat_config(
-            "text_only",
-            ChatConfig(enabled=True, system_prompt=custom),
+            "text_only", ChatConfig(enabled=True, system_prompt=custom)
         )
-
         builder = PromptBuilder(task_config_manager=manager, tab_id="text_only")
-        request = LLMRequest(
-            task=LLMTask.AD_HOC_CHAT, strict_mode=False,
-            procedure_json=None, test_code=None, procedure_text=None,
-            rules_content=None, session_summary=None,
-            user_message="hi",
+        prompt = builder.build(
+            _request(LLMTask.AD_HOC_CHAT, strict_mode=False, user_message="hi")
         )
-        prompt = builder.build(request)
         assert custom in prompt
-        # The default text shouldn't sneak in alongside.
         assert "Respond CONSERVATIVELY" not in prompt
 
     def test_chat_config_blank_falls_through_to_default(self, tmp_path):
-        """system_prompt of None or empty string falls through to the
-        DEFAULT_PROMPTS[AD_HOC_CHAT] text. Same intent as None in the
-        task_template field."""
         manager = TaskConfigManager(tmp_path / "fallback.json")
         manager.set_chat_config(
-            "text_only", ChatConfig(enabled=True, system_prompt=None),
+            "text_only", ChatConfig(enabled=True, system_prompt=None)
         )
         builder = PromptBuilder(task_config_manager=manager, tab_id="text_only")
-        request = LLMRequest(
-            task=LLMTask.AD_HOC_CHAT, strict_mode=False,
-            procedure_json=None, test_code=None, procedure_text=None,
-            rules_content=None, session_summary=None,
-            user_message="hello",
+        prompt = builder.build(
+            _request(LLMTask.AD_HOC_CHAT, strict_mode=False, user_message="hello")
         )
-        prompt = builder.build(request)
-        # Default text surfaces.
         assert "Respond CONSERVATIVELY" in prompt
 
     def test_chat_config_does_not_affect_non_chat_tasks(self, tmp_path):
-        """Setting chat_config.system_prompt for a tab must NOT
-        override the prompts of non-chat tasks on that tab."""
-        manager = TaskConfigManager(tmp_path / "fallback.json")
+        manager = _manager_with_prompt(
+            tmp_path, "text_json", LLMTask.DERIVE_JSON_FROM_TEXT.value, "TASK TEXT"
+        )
         manager.set_chat_config(
-            "text_json",
-            ChatConfig(enabled=True, system_prompt="CHAT ONLY"),
+            "text_json", ChatConfig(enabled=True, system_prompt="CHAT ONLY")
         )
         builder = PromptBuilder(task_config_manager=manager, tab_id="text_json")
-        request = LLMRequest(
-            task=LLMTask.DERIVE_JSON_FROM_TEXT, strict_mode=True,
-            procedure_json=None, test_code=None,
-            procedure_text="Step 1: do X", rules_content=None,
-            session_summary=None, user_message=None,
+        prompt = builder.build(
+            _request(LLMTask.DERIVE_JSON_FROM_TEXT, procedure_text="Step 1: do X")
         )
-        prompt = builder.build(request)
         assert "CHAT ONLY" not in prompt
-        # Default DERIVE_JSON prompt body is present (TaskConfigManager
-        # has the baked editor default for it).
-        assert "Derive procedure.json" in prompt
-
-
-class TestAdHocChatPromptIsConservative:
-    """The default AD_HOC_CHAT prompt must instruct the LLM NOT to
-    proactively review or propose. Regression for the bug where typing
-    'test message' triggered an unsolicited full procedure review."""
+        assert "TASK TEXT" in prompt
 
     def test_default_prompt_forbids_unsolicited_proposals(self):
-        prompt = PromptBuilder.DEFAULT_PROMPTS[LLMTask.AD_HOC_CHAT]
-        lowered = prompt.lower()
+        """Regression: typing 'test message' must not trigger an
+        unsolicited full procedure review."""
+        lowered = AD_HOC_CHAT_DEFAULT_PROMPT.lower()
         assert "conservatively" in lowered
         assert "explicitly" in lowered
-        # Mentions the clarifying-question fallback for ambiguous input.
         assert "clarif" in lowered
-        # Mentions the never-include-a-proposal rule.
         assert "proposal" in lowered
+
+
+class TestCustomTaskEffectiveId:
+    """A bundle-declared CUSTOM task (id not in the LLMTask enum) routes
+    via AD_HOC_CHAT but resolves ITS OWN prompt_template by
+    request.custom_task_id — never the chat default chain. An undeclared
+    custom id fails loudly (gpt-5.5 finding)."""
+
+    @staticmethod
+    def _manager_with_custom_task(tmp_path, tab_id, task_id, prompt):
+        manager = TaskConfigManager(tmp_path / "cfg.json")
+        assert manager.add_task(
+            tab_id, TaskConfig(id=task_id, name="Custom", button_label="Custom",
+                        prompt_template=prompt)
+        )
+        return manager
+
+    def test_declared_custom_task_prompt_resolves(self, tmp_path):
+        custom = "BUNDLE CUSTOM TASK PROMPT: verify the shunt wiring"
+        manager = self._manager_with_custom_task(
+            tmp_path, "text_json", "verify_shunt", custom
+        )
+        builder = PromptBuilder(task_config_manager=manager, tab_id="text_json")
+        prompt = builder.build(
+            _request(LLMTask.AD_HOC_CHAT, custom_task_id="verify_shunt")
+        )
+        assert custom in prompt
+        assert "Respond CONSERVATIVELY" not in prompt
+
+    def test_undeclared_custom_id_raises(self, tmp_path):
+        manager = TaskConfigManager(tmp_path / "cfg.json")
+        builder = PromptBuilder(task_config_manager=manager, tab_id="text_json")
+        with pytest.raises(TaskPromptNotDeclaredError, match="undeclared_custom"):
+            builder.build(
+                _request(LLMTask.AD_HOC_CHAT, custom_task_id="undeclared_custom")
+            )
+
+    def test_custom_id_never_falls_back_to_chat_config(self, tmp_path):
+        # chat_config.system_prompt belongs to the PLAIN chat; an
+        # undeclared custom id must raise, not inherit chat text.
+        manager = TaskConfigManager(tmp_path / "cfg.json")
+        manager.set_chat_config(
+            "text_json", ChatConfig(enabled=True, system_prompt="CHAT ONLY")
+        )
+        builder = PromptBuilder(task_config_manager=manager, tab_id="text_json")
+        with pytest.raises(TaskPromptNotDeclaredError):
+            builder.build(
+                _request(LLMTask.AD_HOC_CHAT, custom_task_id="undeclared_custom")
+            )
+
+    def test_custom_id_without_manager_raises(self):
+        # Backend's config-less builder can never resolve a custom task.
+        builder = PromptBuilder()
+        with pytest.raises(TaskPromptNotDeclaredError):
+            builder.build(_request(LLMTask.AD_HOC_CHAT, custom_task_id="anything"))
+
+    def test_plain_chat_unaffected(self, tmp_path):
+        # No custom_task_id -> the editor-native chat default still resolves,
+        # untouched by declared custom tasks on the same tab.
+        manager = self._manager_with_custom_task(
+            tmp_path, "text_json", "verify_shunt", "BUNDLE CUSTOM"
+        )
+        builder = PromptBuilder(task_config_manager=manager, tab_id="text_json")
+        prompt = builder.build(_request(LLMTask.AD_HOC_CHAT, user_message="hi"))
+        assert "Respond CONSERVATIVELY" in prompt
+        assert "BUNDLE CUSTOM" not in prompt
+
+
+class TestOutgoingPromptResolution:
+    """Backend seam: raw_prompt > prebuilt_prompt > config-less build.
+
+    The tab pipeline builds the prompt with a config-aware PromptBuilder
+    and attaches it as request.prebuilt_prompt; the backend must send
+    THAT text, never rebuild with its config-less builder."""
+
+    def test_raw_prompt_wins(self):
+        backend = NoneBackend()
+        req = _request(LLMTask.AD_HOC_CHAT)
+        req.raw_prompt = "RAW"
+        req.prebuilt_prompt = "PREBUILT"
+        assert backend._resolve_outgoing_prompt(req) == "RAW"
+
+    def test_prebuilt_prompt_used_without_rebuild(self):
+        backend = NoneBackend()
+        # Undeclared task: a rebuild would raise, so returning the
+        # prebuilt text proves no rebuild happens.
+        req = _request(LLMTask.REVIEW_JSON)
+        req.prebuilt_prompt = "PREBUILT TASK PROMPT"
+        assert backend._resolve_outgoing_prompt(req) == "PREBUILT TASK PROMPT"
+
+    def test_fallback_build_raises_for_undeclared_task(self):
+        backend = NoneBackend()
+        req = _request(LLMTask.REVIEW_JSON)
+        with pytest.raises(TaskPromptNotDeclaredError):
+            backend._resolve_outgoing_prompt(req)
+
+    def test_fallback_build_resolves_ad_hoc_chat(self):
+        backend = NoneBackend()
+        req = _request(LLMTask.AD_HOC_CHAT, user_message="ping")
+        prompt = backend._resolve_outgoing_prompt(req)
+        assert "Respond CONSERVATIVELY" in prompt
+        assert "ping" in prompt

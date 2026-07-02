@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import Optional
 
 from ..llm import LLMTask, ChatMessage
-from ..llm.prompt_builder import PromptBuilder
+from ..llm.prompt_builder import PromptBuilder, TaskPromptNotDeclaredError
 from ..llm.output_contracts import get_contract_for_tab
 from ..llm.reconstruction import pipeline_ownership
 from ..core.task_config import DEFAULT_MAX_VALIDATOR_ATTEMPTS
@@ -271,7 +271,22 @@ class LLMTabMixin:
             self.tab_context.project_manager.project_root, override
         )
         contract = get_contract_for_tab(self.tab_context.tab_id, ownership=ownership)
-        full_prompt = prompt_builder.build(request, output_contract_override=contract)
+        # Effective id: bundle-declared CUSTOM tasks route via AD_HOC_CHAT
+        # but resolve THEIR OWN prompt_template (threaded on the request by
+        # _build_request; the builder reads request.custom_task_id).
+        custom_task_id = kwargs.get('custom_task_id', None)
+        try:
+            full_prompt = prompt_builder.build(request, output_contract_override=contract)
+        except TaskPromptNotDeclaredError as exc:
+            # Capability gate (task #22): buttons for undeclared tasks are
+            # greyed out, so this only fires on programmatic invocation.
+            # Fail loudly — never silently substitute prompt text.
+            log.error("Refusing to run task '%s': %s", custom_task_id or task.value, exc)
+            self.status_message.emit(str(exc))
+            return
+        # Attach the config-aware prompt so the backend sends THIS text
+        # (its own builder is config-less and must not rebuild the prompt).
+        request.prebuilt_prompt = full_prompt
 
         # Cancel any running worker before starting a new one.
         if hasattr(self, '_worker') and self._worker and self._worker.isRunning():
@@ -279,7 +294,6 @@ class LLMTabMixin:
             self._worker.wait()
 
         user_msg_text = kwargs.get('user_message', None)
-        custom_task_id = kwargs.get('custom_task_id', None)
         user_message = ChatMessage(
             role="user",
             content=self._get_task_description(task, user_msg_text, custom_task_id=custom_task_id),

@@ -22,7 +22,7 @@
         "id": "review_text_procedure",
         "name": "Review Text Procedure",
         "button_label": "Review Text",
-        "prompt_template": "Task: Apply the rules to the procedure text and return the canonical version.\n\nThe input may already be canonical, partly canonical, or loose operator prose. Read every rule provided, apply them to the input, and return the corrected canonical text. Faithfully preserve the operator's intent, equipment, sequence of steps, refs, and pass/fail criteria — translate non-canonical wording to its canonical counterpart, do not drop steps, do not invent steps. If the input is already canonical, return it unchanged.\n\nAlongside the rewrite, identify and report any issues you found:\n- Ambiguous or unclear steps\n- Missing equipment specifications\n- Missing measurement parameters\n- Rule violations\n- Anything that required a judgment call (assumed values, unmappable prose routed to `Operator:` fallback, etc.)\n\nReport issues in validation.issues[] with severity, code, message, location, and suggested_fix.\n\nIMPORTANT: In your response, you MUST always include a 'procedure_text' proposal — the corrected canonical text if changes were made, or the input unchanged if it was already canonical. Downstream tooling expects exactly one canonical procedure_text artifact.\nDo NOT generate 'procedure_json' or 'test_code' proposals for this task.",
+        "prompt_template": null,
         "enabled": true,
         "max_validator_attempts": null
       },
@@ -38,7 +38,7 @@
         "id": "review_text_vs_json",
         "name": "Review Text vs JSON",
         "button_label": "Check Text↔JSON",
-        "prompt_template": "Task: Check coherence between procedure text and procedure.json.\n\nCompare the procedure text with the procedure JSON and identify:\n- Step count mismatches\n- Step content/intent mismatches\n- Equipment list differences\n- Expected result differences\n\nDon't touch fields like media if they are correct.\nReport issues in validation.issues[] with severity, code, message, location, and suggested_fix.\nIf you find issues, include proposals (procedure_text and/or procedure_json) with the corrected versions.\nYou may ask clarifying questions if needed.",
+        "prompt_template": null,
         "enabled": true,
         "max_validator_attempts": null
       }
@@ -55,7 +55,7 @@
         "id": "generate_code_from_json",
         "name": "Generate Code from JSON",
         "button_label": "JSON → Code",
-        "prompt_template": "Task: Generate test code from procedure.json.\n\nGenerate Python test code that implements the procedure described in the JSON.\nRequirements:\n- Include # Step N markers for each step\n- Follow the equipment and measurement specifications\n- Handle errors appropriately\n- Do not touch the JSON procedure",
+        "prompt_template": null,
         "enabled": true,
         "max_validator_attempts": null
       },

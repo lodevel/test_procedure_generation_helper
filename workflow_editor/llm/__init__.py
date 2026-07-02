@@ -3,7 +3,7 @@
 from .backend_base import LLMBackend, LLMResponse, LLMRequest, LLMTask, NoneBackend, LLMProposal
 from .opencode_backend import OpenCodeBackend, OpenCodeConfig
 from .response_parser import ResponseParser
-from .prompt_builder import PromptBuilder
+from .prompt_builder import PromptBuilder, TaskPromptNotDeclaredError
 from .output_contracts import get_contract_for_tab, get_allowed_artifacts
 from .tab_context import TabContext, ChatMessage
 from .worker import LLMWorker
@@ -19,6 +19,7 @@ __all__ = [
     "OpenCodeConfig",
     "ResponseParser",
     "PromptBuilder",
+    "TaskPromptNotDeclaredError",
     "LLMProposal",
     "get_contract_for_tab",
     "get_allowed_artifacts",

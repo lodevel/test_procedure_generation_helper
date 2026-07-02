@@ -19,118 +19,24 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-class PromptBuilder:
+class TaskPromptNotDeclaredError(RuntimeError):
+    """Raised when a task is invoked whose ``prompt_template`` is not
+    declared by the active bundle/project configuration.
+
+    Task prompts are grammar-opinionated and belong to the pack/bundle
+    layer. The editor never substitutes its own text: an undeclared task
+    is not invocable (its button is greyed out), and a programmatic
+    invocation fails loudly here instead of silently running with a
+    made-up prompt.
     """
-    Builds prompts for LLM tasks following spec Section 14.
-    
-    Prompt structure:
-    1. Task instruction (from TaskConfigManager or defaults)
-    2. Strict mode flag
-    3. Session summary (if any)
-    4. Rules content (if loaded)
-    5. Artifacts
-    6. Output format requirements
-    
-    Prompt resolution order:
-    1. Custom prompt from TaskConfigManager (if available)
-    2. DEFAULT_PROMPTS for the specific task
-    3. DEFAULT_PROMPTS[AD_HOC_CHAT] as last resort
-    """
-    
-    # Default task instructions (used as fallback when TaskConfig.prompt_template is None)
-    DEFAULT_TASK_INSTRUCTIONS = {
-        LLMTask.DERIVE_JSON_FROM_CODE: """
-Task: Derive procedure.json from test code.
 
-Analyze the provided Python test code and create a structured procedure.json that describes the test procedure.
-Extract:
-- Test name and description
-- Board/equipment requirements
-- Test steps (from # Step N markers or inferred from code)
-- Expected results
-""",
-        
-        LLMTask.GENERATE_CODE_FROM_JSON: """
-Task: Generate test code from procedure.json.
 
-Generate Python test code that implements the procedure described in the JSON.
-Requirements:
-- Include # Step N markers for each step
-- Follow the equipment and measurement specifications
-- Handle errors appropriately
-""",
-        
-        LLMTask.REVIEW_JSON: """
-Task: Review procedure.json for correctness and completeness.
-
-Analyze the provided procedure.json and identify:
-- Missing required fields
-- Incomplete step descriptions
-- Equipment specification issues
-- Any violations of the rules (if provided)
-
-Report issues in validation.issues[] with severity, code, message, location, and suggested_fix.
-If you find issues, include a procedure_json proposal with the corrected version.
-You may ask clarifying questions if needed.
-""",
-        
-        LLMTask.REVIEW_CODE_VS_JSON: """
-Task: Check coherence between procedure.json and test code.
-
-Compare the procedure JSON with the test code and identify:
-- Steps in JSON without corresponding code blocks
-- Code blocks without corresponding JSON steps
-- Equipment mismatches
-- Measurement/expectation mismatches
-- Rule violations in either artifact
-
-Report issues in validation.issues[] with severity, code, message, location, and suggested_fix.
-If you find issues, include proposals (procedure_json and/or test_code) with the corrected versions.
-You may ask clarifying questions if needed.
-""",
-        
-        LLMTask.RENDER_TEXT_FROM_JSON: """
-Task: Render procedure.json as human-readable text.
-
-Convert the structured JSON into a clear, readable procedure document.
-Format as markdown with:
-- Title and description
-- Equipment list
-- Numbered steps with clear instructions
-- Expected results
-""",
-        
-        LLMTask.REVIEW_TEXT_PROCEDURE: """
-Task: Rewrite the procedure text into valid, canonical, rule-compliant form.
-
-The canonical-format rules are provided above. Apply them fully: fix every grammar,
-wording, equipment, verb, and format problem so the whole procedure is valid. Preserve
-the operator's intent and the ORDER of the operations; otherwise rewrite freely -- split
-multi-action steps, fix verbs, renumber, and add the ## Equipment the rules require.
-
-Put the complete rewritten procedure in the procedure_text proposal, and list what you
-changed or could not resolve in validation.issues[]. If the procedure is already valid,
-return no proposal.
-
-IMPORTANT: ONLY include a 'procedure_text' proposal. Do NOT generate 'procedure_json'
-or 'test_code' proposals for this task.
-""",
-        
-        LLMTask.DERIVE_JSON_FROM_TEXT: """
-Task: Derive procedure.json from procedure text.
-
-Convert the natural language procedure text into a structured procedure.json.
-Extract and structure:
-- Test name and description
-- Equipment requirements
-- Step-by-step procedure
-- Expected results and pass/fail criteria
-
-IMPORTANT: In your response, ONLY include a 'procedure_json' proposal.
-Do NOT generate 'test_code' or 'procedure_text' proposals for this task.
-""",
-        
-        LLMTask.AD_HOC_CHAT: """
+# Editor-native default for AD_HOC_CHAT ONLY. The ad-hoc chat is
+# grammar-neutral (it encodes no procedure-format opinion), so it may keep
+# an editor-shipped default; a per-tab ``chat_config.system_prompt``
+# overrides it. Every other task prompt must come from the effective
+# bundle/project config.
+AD_HOC_CHAT_DEFAULT_PROMPT = """
 Task: Respond to user question or request.
 
 The user is asking a question or making a request related to test
@@ -145,42 +51,29 @@ procedure authoring. Respond CONSERVATIVELY:
 - If the user asks a question, answer it without modifying artifacts.
 - Never include a proposal (procedure_json, test_code, procedure_text)
   unless the user explicitly asked for a change.
-""",
-        
-        LLMTask.REVIEW_CODE: """
-Task: Review test code for correctness and rule compliance.
+"""
 
-Analyze the provided Python test code and identify:
-- Missing or incorrect step markers
-- Equipment handling issues
-- Measurement structure problems
-- Error handling gaps
-- Rule violations (if rules provided)
-- Code quality issues
 
-Report issues in validation.issues[] with severity, code, message, location, and suggested_fix.
-If you find issues, include a test_code proposal with the corrected version.
-You may ask clarifying questions if needed.
+class PromptBuilder:
+    """
+    Builds prompts for LLM tasks following spec Section 14.
 
-IMPORTANT: In your response, ONLY include a 'test_code' proposal if needed.
-Do NOT generate 'procedure_json' or 'procedure_text' proposals for this task.
-""",
-        
-        LLMTask.REVIEW_TEXT_VS_JSON: """
-Task: Check coherence between procedure text and procedure.json.
+    Prompt structure:
+    1. Task instruction (from TaskConfigManager)
+    2. Strict mode flag
+    3. Session summary (if any)
+    4. Rules content (if loaded)
+    5. Artifacts
+    6. Output format requirements
 
-Compare the procedure text with the procedure JSON and identify:
-- Step count mismatches
-- Step content/intent mismatches
-- Equipment list differences
-- Expected result differences
+    Prompt resolution order:
+    1. prompt_template from TaskConfigManager (effective bundle/project config)
+    1b. For AD_HOC_CHAT: per-tab chat_config.system_prompt
+    2. Deprecated custom_prompts dict (backward compatibility)
+    3. For AD_HOC_CHAT only: AD_HOC_CHAT_DEFAULT_PROMPT (editor-native)
+    4. Otherwise: raise TaskPromptNotDeclaredError (never substitute text)
+    """
 
-Report issues in validation.issues[] with severity, code, message, location, and suggested_fix.
-If you find issues, include proposals (procedure_text and/or procedure_json) with the corrected versions.
-You may ask clarifying questions if needed.
-""",
-    }
-    
     # Default output format requirements
     DEFAULT_OUTPUT_FORMAT = """
 ## Required Response Format
@@ -237,9 +130,6 @@ Rules:
 - Only UTF-8
 """
     
-    # Renamed from DEFAULT_TASK_INSTRUCTIONS for clarity
-    DEFAULT_PROMPTS = DEFAULT_TASK_INSTRUCTIONS
-    
     def __init__(
         self, 
         task_config_manager: Optional['TaskConfigManager'] = None,
@@ -253,7 +143,8 @@ Rules:
         
         Args:
             task_config_manager: TaskConfigManager for querying per-tab task configurations.
-                               If None, only DEFAULT_PROMPTS will be used (backward compatibility for tests).
+                               If None, only the deprecated custom_prompts dict (and the
+                               AD_HOC_CHAT editor default) can resolve a task prompt.
             tab_id: Tab identifier (e.g., "text_json", "json_code") for querying task configs.
                    Required if task_config_manager is provided.
             custom_output_format: Custom output format template. If provided, overrides the default.
@@ -263,7 +154,7 @@ Rules:
         Note:
             tab_id can be None when task_config_manager is provided (e.g., for main window's
             legacy task execution). In this case, TaskConfigManager will not be queried for
-            custom prompts, and DEFAULT_PROMPTS will be used as fallback.
+            custom prompts, and only AD_HOC_CHAT (editor default) remains resolvable.
         """
         self._task_config_manager = task_config_manager
         self._tab_id = tab_id
@@ -297,17 +188,6 @@ Rules:
         )
     
     @staticmethod
-    def get_default_prompts() -> Dict[str, str]:
-        """
-        Get the default prompt templates.
-        
-        Returns:
-            Dictionary mapping task names (as strings) to default prompt templates.
-            Used for reference and testing purposes.
-        """
-        return {task.value: prompt for task, prompt in PromptBuilder.DEFAULT_PROMPTS.items()}
-    
-    @staticmethod
     def get_default_output_format() -> str:
         """
         Get the default output format template.
@@ -317,60 +197,79 @@ Rules:
         """
         return PromptBuilder.DEFAULT_OUTPUT_FORMAT
     
-    def _get_task_prompt(self, task: LLMTask) -> str:
+    def _get_task_prompt(self, task: LLMTask, custom_task_id: Optional[str] = None) -> str:
         """
-        Get the prompt template for a task with fallback chain.
+        Get the prompt template for a task.
+
+        ``custom_task_id`` is the effective id of a bundle-declared CUSTOM
+        task (not in the LLMTask enum) routed through AD_HOC_CHAT. When set,
+        ONLY step 1 applies, keyed by that id — the AD_HOC_CHAT fallback
+        chain (1b/2/3) belongs to the plain chat and must never silently
+        substitute chat text for a custom task.
 
         Resolution order:
-        1. Custom prompt from TaskConfigManager (if configured)
-        1b. For AD_HOC_CHAT: per-tab ``chat_config.system_prompt`` (so
-            the workflows-dialog Chat editor actually takes effect at
-            runtime — Phase 4.5).
+        1. prompt_template from TaskConfigManager (the effective
+           bundle/project config — the editor layer ships none), keyed by
+           the effective id (``custom_task_id`` or ``task.value``).
+        1b. For AD_HOC_CHAT (no custom_task_id): per-tab
+            ``chat_config.system_prompt`` (so the workflows-dialog Chat
+            editor actually takes effect at runtime — Phase 4.5).
         2. Custom prompt from deprecated custom_prompts dict (if provided)
-        3. DEFAULT_PROMPTS for the specific task
-        4. DEFAULT_PROMPTS[AD_HOC_CHAT] as last resort
+        3. For AD_HOC_CHAT only (no custom_task_id):
+           AD_HOC_CHAT_DEFAULT_PROMPT (grammar-neutral, editor-native).
+        4. Otherwise: raise TaskPromptNotDeclaredError — the editor never
+           substitutes text for a task the active bundle did not declare.
 
         Args:
-            task: The LLM task to get prompt for
+            task: The LLM routing task to get prompt for
+            custom_task_id: Effective id of a bundle-declared custom task,
+                or None for plain enum tasks.
 
         Returns:
             Prompt template string
+
+        Raises:
+            TaskPromptNotDeclaredError: If the effective task (other than
+                plain AD_HOC_CHAT) has no non-empty prompt_template in the
+                effective config.
         """
-        # 1. Try TaskConfigManager (if available)
+        effective_id = custom_task_id or task.value
+
+        # 1. Try TaskConfigManager (if available), keyed by the EFFECTIVE id
+        # so a custom task resolves ITS declared prompt_template.
         if self._task_config_manager is not None and self._tab_id is not None:
-            task_config = self._task_config_manager.get_task_config(self._tab_id, task.value)
-            if task_config is not None and task_config.prompt_template is not None:
-                log.debug(f"Using custom prompt for task '{task.value}' from TaskConfigManager")
+            task_config = self._task_config_manager.get_task_config(self._tab_id, effective_id)
+            if task_config is not None and (task_config.prompt_template or "").strip():
+                log.debug(f"Using prompt for task '{effective_id}' from TaskConfigManager")
                 return task_config.prompt_template
 
-        # 1b. For AD_HOC_CHAT, consult the tab's chat_config.system_prompt.
-        # The workflows dialog's Chat section edits this field; without
-        # this wiring the field was stored-but-unused.
-        if (task == LLMTask.AD_HOC_CHAT
-                and self._task_config_manager is not None
-                and self._tab_id is not None):
-            chat = self._task_config_manager.get_chat_config(self._tab_id)
-            if chat is not None and chat.system_prompt:
-                log.debug(f"Using chat_config.system_prompt for tab '{self._tab_id}'")
-                return chat.system_prompt
+        # A custom task gets NO fallback chain: 1b/2/3 all key on the
+        # AD_HOC_CHAT routing task and would substitute chat text.
+        if custom_task_id is None:
+            # 1b. For AD_HOC_CHAT, consult the tab's chat_config.system_prompt.
+            # The workflows dialog's Chat section edits this field; without
+            # this wiring the field was stored-but-unused.
+            if (task == LLMTask.AD_HOC_CHAT
+                    and self._task_config_manager is not None
+                    and self._tab_id is not None):
+                chat = self._task_config_manager.get_chat_config(self._tab_id)
+                if chat is not None and chat.system_prompt:
+                    log.debug(f"Using chat_config.system_prompt for tab '{self._tab_id}'")
+                    return chat.system_prompt
 
-        # 2. Try deprecated custom_prompts dict (backward compatibility)
-        if task in self._custom_prompts_dict:
-            log.debug(f"Using custom prompt for task '{task.value}' from deprecated custom_prompts")
-            return self._custom_prompts_dict[task]
+            # 2. Try deprecated custom_prompts dict (backward compatibility)
+            if task in self._custom_prompts_dict:
+                log.debug(f"Using custom prompt for task '{task.value}' from deprecated custom_prompts")
+                return self._custom_prompts_dict[task]
 
-        # 3. Try DEFAULT_PROMPTS for specific task
-        if task in self.DEFAULT_PROMPTS:
-            return self.DEFAULT_PROMPTS[task]
-        
-        # 4. Last resort: AD_HOC_CHAT prompt
-        log.warning(
-            f"Task '{task.value}' not found in DEFAULT_PROMPTS, "
-            f"falling back to AD_HOC_CHAT prompt"
-        )
-        return self.DEFAULT_PROMPTS.get(
-            LLMTask.AD_HOC_CHAT,
-            "Process the user's request."
+            # 3. AD_HOC_CHAT keeps a grammar-neutral editor-native default.
+            if task == LLMTask.AD_HOC_CHAT:
+                return AD_HOC_CHAT_DEFAULT_PROMPT
+
+        # 4. Undeclared task: fail loudly, never substitute text.
+        raise TaskPromptNotDeclaredError(
+            f"Task '{effective_id}' is not declared by the active bundle "
+            f"(no prompt_template in the effective workflow configuration)."
         )
     
     def build(self, request: LLMRequest, output_contract_override: Optional[str] = None) -> str:
@@ -384,11 +283,16 @@ Rules:
         
         Returns:
             Complete prompt string
+
+        Raises:
+            TaskPromptNotDeclaredError: If the task's prompt_template is not
+                declared by the effective config (see _get_task_prompt).
         """
         sections = []
         
-        # 1. Task instruction (with fallback chain)
-        task_instruction = self._get_task_prompt(request.task)
+        # 1. Task instruction (with fallback chain). The effective id is the
+        # request's custom_task_id for bundle-declared custom tasks.
+        task_instruction = self._get_task_prompt(request.task, request.custom_task_id)
         sections.append(f"# Task\n{task_instruction}")
         
         # 2. Strict mode

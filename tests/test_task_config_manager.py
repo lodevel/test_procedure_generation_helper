@@ -239,13 +239,12 @@ class TestTaskConfigManagerConvenience:
         )
         assert success is True
         
-        # Verify only button label changed; prompt_template carries the
-        # editor's baked-in default (Phase 4.3 baked DEFAULT_TASK_INSTRUCTIONS
-        # into default_workflows.json so they round-trip as task defaults).
+        # Verify only button label changed; prompt_template stays None —
+        # the editor ships NO task prompt text (task #22: prompts come
+        # from the bundle/project config only).
         task = manager.get_task_config("text_json", LLMTask.DERIVE_JSON_FROM_TEXT.value)
         assert task.button_label == "New Label"
-        assert task.prompt_template is not None
-        assert "Derive procedure.json" in task.prompt_template
+        assert task.prompt_template is None
         assert task.enabled is True  # Unchanged
     
     def test_update_task_config_prompt_template(self, tmp_path):
@@ -646,6 +645,78 @@ class TestTaskConfigManagerHelpers:
         """Test that unknown tab returns empty list."""
         config_path = tmp_path / "tab_contexts.json"
         manager = TaskConfigManager(config_path)
-        
+
         tasks = manager.get_all_tasks_for_tab("unknown_tab")
         assert tasks == []
+
+
+class TestIsTaskInvocable:
+    """Task #22 capability gate: a task is invocable only when the
+    EFFECTIVE config declares a non-empty prompt_template. The editor
+    layer ships none, so a bare manager gates everything off (except
+    AD_HOC_CHAT, which is chat_config-resolved and exempt)."""
+
+    def test_bare_manager_gates_all_tasks_off(self, tmp_path):
+        manager = TaskConfigManager(tmp_path / "tab_contexts.json")
+        for tab_id in ("text_json", "json_code", "text_only"):
+            for task_id in manager.get_task_ids_for_tab(tab_id):
+                if task_id == LLMTask.AD_HOC_CHAT.value:
+                    continue
+                assert manager.is_task_invocable(tab_id, task_id) is False, (
+                    f"{tab_id}/{task_id} must gate off without a declared prompt"
+                )
+
+    def test_declared_prompt_makes_task_invocable(self, tmp_path):
+        manager = TaskConfigManager(tmp_path / "tab_contexts.json")
+        manager.update_task_config(
+            tab_id="text_json",
+            task_id=LLMTask.DERIVE_JSON_FROM_TEXT.value,
+            prompt_template="Derive the JSON.",
+        )
+        assert manager.is_task_invocable(
+            "text_json", LLMTask.DERIVE_JSON_FROM_TEXT.value
+        ) is True
+        # Siblings stay gated off.
+        assert manager.is_task_invocable(
+            "text_json", LLMTask.REVIEW_JSON.value
+        ) is False
+
+    def test_blank_prompt_is_not_invocable(self, tmp_path):
+        manager = TaskConfigManager(tmp_path / "tab_contexts.json")
+        manager.update_task_config(
+            tab_id="text_json",
+            task_id=LLMTask.DERIVE_JSON_FROM_TEXT.value,
+            prompt_template="   \n ",
+        )
+        assert manager.is_task_invocable(
+            "text_json", LLMTask.DERIVE_JSON_FROM_TEXT.value
+        ) is False
+
+    def test_ad_hoc_chat_is_exempt(self, tmp_path):
+        manager = TaskConfigManager(tmp_path / "tab_contexts.json")
+        assert manager.is_task_invocable("json_code", LLMTask.AD_HOC_CHAT.value) is True
+
+    def test_unknown_task_is_not_invocable(self, tmp_path):
+        manager = TaskConfigManager(tmp_path / "tab_contexts.json")
+        assert manager.is_task_invocable("text_json", "no_such_task") is False
+
+    def test_declared_custom_task_is_invocable(self, tmp_path):
+        # Bundle-declared CUSTOM task (id not in the LLMTask enum).
+        manager = TaskConfigManager(tmp_path / "tab_contexts.json")
+        manager.add_task(
+            "text_json",
+            TaskConfig(id="verify_shunt", name="Verify Shunt",
+                       button_label="Verify Shunt",
+                       prompt_template="Verify the shunt wiring."),
+        )
+        assert manager.is_task_invocable("text_json", "verify_shunt") is True
+
+    def test_custom_task_without_prompt_is_not_invocable(self, tmp_path):
+        manager = TaskConfigManager(tmp_path / "tab_contexts.json")
+        manager.add_task(
+            "text_json",
+            TaskConfig(id="verify_shunt", name="Verify Shunt",
+                       button_label="Verify Shunt",
+                       prompt_template=None),
+        )
+        assert manager.is_task_invocable("text_json", "verify_shunt") is False

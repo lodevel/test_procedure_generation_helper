@@ -236,6 +236,113 @@ class TestBaseTabButtonLabels:
         assert base_tab.task_config_manager is mock_main_window.task_config_manager
 
 
+class TestLLMButtonCapabilityGating:
+    """Task #22: a task button is enabled only when the effective
+    bundle/project config declares a non-empty prompt_template.
+    Bare-editor mode (editor defaults only) -> all task buttons greyed
+    with a discoverable tooltip; chat is unaffected (no button)."""
+
+    @staticmethod
+    def _collect_task_buttons(tab):
+        """Walk the LLM group layout and collect current task buttons
+        (layout traversal, not findChildren — deleteLater'd buttons from
+        a rebuild would still show up as children)."""
+        buttons = []
+
+        def walk(layout):
+            for i in range(layout.count()):
+                item = layout.itemAt(i)
+                w = item.widget()
+                if isinstance(w, QPushButton) and w.property("llm_task") is not None:
+                    buttons.append(w)
+                elif item.layout():
+                    walk(item.layout())
+
+        walk(tab._llm_group_layout)
+        return buttons
+
+    def test_bare_editor_all_task_buttons_greyed(self, base_tab, mock_main_window):
+        base_tab.tab_id = "text_json"
+        base_tab._create_llm_action_group()
+
+        buttons = self._collect_task_buttons(base_tab)
+        assert len(buttons) > 0
+        for btn in buttons:
+            task_id = btn.property("task_id_override")
+            assert not btn.isEnabled(), f"{task_id} must be greyed without a bundle"
+            assert btn.toolTip() == "Not provided by this bundle"
+
+    def test_declared_task_button_enabled_after_rebuild(self, base_tab, mock_main_window):
+        base_tab.tab_id = "text_json"
+        base_tab._create_llm_action_group()
+
+        declared_id = LLMTask.DERIVE_JSON_FROM_TEXT.value
+        mock_main_window.task_config_manager.update_task_config(
+            tab_id="text_json",
+            task_id=declared_id,
+            prompt_template="Derive the JSON per the bundle rules.",
+        )
+        base_tab.rebuild_llm_buttons()
+
+        buttons = self._collect_task_buttons(base_tab)
+        assert len(buttons) > 0
+        by_id = {btn.property("task_id_override"): btn for btn in buttons}
+        assert by_id[declared_id].isEnabled()
+        assert by_id[declared_id].toolTip() != "Not provided by this bundle"
+        for task_id, btn in by_id.items():
+            if task_id != declared_id:
+                assert not btn.isEnabled(), f"{task_id} must stay greyed"
+
+    def test_no_ad_hoc_chat_button(self, base_tab, mock_main_window):
+        base_tab.tab_id = "json_code"  # json_code declares an ad_hoc_chat task entry
+        base_tab._create_llm_action_group()
+        buttons = self._collect_task_buttons(base_tab)
+        ids = {btn.property("task_id_override") for btn in buttons}
+        assert LLMTask.AD_HOC_CHAT.value not in ids
+
+    def test_declared_custom_task_click_threads_custom_task_id(
+        self, base_tab, mock_main_window
+    ):
+        """A bundle-declared CUSTOM task's button is enabled and clicking
+        runs AD_HOC_CHAT with custom_task_id (gpt-5.5 finding)."""
+        from unittest.mock import MagicMock
+        from workflow_editor.core.task_config import TaskConfig
+
+        base_tab.tab_id = "text_json"
+        mock_main_window.task_config_manager.add_task(
+            "text_json",
+            TaskConfig(id="verify_shunt", name="Verify Shunt",
+                       button_label="Verify Shunt",
+                       prompt_template="Verify the shunt wiring."),
+        )
+        base_tab._create_llm_action_group()
+
+        buttons = self._collect_task_buttons(base_tab)
+        by_id = {btn.property("task_id_override"): btn for btn in buttons}
+        btn = by_id["verify_shunt"]
+        assert btn.isEnabled()
+        assert btn.toolTip() != "Not provided by this bundle"
+
+        base_tab._run_task_async = MagicMock()
+        btn.click()
+        base_tab._run_task_async.assert_called_once_with(
+            LLMTask.AD_HOC_CHAT, custom_task_id="verify_shunt"
+        )
+
+    def test_generic_callback_guards_undeclared_custom_task(
+        self, base_tab, mock_main_window
+    ):
+        """Defense in depth: the generic callback re-checks invocability,
+        so a programmatic call with an undeclared id never dispatches."""
+        from unittest.mock import MagicMock
+
+        base_tab.tab_id = "text_json"
+        base_tab._run_task_async = MagicMock()
+        callback = base_tab._make_generic_task_callback("undeclared_custom")
+        callback()
+        base_tab._run_task_async.assert_not_called()
+
+
 @pytest.fixture
 def base_tab(mock_main_window, qapp):
     """Create a BaseTab instance for testing."""

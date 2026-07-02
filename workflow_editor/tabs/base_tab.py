@@ -651,17 +651,26 @@ class BaseTab(QWidget):
             else:
                 callback = self._make_generic_task_callback(task.id)
                 tooltip = f"Run custom task: {task.name}"
-            
+
+            # Capability gate (task #22): a task is invocable only when the
+            # effective bundle/project config declares a non-empty
+            # prompt_template. Undeclared -> greyed button with tooltip
+            # (discoverable), mirroring the pack-gated parser buttons.
+            invocable = manager.is_task_invocable(tab_id, task.id)
+            if not invocable:
+                tooltip = "Not provided by this bundle"
+
             # Create button with task_id_override for correct label lookup
             btn = self.create_task_button(
                 self._resolve_llm_task(task.id),
                 callback,
+                enabled=invocable,
                 tooltip=tooltip,
                 task_id_override=task.id
             )
             row_layout.addWidget(btn)
             col_count += 1
-            
+
             # Force-mode button (if available for this task)
             if task.id in force_map:
                 # Start new row if needed
@@ -670,13 +679,14 @@ class BaseTab(QWidget):
                     row_layout = QHBoxLayout()
                     layout.addLayout(row_layout)
                     col_count = 0
-                
+
                 force_callback, force_tooltip = force_map[task.id]
                 force_btn = self.create_task_button(
                     self._resolve_llm_task(task.id),
                     force_callback,
                     force_mode=True,
-                    tooltip=force_tooltip,
+                    enabled=invocable,
+                    tooltip=force_tooltip if invocable else "Not provided by this bundle",
                     task_id_override=task.id
                 )
                 row_layout.addWidget(force_btn)
@@ -720,6 +730,18 @@ class BaseTab(QWidget):
         custom_task_id so the correct prompt_template is looked up.
         """
         def _callback():
+            # Defense in depth (task #22): the button is greyed when the
+            # task is undeclared, but re-check so a stale or programmatic
+            # click can never run with a substituted chat prompt.
+            manager = self.task_config_manager
+            tab_id = getattr(self, 'tab_id', None)
+            if (manager is None or tab_id is None
+                    or not manager.is_task_invocable(tab_id, task_id)):
+                log.error(
+                    f"Refusing custom task '{task_id}': not declared by the "
+                    f"active bundle (no prompt_template)"
+                )
+                return
             log.info(f"Running custom task: {task_id}")
             if hasattr(self, '_run_task_async'):
                 self._run_task_async(LLMTask.AD_HOC_CHAT, custom_task_id=task_id)

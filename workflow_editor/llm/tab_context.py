@@ -715,6 +715,9 @@ class TabContext:
             session_summary=session_summary,
             rules_content=rules_content,  # Filtered rules only, sent once
             output_contract=output_contract,  # Tab-specific contract
+            # Bundle-declared CUSTOM tasks route via AD_HOC_CHAT but carry
+            # their own id so prompt resolution uses THEIR prompt_template.
+            custom_task_id=kwargs.get('custom_task_id'),
         )
         
         return request

@@ -890,6 +890,25 @@ class TaskConfigManager:
         task = self.get_task_config(tab_id, task_id)
         return task.enabled if task else True
 
+    def is_task_invocable(self, tab_id: str, task_id: str) -> bool:
+        """True when the EFFECTIVE config declares this task with a
+        non-empty ``prompt_template`` (task #22 capability gating).
+
+        The editor layer ships no prompt_template (default_workflows.json
+        has them all null), so a non-empty template can only come from the
+        bundle's pack_workflow_defaults, the project's workflows override,
+        or the legacy fallback file. Undeclared tasks are not invocable:
+        their buttons are greyed out and PromptBuilder raises
+        TaskPromptNotDeclaredError if invoked programmatically.
+
+        AD_HOC_CHAT is exempt — it is grammar-neutral and resolves through
+        ``chat_config.system_prompt`` / the editor-native default.
+        """
+        if task_id == "ad_hoc_chat":
+            return True
+        task = self.get_task_config(tab_id, task_id)
+        return task is not None and bool((task.prompt_template or "").strip())
+
     def get_chat_config(self, tab_id: str) -> ChatConfig:
         with self._lock:
             if tab_id in self._chat_configs:

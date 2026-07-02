@@ -162,6 +162,22 @@ class LLMRequest:
     # draft mode is plain-text — no JSON contract. ``None`` = normal build path.
     raw_prompt: Optional[str] = None
 
+    # Pre-built TASK prompt from the tab pipeline (LLMTabMixin), produced by a
+    # config-aware PromptBuilder (TaskConfigManager + tab_id) so the effective
+    # bundle/project prompt_template is what actually goes on the wire. Unlike
+    # ``raw_prompt`` it does NOT flip the parser to plain-text — the JSON
+    # output contract is already embedded. ``None`` = backend builds the
+    # prompt itself with its config-less builder (legacy paths only).
+    prebuilt_prompt: Optional[str] = None
+
+    # Effective task id for bundle-declared CUSTOM tasks. Custom tasks route
+    # through AD_HOC_CHAT (their id is not in the LLMTask enum), but their
+    # prompt_template is declared under THIS id in the effective config. When
+    # set, the config-aware PromptBuilder resolves the task prompt by this id
+    # (never the chat default chain); an undeclared id raises
+    # TaskPromptNotDeclaredError. ``None`` = plain enum task (task.value).
+    custom_task_id: Optional[str] = None
+
     # When True, the OpenCode backend exposes the web tools (webfetch +
     # websearch) for THIS request only — the skill chat's 🌐 toggle. Off by
     # default so the model gets NO web access unless the user explicitly opts
@@ -260,6 +276,25 @@ class LLMBackend(ABC):
             from .response_parser import ResponseParser
             self.__response_parser = ResponseParser()
         return self.__response_parser
+
+    def _resolve_outgoing_prompt(self, request: "LLMRequest") -> str:
+        """Resolve the prompt text to send for ``request``.
+
+        Precedence:
+        1. ``raw_prompt`` — verbatim, plain-text contract (skill chat).
+        2. ``prebuilt_prompt`` — built by the tab pipeline's config-aware
+           PromptBuilder; carries the effective bundle/project task prompt.
+        3. Build here with the backend's own (config-less) builder. This
+           legacy path can only resolve AD_HOC_CHAT / deprecated
+           custom_prompts; any other task raises TaskPromptNotDeclaredError.
+        """
+        if request.raw_prompt is not None:
+            return request.raw_prompt
+        if request.prebuilt_prompt is not None:
+            return request.prebuilt_prompt
+        return self._prompt_builder.build(
+            request, output_contract_override=request.output_contract
+        )
     
     def _get_system_prompt(self, task: LLMTask) -> str:
         """Get system prompt for the task.

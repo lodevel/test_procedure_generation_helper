@@ -42,9 +42,9 @@ CANONICAL_SECTION_ORDER: tuple[str, ...] = (
 
 #: Human-facing heading label per section, for prompts/UI.
 SECTION_HEADINGS: dict[str, str] = {
-    "test_id": "# <TEST_ID> (title line)",
+    "test_id": "# <TEST_ID>",
     "title": "## Title",
-    "description": "description paragraph (under the title)",
+    "description": "## Description",
     "meta": "## Meta",
     "equipment": "## Equipment",
     "steps": "## Steps",

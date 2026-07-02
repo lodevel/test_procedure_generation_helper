@@ -1,15 +1,13 @@
 """Built-in validator registrations for Phase 2.
 
-Wraps the three Phase-1 validators (``validate_current_state`` from
-``validator_dispatch``, ``JsonValidator`` and ``CodeValidator`` from
+Wraps the two Phase-1 validators (``validate_current_state`` from
+``validator_dispatch``, ``CodeValidator`` from
 ``core.validators``) and registers them under their canonical
 namespaced ids:
 
 * ``rules_packager_base.validate_procedure`` — full v2.0.x deterministic
   pipeline (R1 text↔JSON, R3 schema, R4 topology). Phase 5 lifts this
   physically into the rules_packager_base wheel; the id is stable.
-* ``rules_packager_base.validate_json_schema`` — quick JSON schema sanity
-  check (recommended-keys + required-keys + steps/expected structure).
 * ``core.check_python_syntax`` — ``py_compile`` syntax check on
   ``test.py``. Grammar-agnostic, lives in the ``core.`` pseudo-pack so
   it stays available even when no rules pack is selected.
@@ -26,7 +24,6 @@ from typing import Iterable
 
 from ..core.validators import (
     CodeValidator,
-    JsonValidator,
     ValidationIssue,
     ValidationResult,
     ValidationSeverity,
@@ -94,14 +91,6 @@ def _validate_procedure(ctx: ValidatorContext) -> ValidationOutcome:
     )
 
 
-def _validate_json_schema(ctx: ValidatorContext) -> ValidationOutcome:
-    """Quick JSON schema/structure validator. Returns ``skipped`` when
-    there's no JSON artifact available on the tab."""
-    if not ctx.artifact_json or not ctx.artifact_json.strip():
-        return _skipped("No procedure.json content to validate.")
-    return _to_outcome(JsonValidator().validate(ctx.artifact_json))
-
-
 def _check_python_syntax(ctx: ValidatorContext) -> ValidationOutcome:
     """``py_compile`` syntax check on the current code artifact."""
     if not ctx.artifact_code or not ctx.artifact_code.strip():
@@ -116,7 +105,6 @@ def _check_python_syntax(ctx: ValidatorContext) -> ValidationOutcome:
 
 _BUILTIN_REGISTRATIONS: Iterable[tuple[str, object]] = (
     ("rules_packager_base.validate_procedure",    _validate_procedure),
-    ("rules_packager_base.validate_json_schema",  _validate_json_schema),
     ("core.check_python_syntax",                  _check_python_syntax),
 )
 

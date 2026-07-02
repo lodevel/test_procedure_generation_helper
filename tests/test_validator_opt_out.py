@@ -184,10 +184,9 @@ def test_set_validator_status_unchecks_disabled_checkbox(tmp_path):
 
 
 def test_validate_procedure_button_hidden_when_wheel_unavailable(monkeypatch):
-    """Phase 5.1: the rules_packager_base validators
-    (`validate_procedure`, `validate_json_schema`) are gated on
-    `pack_parsers.is_available()` — i.e. the wheel imports cleanly.
-    When the wheel is missing, both pack-shipped validators must
+    """Phase 5.1: the rules_packager_base `validate_procedure` validator
+    is gated on `pack_parsers.is_available()` — i.e. the wheel imports
+    cleanly. When the wheel is missing, the pack-shipped validator must
     hide; the pack-independent `core.check_python_syntax` keeps showing.
     """
     from PySide6.QtWidgets import QApplication, QHBoxLayout
@@ -223,7 +222,6 @@ def test_validate_procedure_button_hidden_when_wheel_unavailable(monkeypatch):
             "text_json": {
                 "validators": [
                     {"id": "rules_packager_base.validate_procedure", "enabled": True},
-                    {"id": "rules_packager_base.validate_json_schema", "enabled": True},
                     {"id": "core.check_python_syntax", "enabled": True},
                 ],
             },
@@ -248,9 +246,8 @@ def test_validate_procedure_button_hidden_when_wheel_unavailable(monkeypatch):
 
     # Wheel-dependent validator hidden when wheel can't import.
     assert "rules_packager_base.validate_procedure" not in button_ids
-    # Self-contained validators (in-process JSON schema check,
-    # py_compile syntax) don't depend on the wheel — keep showing.
-    assert "rules_packager_base.validate_json_schema" in button_ids
+    # Self-contained validator (py_compile syntax) doesn't depend on
+    # the wheel — keeps showing.
     assert "core.check_python_syntax" in button_ids
 
     import shutil
@@ -285,7 +282,6 @@ def test_all_validator_buttons_hidden_when_master_toggle_off():
             "text_json": {
                 "validators": [
                     {"id": "rules_packager_base.validate_procedure", "enabled": True},
-                    {"id": "rules_packager_base.validate_json_schema", "enabled": True},
                     {"id": "core.check_python_syntax", "enabled": True},
                 ],
             },

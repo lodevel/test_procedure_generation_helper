@@ -100,6 +100,12 @@ def _make_tab(qapp, main_window, tab_id: str = "text_json") -> BaseTab:
     return tab
 
 
+def _register_stub_validator(vid: str = "pack_test.validate_stub") -> str:
+    """Register a no-op validator for button-mechanics tests; returns its id."""
+    register(vid, lambda _ctx: ValidationOutcome(ok=True, skipped=False, issues=[]))
+    return vid
+
+
 # ---------------------------------------------------------------------------
 # Build / rebuild
 # ---------------------------------------------------------------------------
@@ -116,7 +122,7 @@ def test_validator_run_posts_chat_message(tmp_path, qapp):
     """
     project_root = tmp_path / "proj"
     _seed_project(project_root, validators=[
-        {"id": "rules_packager_base.validate_json_schema", "enabled": True},
+        {"id": "core.check_python_syntax", "enabled": True},
     ])
     ensure_builtins_registered()
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
@@ -125,7 +131,7 @@ def test_validator_run_posts_chat_message(tmp_path, qapp):
     mw.dock.chat_panel = MagicMock()
     tab = _make_tab(qapp, mw, tab_id="text_json")
 
-    tab._run_validator("rules_packager_base.validate_json_schema")
+    tab._run_validator("core.check_python_syntax")
 
     # Either an error during validation (validator may not be importable
     # in CI without rules_packager_base) or a clean result both must
@@ -135,7 +141,7 @@ def test_validator_run_posts_chat_message(tmp_path, qapp):
         "the dock's findings panel can be hidden/off-screen."
     )
     args = mw.dock.chat_panel.add_system_message.call_args[0]
-    assert "Validate Json Schema" in args[0], (
+    assert "Check Python Syntax" in args[0], (
         f"chat-panel echo should name the validator; got: {args[0]!r}"
     )
 
@@ -144,9 +150,10 @@ def test_buttons_built_from_project_validators(tmp_path, qapp):
     """A project carrying a validators list produces one button per
     enabled, registered validator."""
     project_root = tmp_path / "proj"
+    stub_id = _register_stub_validator()
     _seed_project(project_root, validators=[
-        {"id": "rules_packager_base.validate_json_schema", "enabled": True},
-        {"id": "core.check_python_syntax",                 "enabled": True},
+        {"id": stub_id,                    "enabled": True},
+        {"id": "core.check_python_syntax", "enabled": True},
     ])
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     mw = _mock_main_window(tmp_path, manager, project_root)
@@ -161,15 +168,16 @@ def test_buttons_built_from_project_validators(tmp_path, qapp):
         for i in range(layout.count())
         if isinstance(layout.itemAt(i).widget(), QPushButton)
     ]
-    assert "Validate Json Schema" in labels
+    assert "Validate Stub" in labels
     assert "Check Python Syntax" in labels
 
 
 def test_disabled_spec_skipped(tmp_path, qapp):
     project_root = tmp_path / "proj"
+    stub_id = _register_stub_validator()
     _seed_project(project_root, validators=[
-        {"id": "rules_packager_base.validate_json_schema", "enabled": True},
-        {"id": "core.check_python_syntax",                 "enabled": False},
+        {"id": stub_id,                    "enabled": True},
+        {"id": "core.check_python_syntax", "enabled": False},
     ])
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     tab = _make_tab(qapp, _mock_main_window(tmp_path, manager, project_root))
@@ -185,8 +193,8 @@ def test_unregistered_id_skipped_with_warning(tmp_path, qapp, caplog):
     config error."""
     project_root = tmp_path / "proj"
     _seed_project(project_root, validators=[
-        {"id": "rules_packager_base.validate_json_schema", "enabled": True},
-        {"id": "made.up.never_registered",                  "enabled": True},
+        {"id": "core.check_python_syntax", "enabled": True},
+        {"id": "made.up.never_registered", "enabled": True},
     ])
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     tab = _make_tab(qapp, _mock_main_window(tmp_path, manager, project_root))
@@ -203,8 +211,9 @@ def test_rebuild_validator_buttons_swaps_set(tmp_path, qapp):
     validator list — even if the project's config is mutated and the
     manager is reloaded."""
     project_root = tmp_path / "proj"
+    stub_id = _register_stub_validator()
     _seed_project(project_root, validators=[
-        {"id": "rules_packager_base.validate_json_schema", "enabled": True},
+        {"id": stub_id, "enabled": True},
     ])
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     tab = _make_tab(qapp, _mock_main_window(tmp_path, manager, project_root))
@@ -217,7 +226,7 @@ def test_rebuild_validator_buttons_swaps_set(tmp_path, qapp):
     # should win after rebuild.
     _seed_project(project_root, validators=[
         {"id": "core.check_python_syntax", "enabled": True},
-        {"id": "rules_packager_base.validate_json_schema", "enabled": True},
+        {"id": stub_id, "enabled": True},
     ])
     manager.reload(project_root)
     tab.rebuild_validator_buttons()
@@ -230,7 +239,7 @@ def test_rebuild_preserves_non_validator_widgets(tmp_path, qapp):
     a tab put in the same row) survive."""
     project_root = tmp_path / "proj"
     _seed_project(project_root, validators=[
-        {"id": "rules_packager_base.validate_json_schema", "enabled": True},
+        {"id": "core.check_python_syntax", "enabled": True},
     ])
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     tab = _make_tab(qapp, _mock_main_window(tmp_path, manager, project_root))

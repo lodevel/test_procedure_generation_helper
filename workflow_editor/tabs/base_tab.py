@@ -242,7 +242,7 @@ class BaseTab(QWidget):
         #   - validate_procedure-specific availability: hide ONLY the
         #     "Validate Procedure" button when its deps (text_renderer +
         #     pack-side bijective handler) aren't present. Other
-        #     validators (json_schema, python_syntax) are stateless and
+        #     validators (python_syntax) are stateless and
         #     keep showing — they only "skip" if the relevant artifact
         #     is empty at click time.
         project_root = getattr(self.project_manager, "project_root", None)

@@ -2,7 +2,7 @@
 
 from .artifact_manager import ArtifactManager, ArtifactType
 from .session_state import SessionState
-from .validators import JsonValidator, CodeValidator, ValidationResult
+from .validators import CodeValidator, ValidationResult
 from .step_marker_parser import StepMarkerParser, StepBlock
 from .project_manager import ProjectManager
 from .task_config import TaskConfigManager, TaskConfig, DEFAULT_TASK_CONFIGS
@@ -12,7 +12,6 @@ __all__ = [
     "ArtifactManager",
     "ArtifactType",
     "SessionState",
-    "JsonValidator",
     "CodeValidator",
     "ValidationResult",
     "StepMarkerParser",

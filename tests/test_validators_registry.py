@@ -4,9 +4,9 @@ Covers:
 
 * Register / get / list / shorthand resolution.
 * Built-in registration is idempotent.
-* The three built-in wrappers (rules_packager_base.validate_procedure,
-  rules_packager_base.validate_json_schema, core.check_python_syntax)
-  produce ValidationOutcome with the expected shape.
+* The two built-in wrappers (rules_packager_base.validate_procedure,
+  core.check_python_syntax) produce ValidationOutcome with the
+  expected shape.
 * Built-ins handle missing artifacts by returning ``skipped=True``
   instead of raising.
 """
@@ -124,7 +124,6 @@ def test_ensure_builtins_registered_registers_expected_ids():
     ensure_builtins_registered()
     ids = set(list_ids())
     assert "rules_packager_base.validate_procedure" in ids
-    assert "rules_packager_base.validate_json_schema" in ids
     assert "core.check_python_syntax" in ids
 
 
@@ -141,32 +140,6 @@ def _ctx(text=None, jsonstr=None, code=None, project_root=None, tab_id="text_jso
         project_root=project_root,
         tab_id=tab_id,
     )
-
-
-def test_validate_json_schema_skipped_when_no_json():
-    ensure_builtins_registered()
-    outcome = get("rules_packager_base.validate_json_schema")(_ctx(jsonstr=None))
-    assert outcome.skipped is True
-    assert outcome.ok is True
-    assert outcome.issues == []
-
-
-def test_validate_json_schema_passes_minimal_valid_doc():
-    ensure_builtins_registered()
-    outcome = get("rules_packager_base.validate_json_schema")(
-        _ctx(jsonstr='{"name": "x", "steps": []}')
-    )
-    assert outcome.skipped is False
-    assert outcome.ok is True
-
-
-def test_validate_json_schema_flags_invalid_json():
-    ensure_builtins_registered()
-    outcome = get("rules_packager_base.validate_json_schema")(_ctx(jsonstr='{ not json'))
-    assert outcome.skipped is False
-    assert outcome.ok is False
-    assert outcome.has_errors
-    assert any("JSON_PARSE_ERROR" == i.code for i in outcome.issues)
 
 
 def test_check_python_syntax_skipped_when_no_code():

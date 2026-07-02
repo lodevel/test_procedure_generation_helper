@@ -20,7 +20,7 @@ from PySide6.QtGui import QAction, QKeySequence, QShortcut, QCursor
 
 from .core import (
     ArtifactManager, SessionState, ProjectManager, ArtifactType,
-    JsonValidator, CodeValidator
+    CodeValidator
 )
 from .core.task_config import TaskConfigManager
 from .llm import (

@@ -101,7 +101,7 @@ def test_unknown_workflows_keys_survive_round_trip(tmp_path):
                 ],
                 "chat_config": {"enabled": True, "system_prompt": "custom"},
                 "validators": [
-                    {"id": "validate_json_schema", "enabled": True},
+                    {"id": "rules_packager_base.validate_procedure", "enabled": True},
                     {"id": "core.check_python_syntax", "enabled": False},
                 ],
                 "future_extension": {"opaque": ["data", 42]},
@@ -122,7 +122,7 @@ def test_unknown_workflows_keys_survive_round_trip(tmp_path):
 
     wf = after["workflows"]["text_json"]
     assert wf["validators"] == [
-        {"id": "validate_json_schema", "enabled": True},
+        {"id": "rules_packager_base.validate_procedure", "enabled": True},
         {"id": "core.check_python_syntax", "enabled": False},
     ], "validators block survived"
     assert wf["future_extension"] == {"opaque": ["data", 42]}, "future block survived"

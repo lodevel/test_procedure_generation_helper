@@ -1,15 +1,14 @@
 """
-Local Validators - JSON and Python code validation.
+Local Validators - Python code validation.
 
 These run locally without LLM, providing quick syntax checks.
 """
 
-import json
 import py_compile
 import tempfile
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Optional, Any
+from typing import Optional
 from enum import Enum
 
 
@@ -72,112 +71,6 @@ class ValidationResult:
             location=location,
             code=code
         ))
-
-
-class JsonValidator:
-    """
-    Validates procedure.json content.
-    
-    Checks:
-    - Valid JSON syntax
-    - Top-level object
-    - Recommended keys present
-    - Steps and expected are arrays of objects with text keys
-    """
-    
-    RECOMMENDED_KEYS = {"name", "description", "board", "equipment", "steps", "expected"}
-    REQUIRED_KEYS = {"name", "steps"}  # Minimal required keys
-    
-    def validate(self, content: str) -> ValidationResult:
-        """Validate JSON content."""
-        result = ValidationResult(is_valid=True)
-        
-        # Check if empty
-        if not content.strip():
-            result.add_error("JSON content is empty")
-            return result
-        
-        # Try to parse JSON
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError as e:
-            result.add_error(
-                f"Invalid JSON syntax: {e.msg}",
-                location=f"line {e.lineno}, column {e.colno}",
-                code="JSON_PARSE_ERROR"
-            )
-            return result
-        
-        # Check top-level is object
-        if not isinstance(data, dict):
-            result.add_error(
-                "JSON must be an object (not array or primitive)",
-                code="JSON_NOT_OBJECT"
-            )
-            return result
-        
-        # Check required keys
-        for key in self.REQUIRED_KEYS:
-            if key not in data:
-                result.add_error(
-                    f"Missing required key: '{key}'",
-                    code="MISSING_REQUIRED_KEY"
-                )
-        
-        # Check recommended keys
-        for key in self.RECOMMENDED_KEYS - self.REQUIRED_KEYS:
-            if key not in data:
-                result.add_warning(
-                    f"Missing recommended key: '{key}'",
-                    code="MISSING_RECOMMENDED_KEY"
-                )
-        
-        # Validate steps array
-        if "steps" in data:
-            self._validate_steps_array(data["steps"], "steps", result)
-        
-        # Validate expected array
-        if "expected" in data:
-            self._validate_steps_array(data["expected"], "expected", result)
-        
-        # Validate equipment array
-        if "equipment" in data and not isinstance(data["equipment"], list):
-            result.add_warning(
-                "'equipment' should be an array",
-                location="equipment",
-                code="EQUIPMENT_NOT_ARRAY"
-            )
-        
-        return result
-    
-    def _validate_steps_array(
-        self, 
-        steps: Any, 
-        field_name: str, 
-        result: ValidationResult
-    ) -> None:
-        """Validate steps or expected array."""
-        if not isinstance(steps, list):
-            result.add_error(
-                f"'{field_name}' must be an array",
-                location=field_name,
-                code=f"{field_name.upper()}_NOT_ARRAY"
-            )
-            return
-        
-        for i, step in enumerate(steps):
-            if not isinstance(step, dict):
-                result.add_warning(
-                    f"'{field_name}[{i}]' should be an object",
-                    location=f"{field_name}[{i}]",
-                    code=f"{field_name.upper()}_ITEM_NOT_OBJECT"
-                )
-            elif "text" not in step:
-                result.add_warning(
-                    f"'{field_name}[{i}]' is missing 'text' key",
-                    location=f"{field_name}[{i}]",
-                    code=f"{field_name.upper()}_MISSING_TEXT"
-                )
 
 
 class CodeValidator:

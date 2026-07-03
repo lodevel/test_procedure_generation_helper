@@ -5,7 +5,6 @@ Implements Section 9.1 of the spec.
 """
 
 from pathlib import Path
-import hashlib
 import json
 import logging
 import os
@@ -20,7 +19,7 @@ from PySide6.QtGui import QColor, QBrush, QPalette
 from .base_tab import BaseTab
 from ..badge_delegate import BADGES_ROLE, CURRENT_ROLE, BadgeDelegate
 from ..core import ArtifactType
-from ..core.sync_utils import normalize_for_hash
+from ..core.artifact_manager import enforced_sync_hash
 from ..theme import (
     sync_warning_color, empty_test_color, ready_test_color,
     default_text_color, selected_test_bg, selected_test_fg,
@@ -247,8 +246,7 @@ class WorkspaceTab(BaseTab):
                 disk_content = file_path.read_text(encoding="utf-8")
             except Exception:
                 continue
-            normalised = normalize_for_hash(disk_content, filename, patterns)
-            disk_hash = hashlib.sha256(normalised.encode("utf-8")).hexdigest()
+            disk_hash = enforced_sync_hash(test_path, filename, disk_content, patterns)
             if disk_hash != stored:
                 return True
 
@@ -394,10 +392,7 @@ class WorkspaceTab(BaseTab):
                     f"Could not read {filename}:\n{e}",
                 )
                 return
-            normalised = normalize_for_hash(content, filename, patterns)
-            hashes[filename] = hashlib.sha256(
-                normalised.encode("utf-8"),
-            ).hexdigest()
+            hashes[filename] = enforced_sync_hash(path, filename, content, patterns)
 
         data["artifact_hashes"] = hashes
         data["artifacts_in_sync"] = True

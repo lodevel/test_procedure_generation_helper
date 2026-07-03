@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QLabel, QPlainTextEdit, QSplitter
 )
 from PySide6.QtCore import Signal, Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QTextCursor
 
 from .base_tab import BaseTab
 from ..widgets.netlist_panel import NetlistPanel
@@ -29,6 +29,29 @@ from ..theme import status_modified, status_saved
 from ..widgets.find_replace_bar import FindReplaceBar, install_find_shortcuts
 
 log = logging.getLogger(__name__)
+
+
+def _refresh_editor_after_save(editor, saved_content: str) -> None:
+    """Mirror save-time-corrected artifact content back into the editor.
+
+    ``ArtifactManager.save_artifact`` may rewrite the content it was
+    given (id == folder enforcement), so the visible buffer must be
+    refreshed to match disk or the screen lies until reload. Signals
+    are blocked so the ``textChanged`` mirror doesn't re-dirty the
+    just-saved artifact; the caret position is preserved (clamped to
+    the new end) so the cursor doesn't jump. No-op when the save wrote
+    the buffer verbatim — the common case.
+    """
+    if editor.toPlainText() == saved_content:
+        return
+    pos = editor.textCursor().position()
+    editor.blockSignals(True)
+    editor.setPlainText(saved_content)
+    editor.blockSignals(False)
+    cursor = editor.textCursor()
+    cursor.movePosition(QTextCursor.End)
+    cursor.setPosition(min(pos, cursor.position()))
+    editor.setTextCursor(cursor)
 
 
 def _post_to_chat(main_window, content: str) -> None:
@@ -233,6 +256,10 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
             self.artifact_manager.set_content(ArtifactType.PROCEDURE_TEXT, content)
             self.artifact_manager.save_artifact(ArtifactType.PROCEDURE_TEXT)
             self.artifact_manager.procedure_text.mark_clean()
+            _refresh_editor_after_save(
+                self.text_editor,
+                self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT),
+            )
             self._text_dirty = False
             self._update_text_status()
             self.status_message.emit("Text saved successfully")

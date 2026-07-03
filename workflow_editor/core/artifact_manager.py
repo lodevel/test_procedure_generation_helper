@@ -155,18 +155,15 @@ class ArtifactManager:
     def _enforce_folder_id(self, artifact_type: ArtifactType, content: str) -> str:
         """Force the procedure id to the sanitized folder name.
 
-        Applies to the PROCEDURE_TEXT header line and the PROCEDURE_JSON
-        top-level "id". No-op when no test_dir is set or for other
-        artifact types. Never raises: invalid JSON is left untouched.
+        Delegates to module-level :func:`enforce_folder_id` — the single
+        enforcement rule, shared with the workspace tab's disk hasher.
         """
-        if self.test_dir is None:
-            return content
-        folder_id = sanitize_test_id(self.test_dir.name)
-        if artifact_type == ArtifactType.PROCEDURE_TEXT:
-            return force_text_id_line(content, folder_id)
-        if artifact_type == ArtifactType.PROCEDURE_JSON:
-            return force_json_id(content, folder_id)
-        return content
+        names = {
+            ArtifactType.PROCEDURE_JSON: self.PROCEDURE_JSON_NAME,
+            ArtifactType.TEST_CODE: self.TEST_CODE_NAME,
+            ArtifactType.PROCEDURE_TEXT: self.PROCEDURE_TEXT_NAME,
+        }
+        return enforce_folder_id(self.test_dir, names[artifact_type], content)
 
     def save_all(self) -> list[ArtifactType]:
         """Save all dirty artifacts. Returns list of saved artifact types."""
@@ -328,12 +325,19 @@ class ArtifactManager:
 
         Returns a dict keyed by artifact file name (e.g. 'procedure.json').
         Only includes artifacts that have non-empty content.
+
+        Hashes come from :func:`enforced_sync_hash` (folder-id enforcement
+        first) so they reflect what ``save_artifact`` will actually write:
+        a folder-id correction at save time is not a real divergence and
+        must never flip a user-acknowledged in-sync state. Idempotent
+        for already-correct ids, no-op for test.py.
         """
         hashes: dict[str, str] = {}
         for name, artifact in self._sync_tracked_mapping().items():
             if artifact.content:
-                normalised = normalize_for_hash(artifact.content, name, self._exclusion_patterns)
-                hashes[name] = self._hash_content(normalised)
+                hashes[name] = enforced_sync_hash(
+                    self.test_dir, name, artifact.content, self._exclusion_patterns
+                )
         return hashes
 
     def check_external_changes(self, stored_hashes: dict[str, str]) -> list[str]:
@@ -350,8 +354,49 @@ class ArtifactManager:
                 disk_content = artifact.file_path.read_text(encoding="utf-8")
             except Exception:
                 continue
-            disk_hash = self._hash_content(normalize_for_hash(disk_content, name, self._exclusion_patterns))
+            # Same folder-id normalization as compute_hashes: an id that
+            # merely differs from the folder is rewritten on the next
+            # save and is not an external divergence.
+            disk_hash = enforced_sync_hash(
+                self.test_dir, name, disk_content, self._exclusion_patterns
+            )
             stored = stored_hashes.get(name)
             if stored and disk_hash != stored:
                 changed.append(name)
         return changed
+
+
+def enforce_folder_id(test_dir: Optional[Path], filename: str, content: str) -> str:
+    """Force the procedure id in *content* to the sanitized folder name.
+
+    Single enforcement rule, keyed by canonical file name: the ``# <id>``
+    header of procedure_text.md, the top-level ``"id"`` of procedure.json;
+    no-op for other files or without a *test_dir*. Never raises: invalid
+    JSON is left untouched.
+    """
+    if test_dir is None:
+        return content
+    folder_id = sanitize_test_id(test_dir.name)
+    if filename == ArtifactManager.PROCEDURE_TEXT_NAME:
+        return force_text_id_line(content, folder_id)
+    if filename == ArtifactManager.PROCEDURE_JSON_NAME:
+        return force_json_id(content, folder_id)
+    return content
+
+
+def enforced_sync_hash(
+    test_dir: Optional[Path],
+    filename: str,
+    content: str,
+    exclusion_patterns: list[re.Pattern[str]],
+) -> str:
+    """THE sync-hash pipeline: enforce folder id, normalize, SHA-256.
+
+    Every sync baseline / comparison hash must come from here — both
+    ArtifactManager (loaded artifacts + disk checks) and the workspace
+    Tests list (raw disk files of unloaded tests) — so a wrong on-disk
+    id hashes identically on every path.
+    """
+    content = enforce_folder_id(test_dir, filename, content)
+    normalised = normalize_for_hash(content, filename, exclusion_patterns)
+    return hashlib.sha256(normalised.encode("utf-8")).hexdigest()

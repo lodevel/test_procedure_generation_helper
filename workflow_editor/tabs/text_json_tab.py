@@ -287,6 +287,13 @@ class TextJsonTab(LLMTabMixin, BaseTab):
             self.artifact_manager.set_content(ArtifactType.PROCEDURE_TEXT, content)
             self.artifact_manager.save_artifact(ArtifactType.PROCEDURE_TEXT)
             self.artifact_manager.procedure_text.mark_clean()
+            # Save may have corrected the id header (id == folder
+            # enforcement) — reflect it back into the visible buffer.
+            from .text_only_tab import _refresh_editor_after_save
+            _refresh_editor_after_save(
+                self.text_editor,
+                self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT),
+            )
             self._text_dirty = False
             self._update_text_status()
             self.status_message.emit("Text saved successfully")
@@ -424,6 +431,13 @@ class TextJsonTab(LLMTabMixin, BaseTab):
             self.artifact_manager.set_content(ArtifactType.PROCEDURE_JSON, content)
             self.artifact_manager.save_artifact(ArtifactType.PROCEDURE_JSON)
             self.artifact_manager.procedure_json.mark_clean()
+            # Save may have corrected the top-level "id" (id == folder
+            # enforcement) — reflect it back into the visible buffer.
+            from .text_only_tab import _refresh_editor_after_save
+            _refresh_editor_after_save(
+                self.json_editor,
+                self.artifact_manager.get_content(ArtifactType.PROCEDURE_JSON),
+            )
             self._json_dirty = False
             self._update_json_status()
             self.status_message.emit("JSON saved successfully")

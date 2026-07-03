@@ -177,7 +177,7 @@ def skill_tool_overrides(active_servers, universe) -> dict:
     ``enabled`` default — so to scope tools to the active skill we must emit an
     EXPLICIT bool for every tool of every registered skill-owned server: ``True``
     for a server the active skill declared, ``False`` for all others (this is what
-    stops e.g. rail_check from seeing dcdc's tool).
+    stops one skill from seeing another skill's tools).
 
     ``universe`` is ``{server: [tool names]}`` (see
     :func:`workflow_editor.authoring.tool_folders.build_skill_tools_universe`);

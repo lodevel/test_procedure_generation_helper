@@ -110,10 +110,9 @@ def resolve_launch(flow: WizardFlow) -> Any:
     except Exception as exc:  # noqa: BLE001
         raise WizardLaunchError(f"could not load {flow.launch_spec!r}: {exc}") from exc
     # Guard against a same-named internal package shadowing another wizard's: the
-    # resolved module must live under the head folder (skill-relative) OR be an
-    # editor module (the in-tree form during the transition).
+    # resolved module must live under the head folder (skill-relative).
     mf = getattr(module, "__file__", "") or ""
-    if not (mf.startswith(head_dir) or mod_part.strip().startswith("workflow_editor.")):
+    if not mf.startswith(head_dir):
         log.warning("wizard %r resolved %s outside its package (%s)",
                     flow.flow_id, mod_part, mf)
     return entry

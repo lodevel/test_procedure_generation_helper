@@ -204,7 +204,7 @@ class LLMRequest:
     save_docs_enabled: bool = False
 
     # The skill-owned MCP servers the ACTIVE skill declares (its SKILL.md
-    # frontmatter ``mcp_tools``, e.g. ``[dcdc_tools]``). The OpenCode backend
+    # frontmatter ``mcp_tools``, e.g. ``[board_tools]``). The OpenCode backend
     # turns each declared server's tools ON and every OTHER registered skill tool
     # explicitly OFF (additive-override safe), so a skill sees only its own tools.
     # Empty = the skill declares no tools.

@@ -5,7 +5,7 @@ web/save_docs/project_tools toggles, the context picker, the Run/Send/Stop/
 Trash/Restart controls, the elapsed-time indicator, the token/context-usage
 readout, the LLM worker dispatch + backend lifecycle + ``SkillChatSession``)
 lives in the reusable :class:`~workflow_editor.dock.skill_chat_widget.SkillChatWidget`,
-so the Skills-menu chat and the DCDC wizard share the SAME chat — not two
+so the Skills-menu chat and a hosting wizard share the SAME chat — not two
 hand-rolled copies.
 
 The dialog adds only what is window-specific:

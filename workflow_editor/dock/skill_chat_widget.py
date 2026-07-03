@@ -3,7 +3,7 @@
 This is the reusable brain-and-chrome of a skill chat, extracted from
 :class:`~workflow_editor.dock.skill_chat_dialog.SkillChatDialog` so it can be
 hosted by either the Skills-menu dialog (thin window chrome + the *Insert*
-button) OR the DCDC wizard (driven programmatically through its stage logic).
+button) OR a hosting wizard (driven programmatically through its stage logic).
 
 A skill chat is a plain multi-turn conversation on a PERSISTENT OpenCode session:
 the skill's ``SKILL.md`` system prompt plus the chosen context on the first
@@ -26,7 +26,7 @@ The brain it drives is reused, not reimplemented:
 Backend ownership: the widget creates and owns a DEDICATED backend via
 ``backend_factory.create_backend(tab_id=backend_tab_id)`` so each embed has its
 OWN OpenCode session, independent of the dock chat and of the other embed
-(``"skill_chat"`` for the dialog, ``"dcdc_wizard"`` for the wizard — never share
+(``"skill_chat"`` for the dialog, ``"my_wizard"`` for a wizard — never share
 a tab_id or they would share a conversation). The session is PERSISTENT:
 ``ensure_session`` before each send reuses it; ``new_session`` only resets.
 
@@ -131,14 +131,14 @@ class SkillChatWidget(QWidget):
                 :meth:`set_pushed_context`.
             documents_dir: Folder backing the picker's Documents tab (or None).
             backend_tab_id: Dedicated-backend / OpenCode-session id. Each embed
-                MUST use a distinct id (``"skill_chat"`` / ``"dcdc_wizard"``).
+                MUST use a distinct id (``"skill_chat"`` / ``"my_wizard"``).
             show_skill_selector: Show the skill combo + when-to-use header. False
                 when the host switches the skill programmatically.
             show_run_button: Show the *Run skill* button. False when the host
                 drives the kickoff from its own stage buttons.
             dispatch_gate: Optional ``gate(fire, *, interactive)`` callable. When
                 set, EVERY fire (kickoff + user send) is routed through it instead
-                of firing immediately — the DCDC wizard's concurrency scheduler,
+                of firing immediately — e.g. a batch wizard's concurrency scheduler,
                 which calls ``fire`` now (slot free) or stores it to fire later
                 (queued). ``interactive`` is True for a user answer (may jump the
                 queue), False for an initial build. None → fire at once (the
@@ -414,8 +414,8 @@ class SkillChatWidget(QWidget):
     def resolved_context(self) -> str:
         """The context string this widget would send right now — the picker's
         assembled selection (when it has a picker) or the host's pushed string.
-        Hosts read this to PROPAGATE one widget's chosen context to another: the
-        DCDC wizard hands P1's picker selection to every per-IC build chat."""
+        Hosts read this to PROPAGATE one widget's chosen context to another: a
+        batch wizard hands one page's picker selection to every per-item build chat."""
         return self._resolve_context()
 
     def run_kickoff(self, priming: str = "") -> None:
@@ -650,7 +650,7 @@ class SkillChatWidget(QWidget):
             save_docs_enabled=self._save_docs_checkbox.isChecked(),
             project_tools_enabled=self._project_tools_checkbox.isChecked(),
             # A skill exposes ONLY its own tools: it declares the server(s) it
-            # uses in frontmatter (e.g. dcdc_bringup -> `mcp_tools: [dcdc_tools]`);
+            # uses in frontmatter (e.g. board_bringup -> `mcp_tools: [board_tools]`);
             # the backend turns those on and every other skill tool explicitly off.
             skill_servers_enabled=_declared,
             run_skill_enabled=_run_skill,

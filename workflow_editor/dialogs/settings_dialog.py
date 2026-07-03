@@ -268,7 +268,7 @@ def build_launch_config(
     Reads ``master.json`` (providers + general, no model/mcp), deep-copies it, and
     BUILDS the MCP blocks FRESH — ``pdf_tools`` (documents/rules) always present,
     ``project_tools`` only when the project has a ``*.tgz`` board archive, plus one
-    block per discovered tool folder (e.g. ``dcdc_tools``). Every path (venv python via ``sys.executable``,
+    block per discovered tool folder (e.g. ``board_tools``). Every path (venv python via ``sys.executable``,
     scripts via ``__file__``, documents/rules/tgz under ``project_root``) is
     computed at RUNTIME, so the derived config self-heals on reinstall/move and
     follows the active project. The result is written ATOMICALLY (temp file in the
@@ -576,8 +576,8 @@ class SettingsDialog(QDialog):
         self.wizard_max_sessions.setRange(1, 16)
         self.wizard_max_sessions.setValue(5)
         self.wizard_max_sessions.setToolTip(
-            "Max concurrent LLM sessions the DCDC wizard runs in parallel "
-            "(per-IC rail-reads / builds); the wizard Parallel spin-box "
+            "Max concurrent LLM sessions a batch wizard runs in parallel "
+            "(per-item reads / builds); a wizard's Parallel spin-box "
             "defaults to this.")
         opencode_layout.addRow(
             "Wizard max concurrent sessions:", self.wizard_max_sessions)

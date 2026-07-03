@@ -246,7 +246,7 @@ def _components_result(rows):
     FIRST so it survives even when the body is cut, telling the model how many
     rows to expect; (2) the body is COMPACT JSON (no indent) so far more rows fit
     before the cap truncates. The model compares the rows it actually received
-    against ``count`` to detect a dropped tail (the classifier's completeness
+    against ``count`` to detect a dropped tail (the caller's completeness
     check) and re-pulls in refdes chunks if short.
     """
     note = (

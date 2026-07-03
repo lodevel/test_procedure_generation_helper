@@ -386,9 +386,11 @@ def sync_equipment_from_steps(
     measure-only channel).
 
     When ``controller_profiles`` is None, falls back to reading the
-    bundle's ``equipment_profiles`` via the ``TPG_BUNDLE_DEFAULTS_PATH``
-    env var (same path the workflows editor uses for its bundle
-    defaults), filtered to ``equipment_type == "controller"`` and shimmed
+    bundle's ``equipment_profiles`` from the project's bundle
+    defaults.json (project-root-first, ``TPG_BUNDLE_DEFAULTS_PATH`` env
+    var as legacy fallback — same resolution the workflows editor uses
+    for its bundle defaults), filtered to
+    ``equipment_type == "controller"`` and shimmed
     to the wheel's record shape (``pattern`` <- ``id_pattern``), so the
     GUI button can call this with just ``text`` and still get controller
     subtype inference.
@@ -398,7 +400,7 @@ def sync_equipment_from_steps(
     if controller_profiles is None:
         controller_profiles = [
             {**p, "pattern": p.get("id_pattern")}
-            for p in _load_bundle_equipment_profiles()
+            for p in _load_bundle_equipment_profiles(project_root)
             if p.get("equipment_type") == "controller"
         ]
 
@@ -631,22 +633,25 @@ def build_manual_result(
     return out if isinstance(out, dict) else {}
 
 
-def _load_bundle_equipment_profiles() -> list[dict]:
+def _load_bundle_equipment_profiles(
+    project_root: Optional[Path] = None,
+) -> list[dict]:
     """Read ``equipment_profiles`` from the bundle's defaults.json.
 
-    The parent app exposes the bundle path via ``TPG_BUNDLE_DEFAULTS_PATH``;
-    same convention as ``TaskConfigManager._load_pack_workflow_defaults``.
-    Returns ``[]`` when the env var is unset or the file is missing /
+    Task #39: resolved project-root-first via ``_bundle_defaults_path``
+    (``<project_root>/bundle/defaults.json`` when a project is open, so
+    a bundle imported mid-session is seen immediately), falling back to
+    ``TPG_BUNDLE_DEFAULTS_PATH`` — the same convention as
+    ``TaskConfigManager._load_pack_workflow_defaults``.
+    Returns ``[]`` when no bundle resolves or the file is missing /
     malformed (no bundle context). A readable bundle defaults.json
     WITHOUT the ``equipment_profiles`` key is a pre-bundle/2 artifact —
     that is a hard error (D4), never a silent ``[]``.
     """
     import json
-    import os
-    path_str = os.environ.get("TPG_BUNDLE_DEFAULTS_PATH")
-    if not path_str:
+    p = _bundle_defaults_path(project_root)
+    if p is None:
         return []
-    p = Path(path_str)
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QStatusBar, QMenuBar, QMenu, QToolBar, QMessageBox, QLabel, QDockWidget,
     QFileDialog, QDialog, QTextBrowser
 )
-from PySide6.QtCore import Qt, Signal, Slot, QFileSystemWatcher
+from PySide6.QtCore import Qt, Signal, Slot, QFileSystemWatcher, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QShortcut, QCursor
 
 from .core import (
@@ -130,6 +130,20 @@ class MainWindow(QMainWindow):
         self._config_watcher.directoryChanged.connect(self._on_config_dir_changed)
         self._watched_config_path: Optional[Path] = None
         self._watched_config_dir: Optional[Path] = None
+        # Task #39: also watch <project>/bundle (+ the project root, to
+        # re-arm when an import atomically swaps the whole bundle dir)
+        # so a bundle imported by the MAIN APP while this editor is open
+        # goes live immediately. One import produces a burst of
+        # directory events -> debounced into a single reload.
+        self._watched_bundle_dir: Optional[Path] = None
+        self._watched_project_root: Optional[Path] = None
+        self._bundle_signature: Optional[tuple] = None
+        self._bundle_stamp_mtime: Optional[int] = None
+        self._bundle_change_timer = QTimer(self)
+        self._bundle_change_timer.setSingleShot(True)
+        self._bundle_change_timer.setInterval(300)
+        self._bundle_change_timer.timeout.connect(
+            self._on_bundle_change_debounced)
         
         # Initialize task config manager pointing at the repo-shared
         # fallback. ``reload(project_root)`` is called below whenever a
@@ -226,6 +240,9 @@ class MainWindow(QMainWindow):
                 # auto-detection inside detect_rules_root.
                 self.project_manager.detect_rules_root(self._cli_rules_root)
                 self._update_project_rules_indicators()
+                # Task #39: arm the config + bundle watchers for the
+                # CLI-supplied project (the main-app launch path).
+                self._watch_project_config()
             
             # Step 2: Determine which test to open
             test_dir_to_open = None
@@ -2076,6 +2093,95 @@ class MainWindow(QMainWindow):
             self._config_watcher.addPath(str(config_dir))
             self._watched_config_dir = config_dir
 
+        # Task #39: arm the bundle-dir watches and seed the change
+        # detectors so the first event compares against a baseline
+        # instead of always firing.
+        self._watch_project_bundle()
+        self._bundle_signature_changed()
+        self._bundle_stamp_changed()
+
+    def _watch_project_bundle(self) -> None:
+        """Watch <project>/bundle plus the project root itself (task #39).
+
+        A bundle import atomically swaps the whole bundle/ directory
+        (os.replace), which drops any watch on the old dir — the
+        project-root watch catches the swap so we can re-arm. Mirrors
+        the main app's display_snapshot_watcher pattern. Safe to call
+        repeatedly; removes previous watches first.
+        """
+        for old in (self._watched_bundle_dir, self._watched_project_root):
+            if old is not None:
+                self._config_watcher.removePath(str(old))
+        self._watched_bundle_dir = None
+        self._watched_project_root = None
+
+        root = getattr(self.project_manager, "project_root", None)
+        if root is None:
+            return
+        root = Path(root)
+        if root.exists():
+            self._config_watcher.addPath(str(root))
+            self._watched_project_root = root
+        bundle_dir = root / "bundle"
+        if bundle_dir.exists():
+            self._config_watcher.addPath(str(bundle_dir))
+            self._watched_bundle_dir = bundle_dir
+
+    def _bundle_signature_changed(self) -> bool:
+        """True when the bundle's identity moved since the last check.
+
+        Signature = mtimes of the bundle dir + bundle.json +
+        defaults.json (None per missing entry). An import swaps the
+        whole dir, so all three change; unrelated project-root events
+        (test folders created, etc.) leave the signature alone — the
+        noise filter that keeps root-watch events from causing reload
+        storms (task #39, mirrors display_snapshot_watcher's
+        bundle-key check).
+        """
+        root = getattr(self.project_manager, "project_root", None)
+        if root is None:
+            sig = None
+        else:
+            bundle_dir = Path(root) / "bundle"
+            parts = []
+            for p in (bundle_dir, bundle_dir / "bundle.json",
+                      bundle_dir / "defaults.json"):
+                try:
+                    parts.append(p.stat().st_mtime_ns)
+                except OSError:
+                    parts.append(None)
+            sig = tuple(parts)
+        changed = sig != self._bundle_signature
+        self._bundle_signature = sig
+        return changed
+
+    def _bundle_stamp_changed(self) -> bool:
+        """True when config/.bundle_installed.json moved since the last
+        check. The stamp is written as the final step of every bundle
+        install — a change means an import completed even if the
+        bundle-dir events were missed mid-swap (task #39
+        belt-and-braces)."""
+        if self._watched_config_dir is None:
+            return False
+        stamp = self._watched_config_dir / ".bundle_installed.json"
+        try:
+            mtime: Optional[int] = stamp.stat().st_mtime_ns
+        except OSError:
+            mtime = None
+        changed = mtime != self._bundle_stamp_mtime
+        self._bundle_stamp_mtime = mtime
+        return changed
+
+    def _on_bundle_change_debounced(self) -> None:
+        """Debounced funnel for bundle changes (task #39): a bundle
+        imported into the open project must be live everywhere with no
+        reload/reopen — refresh the rules indicators, reload
+        TaskConfigManager (the reload-callback chain rebuilds task
+        buttons / gating / validator rows) and regate the parser
+        buttons via _handle_config_change."""
+        self._update_project_rules_indicators()
+        self._handle_config_change()
+
     def _on_config_file_changed(self, path: str) -> None:
         """Refresh parser- and workflow-driven UI when config.json changes.
 
@@ -2099,7 +2205,23 @@ class MainWindow(QMainWindow):
         """Directory-level watch fires when config.json is created/
         recreated by an external writer (e.g. ProjectConfigDialog's
         rmtree+copytree commit). Re-arms the file watch and triggers
-        the same hot-reload as a direct file change. Phase 4.6.2."""
+        the same hot-reload as a direct file change. Phase 4.6.2.
+
+        Also receives events for <project>/bundle and the project root
+        (task #39): an import swaps the bundle dir atomically, dropping
+        its watch — re-arm and, when the bundle signature actually
+        moved, fire the debounced bundle reload."""
+        p = Path(path)
+        if p in (self._watched_bundle_dir, self._watched_project_root):
+            self._watch_project_bundle()
+            if self._bundle_signature_changed():
+                self._bundle_change_timer.start()
+            return
+        # Belt-and-braces (task #39): the install stamp lands in
+        # config/ as the last step of an import — a changed stamp is a
+        # bundle change even when the bundle-dir events were missed.
+        if self._bundle_stamp_changed():
+            self._bundle_change_timer.start()
         if self._watched_config_path is None:
             return
         # If the file watch dropped during a rmtree window, re-add it
@@ -2343,14 +2465,14 @@ class MainWindow(QMainWindow):
         from project_services.project_model import ProjectModel
         origin = ProjectModel.get_active_config_from_path(root)
         dlg = ProjectConfigDialog(self, project_path=root, project_config_origin=origin)
-        if dlg.exec() != QDialog.Accepted:
-            return
-        # Config / bundle may have changed -> refresh capability gating + rules.
-        self.task_config_manager.reload(root)
+        dlg.exec()
+        # Config / bundle may have changed -> refresh capability gating
+        # + rules. Runs on Cancel too (task #39): the dialog can import
+        # a bundle into the project live before being cancelled.
+        # _handle_config_change reloads TaskConfigManager and regates
+        # the parser buttons in one funnel.
         self._update_project_rules_indicators()
-        self.text_json_tab.refresh_parser_button()
-        self.text_only_tab.refresh_parser_button()
-        self.json_code_tab.refresh_code_parser_button()
+        self._handle_config_change()
 
     def _on_template_manager(self):
         """File -> Template Manager: manage saved customer-config templates via
@@ -2370,11 +2492,13 @@ class MainWindow(QMainWindow):
         from project_services.bundle_library_dialog import BundleLibraryDialog
         root = getattr(self.project_manager, "project_root", None)
         BundleLibraryDialog(self, project_path=root).exec()
-        # Library changes may alter which bundle resolves -> refresh gating.
+        # Library changes may alter which bundle resolves -> refresh
+        # gating. Task #39: an "Import into Project" must go live
+        # immediately — _handle_config_change reloads TaskConfigManager
+        # (task buttons / prompt templates via the reload-callback
+        # chain) on top of the parser-button regate.
         self._update_project_rules_indicators()
-        self.text_json_tab.refresh_parser_button()
-        self.text_only_tab.refresh_parser_button()
-        self.json_code_tab.refresh_code_parser_button()
+        self._handle_config_change()
 
     def _on_scenarios(self):
         """File -> Scenarios: author named test scenarios via the shared

@@ -412,20 +412,32 @@ class TaskConfigManager:
         Phase 5h: the legacy manifest-walk path (resolve
         ``packs.selected_packs`` + read each pack's
         ``pack_workflow_defaults.json``) was removed. The parent app
-        owns bundle resolution and hands the editor a path via
-        ``TPG_BUNDLE_DEFAULTS_PATH``; this method just reads that
-        file's ``workflows`` block.
+        owns bundle resolution; the bundle's ``defaults.json`` lives at
+        ``<project>/bundle/defaults.json``.
 
-        Returns ``{}`` when the env var is unset, the file is missing
+        Task #39: resolve the ACTIVE project's bundle first, so a
+        bundle imported while the editor runs is picked up by a plain
+        ``reload()``. The ``TPG_BUNDLE_DEFAULTS_PATH`` env var is a
+        launch-time snapshot (unset when no bundle existed at editor
+        launch, or in standalone launches) — kept only as the legacy
+        fallback for no-project mode.
+
+        Returns ``{}`` when no bundle resolves, the file is missing
         or malformed, or the bundle ships no workflows block. The
         editor's merge with its baked-in defaults degrades gracefully
         to editor-defaults-only.
         """
         import os
-        path_str = os.environ.get("TPG_BUNDLE_DEFAULTS_PATH")
-        if not path_str:
-            return {}
-        defaults_path = Path(path_str)
+        defaults_path: Optional[Path] = None
+        if self._project_root is not None:
+            candidate = self._project_root / "bundle" / "defaults.json"
+            if candidate.is_file():
+                defaults_path = candidate
+        if defaults_path is None:
+            path_str = os.environ.get("TPG_BUNDLE_DEFAULTS_PATH")
+            if not path_str:
+                return {}
+            defaults_path = Path(path_str)
         if not defaults_path.is_file():
             return {}
         data = _safe_read_json(defaults_path)

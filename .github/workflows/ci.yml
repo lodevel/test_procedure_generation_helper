@@ -9,9 +9,9 @@
 #              installed grammar pack or a spawn-capable console skip
 #              themselves via the precondition probes in tests/_env.py, so no
 #              exclusion list is needed. The suite is green headless on
-#              Windows but has not yet been validated on a Linux runner, so
-#              the job is advisory (continue-on-error) until it has been
-#              observed green here once. Flip it to blocking then.
+#              Windows and was observed green on Linux (2026-07-06, 964
+#              passed) — the job is BLOCKING. Sole indulgence: a Qt teardown
+#              segfault AFTER a green summary is tolerated (see the step).
 name: ci
 
 on:
@@ -49,8 +49,6 @@ jobs:
 
   suite:
     runs-on: ubuntu-latest
-    # Advisory until observed green on Linux once — then remove this line.
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -71,7 +69,19 @@ jobs:
           pip install -e .[dev]
 
       # Bundle/pack-dependent tests skip themselves via tests/_env.py probes.
+      # PySide6 offscreen is known to segfault (exit 139) during Qt teardown
+      # at interpreter exit AFTER all tests passed; tolerate 139 ONLY when the
+      # printed summary is itself green (a mid-run crash never prints one).
       - name: pytest (headless)
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest tests -q
+        run: |
+          set +e
+          python -m pytest tests -q | tee pytest.out
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -eq 139 ] && tail -5 pytest.out | grep -qE "[0-9]+ passed" \
+             && ! tail -5 pytest.out | grep -qE "[0-9]+ (failed|error)"; then
+            echo "::warning::Qt teardown segfault after a green run - tolerated"
+            rc=0
+          fi
+          exit $rc

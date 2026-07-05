@@ -13,6 +13,7 @@ the real CLI produces for ``--list-property-fields`` / ``--list`` (with
 ``--fields`` / ``--filter``) / ``--list-nets``.
 """
 import json
+import re
 import os
 import subprocess
 import sys
@@ -258,18 +259,19 @@ def _result_json(resp):
 
 
 def _components(resp):
-    """Unwrap the list_components ``{"count", "components"}`` envelope.
-
-    The product intentionally wraps the rows in a count envelope so an
-    over-filtered result (e.g. 98 components collapsing to 2) is visible to the
-    model. Here we assert the envelope is well-formed (count == len(rows)) and
-    hand back the rows for the per-test content assertions.
+    """Unwrap list_components: a loud ``count=N`` prose header (placed BEFORE
+    the JSON so it survives output-cap truncation) followed by a compact
+    ``{"components": rows}`` body. Cross-checks the advertised count against
+    the rows actually received - the model's completeness check, exercised
+    here on the test side.
     """
+    text = _result_text(resp)
+    m = re.search(r"count=(\d+) components", text)
+    assert m, f"missing count= header: {text[:80]!r}"
     payload = _result_json(resp)
     assert isinstance(payload, dict)
-    assert set(payload) >= {"count", "components"}
     rows = payload["components"]
-    assert payload["count"] == len(rows)
+    assert int(m.group(1)) == len(rows)
     return rows
 
 

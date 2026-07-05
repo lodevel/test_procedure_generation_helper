@@ -1,0 +1,85 @@
+# Workflow-editor CI.
+#
+# Two tiers:
+#   * gates  — checks that are platform-independent and GREEN today: ruff
+#              (curated E9/F config in pyproject), mypy (Qt-free
+#              workflow_editor/core only) and the AST size-budget ratchet.
+#              These block.
+#   * suite  — the full pytest run. 7 test files need a built project bundle /
+#              installed grammar pack (reconstruction, validator dispatch,
+#              project-tools MCP, web toggle) and are excluded; the remainder
+#              is green on Windows but has not yet been validated on a Linux
+#              runner, so the job is advisory (continue-on-error) until it has
+#              been observed green here once. Flip it to blocking then.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      - name: ruff check
+        run: ruff check .
+
+      - name: mypy (Qt-free core)
+        run: mypy
+
+      # Pure pathlib+ast — no Qt, no bundle, no display needed.
+      - name: size-budget ratchet
+        run: |
+          pip install pytest
+          python -m pytest tests/test_size_budgets.py -q
+
+  suite:
+    runs-on: ubuntu-latest
+    # Advisory until observed green on Linux once — then remove this line.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: System libs for headless Qt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      # Excluded files need a built project bundle / installed grammar pack
+      # (labscpi) that CI does not have; they run in the bench environment.
+      - name: pytest (headless subset)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: >
+          python -m pytest tests -q
+          --ignore tests/test_pack_parsers_bridges.py
+          --ignore tests/test_pdf_documents.py
+          --ignore tests/test_project_tools_mcp.py
+          --ignore tests/test_reconstruction.py
+          --ignore tests/test_validator_dispatch_reconstruct.py
+          --ignore tests/test_validator_feedback_fragment_lines.py
+          --ignore tests/test_web_toggle.py

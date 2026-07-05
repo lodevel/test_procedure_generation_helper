@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "workflow_editor"
+version = "0.1.0"
+description = "Qt workflow editor for authoring structured test procedures"
+requires-python = ">=3.10,<3.14"
+# Mirrors requirements.txt. QScintilla stays commented there (optional syntax
+# highlighting) and is intentionally NOT a hard dependency here.
+dependencies = [
+    "PySide6>=6.5.0",
+    "requests>=2.28.0",
+    "python-docx>=1.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "mypy",
+]
+
+# `python -m workflow_editor` already works via workflow_editor/__main__.py;
+# this exposes the same entry point as a console script.
+[project.scripts]
+workflow_editor = "workflow_editor.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["workflow_editor*"]
+
+# --- Lint gate -------------------------------------------------------------
+# GREEN DAY-1: this tree has never been through a format/autofix pass, so the
+# host's full E,F,W,I,UP,B ruleset is red everywhere. We block on the
+# crash-class pyflakes/syntax rules (E9 + F) and defer the pervasive
+# unused-import / unused-local cleanup (F401/F841) plus a handful of
+# grandfathered files. Ratchet: drop excludes / tighten `select` as files are
+# cleaned.
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = [
+    "build",
+    "dist",
+    ".venv",
+    # Grandfathered: pre-existing F402 (loop-var shadow) and F541 (placeholder-
+    # less f-string in the MIXED-EOL main_window.py — do not touch with a
+    # reformatter). Deferred, not silenced tree-wide.
+    "workflow_editor/llm/validator_dispatch.py",
+    "workflow_editor/main_window.py",
+]
+
+[tool.ruff.lint]
+select = ["E9", "F"]
+# Pervasive across the never-formatted tree; deferred to a dedicated cleanup.
+ignore = ["F401", "F841"]
+
+# --- Type gate (Qt-free core only) -----------------------------------------
+# GREEN DAY-1: scoped to workflow_editor/core (the Qt-free logic layer). Qt
+# dialogs / god-files stay out. Lenient settings + per-module grandfathering
+# keep it green today; ratchet by removing overrides / raising strictness.
+[tool.mypy]
+python_version = "3.10"
+files = ["workflow_editor/core"]
+ignore_missing_imports = true
+follow_imports = "silent"
+warn_unused_ignores = false
+
+[[tool.mypy.overrides]]
+module = [
+    "workflow_editor.core.procedure_export",
+    "workflow_editor.core.odb_inspect",
+    "workflow_editor.core.artifact_manager",
+    "workflow_editor.core.task_config",
+]
+ignore_errors = true

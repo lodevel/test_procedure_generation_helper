@@ -33,6 +33,10 @@ _DOCS_ALWAYS_ON = {
     "pdf_tools_list_rules": True, "pdf_tools_read_rule": True,
 }
 
+# run_skill (recursion infra, #15) rides its own per-request bool; fail-closed
+# default = off on every ordinary request.
+_RUN_SKILL_OFF = {"run_skill_run_skill": False}
+
 
 def _backend(model: str = "") -> OpenCodeBackend:
     return OpenCodeBackend(OpenCodeConfig(model=model))
@@ -48,7 +52,7 @@ def test_web_enabled_exposes_web_tools_and_read_pdf():
     # skill_tools empty by default -> no skill-owned keys in the body.
     body = _backend()._build_message_body("hi", _req(web_enabled=True))
     assert body["tools"] == {
-        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DOCS_ALWAYS_ON,
+        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DOCS_ALWAYS_ON, **_RUN_SKILL_OFF,
         "webfetch": True, "websearch": True, "pdf_tools_read_pdf": True,
         "pdf_tools_save_pdf": False}
 
@@ -58,7 +62,7 @@ def test_web_disabled_sends_explicit_false():
     # skill keep web access if the launch config/agent enabled it.
     body = _backend()._build_message_body("hi", _req(web_enabled=False))
     assert body["tools"] == {
-        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DOCS_ALWAYS_ON,
+        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DOCS_ALWAYS_ON, **_RUN_SKILL_OFF,
         "webfetch": False, "websearch": False, "pdf_tools_read_pdf": False,
         "pdf_tools_save_pdf": False}
 
@@ -66,7 +70,7 @@ def test_web_disabled_sends_explicit_false():
 def test_default_request_has_web_off():
     body = _backend()._build_message_body("hi", LLMRequest(task=LLMTask.AD_HOC_CHAT))
     assert body["tools"] == {
-        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DOCS_ALWAYS_ON,
+        **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DOCS_ALWAYS_ON, **_RUN_SKILL_OFF,
         "webfetch": False, "websearch": False, "pdf_tools_read_pdf": False,
         "pdf_tools_save_pdf": False}
 

@@ -5,9 +5,9 @@
 #              (curated E9/F config in pyproject), mypy (Qt-free
 #              workflow_editor/core only) and the AST size-budget ratchet.
 #              These block.
-#   * suite  — the full pytest run. 7 test files need a built project bundle /
+#   * suite  — the full pytest run. 6 test files need a built project bundle /
 #              installed grammar pack (reconstruction, validator dispatch,
-#              project-tools MCP, web toggle) and are excluded; the remainder
+#              project-tools MCP) and are excluded; the remainder
 #              is green on Windows but has not yet been validated on a Linux
 #              runner, so the job is advisory (continue-on-error) until it has
 #              been observed green here once. Flip it to blocking then.
@@ -82,4 +82,3 @@ jobs:
           --ignore tests/test_reconstruction.py
           --ignore tests/test_validator_dispatch_reconstruct.py
           --ignore tests/test_validator_feedback_fragment_lines.py
-          --ignore tests/test_web_toggle.py

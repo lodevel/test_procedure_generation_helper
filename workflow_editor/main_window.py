@@ -40,6 +40,7 @@ from .tabs import (
 from .dock import DockWidget
 from .dialogs import SettingsDialog, load_settings
 from . import _host_services
+from .controllers import DocumentController, ProjectController, project_controller
 
 log = logging.getLogger(__name__)
 
@@ -103,6 +104,12 @@ class MainWindow(QMainWindow):
         self._cli_llm_backend = llm_backend
         self._cli_llm_profile = llm_profile
         self._modern_workspace_layout = os.environ.get("TPG_APP_LAYOUT") == "modern_workspace"
+
+        # Controllers carved out of this god-class (mechanical move):
+        # each owns one cohesive slice of behavior; the thin delegates
+        # below keep every test-pinned / Qt-connected name working.
+        self._project_controller = ProjectController(self)
+        self._document_controller = DocumentController(self)
 
         # Initialize managers
         log.debug("Initializing managers...")
@@ -1225,7 +1232,7 @@ class MainWindow(QMainWindow):
         self.code_indicator.setText(f"Code {check if code_ok else circle}")
         
         # Update sync indicator
-        self._update_sync_indicator()
+        self._document_controller.update_sync_indicator()
         
         # Also update project/rules indicators
         self._update_project_rules_indicators()
@@ -1234,306 +1241,24 @@ class MainWindow(QMainWindow):
         """Update menu items based on artifact availability."""
         pass
     
-    def _update_sync_indicator(self):
-        """Update the JSON\u2194Code sync indicator in the status bar."""
-        if not self.session_state:
-            self.sync_indicator.setText("Sync \u26aa")
-            self.sync_indicator.setToolTip("No test loaded")
-            return
-        
-        if self.session_state.artifacts_in_sync:
-            self.sync_indicator.setText("Sync \u2705")
-            self.sync_indicator.setToolTip(
-                "procedure.json and test.py are in sync.\n"
-                "Click to view status."
-            )
-        else:
-            self.sync_indicator.setText("Sync \u26a0\ufe0f")
-            self.sync_indicator.setToolTip(
-                "procedure.json and test.py may be out of sync!\n"
-                "One was modified without the other.\n"
-                "Click to acknowledge sync."
-            )
-    
     def _on_sync_indicator_clicked(self):
-        """Handle click on the sync indicator."""
-        if not self.session_state:
-            return
-        
-        if self.session_state.artifacts_in_sync:
-            QMessageBox.information(
-                self,
-                "Artifacts In Sync",
-                "procedure.json and test.py are currently marked as in sync."
-            )
-            return
-        
-        result = QMessageBox.question(
-            self,
-            "Acknowledge Sync",
-            "procedure.json and test.py are currently marked as OUT OF SYNC.\n\n"
-            "One was modified without the other during this session.\n\n"
-            "Are you sure both artifacts are now coherent?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        
-        if result == QMessageBox.Yes:
-            self.session_state.artifacts_in_sync = True
-            self.session_state.artifact_hashes = self.artifact_manager.compute_hashes()
-            self.session_state.save()
-            self._update_sync_indicator()
-            self.workspace_widget.refresh()
-            self.status_bar.showMessage("Artifacts marked as in sync", 2000)
+        """Handle click on the sync indicator (body in controllers/)."""
+        self._document_controller.on_sync_indicator_clicked()
 
-    def _check_artifact_coherence(self) -> bool:
-        """Check if JSON and Code artifacts are in sync and warn if not.
-        
-        Returns:
-            True if the user cancelled (caller should abort), False otherwise.
-        """
-        if not self.session_state or self.session_state.artifacts_in_sync:
-            return False
-        
-        msg = QMessageBox(self)
-        msg.setIcon(QMessageBox.Warning)
-        msg.setWindowTitle("\u26a0\ufe0f Artifacts Out of Sync")
-        msg.setText(
-            "procedure.json and test.py may be out of sync!\n\n"
-            "One was modified without the other. The test code may not\n"
-            "match the procedure definition."
-        )
-        
-        mark_sync_btn = msg.addButton("They are in sync \u2714", QMessageBox.AcceptRole)
-        continue_btn = msg.addButton("Continue anyway", QMessageBox.DestructiveRole)
-        go_back_btn = msg.addButton("Go back and review", QMessageBox.RejectRole)
-        # Qt under-sizes stylesheet-styled QMessageBox buttons for long
-        # labels (the text rect collapses to ~text width with no slack),
-        # clipping the last glyphs. Widen each from its own font metrics.
-        for _b in (mark_sync_btn, continue_btn, go_back_btn):
-            _b.setMinimumWidth(_b.fontMetrics().horizontalAdvance(_b.text()) + 56)
-        msg.setDefaultButton(go_back_btn)
-        
-        msg.exec()
-        clicked = msg.clickedButton()
-        
-        if clicked == mark_sync_btn:
-            self.session_state.artifacts_in_sync = True
-            self.session_state.artifact_hashes = self.artifact_manager.compute_hashes()
-            self.session_state.save()
-            self._update_sync_indicator()
-            self.workspace_widget.refresh()
-            return False
-        elif clicked == go_back_btn:
-            return True  # User wants to go back and review
-        else:
-            # Continue anyway \u2014 leave out-of-sync flag
-            return False
-    
     # ==================== Event Handlers ====================
     
     def _on_tab_changed(self, index: int):
-        """Handle tab change."""
-        # Only sync the PREVIOUSLY active tab (the one being deactivated).
-        # We must not sync all non-current tabs, as they may hold stale
-        # content for shared artifacts (e.g. procedure.json).
-        if hasattr(self, '_previous_tab_index'):
-            prev_tab = self.tab_widget.widget(self._previous_tab_index)
-            if prev_tab is not None and prev_tab != self.tab_widget.widget(index):
-                if hasattr(prev_tab, 'sync_editors_to_artifacts'):
-                    prev_tab.sync_editors_to_artifacts()
-                if hasattr(prev_tab, 'on_deactivated'):
-                    prev_tab.on_deactivated()
-        
-        self._previous_tab_index = index
-        
-        tab = self.tab_widget.widget(index)
-        if hasattr(tab, 'on_activated') and self.artifact_manager is not None:
-            tab.on_activated()
-        
-        # Switch chat context to current tab's TabContext
-        if hasattr(self, 'dock') and hasattr(tab, 'tab_context'):
-            self.dock.chat_panel.switch_context(tab.tab_context)
-            self.dock.session_viewer.switch_context(tab.tab_context)
-            self.dock.raw_viewer.switch_context(tab.tab_context)
-            # Findings are per-test (session_state), no context switch needed
-            
-            # If this tab has a running LLM worker, restore in-flight UI
-            worker = getattr(tab, '_worker', None)
-            if worker and worker.isRunning():
-                self.dock.chat_panel.add_thinking_message()
-                self.dock.chat_panel.set_llm_active(True)
-                # Restore all accumulated streaming text so far
-                if worker.accumulated_thinking:
-                    self.dock.chat_panel.append_thinking_text(
-                        worker.accumulated_thinking
-                    )
-                if worker.accumulated_response:
-                    self.dock.chat_panel.append_response_text(
-                        worker.accumulated_response
-                    )
-                # Disconnect any stale connections before reconnecting
-                # to avoid duplicate text from multiple connections
-                try:
-                    worker.thinking_chunk.disconnect(
-                        self.dock.chat_panel.append_thinking_text
-                    )
-                except (RuntimeError, TypeError):
-                    # best-effort: disconnect raises when the signal was
-                    # never connected (RuntimeError) or the slot owner is
-                    # gone (TypeError)
-                    pass
-                try:
-                    worker.text_chunk.disconnect(
-                        self.dock.chat_panel.append_response_text
-                    )
-                except (RuntimeError, TypeError):
-                    # best-effort: same as above -- stale connection may
-                    # not exist
-                    pass
-                # Reconnect streaming signals to the restored thinking widget
-                worker.thinking_chunk.connect(
-                    self.dock.chat_panel.append_thinking_text
-                )
-                worker.text_chunk.connect(
-                    self.dock.chat_panel.append_response_text
-                )
-        
-        # Update save action label to be context-aware
-        tab_name = self.tab_widget.tabText(index)
-        self.save_action.setText(f"&Save {tab_name}")
-        
-        # Update menu state based on current artifacts
-        self._update_menu_state()
-    
+        """Handle tab change (body in controllers/document_controller.py)."""
+        self._document_controller.on_tab_changed(index)
+
     def _on_test_opened(self, path: Path):
-        """Handle test folder being opened."""
-        log.info(f"Opening test: {path}")
-        
-        # Check for unsaved changes before loading a new test
-        if self.artifact_manager and self._check_unsaved_changes():
-            return  # User cancelled
-        
-        # Check artifact coherence before switching away
-        if self.artifact_manager and self._check_artifact_coherence():
-            return  # User wants to review
-        
-        # Save current session state (includes validation_issues) before switching
-        if hasattr(self, 'session_state') and self.session_state and self.session_state._file_path:
-            try:
-                self.session_state.save()
-            except Exception as e:
-                log.warning(f"Failed to save session state before switching tests: {e}")
-        
-        # Initialize managers for this test
-        self.artifact_manager = ArtifactManager()
-        self.artifact_manager.set_test_dir(path)
-        self.artifact_manager.load_all()  # Load existing files from disk
-        self.artifact_manager.set_exclusion_patterns(
-            self.project_manager.get_equipment_patterns()
-        )
-        
-        # Initialize session state (empty, not with path)
-        self.session_state = SessionState()
-        self.session_state.set_file_path(path)
-        self.session_state.load()  # Load existing session data from disk if it exists
+        """Handle test folder being opened (body in controllers/)."""
+        self._document_controller.on_test_opened(path)
 
-        # Check for external edits since last session
-        self._check_for_external_changes()
-        
-        # ChatHistoryManager removed: chat history is now per-tab only
-        
-        # Update tab contexts with real managers (fixes None reference issue)
-        if hasattr(self.text_only_tab, 'tab_context'):
-            self.text_only_tab.tab_context.update_managers(self.artifact_manager, self.session_state)
-        if hasattr(self.text_json_tab, 'tab_context'):
-            self.text_json_tab.tab_context.update_managers(self.artifact_manager, self.session_state)
-        if hasattr(self.json_code_tab, 'tab_context'):
-            self.json_code_tab.tab_context.update_managers(self.artifact_manager, self.session_state)
-        
-        # Point findings panel at the new session state (per-test findings)
-        self.dock.findings_panel.set_session(self.session_state)
-        
-        log.debug(f"Artifacts exist - JSON: {self.artifact_manager.procedure_json.exists_on_disk}, "
-                  f"Code: {self.artifact_manager.test_code.exists_on_disk}, "
-                  f"Text: {self.artifact_manager.procedure_text.exists_on_disk}")
-        
-        # Update status
-        self.test_label.setText(f"Test: {path.name}")
-        
-        # Highlight the opened test in workspace
-        self.workspace_widget.set_opened_test(path)
-        
-        # Detect rules (result stored in project_manager.rules_root)
-        self.project_manager.detect_rules_root()
-        
-        # Enable tabs and dock now that a test is loaded
-        self.tab_widget.setEnabled(True)
-        self.dock.setEnabled(True)
-        
-        # Refresh tabs
-        self.text_only_tab.load_content()
-        self.text_json_tab.load_content()
-        self.json_code_tab.load_content()
-        self.traceability_tab.refresh()
-
-        # Parser availability may have changed since last refresh (e.g. the
-        # user edited config.json externally, or a parser variant file was
-        # added/removed). Re-evaluate visibility here so the Quick Parse
-        # button state is consistent per-test.
-        self.text_json_tab.refresh_parser_button()
-        self.text_only_tab.refresh_parser_button()
-        self.json_code_tab.refresh_code_parser_button()
-        
-        # Refresh dock panels with session data
-        self.dock.refresh_session()
-        
-        # Update status indicators
-        self._update_status_indicators()
-        self._update_menu_state()
-        
-        # Refresh session viewer
-        self.dock.refresh_session()
-        
-        # Switch to appropriate tab only on first test load.
-        # When switching between tests, preserve the user's current tab.
-        if not hasattr(self, '_has_opened_test'):
-            self._has_opened_test = True
-            # Default to the Text tab (text-only authoring view).
-            self.tab_widget.setCurrentWidget(self.text_only_tab)
-        
-        # The _on_tab_changed handler will call switch_context automatically
-        # So we don't need to explicitly call it here - it's handled by the tab change event
-    
     def _on_test_deleted(self, path: Path):
-        """Handle a test folder being deleted."""
-        log.info(f"Test deleted: {path}")
-        
-        # If the deleted test was the currently opened one, clear everything
-        if self.artifact_manager and self.artifact_manager.test_dir == path:
-            self.artifact_manager = None
-            self.session_state = None
-            
-            # Clear editors
-            self.text_only_tab.text_editor.clear()
-            self.text_json_tab.text_editor.clear()
-            self.text_json_tab.json_editor.clear()
-            self.json_code_tab.json_editor.clear()
-            self.json_code_tab.code_editor.clear()
-            
-            # Disable tabs and dock
-            self.tab_widget.setEnabled(False)
-            self.dock.setEnabled(False)
-            
-            # Reset status
-            self.test_label.setText("No test loaded")
-            self._update_status_indicators()
-            
-            # Clear opened test highlight
-            self.workspace_widget.set_opened_test(None)
-        
-        self.status_bar.showMessage(f"Deleted test: {path.name}", 3000)
-    
+        """Handle a test folder being deleted (body in controllers/)."""
+        self._document_controller.on_test_deleted(path)
+
     def _update_llm_status(self):
         """Update status bar with LLM backend information."""
         # Check if UI is initialized yet
@@ -1916,513 +1641,73 @@ class MainWindow(QMainWindow):
     
     @_host_services.requires_host
     def _on_new_project(self):
-        """Handle new project creation."""
-        # Shared, bundle-backed New Project — the SAME dialog the main app
-        # uses: creates dirs + venv + bundle ref + starter test, so
-        # editor-made projects are openable/runnable by the main app.
-        from project_services.new_project_dialog import NewProjectDialog
-        from project_services import config_manager
+        """Handle new project creation (body in controllers/project_controller.py)."""
+        self._project_controller.on_new_project()
 
-        dialog = NewProjectDialog(self)
-        if dialog.exec() != QDialog.Accepted:
-            return
-
-        project_path = Path(dialog.project_location) / dialog.project_name
-
-        selected_cfg = dialog.selected_config
-        if selected_cfg:
-            config_manager.seed_project_from_config(selected_cfg, project_path)
-            config_manager.set_last_used_config(selected_cfg)
-
-        config_name = getattr(dialog, "config_name", "") or dialog.project_name
-        if config_name:
-            config_dir = project_path / "config"
-            config_dir.mkdir(parents=True, exist_ok=True)
-            origin = config_manager.read_config_section(config_dir, "origin")
-            origin["config_name"] = config_name
-            config_manager.write_config_section(config_dir, "origin", origin)
-
-        # Point the editor's navigation model at the freshly-created project.
-        self.project_manager.set_project_root(project_path)
-        _host_services.note_recent_project(str(project_path))
-
-        # Now initialize the UI with the new project
-        self.workspace_widget._load_test_list()
-        self.workspace_widget.new_test_btn.setEnabled(True)
-
-        # Detect rules (will prompt user if not found)
-        self.project_manager.detect_rules_root()
-
-        # Switch task configurations to the freshly-created project so
-        # any workflow saves land in the new ``config.json``. The
-        # registered reload callback refreshes button labels.
-        self.task_config_manager.reload(self.project_manager.project_root)
-
-        # Update status bar indicators
-        self._update_project_rules_indicators()
-        self.text_json_tab.refresh_parser_button()
-        self.text_only_tab.refresh_parser_button()
-        self.json_code_tab.refresh_code_parser_button()
-        self._watch_project_config()
-        
-        # Show workspace dock if hidden
-        if self.workspace_dock.isHidden():
-            self.workspace_dock.show()
-        self._restart_server_for_project()
-        
-        # Show success message
-        QMessageBox.information(
-            self,
-            "Project Created",
-            f"Project created successfully at:\n{project_path}\n\n"
-            "You can now create test folders using the Workspace tab."
-        )
-    
     def _refresh_after_open(self):
         """Common UI refresh after a project root is set (open / recent)."""
-        self.workspace_widget._load_test_list()
-        self.workspace_widget.new_test_btn.setEnabled(True)
-        self.project_manager.detect_rules_root()
-        self.task_config_manager.reload(self.project_manager.project_root)
-        self._update_project_rules_indicators()
-        self.text_json_tab.refresh_parser_button()
-        self.text_only_tab.refresh_parser_button()
-        self.json_code_tab.refresh_code_parser_button()
-        self._watch_project_config()
-        if self.workspace_dock.isHidden():
-            self.workspace_dock.show()
-        self._restart_server_for_project()
+        self._project_controller.refresh_after_open()
 
     def _rebuild_open_recent_menu(self):
-        # Repopulate from the SHARED recent list (same app_settings the main
-        # app writes), so recents are unified across both apps.
-        aps = _host_services.load_optional("project_services.app_settings")
-        self._open_recent_menu.clear()
-        recent = aps.load_app_settings().get("recent_projects", []) if aps else []
-        if not recent:
-            placeholder = self._open_recent_menu.addAction("No recent projects")
-            placeholder.setEnabled(False)
-            return
-        for path_str in recent:
-            action = self._open_recent_menu.addAction(path_str)
-            action.triggered.connect(
-                lambda checked=False, p=path_str: self._on_open_recent(p)
-            )
+        """Repopulate Open Recent from the shared recents list."""
+        self._project_controller.rebuild_open_recent_menu()
 
     def _on_open_recent(self, path_str):
         """Open a project from the recent list."""
-        path = Path(path_str)
-        if not path.is_dir():
-            QMessageBox.warning(
-                self, "Project Not Found",
-                f"The project folder no longer exists:\n{path_str}")
-            return
-        if self.project_manager.set_project_root(path):
-            _host_services.note_recent_project(str(path))
-            self._refresh_after_open()
+        self._project_controller.on_open_recent(path_str)
 
     def _on_open_project(self):
         """Handle open project action."""
-        path = QFileDialog.getExistingDirectory(
-            self,
-            "Select Project Root",
-            str(Path.home()),
-        )
-        
-        if not path:
-            return
-        
-        project_path = Path(path)
-        
-        # Try to set as project root
-        if self.project_manager.set_project_root(project_path):
-            _host_services.note_recent_project(str(project_path))
-            self._refresh_after_open()
-        else:
-            # Maybe user selected a test folder directly?
-            detected_root = self.project_manager.detect_project_from_test_folder(project_path)
-            if detected_root:
-                self.project_manager.set_project_root(detected_root)
-                self.workspace_widget._load_test_list()
-                self.workspace_widget.new_test_btn.setEnabled(True)
-                self.project_manager.detect_rules_root()
-
-                # Switch task configurations to the detected project root.
-                self.task_config_manager.reload(self.project_manager.project_root)
-
-                # Update status bar indicators
-                self._update_project_rules_indicators()
-                self.text_json_tab.refresh_parser_button()
-                self.text_only_tab.refresh_parser_button()
-                self.json_code_tab.refresh_code_parser_button()
-                self._watch_project_config()
-                
-                # Show workspace dock
-                if self.workspace_dock.isHidden():
-                    self.workspace_dock.show()
-                self._restart_server_for_project()
-            else:
-                QMessageBox.warning(
-                    self,
-                    "Invalid Project",
-                    "Selected folder does not appear to be a valid project root.\n\n"
-                    "A valid project should contain a 'tests/' or 'config/' folder."
-                )
+        self._project_controller.on_open_project()
 
     def _watch_project_config(self) -> None:
-        """Watch the active project's config.json + its parent dir.
-
-        Removes any previous watches before adding the new ones. Safe
-        to call repeatedly (e.g. after switching projects). The parent
-        directory watch is the safety net for rmtree+copytree commits
-        where the fileChanged signal fires on delete and we miss the
-        subsequent recreate (Codex Q2).
-        """
-        config_dir = self.project_manager.get_config_dir()
-        new_path = (config_dir / "config.json") if config_dir else None
-
-        if self._watched_config_path is not None:
-            self._config_watcher.removePath(str(self._watched_config_path))
-            self._watched_config_path = None
-        if self._watched_config_dir is not None:
-            self._config_watcher.removePath(str(self._watched_config_dir))
-            self._watched_config_dir = None
-
-        if new_path and new_path.exists():
-            self._config_watcher.addPath(str(new_path))
-            self._watched_config_path = new_path
-        # Watch the parent dir regardless of file presence — survives
-        # the brief delete-recreate window of ProjectConfigDialog commits.
-        if config_dir is not None and config_dir.exists():
-            self._config_watcher.addPath(str(config_dir))
-            self._watched_config_dir = config_dir
-
-        # Task #39: arm the bundle-dir watches and seed the change
-        # detectors so the first event compares against a baseline
-        # instead of always firing.
-        self._watch_project_bundle()
-        self._bundle_signature_changed()
-        self._bundle_stamp_changed()
+        """Arm config.json/config-dir watches (module fn: harness-liftable)."""
+        project_controller.watch_project_config(self)
 
     def _watch_project_bundle(self) -> None:
-        """Watch <project>/bundle plus the project root itself (task #39).
-
-        A bundle import atomically swaps the whole bundle/ directory
-        (os.replace), which drops any watch on the old dir — the
-        project-root watch catches the swap so we can re-arm. Mirrors
-        the main app's display_snapshot_watcher pattern. Safe to call
-        repeatedly; removes previous watches first.
-        """
-        for old in (self._watched_bundle_dir, self._watched_project_root):
-            if old is not None:
-                self._config_watcher.removePath(str(old))
-        self._watched_bundle_dir = None
-        self._watched_project_root = None
-
-        root = getattr(self.project_manager, "project_root", None)
-        if root is None:
-            return
-        root = Path(root)
-        if root.exists():
-            self._config_watcher.addPath(str(root))
-            self._watched_project_root = root
-        bundle_dir = root / "bundle"
-        if bundle_dir.exists():
-            self._config_watcher.addPath(str(bundle_dir))
-            self._watched_bundle_dir = bundle_dir
+        """Arm bundle-dir + project-root watches (task #39)."""
+        project_controller.watch_project_bundle(self)
 
     def _bundle_signature_changed(self) -> bool:
-        """True when the bundle's identity moved since the last check.
-
-        Signature = mtimes of the bundle dir + bundle.json +
-        defaults.json (None per missing entry). An import swaps the
-        whole dir, so all three change; unrelated project-root events
-        (test folders created, etc.) leave the signature alone — the
-        noise filter that keeps root-watch events from causing reload
-        storms (task #39, mirrors display_snapshot_watcher's
-        bundle-key check).
-        """
-        root = getattr(self.project_manager, "project_root", None)
-        if root is None:
-            sig = None
-        else:
-            bundle_dir = Path(root) / "bundle"
-            parts = []
-            for p in (bundle_dir, bundle_dir / "bundle.json",
-                      bundle_dir / "defaults.json"):
-                try:
-                    parts.append(p.stat().st_mtime_ns)
-                except OSError:
-                    parts.append(None)
-            sig = tuple(parts)
-        changed = sig != self._bundle_signature
-        self._bundle_signature = sig
-        return changed
+        """Edge-triggered: bundle identity moved since the last check."""
+        return project_controller.bundle_signature_changed(self)
 
     def _bundle_stamp_changed(self) -> bool:
-        """True when config/.bundle_installed.json moved since the last
-        check. The stamp is written as the final step of every bundle
-        install — a change means an import completed even if the
-        bundle-dir events were missed mid-swap (task #39
-        belt-and-braces)."""
-        if self._watched_config_dir is None:
-            return False
-        stamp = self._watched_config_dir / ".bundle_installed.json"
-        try:
-            mtime: Optional[int] = stamp.stat().st_mtime_ns
-        except OSError:
-            mtime = None
-        changed = mtime != self._bundle_stamp_mtime
-        self._bundle_stamp_mtime = mtime
-        return changed
+        """Edge-triggered: install stamp moved since the last check."""
+        return project_controller.bundle_stamp_changed(self)
 
     def _on_bundle_change_debounced(self) -> None:
-        """Debounced funnel for bundle changes (task #39): a bundle
-        imported into the open project must be live everywhere with no
-        reload/reopen — refresh the rules indicators, reload
-        TaskConfigManager (the reload-callback chain rebuilds task
-        buttons / gating / validator rows) and regate the parser
-        buttons via _handle_config_change."""
-        self._update_project_rules_indicators()
-        self._handle_config_change()
+        """Debounced funnel for bundle changes (task #39)."""
+        project_controller.on_bundle_change_debounced(self)
 
     def _on_config_file_changed(self, path: str) -> None:
-        """Refresh parser- and workflow-driven UI when config.json changes.
-
-        Some editors atomic-write (delete + recreate), which silently
-        drops the watch — re-add the path defensively after each event.
-
-        Phase 4 hot-reload: when the parent app's ProjectConfigDialog
-        commits a workflows edit, reload the TaskConfigManager so the
-        running workflow editor's button labels + validator rows
-        reflect the change without restart. The reload-callback chain
-        fires ``refresh_all_button_labels``, which itself calls
-        ``rebuild_validator_buttons`` on every tab (registered in
-        Phase 2/3).
-        """
-        self._handle_config_change()
-        p = Path(path)
-        if p.exists() and str(p) not in self._config_watcher.files():
-            self._config_watcher.addPath(str(p))
+        """Hot-reload when config.json changes."""
+        project_controller.on_config_file_changed(self, path)
 
     def _on_config_dir_changed(self, path: str) -> None:
-        """Directory-level watch fires when config.json is created/
-        recreated by an external writer (e.g. ProjectConfigDialog's
-        rmtree+copytree commit). Re-arms the file watch and triggers
-        the same hot-reload as a direct file change. Phase 4.6.2.
-
-        Also receives events for <project>/bundle and the project root
-        (task #39): an import swaps the bundle dir atomically, dropping
-        its watch — re-arm and, when the bundle signature actually
-        moved, fire the debounced bundle reload."""
-        p = Path(path)
-        if p in (self._watched_bundle_dir, self._watched_project_root):
-            self._watch_project_bundle()
-            if self._bundle_signature_changed():
-                self._bundle_change_timer.start()
-            return
-        # Belt-and-braces (task #39): the install stamp lands in
-        # config/ as the last step of an import — a changed stamp is a
-        # bundle change even when the bundle-dir events were missed.
-        if self._bundle_stamp_changed():
-            self._bundle_change_timer.start()
-        if self._watched_config_path is None:
-            return
-        # If the file watch dropped during a rmtree window, re-add it
-        # now that the directory event tells us the file is back.
-        file_str = str(self._watched_config_path)
-        if (self._watched_config_path.exists()
-                and file_str not in self._config_watcher.files()):
-            self._config_watcher.addPath(file_str)
-            self._handle_config_change()
+        """Dir event: re-arm watches + hot-reload funnels."""
+        project_controller.on_config_dir_changed(self, path)
 
     def _handle_config_change(self) -> None:
-        """Single funnel for hot-reload work — called by both the
-        file-change and directory-change paths so logic stays in one
-        place."""
-        self.text_json_tab.refresh_parser_button()
-        self.text_only_tab.refresh_parser_button()
-        self.json_code_tab.refresh_code_parser_button()
-        try:
-            project_root = self.project_manager.project_root
-            if project_root is not None:
-                self.task_config_manager.reload(project_root)
-        except Exception:  # never let the watcher die on a load error
-            log.exception("Hot-reload of TaskConfigManager failed")
-        # Also refresh the chat panel's validator-status indicator so
-        # auto-correct checkbox + dot reflect the new state.
-        try:
-            current = self.tab_widget.currentWidget()
-            ctx = getattr(current, "tab_context", None)
-            if ctx is not None:
-                self.dock.chat_panel._refresh_validator_ui_for_context(ctx)
-        except Exception:
-            log.debug("post-config-change chat-panel refresh failed", exc_info=True)
-    
+        """Single funnel for hot-reload work (body in controllers/)."""
+        project_controller.handle_config_change(self)
+
     def _on_save(self):
-        """Save artifacts managed by the current tab.
-        
-        Delegates to the tab's save_all_artifacts() which properly syncs
-        editor content, writes to disk, resets dirty flags, and updates
-        status labels.
-        """
-        if not self.artifact_manager:
-            return
-        
-        current_tab = self.tab_widget.currentWidget()
-        
-        if hasattr(current_tab, 'save_all_artifacts'):
-            current_tab.save_all_artifacts()
-        else:
-            # Fallback for tabs without editors
-            self.artifact_manager.save_all()
+        """Save the current tab's artifacts (body in controllers/)."""
+        self._document_controller.on_save()
 
-        # Check if JSON/Code pair coherence is broken
-        self._check_sync_hashes()
-
-        self._update_status_indicators()
-        # Refresh workspace test list to update artifact indicators
-        self.workspace_widget.refresh()
-        self.status_bar.showMessage("Saved", 2000)
-
-    def _check_sync_hashes(self):
-        """Compare current artifact content hashes against the last-acknowledged baseline.
-
-        If any canonical artifact (procedure.json, test.py) changed since the
-        user last acknowledged sync, mark artifacts as out-of-sync.  Never
-        auto-restores in-sync — only user acknowledgment does that.
-        """
-        if not self.artifact_manager or not self.session_state:
-            return
-        stored = self.session_state.artifact_hashes
-        if not stored:
-            # First save or legacy session — seed baseline, assume in-sync
-            self.session_state.artifact_hashes = self.artifact_manager.compute_hashes()
-            self.session_state.save()
-            return
-        current = self.artifact_manager.compute_hashes()
-        if current != stored:
-            if self.session_state.artifacts_in_sync:
-                self.session_state.artifacts_in_sync = False
-                self.session_state.save()
-                log.info("Artifacts marked out of sync: content hashes differ from acknowledged baseline")
-
-    def _check_for_external_changes(self):
-        """Detect files edited outside the workflow editor since the last acknowledgment.
-
-        Compares stored hashes (from .llm_session.json) against current disk
-        content.  If any canonical artifact changed, marks artifacts out of sync.
-        """
-        if not self.artifact_manager or not self.session_state:
-            return
-        stored = self.session_state.artifact_hashes
-        if not stored:
-            # First open or legacy session — seed hashes without warning
-            self.session_state.artifact_hashes = self.artifact_manager.compute_hashes()
-            self.session_state.save()
-            return
-        changed = self.artifact_manager.check_external_changes(stored)
-        if changed:
-            names = ", ".join(changed)
-            log.info(f"External changes detected in: {names}")
-            self.session_state.artifacts_in_sync = False
-            self.session_state.save()
-    
     def _on_tab_artifact_saved(self):
-        """Handle artifact_saved signal from any tab's per-button save.
-        
-        Ensures the sync state and UI indicators are updated regardless of
-        whether the user used Ctrl+S or a per-tab save button.
-        """
-        self._check_sync_hashes()
-        self._update_status_indicators()
-        self.workspace_widget.refresh()
-    
+        """Handle artifact_saved from any tab's per-button save."""
+        self._document_controller.on_tab_artifact_saved()
+
     def _on_save_all(self):
-        """Save all dirty artifacts across all tabs.
-        
-        Syncs only the current tab's editors (to avoid stale content from
-        inactive tabs overwriting shared artifacts), then saves all dirty
-        artifacts via the ArtifactManager, and reloads all tabs so their
-        editors and dirty flags reflect the saved state.
-        """
-        if not self.artifact_manager:
-            return
-        
-        # Sync only the current tab — inactive tabs may hold stale content
-        # for shared artifacts like procedure.json
-        current_tab = self.tab_widget.currentWidget()
-        if hasattr(current_tab, 'sync_editors_to_artifacts'):
-            current_tab.sync_editors_to_artifacts()
-        
-        # Save all dirty artifacts via artifact manager (single source of truth)
-        self.artifact_manager.save_all()
-        
-        # Reload all tabs so editors + dirty flags reflect saved state
-        for tab in self._get_llm_tabs():
-            if hasattr(tab, 'load_content'):
-                tab.load_content()
-        
-        if self.session_state:
-            self.session_state.save()
-        
-        # Check if artifacts changed from the acknowledged baseline
-        self._check_sync_hashes()
-        
-        # Update indicators after save
-        self._update_status_indicators()
-        # Refresh workspace test list to update artifact indicators
-        self.workspace_widget.refresh()
-        self.status_bar.showMessage("All saved", 2000)
-    
+        """Save all dirty artifacts across all tabs."""
+        self._document_controller.on_save_all()
+
     def _check_unsaved_changes(self) -> bool:
-        """Check for unsaved changes and prompt user.
-        
-        Syncs only the current tab's editors, then checks artifact dirty state.
-        We must NOT sync inactive tabs because their editors may hold stale
-        content for shared artifacts (e.g. procedure.json) and would overwrite
-        the artifact manager's correct state.
-        
-        Returns:
-            True if the user cancelled (caller should abort), False otherwise
-        """
-        if not self.artifact_manager:
-            return False
-        
-        # Sync only the CURRENT tab to catch un-saved editor changes.
-        # Inactive tabs may have stale content for shared artifacts.
-        current_tab = self.tab_widget.currentWidget()
-        if hasattr(current_tab, 'sync_editors_to_artifacts'):
-            current_tab.sync_editors_to_artifacts()
-        
-        dirty = []
-        if self.artifact_manager.is_dirty(ArtifactType.PROCEDURE_JSON):
-            dirty.append("procedure.json")
-        if self.artifact_manager.is_dirty(ArtifactType.TEST_CODE):
-            dirty.append("test.py")
-        if self.artifact_manager.is_dirty(ArtifactType.PROCEDURE_TEXT):
-            dirty.append("procedure_text.md")
-        
-        if not dirty:
-            return False
-        
-        result = QMessageBox.question(
-            self,
-            "Unsaved Changes",
-            f"You have unsaved changes in:\n  \u2022 " + "\n  \u2022 ".join(dirty) +
-            "\n\nSave before continuing?",
-            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
-            QMessageBox.Save
-        )
-        
-        if result == QMessageBox.Save:
-            self._on_save_all()
-            return False
-        elif result == QMessageBox.Cancel:
-            return True  # User cancelled
-        else:
-            return False  # Discard
-    
+        """True when the user cancelled the unsaved-changes prompt."""
+        return self._document_controller.check_unsaved_changes()
+
     def _on_settings(self):
         """Open settings dialog."""
         # Pass project_root so the Validator tab can read/write the
@@ -2690,36 +1975,5 @@ class MainWindow(QMainWindow):
         self.workspace_widget.set_project_root(path)
     
     def closeEvent(self, event):
-        """Handle window close."""
-        # Save session state (validation_issues are already in session_state)
-        if hasattr(self, 'session_state') and self.session_state:
-            try:
-                self.session_state.save()
-            except Exception as e:
-                log.warning(f"Failed to save session state on close: {e}")
-        
-        # Check for unsaved changes (syncs editors + prompts)
-        if self._check_unsaved_changes():
-            event.ignore()
-            return
-        
-        # Check artifact coherence before closing
-        if self._check_artifact_coherence():
-            event.ignore()
-            return
-        
-        # Cancel any running LLM workers
-        self._cancel_all_llm_workers()
-        
-        # Stop all tab backends
-        for tab in self._get_llm_tabs():
-            if hasattr(tab, 'tab_context') and tab.tab_context._backend:
-                log.debug(f"Stopping backend for {tab.__class__.__name__}")
-                tab.tab_context._backend.stop()
-        
-        # Stop server manager if exists
-        if hasattr(self, '_server_manager') and self._server_manager:
-            log.info("Stopping OpenCode server manager...")
-            self._server_manager.stop()
-        
-        event.accept()
+        """Handle window close (body in controllers/document_controller.py)."""
+        self._document_controller.on_close_event(event)

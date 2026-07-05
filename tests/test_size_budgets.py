@@ -47,13 +47,13 @@ FILE_BUDGET: dict[str, int] = {
     "llm/pack_parsers.py": 1682,
     "llm/tab_context.py": 1057,
     "llm/validator_dispatch.py": 1163,
-    "main_window.py": 2726,  # +5: bare-except cleanup log lines
+    "main_window.py": 1980,  # post-carve (controllers/ project+document split)
     "theme.py": 1981,  # light/dark Fluent QSS deduped into one template + token dicts
 }
 
 CLASS_METHOD_BUDGET: dict[tuple[str, str], int] = {
     ("dock/skill_chat_widget.py", "SkillChatWidget"): 42,
-    ("main_window.py", "MainWindow"): 94,
+    ("main_window.py", "MainWindow"): 90,
     ("tabs/json_code_tab.py", "JsonCodeTab"): 42,
     ("tabs/text_json_tab.py", "TextJsonTab"): 43,
 }

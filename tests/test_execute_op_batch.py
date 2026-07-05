@@ -18,6 +18,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip(
+    "rules_packager_base",
+    reason="needs the installed grammar wheel (bench/host venv); absent on CI",
+)
 import rules_packager_base.rules.v2_0_2.parser._default_registry as reg
 import labscpi_pack.rules.v2_0_1.parser as labpack
 

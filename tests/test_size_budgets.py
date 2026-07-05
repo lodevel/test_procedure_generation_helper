@@ -48,7 +48,7 @@ FILE_BUDGET: dict[str, int] = {
     "llm/tab_context.py": 1057,
     "llm/validator_dispatch.py": 1163,
     "main_window.py": 2726,  # +5: bare-except cleanup log lines
-    "theme.py": 2759,
+    "theme.py": 1981,  # light/dark Fluent QSS deduped into one template + token dicts
 }
 
 CLASS_METHOD_BUDGET: dict[tuple[str, str], int] = {

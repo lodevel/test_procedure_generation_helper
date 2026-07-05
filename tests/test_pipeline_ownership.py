@@ -17,6 +17,8 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+
+import pytest
 from pathlib import Path
 
 from tests._qt_stub import ensure_workflow_editor_importable
@@ -25,6 +27,12 @@ ensure_workflow_editor_importable()
 
 from workflow_editor.llm import pack_parsers  # noqa: E402
 from workflow_editor.llm.reconstruction import pipeline_ownership  # noqa: E402
+
+from tests import _env
+
+_skip_no_wheel = pytest.mark.skipif(
+    not _env.rules_packager_available(), reason=_env.WHEEL_SKIP_REASON
+)
 from workflow_editor.llm.section_ownership import (  # noqa: E402
     CANONICAL_SECTIONS,
     DEFAULT_OWNERSHIP,
@@ -43,6 +51,7 @@ class PipelineOwnershipNoOverrideTests(unittest.TestCase):
     def test_returns_section_ownership(self) -> None:
         self.assertIsInstance(self.own, SectionOwnership)
 
+    @_skip_no_wheel
     def test_llm_sections_match_wheel_map(self) -> None:
         expected = resolve(pack_parsers.get_section_ownership(None))
         self.assertEqual(self.own.llm_sections, expected.llm_sections)

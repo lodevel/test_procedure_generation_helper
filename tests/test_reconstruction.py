@@ -23,7 +23,11 @@ from workflow_editor.llm.reconstruction import (  # noqa: E402
     reconstructed_or_error,
 )
 
-from tests import _env  # noqa: E402
+from tests import _env
+
+pytestmark = pytest.mark.skipif(
+    not _env.rules_packager_available(), reason=_env.WHEEL_SKIP_REASON
+)  # noqa: E402
 
 _skip_no_labscpi = pytest.mark.skipif(
     not _env.labscpi_psu_reconstruct_available(), reason=_env.LABSCPI_SKIP_REASON

@@ -221,7 +221,9 @@ def _safe_pdf_name(save_as):
     basename only (strips any path -> no traversal), a safe charset, and a forced
     ``.pdf`` suffix, so the cached file can only land directly in the documents
     folder. Returns None when nothing usable remains (then we do not cache)."""
-    base = os.path.basename(str(save_as or "").strip())
+    # Strip both separator styles regardless of host OS ("\\" is not a
+    # separator on POSIX, so basename alone would keep the prefix intact).
+    base = str(save_as or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
     if base.lower().endswith(".pdf"):
         base = base[:-4]
     safe = "".join(c if (c.isalnum() or c in "._-") else "_" for c in base).strip("._")

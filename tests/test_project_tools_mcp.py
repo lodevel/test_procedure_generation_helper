@@ -249,7 +249,12 @@ def _result_text(resp):
 
 
 def _result_json(resp):
-    return json.loads(_result_text(resp))
+    """Parse the JSON body of a tool reply, tolerating the human/LLM-facing
+    prose preamble some handlers emit before it (e.g. the ``count=N ...
+    TRUNCATED`` guard line ahead of the components envelope)."""
+    text = _result_text(resp)
+    starts = [i for i in (text.find("{"), text.find("[")) if i != -1]
+    return json.loads(text[min(starts):] if starts else text)
 
 
 def _components(resp):

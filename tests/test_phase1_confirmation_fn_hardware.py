@@ -31,6 +31,13 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _FALLBACK_PATH = _REPO_ROOT / "external" / "test_procedure_generation_helper" / "config" / "tab_contexts.json"
 _FN_HARDWARE = _REPO_ROOT / "customer_configs" / "FN_hardware"
 
+# Real customer data living OUTSIDE this repo — present on dev/bench machines
+# with the full host checkout, absent on CI / standalone clones.
+pytestmark = pytest.mark.skipif(
+    not (_FN_HARDWARE / "config.json").exists(),
+    reason="needs the customer_configs/FN_hardware dataset (host checkout only)",
+)
+
 
 @pytest.fixture
 def fn_hardware_project(tmp_path):

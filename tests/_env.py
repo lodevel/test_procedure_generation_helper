@@ -128,3 +128,19 @@ def nested_interpreter_spawn_works() -> bool:
     except Exception:
         pass
     return result.get("line", "").strip() == "OK"
+
+
+# --- probe 3: the rules_packager_base wheel itself ----------------------------
+
+WHEEL_SKIP_REASON = (
+    "the rules_packager_base grammar wheel is not installed in this venv; the "
+    "in-process pack_parsers bridge cannot run. Installed on bench/host venvs."
+)
+
+
+@functools.lru_cache(maxsize=1)
+def rules_packager_available() -> bool:
+    """True iff the rules_packager_base wheel is importable in-process."""
+    import importlib.util
+
+    return importlib.util.find_spec("rules_packager_base") is not None

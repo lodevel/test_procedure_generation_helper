@@ -15,6 +15,8 @@ dependencies = [
     "python-docx>=1.1.0",
     # authoring skill loader (frontmatter parsing)
     "PyYAML>=6.0",
+    # pdf read tool (text-layer extraction)
+    "pypdf>=4.0",
 ]
 
 [project.optional-dependencies]

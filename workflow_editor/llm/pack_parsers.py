@@ -46,7 +46,7 @@ import threading
 from collections import deque
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, NoReturn, Optional
 
 from . import section_ownership
 
@@ -1417,7 +1417,7 @@ def _inproc_validate(
 # ---------------------------------------------------------------------------
 
 
-def _reconstruct_parse_failure(result: dict[str, Any]) -> "never":
+def _reconstruct_parse_failure(result: dict[str, Any]) -> "NoReturn":
     """Raise ParseFailure reconstructed from a subprocess error dict."""
     findings_dicts = result.get("findings", [])
     issues = [_IssueFromDict(d) for d in findings_dicts]

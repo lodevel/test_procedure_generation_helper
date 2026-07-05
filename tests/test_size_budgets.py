@@ -41,13 +41,13 @@ _SKIP_DIRS = {"__pycache__", "build", "dist", ".venv"}
 
 FILE_BUDGET: dict[str, int] = {
     "core/task_config.py": 1289,
-    "dialogs/settings_dialog.py": 1294,
+    "dialogs/settings_dialog.py": 1298,  # +4: bare-except cleanup log lines
     "llm/_execute_op_subprocess.py": 1005,
-    "llm/opencode_backend.py": 1242,
+    "llm/opencode_backend.py": 1251,  # +9: bare-except cleanup log lines
     "llm/pack_parsers.py": 1682,
     "llm/tab_context.py": 1057,
     "llm/validator_dispatch.py": 1163,
-    "main_window.py": 2721,
+    "main_window.py": 2726,  # +5: bare-except cleanup log lines
     "theme.py": 2759,
 }
 

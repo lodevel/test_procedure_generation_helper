@@ -748,7 +748,9 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
             if json_content.strip():
                 json_data = json.loads(json_content)
                 json_steps = json_data.get("steps", []) or []
-        except (json.JSONDecodeError, Exception):
+        except (json.JSONDecodeError, AttributeError):
+            # best-effort: editor JSON may be mid-edit/invalid or non-dict;
+            # empty json_steps falls through to the "No steps in JSON" status.
             pass
         if not json_steps:
             self.step_status.setText("No steps in JSON")

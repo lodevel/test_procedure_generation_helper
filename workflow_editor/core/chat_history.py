@@ -5,11 +5,14 @@ Manages persistent chat history with full prompt/response pairs.
 """
 
 import json
+import logging
 import os
 import uuid
 from datetime import datetime
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass, asdict
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -102,7 +105,9 @@ class ChatHistoryManager:
             with open(self.file_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except OSError:
-            pass  # Silently fail on write errors
+            # Best-effort persistence: chat history is a debugging aid, a failed
+            # save must not break the chat flow.
+            log.debug("Failed to save chat history to %s", self.file_path, exc_info=True)
     
     def add_message(
         self,

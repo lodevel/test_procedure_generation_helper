@@ -47,8 +47,10 @@ def load_settings() -> dict:
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 return json.load(f)
-        except Exception:
-            pass
+        except (OSError, ValueError):
+            # Unreadable or corrupt settings file (JSONDecodeError is a
+            # ValueError) — fall back to defaults rather than crash startup.
+            log.warning("Could not load settings from %s; using defaults", path)
     return {}
 
 
@@ -343,7 +345,9 @@ def build_launch_config(
         try:
             os.unlink(tmp_name)
         except OSError:
-            pass
+            # Best-effort temp-file cleanup on a failed atomic write; the
+            # original exception re-raised below is the one that matters.
+            log.debug("Could not remove temp file %s", tmp_name)
         raise
     log.info("Built launch config (project=%s, mcp=%s)",
              project_root, sorted(mcp.keys()))

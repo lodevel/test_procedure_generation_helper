@@ -144,5 +144,8 @@ def _atomic_write_text(target: Path, content: str) -> None:
         try:
             os.unlink(tmp_name)
         except OSError:
+            # best-effort: temp file may already be gone (mkstemp/replace
+            # failed early) or be locked on Windows; the original write
+            # failure re-raises below and is what callers must see.
             pass
         raise

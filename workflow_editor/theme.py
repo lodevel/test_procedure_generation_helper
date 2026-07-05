@@ -2755,4 +2755,4 @@ def _set_pride_fx(app: QApplication, on: bool) -> None:
         from . import pride_fx
         pride_fx.set_enabled(app, on)
     except Exception:
-        pass
+        pass  # best-effort: cosmetic pride FX only; a failure here must never affect theming

@@ -575,8 +575,9 @@ class OpenCodeServerManager:
                 if response.status_code == 200:
                     log.debug(f"Server ready after {attempt} attempts")
                     return True
-            except requests.exceptions.RequestException:
-                pass
+            except requests.exceptions.RequestException as e:
+                # Expected while the server is still booting; keep polling.
+                log.debug(f"Health check attempt {attempt} not ready yet: {e}")
             
             # Check if process died (stderr is captured by the drain thread).
             if self._server_process and self._server_process.poll() is not None:
@@ -624,8 +625,8 @@ class OpenCodeServerManager:
                  f"pkill -f 'opencode serve --port {self._config.server_port}'"],
                 capture_output=True, timeout=3, cwd=safe_wsl_cwd(),
             )
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 — best-effort cleanup
+            log.debug(f"WSL-side pkill of opencode serve failed (best-effort): {e}")
 
         # Our process is gone — drop the PID file so the next session's
         # orphan-sweep has nothing stale to chase.

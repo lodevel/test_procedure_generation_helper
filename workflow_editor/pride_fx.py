@@ -139,6 +139,9 @@ class _GlitterFilter(QObject):
                         )
                         self._overlays.add(burst)
             except Exception:
+                # best-effort: cosmetic sparkle burst on a hot mouse-event path;
+                # a failure (e.g. synthesized event without globalPosition) must
+                # never affect click handling, and logging per-click is noise.
                 pass
         return False  # never consume — clicks behave normally
 

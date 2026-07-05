@@ -17,9 +17,12 @@ feature is optional (the operator simply sees a friendly empty state).
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 PREBUILT_NAME = "cheatsheet.md"   # a bundle-shipped sheet takes precedence
 _SCHEMA_RE = re.compile(r"schema", re.IGNORECASE)
@@ -138,7 +141,8 @@ def _manifest_entries(root: Path) -> list[dict]:
         if isinstance(data, list) and data:
             return sorted(data, key=lambda e: e.get("index", 0))
     except (OSError, ValueError):
-        pass
+        # Expected when the manifest is missing/corrupt — glob fallback below.
+        logger.debug("manifest.json unreadable under %s; falling back to *.md glob", root)
     return [{"index": i, "filename": p.name, "source": ""}
             for i, p in enumerate(sorted(root.glob("*.md")), 1)]
 
@@ -196,7 +200,8 @@ def build_cheatsheet(rules_root) -> str:
         try:
             return prebuilt.read_text(encoding="utf-8")
         except OSError:
-            pass  # fall through to runtime extraction
+            # Prebuilt sheet unreadable — fall through to runtime extraction.
+            logger.debug("prebuilt %s unreadable; extracting cheat-sheet at runtime", prebuilt)
 
     entries = _manifest_entries(root)
     if not entries:

@@ -1376,12 +1376,17 @@ class MainWindow(QMainWindow):
                         self.dock.chat_panel.append_thinking_text
                     )
                 except (RuntimeError, TypeError):
+                    # best-effort: disconnect raises when the signal was
+                    # never connected (RuntimeError) or the slot owner is
+                    # gone (TypeError)
                     pass
                 try:
                     worker.text_chunk.disconnect(
                         self.dock.chat_panel.append_response_text
                     )
                 except (RuntimeError, TypeError):
+                    # best-effort: same as above -- stale connection may
+                    # not exist
                     pass
                 # Reconnect streaming signals to the restored thinking widget
                 worker.thinking_chunk.connect(
@@ -2437,7 +2442,7 @@ class MainWindow(QMainWindow):
             try:
                 self.text_only_tab.reload_netlist()
             except Exception:
-                pass
+                log.debug("netlist reload after settings change failed", exc_info=True)
             # Refresh button labels + validator buttons after settings change
             self.refresh_all_button_labels()
             # Also refresh the chat panel's validator-status indicator

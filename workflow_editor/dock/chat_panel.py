@@ -634,6 +634,7 @@ class ChatPanel(QWidget):
                 if not getattr(self, '_thinking_has_content', False):
                     self._thinking_header.setText(f"💭 Thinking{dots}")
             except RuntimeError:
+                # best-effort: widget C++ object deleted during tab switch
                 pass
     
     def append_response_text(self, text: str):

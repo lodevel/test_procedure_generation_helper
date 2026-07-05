@@ -6,6 +6,7 @@ Defensive parsing to handle malformed responses gracefully.
 """
 
 import json
+import logging
 import re
 from typing import Optional, Any
 
@@ -15,6 +16,8 @@ from .backend_base import (
     LLMProposal,
     ValidationIssue
 )
+
+log = logging.getLogger(__name__)
 
 
 class ResponseParser:
@@ -147,8 +150,9 @@ class ResponseParser:
                 # (don't fall through to parsing the wrapper itself)
                 return None
         except json.JSONDecodeError:
-            pass
-        
+            # Not an OpenCode-wrapped envelope; fall through to direct/fenced extraction
+            log.debug("Response is not OpenCode-wrapped JSON; trying direct/fenced extraction")
+
         # Try direct JSON parse
         raw_stripped = raw.strip()
         if raw_stripped.startswith("{"):
@@ -202,7 +206,8 @@ class ResponseParser:
                 json.loads(text)
                 return text
             except json.JSONDecodeError:
-                pass
+                # Candidate is not direct JSON; fall through to fenced-block extraction
+                log.debug("Part candidate is not direct JSON; trying fenced-block extraction")
 
         # Markdown fenced JSON / code block
         fenced_patterns = [
@@ -249,8 +254,9 @@ class ResponseParser:
                 if text_parts:
                     return "\n\n".join(text_parts)
         except json.JSONDecodeError:
-            pass
-        
+            # Not an OpenCode-wrapped envelope; fall through to plain-text fallback
+            log.debug("Response is not OpenCode-wrapped JSON; using plain-text fallback")
+
         # Fallback: Remove code blocks and return text
         text = re.sub(r"```[\s\S]*?```", "", raw)
         text = text.strip()
@@ -279,7 +285,8 @@ class ResponseParser:
             try:
                 response.task = LLMTask(task_str)
             except ValueError:
-                pass  # Unknown task, ignore
+                # Unknown task value from the LLM: ignore, response.task stays None
+                log.warning("LLM returned unknown task %r; ignoring", task_str)
         
         # Validation
         validation = data.get("validation", {})

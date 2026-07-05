@@ -292,8 +292,10 @@ class OpenCodeBackend(LLMBackend):
                 if response.status_code == 200:
                     return True
             except requests.exceptions.RequestException:
+                # best-effort: server not up yet; polled every 0.5s and each
+                # attempt is already logged at debug above, so stay silent here.
                 pass
-            
+
             # Check if process died
             if self._server_process and self._server_process.poll() is not None:
                 return False
@@ -657,6 +659,10 @@ class OpenCodeBackend(LLMBackend):
                                         log.debug("Streaming: session.status idle, fetching final response")
                                         break
                         except (json.JSONDecodeError, AttributeError):
+                            # best-effort completion probe per SSE event: decode
+                            # failures are already debug-logged by the parse block
+                            # above; a non-dict payload simply carries no
+                            # completion signal.
                             pass
                     
                     event_data_buffer = ""
@@ -678,8 +684,10 @@ class OpenCodeBackend(LLMBackend):
         finally:
             try:
                 sse_response.close()
-            except Exception:
-                pass
+            except Exception as e:
+                # Cleanup path: closing a broken/already-closed SSE stream may
+                # raise; must not mask the real outcome of the request.
+                log.debug(f"Streaming: ignoring error while closing SSE response: {e}")
 
         if self._cancel_requested:
             return LLMResponse(
@@ -1139,8 +1147,9 @@ class OpenCodeBackend(LLMBackend):
                                 raw_response=raw_response,
                                 session_rehydrated=rehydrated,
                             )
-            except (json.JSONDecodeError, KeyError):
-                pass  # Not a context error, continue normal parsing
+            except (json.JSONDecodeError, KeyError) as e:
+                # Not a context error, continue normal parsing
+                log.debug(f"Context-error probe did not match ({type(e).__name__}); continuing normal parsing")
             
             log.debug(f"Raw response preview: {raw_response[:200]}")
             

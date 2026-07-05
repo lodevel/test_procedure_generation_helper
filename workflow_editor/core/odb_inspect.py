@@ -11,11 +11,14 @@ from __future__ import annotations
 
 import atexit
 import json
+import logging
 import subprocess
 import sys
 import threading
 from pathlib import Path
 from typing import Optional
+
+log = logging.getLogger(__name__)
 
 
 def odb_cli_path() -> Optional[Path]:
@@ -122,8 +125,9 @@ def find_odb_tgz(project_root: Optional[Path]) -> Optional[Path]:
                 p = root / raw
             if p.exists():
                 return p
-    except (OSError, ValueError):
-        pass
+    except (OSError, ValueError) as exc:
+        # Best-effort config override; fall through to the *.tgz glob below.
+        log.debug("odb_archive override unreadable (%s); falling back to glob", exc)
     try:
         tgz = sorted(root.glob("*.tgz"))
     except OSError:
@@ -336,6 +340,7 @@ def render_target(project_root: Optional[Path], refdes: str,
              "--parallel-export" if p["parallel_export"] else "--no-parallel-export"],
             capture_output=True, text=True, timeout=240,
         )
-    except (OSError, subprocess.SubprocessError):
-        pass
+    except (OSError, subprocess.SubprocessError) as exc:
+        # Documented graceful degrade: panel shows no image, never an error.
+        log.debug("one-shot ODB render fallback failed for %s: %s", target, exc)
     return cached_image_paths(project_root, refdes, pad)

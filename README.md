@@ -8,9 +8,11 @@ the canonical `procedure.json` and generated `test.py`, keeping the natural-lang
 text, JSON, and code in sync.
 
 It lives in `external/test_procedure_generation_helper/` as a sibling package of the
-main GUI (`src/test_procedure_gui/`). It is **not** pip-installed: the main GUI adds
-this directory to `sys.path` at startup so it can import `workflow_editor` in-tree
-(see `src/test_procedure_gui/app.py::_bootstrap_editor_on_path`).
+main GUI (`src/test_procedure_gui/`). The host's `script.bat` installs it **editable**
+into the host venv (`pip install -e`), so `workflow_editor` imports like any
+dependency — no `sys.path` / `PYTHONPATH` glue. The legacy path bootstraps remain
+only as logged deprecation shims. See the host repo's
+`docs/adr/0003-editor-installed-package.md`.
 
 ## What it does
 
@@ -75,13 +77,17 @@ test_procedure_generation_helper/
     │   ├── json_code_tab.py       # "JSON-Code" tab
     │   ├── traceability_tab.py    # "Traceability" tab (read-only)
     │   └── workspace_tab.py       # Workspace (modern layout)
+    ├── authoring/                 # Skill/wizard packages: tier discovery, skill chat, MCP tool servers
     ├── dock/                      # Dock panels (chat, session, findings, raw response)
     ├── dialogs/                   # settings, diff viewer, new-project, syntax reference
     └── widgets/                   # project bar, find/replace, netlist panel, rule selector
 ```
 
-(The `__init__.py` reports `__version__ = "0.1.0"`. There are no `docs/` files in this
-package — the authoritative cross-package contracts live at the repo root, see below.)
+(The `__init__.py` reports `__version__ = "0.1.0"`. Authoring-skill packages are
+discovered from four tiers — builtin / bundled / local / project, resolved in
+`workflow_editor/authoring/locations.py` — see `docs/authoring-a-skill.md` in this
+repo for writing one. The authoritative cross-package contracts live at the host
+repo root, see below.)
 
 ## Requirements
 
@@ -103,6 +109,12 @@ live in each *project's* venv and are invoked there by the subprocess runners
 ```bash
 python -m workflow_editor [options]
 ```
+
+Run from a venv **without** the host app, the editor starts in **degraded mode**:
+`project_services`-backed features (package-library tiers, full .docx report, the
+shared project/bundle/scenario/config dialogs) disable or report unavailable —
+nothing crashes. The exact consumed surface and guard rule are Contract C
+(`../../docs/contract_c_editor_host_services.md`).
 
 Command-line options (see `workflow_editor/__main__.py`):
 
@@ -140,7 +152,8 @@ menu ("Edit in Workflow Editor"). `src/test_procedure_gui/main_window.py::_launc
 formats a configured command template (its `{python}` placeholder defaults to the
 GUI's `sys.executable`), launches it via `subprocess.Popen`, and appends
 `--project-root`, `--rules-root` (the active bundle's `rules/`), and `--test-name`.
-It also puts the editor on the child's `PYTHONPATH`. The editor path and command
+No `PYTHONPATH` injection: `workflow_editor` is installed editable in the GUI venv
+(ADR 0003). The editor path and command
 template are set in the main GUI's **Workflow Editor Settings** dialog.
 Project-specific parsing/validation then runs in the project's own venv via
 `pack_parsers.py`, so the editor does not itself need the project venv.
@@ -235,8 +248,9 @@ and it is driven by the main GUI's interactive/manual runner
 
 ## How it ties into the main GUI
 
-- The main GUI puts this package on `sys.path` and imports it in-tree
-  (`app.py::_bootstrap_editor_on_path`).
+- The main GUI imports this package from its venv's editable install; the old
+  `app.py::_bootstrap_editor_on_path` sys.path hack survives only as a logged
+  deprecation shim.
 - Several main-GUI modules import from `workflow_editor` directly —
   `llm.pack_parsers` (e.g. `bench_fields`, `bench_constant_names`,
   `build_manual_run`/`build_manual_result`), `llm.section_ownership`, and
@@ -264,4 +278,6 @@ package):
 
 - `../../docs/contract_a_gui_wheel_api.md` — Contract A: the GUI ↔ wheel `pack_parsers` façade
 - `../../docs/contract_b_bundle_engine_api.md` — Contract B: the bundle ↔ engine API
+- `../../docs/contract_c_editor_host_services.md` — Contract C: what this editor consumes from `project_services` + degraded mode
+- `../../docs/adr/0003-editor-installed-package.md` — why the editor is an installed (editable) package
 - `../../TODO.md` — current status / task tracker

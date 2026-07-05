@@ -23,16 +23,25 @@ from pathlib import Path
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 
-# Make the shared `project_services` package importable in standalone runs that
-# lack the main app's editable install (embedded runs get it from the GUI venv).
+# Dev-convenience shim (deprecated): only for STANDALONE runs launched from
+# inside a host checkout — walks up to the host's src/ so `project_services`
+# resolves. Embedded runs get it from the host venv's editable installs; a
+# checkout without the host degrades (see workflow_editor._host_services).
+_BOOTSTRAPPED_SRC: str | None = None
+
+
 def _bootstrap_project_services() -> None:
+    global _BOOTSTRAPPED_SRC
     import importlib.util
     if importlib.util.find_spec("project_services") is not None:
         return
     here = Path(__file__).resolve()
     for parent in here.parents:
         if (parent / "src" / "project_services" / "__init__.py").is_file():
-            sys.path.insert(0, str(parent / "src"))
+            _BOOTSTRAPPED_SRC = str(parent / "src")
+            logging.getLogger(__name__).debug(
+                "project_services dev-shim: sys.path += %s", _BOOTSTRAPPED_SRC)
+            sys.path.insert(0, _BOOTSTRAPPED_SRC)
             return
 
 
@@ -103,6 +112,9 @@ def main() -> int:
     setup_logging(debug=args.debug, log_file=args.log_file)
     
     log = logging.getLogger("workflow_editor.__main__")
+    if _BOOTSTRAPPED_SRC:
+        log.debug("project_services resolved via dev-shim walk-up: %s",
+                  _BOOTSTRAPPED_SRC)
     log.info("=" * 50)
     log.info("Workflow Editor starting")
     log.debug(f"CLI args: {args}")

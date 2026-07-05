@@ -25,6 +25,10 @@ _SRC = _REPO_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+# The walk-up assumes the submodule layout; a STANDALONE editor checkout has no
+# host src/ above it, so config_manager is truthfully absent -> skip.
+pytest.importorskip("project_services")
+
 from project_services.config_manager import preserve_section_into_shadow  # noqa: E402
 
 

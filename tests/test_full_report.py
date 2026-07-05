@@ -8,10 +8,16 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 _REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO / "src"))                                  # project_services
 sys.path.insert(0, str(_REPO / "external" / "test_procedure_generation_helper"))  # workflow_editor
+
+# The walk-up assumes the submodule layout; a STANDALONE editor checkout has no
+# host src/ above it, so the shared report engine is truthfully absent -> skip.
+pytest.importorskip("project_services")
 
 
 def test_export_full_report_renders_docx(tmp_path):

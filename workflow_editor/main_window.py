@@ -39,6 +39,7 @@ from .tabs import (
 )
 from .dock import DockWidget
 from .dialogs import SettingsDialog, load_settings
+from . import _host_services
 
 log = logging.getLogger(__name__)
 
@@ -751,6 +752,7 @@ class MainWindow(QMainWindow):
                     return txt
         return None
 
+    @_host_services.requires_host
     def _on_install_package(self):
         """Packages -> Install Package: the shared project_services dialog."""
         from project_services.install_helper_dialog import InstallPackageDialog
@@ -829,6 +831,7 @@ class MainWindow(QMainWindow):
             return
         self.status_bar.showMessage(f"Exported Markdown -> {path}", 5000)
 
+    @_host_services.requires_host
     def _on_export_word(self):
         """File -> Export -> Word: the FULL report (.docx) over the SELECTED tests
         (same engine as the main app), or a quick single-procedure dump when no
@@ -1911,13 +1914,12 @@ class MainWindow(QMainWindow):
         self.toggle_dock_action.setChecked(visible)
         self.toggle_dock_action.blockSignals(False)
     
+    @_host_services.requires_host
     def _on_new_project(self):
         """Handle new project creation."""
         # Shared, bundle-backed New Project — the SAME dialog the main app
         # uses: creates dirs + venv + bundle ref + starter test, so
         # editor-made projects are openable/runnable by the main app.
-        # project_services is reachable via the GUI venv's editable install
-        # (embedded) or the __main__ walk-up bootstrap (standalone).
         from project_services.new_project_dialog import NewProjectDialog
         from project_services import config_manager
 
@@ -1942,8 +1944,7 @@ class MainWindow(QMainWindow):
 
         # Point the editor's navigation model at the freshly-created project.
         self.project_manager.set_project_root(project_path)
-        from project_services.app_settings import add_recent_project
-        add_recent_project(str(project_path))
+        _host_services.note_recent_project(str(project_path))
 
         # Now initialize the UI with the new project
         self.workspace_widget._load_test_list()
@@ -1995,9 +1996,9 @@ class MainWindow(QMainWindow):
     def _rebuild_open_recent_menu(self):
         # Repopulate from the SHARED recent list (same app_settings the main
         # app writes), so recents are unified across both apps.
-        from project_services.app_settings import load_app_settings
+        aps = _host_services.load_optional("project_services.app_settings")
         self._open_recent_menu.clear()
-        recent = load_app_settings().get("recent_projects", [])
+        recent = aps.load_app_settings().get("recent_projects", []) if aps else []
         if not recent:
             placeholder = self._open_recent_menu.addAction("No recent projects")
             placeholder.setEnabled(False)
@@ -2010,7 +2011,6 @@ class MainWindow(QMainWindow):
 
     def _on_open_recent(self, path_str):
         """Open a project from the recent list."""
-        from project_services.app_settings import add_recent_project
         path = Path(path_str)
         if not path.is_dir():
             QMessageBox.warning(
@@ -2018,7 +2018,7 @@ class MainWindow(QMainWindow):
                 f"The project folder no longer exists:\n{path_str}")
             return
         if self.project_manager.set_project_root(path):
-            add_recent_project(str(path))
+            _host_services.note_recent_project(str(path))
             self._refresh_after_open()
 
     def _on_open_project(self):
@@ -2036,8 +2036,7 @@ class MainWindow(QMainWindow):
         
         # Try to set as project root
         if self.project_manager.set_project_root(project_path):
-            from project_services.app_settings import add_recent_project
-            add_recent_project(str(project_path))
+            _host_services.note_recent_project(str(project_path))
             self._refresh_after_open()
         else:
             # Maybe user selected a test folder directly?
@@ -2456,6 +2455,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 log.debug("post-settings validator UI refresh failed", exc_info=True)
 
+    @_host_services.requires_host
     def _on_project_configuration(self):
         """File -> Project Configuration: edit this project's config.json via the
         shared ProjectConfigDialog (the same dialog the main app uses).
@@ -2471,14 +2471,13 @@ class MainWindow(QMainWindow):
         origin = ProjectModel.get_active_config_from_path(root)
         dlg = ProjectConfigDialog(self, project_path=root, project_config_origin=origin)
         dlg.exec()
-        # Config / bundle may have changed -> refresh capability gating
-        # + rules. Runs on Cancel too (task #39): the dialog can import
-        # a bundle into the project live before being cancelled.
-        # _handle_config_change reloads TaskConfigManager and regates
-        # the parser buttons in one funnel.
+        # Config / bundle may have changed -> refresh gating + rules. Runs on
+        # Cancel too (task #39): the dialog can import a bundle live before
+        # being cancelled; _handle_config_change funnels the reload/regate.
         self._update_project_rules_indicators()
         self._handle_config_change()
 
+    @_host_services.requires_host
     def _on_template_manager(self):
         """File -> Template Manager: manage saved customer-config templates via
         the shared TemplateManagerDialog.
@@ -2489,6 +2488,7 @@ class MainWindow(QMainWindow):
         origin = ProjectModel.get_active_config_from_path(root) if root else None
         TemplateManagerDialog(self, project_path=root, project_config_origin=origin).exec()
 
+    @_host_services.requires_host
     def _on_bundle_library(self):
         """File -> Bundle Library: manage installed bundles via the shared
         BundleLibraryDialog. When a project is open, "Import into Project"
@@ -2497,14 +2497,14 @@ class MainWindow(QMainWindow):
         from project_services.bundle_library_dialog import BundleLibraryDialog
         root = getattr(self.project_manager, "project_root", None)
         BundleLibraryDialog(self, project_path=root).exec()
-        # Library changes may alter which bundle resolves -> refresh
-        # gating. Task #39: an "Import into Project" must go live
-        # immediately — _handle_config_change reloads TaskConfigManager
-        # (task buttons / prompt templates via the reload-callback
-        # chain) on top of the parser-button regate.
+        # Library changes may alter which bundle resolves -> refresh gating.
+        # Task #39: an "Import into Project" must go live immediately —
+        # _handle_config_change reloads TaskConfigManager (task buttons /
+        # prompt templates via the reload-callback chain) on top of the regate.
         self._update_project_rules_indicators()
         self._handle_config_change()
 
+    @_host_services.requires_host
     def _on_scenarios(self):
         """File -> Scenarios: author named test scenarios via the shared
         ScenarioManagerDialog. The author DEFINES scenarios here; the main app

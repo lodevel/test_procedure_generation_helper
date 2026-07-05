@@ -7,6 +7,12 @@ build, no Qt.
 """
 import json
 
+import pytest
+
+# Host services come from the embedding checkout (venv editable install / src);
+# a STANDALONE editor checkout has none, so skip truthfully.
+pytest.importorskip("project_services")
+
 from project_services.bundle_generator import (
     _dirs_with,
     bundle_skills_for_registry,

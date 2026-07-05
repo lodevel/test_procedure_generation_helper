@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import unittest
 
+import pytest
+
 from tests._qt_stub import ensure_workflow_editor_importable
 
 ensure_workflow_editor_importable()
@@ -19,6 +21,12 @@ from workflow_editor.llm import pack_parsers  # noqa: E402
 from workflow_editor.llm.reconstruction import (  # noqa: E402
     reconstruct_for_pipeline,
     reconstructed_or_error,
+)
+
+from tests import _env  # noqa: E402
+
+_skip_no_labscpi = pytest.mark.skipif(
+    not _env.labscpi_psu_reconstruct_available(), reason=_env.LABSCPI_SKIP_REASON
 )
 
 
@@ -54,6 +62,7 @@ class ReconstructAgainstPriorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.report = reconstruct_for_pipeline(FRAGMENT, PRIOR, project_root=None)
 
+    @_skip_no_labscpi
     def test_success(self) -> None:
         self.assertIs(self.report.success, True)
         self.assertIs(self.report.ok, True)
@@ -62,6 +71,7 @@ class ReconstructAgainstPriorTests(unittest.TestCase):
         self.assertIsInstance(self.report.text, str)
         self.assertTrue(self.report.text.startswith("# PRIOR_TEST"))
 
+    @_skip_no_labscpi
     def test_json_id_matches_prior(self) -> None:
         self.assertEqual(self.report.json["id"], "PRIOR_TEST")
 
@@ -71,6 +81,7 @@ class ReconstructAgainstPriorTests(unittest.TestCase):
     def test_prior_board_preserved(self) -> None:
         self.assertIn("board: BOARD_A", self.report.text)
 
+    @_skip_no_labscpi
     def test_pack_version_lines_present(self) -> None:
         # The parser fills Meta wholesale: pack-version lines come from the
         # authoritative pack, NOT from the prior's stale ``old@1.0.0``.
@@ -86,9 +97,11 @@ class ReconstructCreateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.report = reconstruct_for_pipeline(FRAGMENT, None, project_root=None)
 
+    @_skip_no_labscpi
     def test_success(self) -> None:
         self.assertIs(self.report.success, True)
 
+    @_skip_no_labscpi
     def test_json_id_is_placeholder(self) -> None:
         self.assertEqual(self.report.json["id"], "PLACEHOLDER")
 
@@ -122,6 +135,7 @@ class ReconstructOverrideEquivalenceTests(unittest.TestCase):
     names the same default LLM-owned set produce identical reconstruction for
     a normal body fragment."""
 
+    @_skip_no_labscpi
     def test_none_matches_explicit_default(self) -> None:
         default = reconstruct_for_pipeline(
             FRAGMENT, PRIOR, task_override=None, project_root=None
@@ -181,6 +195,7 @@ class ReconstructedOrErrorTests(unittest.TestCase):
     ``(None, None, reason)`` when there is genuinely nothing to show (e.g. an
     unguarded ``ParserUnavailable`` raised into a Qt slot)."""
 
+    @_skip_no_labscpi
     def test_success_returns_text_and_none(self) -> None:
         strict, best, err = reconstructed_or_error(FRAGMENT, PRIOR, project_root=None)
         self.assertIsNone(err)

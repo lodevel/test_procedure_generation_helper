@@ -39,8 +39,8 @@ def test_read_document_requires_name(tmp_path):
 
 def test_tools_list_advertises_all_tools():
     names = {t["name"] for t in m.TOOLS}
-    assert names == {"read_pdf", "read_document", "list_documents",
-                     "list_rules", "read_rule"}
+    assert names == {"read_pdf", "save_pdf", "read_document", "search_document",
+                     "list_documents", "list_rules", "read_rule"}
 
 
 def test_list_rules_lists_files(tmp_path):

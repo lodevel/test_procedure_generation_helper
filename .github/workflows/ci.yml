@@ -5,12 +5,13 @@
 #              (curated E9/F config in pyproject), mypy (Qt-free
 #              workflow_editor/core only) and the AST size-budget ratchet.
 #              These block.
-#   * suite  — the full pytest run. 6 test files need a built project bundle /
-#              installed grammar pack (reconstruction, validator dispatch,
-#              project-tools MCP) and are excluded; the remainder
-#              is green on Windows but has not yet been validated on a Linux
-#              runner, so the job is advisory (continue-on-error) until it has
-#              been observed green here once. Flip it to blocking then.
+#   * suite  — the full pytest run. Tests needing a built project bundle /
+#              installed grammar pack or a spawn-capable console skip
+#              themselves via the precondition probes in tests/_env.py, so no
+#              exclusion list is needed. The suite is green headless on
+#              Windows but has not yet been validated on a Linux runner, so
+#              the job is advisory (continue-on-error) until it has been
+#              observed green here once. Flip it to blocking then.
 name: ci
 
 on:
@@ -69,16 +70,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .[dev]
 
-      # Excluded files need a built project bundle / installed grammar pack
-      # (labscpi) that CI does not have; they run in the bench environment.
-      - name: pytest (headless subset)
+      # Bundle/pack-dependent tests skip themselves via tests/_env.py probes.
+      - name: pytest (headless)
         env:
           QT_QPA_PLATFORM: offscreen
-        run: >
-          python -m pytest tests -q
-          --ignore tests/test_pack_parsers_bridges.py
-          --ignore tests/test_pdf_documents.py
-          --ignore tests/test_project_tools_mcp.py
-          --ignore tests/test_reconstruction.py
-          --ignore tests/test_validator_dispatch_reconstruct.py
-          --ignore tests/test_validator_feedback_fragment_lines.py
+        run: python -m pytest tests -q

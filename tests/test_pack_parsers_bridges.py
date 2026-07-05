@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+
+import pytest
 from pathlib import Path
 
 from tests._qt_stub import ensure_workflow_editor_importable
@@ -20,6 +22,12 @@ ensure_workflow_editor_importable()
 
 from workflow_editor.llm import pack_parsers as pp  # noqa: E402
 from workflow_editor.llm import _pack_parsers_subprocess as worker  # noqa: E402
+
+from tests import _env
+
+_skip_no_labscpi = pytest.mark.skipif(
+    not _env.labscpi_psu_reconstruct_available(), reason=_env.LABSCPI_SKIP_REASON
+)
 
 
 # ---------------------------------------------------------------------------
@@ -124,10 +132,12 @@ class ReconstructTextSuccessTests(unittest.TestCase):
     def setUp(self) -> None:
         self.report = pp.reconstruct_text(FRAGMENT, PRIOR)
 
+    @_skip_no_labscpi
     def test_success(self) -> None:
         self.assertIs(self.report.success, True)
         self.assertIs(self.report.ok, True)
 
+    @_skip_no_labscpi
     def test_no_findings(self) -> None:
         self.assertEqual(self.report.findings, [])
         self.assertEqual(self.report.errors, [])
@@ -136,6 +146,7 @@ class ReconstructTextSuccessTests(unittest.TestCase):
         self.assertIsInstance(self.report.text, str)
         self.assertTrue(self.report.text.startswith("# PRIOR_TEST"))
 
+    @_skip_no_labscpi
     def test_json_id_matches_prior(self) -> None:
         self.assertEqual(self.report.json["id"], "PRIOR_TEST")
 

@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import unittest
 
+import pytest
+
 from tests._qt_stub import ensure_workflow_editor_importable
 
 ensure_workflow_editor_importable()
@@ -39,6 +41,12 @@ from workflow_editor.llm.validator_dispatch import (  # noqa: E402
     format_validator_feedback,
 )
 from workflow_editor.llm.backend_base import LLMResponse, LLMProposal  # noqa: E402
+
+from tests import _env
+
+_skip_no_labscpi = pytest.mark.skipif(
+    not _env.labscpi_psu_reconstruct_available(), reason=_env.LABSCPI_SKIP_REASON
+)
 
 
 # A reconstructed full document whose body (anchor `## Equipment`) starts at
@@ -246,6 +254,7 @@ class _CapturingValidateFn:
 
 
 class ValidateProposedTextTranslationIntegrationTests(unittest.TestCase):
+    @_skip_no_labscpi
     def test_issue_line_translated_to_fragment_coords(self) -> None:
         response = LLMResponse(success=True)
         response.procedure_text = LLMProposal(mode="replace", content=FRAGMENT)

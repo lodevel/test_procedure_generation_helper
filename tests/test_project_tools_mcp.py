@@ -23,6 +23,12 @@ import pytest
 # The server module file, found via the installed package (path-independent).
 import workflow_editor.authoring._project_tools_mcp as _mcp_mod
 
+from tests import _env
+
+_skip_no_nested_spawn = pytest.mark.skipif(
+    not _env.nested_interpreter_spawn_works(), reason=_env.NESTED_SPAWN_SKIP_REASON
+)
+
 SERVER_PATH = os.path.abspath(_mcp_mod.__file__)
 
 
@@ -303,6 +309,7 @@ def test_tools_list_advertises_all_tools(server):
         assert "inputSchema" in tool
 
 
+@_skip_no_nested_spawn
 def test_list_property_fields(server):
     _handshake(server)
     resp = server.call(2, "list_property_fields")
@@ -310,6 +317,7 @@ def test_list_property_fields(server):
     assert fields == ["MfgRef", "Package", "Type"]
 
 
+@_skip_no_nested_spawn
 def test_list_components_all(server):
     _handshake(server)
     resp = server.call(2, "list_components")
@@ -321,6 +329,7 @@ def test_list_components_all(server):
     assert r1["properties"]["MfgRef"] == "RES-1K"
 
 
+@_skip_no_nested_spawn
 def test_list_components_filtered(server):
     _handshake(server)
     resp = server.call(2, "list_components", {"filter": "Type=Pad"})
@@ -328,6 +337,7 @@ def test_list_components_filtered(server):
     assert {c["refdes"] for c in comps} == {"TP_VCC", "TP_GND"}
 
 
+@_skip_no_nested_spawn
 def test_list_components_filter_case_insensitive(server):
     _handshake(server)
     resp = server.call(2, "list_components", {"filter": "Type=pad"})
@@ -335,6 +345,7 @@ def test_list_components_filter_case_insensitive(server):
     assert {c["refdes"] for c in comps} == {"TP_VCC", "TP_GND"}
 
 
+@_skip_no_nested_spawn
 def test_list_components_projected_fields(server):
     _handshake(server)
     resp = server.call(2, "list_components", {"fields": ["Type"]})
@@ -349,6 +360,7 @@ def test_list_components_bad_filter(server):
     assert "filter" in _result_text(resp).lower()
 
 
+@_skip_no_nested_spawn
 def test_list_components_empty_filter_is_no_filter(server):
     # An empty filter string is coerced to "no filter" (not a malformed
     # 'KEY=VALUE' error): the model gets every component, not a complaint.
@@ -358,6 +370,7 @@ def test_list_components_empty_filter_is_no_filter(server):
     assert {c["refdes"] for c in comps} == {"U1", "R1", "C1", "TP_VCC", "TP_GND"}
 
 
+@_skip_no_nested_spawn
 def test_list_components_refdes_prefix_keeps_only_ics(server):
     # The targeted one-call IC pull: refdes_prefix='U,IC' + the part-number field.
     _handshake(server)
@@ -369,6 +382,7 @@ def test_list_components_refdes_prefix_keeps_only_ics(server):
     assert comps[0]["properties"] == {"MfgRef": "TPS62840"}
 
 
+@_skip_no_nested_spawn
 def test_list_components_refdes_prefix_excludes_passives(server):
     _handshake(server)
     resp = server.call(2, "list_components", {"refdes_prefix": "U,IC"})
@@ -383,6 +397,7 @@ def test_list_components_bad_refdes_prefix_type(server):
     assert "refdes_prefix" in _result_text(resp).lower()
 
 
+@_skip_no_nested_spawn
 def test_get_component_found(server):
     _handshake(server)
     resp = server.call(2, "get_component", {"refdes": "C1"})
@@ -391,6 +406,7 @@ def test_get_component_found(server):
     assert comp["properties"]["Type"] == "Capacitor"
 
 
+@_skip_no_nested_spawn
 def test_get_component_projected(server):
     _handshake(server)
     resp = server.call(2, "get_component", {"refdes": "C1", "fields": ["Package"]})
@@ -398,6 +414,7 @@ def test_get_component_projected(server):
     assert set(comp["properties"].keys()) == {"Package"}
 
 
+@_skip_no_nested_spawn
 def test_get_component_not_found(server):
     _handshake(server)
     resp = server.call(2, "get_component", {"refdes": "NOPE"})
@@ -410,6 +427,7 @@ def test_get_component_missing_refdes(server):
     assert "refdes" in _result_text(resp).lower()
 
 
+@_skip_no_nested_spawn
 def test_query_net_found(server):
     _handshake(server)
     resp = server.call(2, "query_net", {"name": "VCC"})
@@ -420,12 +438,14 @@ def test_query_net_found(server):
     assert ("TP_VCC", "1") in nodes
 
 
+@_skip_no_nested_spawn
 def test_query_net_not_found(server):
     _handshake(server)
     resp = server.call(2, "query_net", {"name": "DOES_NOT_EXIST"})
     assert "not found" in _result_text(resp).lower()
 
 
+@_skip_no_nested_spawn
 def test_netlist_returns_full_connectivity_text(server):
     # netlist() returns the FULL board as compact format_netlist TEXT — the same
     # connectivity the editor's PUSH context sends. No cap / filter / paging: any
@@ -439,6 +459,7 @@ def test_netlist_returns_full_connectivity_text(server):
     assert "VCC" in text and "GND" in text
 
 
+@_skip_no_nested_spawn
 def test_list_test_points_board_agnostic(server):
     _handshake(server)
     resp = server.call(2, "list_test_points")

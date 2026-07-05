@@ -31,6 +31,14 @@ ensure_workflow_editor_importable()
 from workflow_editor.llm import validator_dispatch  # noqa: E402
 from workflow_editor.llm.backend_base import LLMResponse, LLMProposal  # noqa: E402
 
+import pytest  # noqa: E402
+
+from tests import _env  # noqa: E402
+
+pytestmark = pytest.mark.skipif(
+    not _env.labscpi_psu_reconstruct_available(), reason=_env.LABSCPI_SKIP_REASON
+)
+
 
 # A valid BODY fragment (the LLM authors only the body sections).
 FRAGMENT = """## Equipment

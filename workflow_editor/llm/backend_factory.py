@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .backend_base import LLMBackend, NoneBackend
+from .lifecycle_adapters import ManagerLifecycle, make_wsl_lifecycle
 from .opencode_backend import OpenCodeBackend, OpenCodeConfig
 from .server_manager import OpenCodeServerManager
 
@@ -225,9 +226,11 @@ class BackendFactory:
                 "No server_manager provided for OpenCode backend. "
                 "Backend will manage its own server (not recommended)."
             )
-            # Create backend without shared server - it will start its own
+            # Create backend without shared server - it self-spawns its own
+            # `opencode serve` in WSL (the historical no-manager fallback).
             return OpenCodeBackend(
                 config=self._config.opencode,
+                lifecycle=make_wsl_lifecycle(self._config.opencode),
                 custom_prompts=self._config.custom_prompts or None,
                 custom_output_format=self._config.custom_output_format or None,
             )
@@ -242,10 +245,12 @@ class BackendFactory:
                 # NoneBackend surfaces the classified reason when the user chats.
                 return NoneBackend(reason=reason)
 
-        # Create backend with same config (will create its own session)
-        # The backend's start() will detect the running server and create a session
+        # Create backend bound to the shared server via the manager (per-tab
+        # session, one shared `opencode serve`). ManagerLifecycle delegates
+        # server lifetime to the manager; the backend only reads its URL.
         backend = OpenCodeBackend(
             config=self._config.opencode,
+            lifecycle=ManagerLifecycle(self._server_manager),
             custom_prompts=self._config.custom_prompts or None,
             custom_output_format=self._config.custom_output_format or None,
         )

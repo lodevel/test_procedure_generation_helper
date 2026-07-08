@@ -929,6 +929,7 @@ class SettingsDialog(QDialog):
             if backend == "opencode":
                 # Test OpenCode backend
                 from ..llm.opencode_backend import OpenCodeBackend, OpenCodeConfig
+                from ..llm.lifecycle_adapters import make_wsl_lifecycle
                 from ..llm.backend_base import LLMRequest, LLMTask
                 
                 # Build the per-launch derived config (MCP built fresh) from the
@@ -996,7 +997,13 @@ class SettingsDialog(QDialog):
                 # included), so the button truly validates the model, not just
                 # that OpenCode is installed + reachable.
                 model_label = config.model or "auto-pick (Default)"
-                backend_obj = OpenCodeBackend(config=config)
+                # The probe stopped the manager's server above so THIS backend
+                # spawns its own on that port — inject the WSL self-spawn
+                # lifecycle so start() actually launches (the package client
+                # otherwise only attaches to an already-running server).
+                backend_obj = OpenCodeBackend(
+                    config=config, lifecycle=make_wsl_lifecycle(config)
+                )
                 if not backend_obj.is_running:
                     if not backend_obj.start():
                         st = mgr.last_status

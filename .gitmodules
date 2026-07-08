@@ -1,0 +1,3 @@
+[submodule "external/opencode_client"]
+	path = external/opencode_client
+	url = https://github.com/lodevel/opencode_client

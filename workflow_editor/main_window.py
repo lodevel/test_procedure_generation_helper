@@ -447,9 +447,81 @@ class MainWindow(QMainWindow):
         self._reset_server_recovery()
         self._init_llm_backend()
     
+    def _settings_require_server_restart(self, old: dict, new: dict) -> bool:
+        """True when a Settings change needs the OpenCode server rebuilt.
+
+        Only LAUNCH-IDENTITY keys force a respawn: the backend type and the
+        server host/port/wsl-path (which define WHICH ``opencode serve`` we talk
+        to), plus ``custom_output_format`` (baked into each backend's cached
+        PromptBuilder, so it needs a fresh backend). Everything else the dialog
+        can change — model, timeouts, fold-system — is per-request and is
+        applied live by :meth:`_apply_llm_settings_live`, keeping the session.
+
+        master.json providers and MCP wiring are also launch-affecting but are
+        NOT settings.json keys (edited via the Config controls, or changed on a
+        project switch), so they are handled outside ``_on_settings`` and are
+        intentionally not compared here.
+        """
+        old = old or {}
+        new = new or {}
+        # No warm, reusable manager to keep -> must (re)build.
+        sm = getattr(self, "_server_manager", None)
+        if sm is None or getattr(sm, "_retired", False):
+            return True
+        if old.get("llm_backend", "opencode") != new.get("llm_backend", "opencode"):
+            return True
+        if (old.get("custom_output_format", "") or "") != (
+            new.get("custom_output_format", "") or ""
+        ):
+            return True
+        o = old.get("opencode", {}) or {}
+        n = new.get("opencode", {}) or {}
+        for key in ("host", "port", "wsl_path"):
+            if o.get(key) != n.get(key):
+                return True
+        return False
+
+    def _apply_llm_settings_live(self) -> None:
+        """Apply per-request LLM settings WITHOUT restarting the server.
+
+        The manager, the factory and every per-tab backend share ONE
+        ``OpenCodeConfig`` by reference, and the client reads ``model`` /
+        ``fold_system_into_prompt`` / ``request_timeout`` at send time — so
+        mutating those fields in place makes the NEXT request use them while the
+        warm ``opencode serve`` and its session_id (conversation history +
+        accumulated MCP tool results) stay intact. Named fields ONLY: never
+        replace the object — ``start()`` / prewarm write ``server_port`` /
+        ``working_directory`` / ``skill_tools`` / ``run_skill_secret`` onto it.
+        """
+        sm = getattr(self, "_server_manager", None)
+        if sm is None:  # defensive; the predicate already guards this
+            self._init_llm_backend()
+            return
+        oc = self._settings.get("opencode", {}) or {}
+        common = self._settings.get("common_llm", {}) or {}
+        live = sm.config  # the shared OpenCodeConfig (== factory + every backend)
+        live.model = oc.get("model") or None
+        live.fold_system_into_prompt = oc.get("fold_system_into_prompt", False)
+        live.request_timeout = common.get("request_timeout", 120.0)
+        live.startup_timeout = oc.get("startup_timeout", live.startup_timeout)
+        # Drop each live backend's memoised context window so the token readout
+        # re-resolves for the new model. Touch EXISTING backends only (via the
+        # private handle) — never ``tab_context.backend``, whose getter would
+        # lazily spawn a backend/session as a side effect of a settings save.
+        for tab in self._get_llm_tabs():
+            ctx = getattr(tab, "tab_context", None)
+            backend = getattr(ctx, "_backend", None)
+            if backend is not None:
+                backend._context_window = None
+        self._update_llm_status()
+        log.info(
+            "Applied LLM settings live (model=%s) — server + session kept",
+            live.model,
+        )
+
     def _build_backend_config(self) -> BackendConfig:
         """Build backend config from settings.
-        
+
         Returns:
             BackendConfig for the configured backend type
         """
@@ -1720,8 +1792,20 @@ class MainWindow(QMainWindow):
             server_manager=self._server_manager,
         )
         if dialog.exec():
+            _old_settings = self._settings
             self._settings = dialog.get_settings()
-            self._init_llm_backend()
+            # Only respawn the OpenCode server when a launch-affecting setting
+            # changed. A per-request change (model, timeouts, fold-system) is
+            # applied to the LIVE config in place so the running server AND the
+            # conversation's session_id (server-side history + accumulated MCP
+            # tool results) survive. The model is a per-request override, never
+            # baked into the server launch, so switching it must NOT restart —
+            # this matches the web plugin, and is the only valid behaviour when
+            # opencode is shared/remote and cannot be restarted.
+            if self._settings_require_server_restart(_old_settings, self._settings):
+                self._init_llm_backend()
+            else:
+                self._apply_llm_settings_live()
             self._apply_settings()
             try:
                 self.text_only_tab.reload_netlist()

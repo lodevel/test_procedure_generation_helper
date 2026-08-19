@@ -11,7 +11,7 @@ import os
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QSplitter, QListWidget, QListWidgetItem,
     QPushButton, QLabel, QFileDialog, QGroupBox, QFrame, QInputDialog,
-    QMenu, QMessageBox
+    QLineEdit, QMenu, QMessageBox
 )
 from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QColor, QBrush, QPalette
@@ -106,7 +106,15 @@ class WorkspaceTab(BaseTab):
         # Test list only - project selection is in File menu
         list_group = QGroupBox("Tests")
         list_layout = QVBoxLayout(list_group)
-        
+
+        # Search bar — same semantics as the main GUI's test list filter:
+        # case-insensitive substring on the folder name, applied live.
+        self.search_bar = QLineEdit()
+        self.search_bar.setPlaceholderText("Search tests...")
+        self.search_bar.setClearButtonEnabled(True)
+        self.search_bar.textChanged.connect(self._on_search_changed)
+        list_layout.addWidget(self.search_bar)
+
         self.test_list = QListWidget()
         self.test_list.setObjectName("workflowTestCards")
         self.test_list.setItemDelegate(BadgeDelegate(self.test_list))
@@ -192,7 +200,23 @@ class WorkspaceTab(BaseTab):
                 item.setForeground(ready_test_color())
             
             self.test_list.addItem(item)
-    
+
+        self._apply_search_filter()
+
+    def _on_search_changed(self, text: str) -> None:
+        del text  # read live in _apply_search_filter
+        self._apply_search_filter()
+
+    def _apply_search_filter(self) -> None:
+        """Hide list items whose folder name doesn't contain the search
+        text (case-insensitive). Empty search shows everything."""
+        needle = self.search_bar.text().strip().lower()
+        for i in range(self.test_list.count()):
+            item = self.test_list.item(i)
+            path = item.data(Qt.UserRole)
+            name = path.name if path else item.text()
+            item.setHidden(bool(needle) and needle not in name.lower())
+
     def _select_test_by_path(self, path: Path):
         """Select a test in the list by path."""
         for i in range(self.test_list.count()):
@@ -335,6 +359,20 @@ class WorkspaceTab(BaseTab):
                 "as coherent. Rewrites the hash baseline in .llm_session.json."
             )
 
+        rename_action = menu.addAction("Rename Test...")
+        rename_action.setEnabled(not is_loaded)
+        if is_loaded:
+            rename_action.setToolTip(
+                "Close the test first — the loaded editor session pins "
+                "the old folder path."
+            )
+        else:
+            rename_action.setToolTip(
+                "Rename the folder and re-sync the test id (procedure_text.md "
+                "header + procedure.json id), test_order and scenario entries. "
+                "Past run reports keep the old name."
+            )
+
         menu.addSeparator()
         delete_action = menu.addAction("Delete Test...")
         delete_action.setToolTip("Permanently delete this test folder and all its contents")
@@ -348,6 +386,8 @@ class WorkspaceTab(BaseTab):
                 self.request_mark_loaded_in_sync.emit()
             else:
                 self._mark_test_in_sync(path)
+        elif action == rename_action:
+            self._rename_test(path)
         elif action == delete_action:
             self._delete_test(path)
 
@@ -412,6 +452,113 @@ class WorkspaceTab(BaseTab):
 
         self.refresh()
     
+    def _rename_test(self, path: Path):
+        """Rename a test folder and keep the id + project references in sync.
+
+        The folder name is the single source of truth for the test id
+        (core/test_id.py), so the ``# <id>`` header and procedure.json
+        ``id`` are rewritten immediately rather than waiting for the next
+        save. config.json ``test_order`` and ``scenarios/*.json`` entries
+        follow; historical run reports keep the old name. Only offered
+        for unloaded tests — the context menu disables the entry when the
+        test is open in the editor.
+        """
+        from ..core.test_id import sanitize_test_id, force_text_id_line, force_json_id
+
+        raw, ok = QInputDialog.getText(
+            self, "Rename Test", "New test name:", text=path.name,
+        )
+        if not ok or not raw.strip():
+            return
+        new_name = sanitize_test_id(raw.strip())
+        if new_name == path.name:
+            return
+        new_path = path.parent / new_name
+        if new_path.exists():
+            QMessageBox.critical(
+                self, "Rename Failed",
+                f"A test named '{new_name}' already exists.",
+            )
+            return
+        try:
+            path.rename(new_path)
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Rename Failed",
+                f"Could not rename '{path.name}' to '{new_name}':\n{e}",
+            )
+            return
+
+        # Folder renamed — force the id artifacts to match right away.
+        warnings: list[str] = []
+        for fname, fixer in (
+            ("procedure_text.md", force_text_id_line),
+            ("procedure.json", force_json_id),
+        ):
+            fpath = new_path / fname
+            if not fpath.exists():
+                continue
+            try:
+                fpath.write_text(
+                    fixer(fpath.read_text(encoding="utf-8"), new_name),
+                    encoding="utf-8",
+                )
+            except Exception as e:
+                warnings.append(f"{fname}: {e}")
+
+        warnings += self._update_test_name_references(path.name, new_name)
+        if warnings:
+            QMessageBox.warning(
+                self, "Renamed With Warnings",
+                "The folder was renamed, but some references could not be "
+                "updated (ids re-sync on the next save):\n\n"
+                + "\n".join(warnings),
+            )
+
+        self.refresh()
+        self._select_test_by_path(new_path)
+
+    def _update_test_name_references(self, old: str, new: str) -> list[str]:
+        """Best-effort swap of *old* → *new* in config.json ``test_order``
+        and every ``scenarios/*.json`` ``tests`` list. Returns warnings."""
+        warnings: list[str] = []
+
+        def _swap(seq):
+            return [new if entry == old else entry for entry in seq]
+
+        config_dir = self.project_manager.get_config_dir()
+        config_file = (config_dir / "config.json") if config_dir else None
+        if config_file and config_file.exists():
+            try:
+                data = json.loads(config_file.read_text(encoding="utf-8"))
+                order = data.get("test_order", {}).get("order")
+                if isinstance(order, list) and old in order:
+                    data["test_order"]["order"] = _swap(order)
+                    config_file.write_text(
+                        json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+                        encoding="utf-8",
+                    )
+            except Exception as e:
+                warnings.append(f"config.json test_order: {e}")
+
+        project_root = self.project_manager.project_root
+        scenarios_dir = (project_root / "scenarios") if project_root else None
+        if scenarios_dir and scenarios_dir.is_dir():
+            for sc_file in sorted(scenarios_dir.glob("*.json")):
+                try:
+                    data = json.loads(sc_file.read_text(encoding="utf-8"))
+                    tests = data.get("tests")
+                    if isinstance(tests, list) and old in tests:
+                        data["tests"] = _swap(tests)
+                        sc_file.write_text(
+                            json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+                            encoding="utf-8",
+                        )
+                except Exception as e:
+                    warnings.append(f"scenarios/{sc_file.name}: {e}")
+
+        return warnings
+
     def _delete_test(self, path: Path):
         """Delete a test folder after confirmation."""
         import shutil

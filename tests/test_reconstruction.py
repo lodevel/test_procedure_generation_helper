@@ -17,7 +17,7 @@ from tests._qt_stub import ensure_workflow_editor_importable
 
 ensure_workflow_editor_importable()
 
-from workflow_editor.llm import pack_parsers  # noqa: E402
+from workflow_editor.pack_ops import pack_parsers  # noqa: E402
 from workflow_editor.llm.reconstruction import (  # noqa: E402
     reconstruct_for_pipeline,
     reconstructed_or_error,

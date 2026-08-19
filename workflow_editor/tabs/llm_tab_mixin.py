@@ -63,8 +63,8 @@ class LLMTabMixin:
         is always correct.
         """
         from ..core import ArtifactType
-        from ..llm import pack_parsers
-        from ..llm.media_extraction import populate_media_on_steps
+        from ..pack_ops import pack_parsers
+        from ..pack_ops.media_extraction import populate_media_on_steps
         from ..dialogs import DiffViewer
 
         text = self.text_editor.toPlainText().strip()

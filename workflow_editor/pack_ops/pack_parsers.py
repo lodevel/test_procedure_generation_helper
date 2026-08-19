@@ -48,7 +48,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, NoReturn, Optional
 
-from . import section_ownership
+from ..llm import section_ownership
 
 log = logging.getLogger(__name__)
 
@@ -255,7 +255,7 @@ def _inproc_import_wheel():
     except ImportError as exc:
         raise ParserUnavailable(
             f"{_REQUIRED_WHEEL} is not importable: {exc}. "
-            f"Reinstall the rules_packager_base wheel (>= 2.0.1) into "
+            f"Reinstall the rules_packager_base wheel (>= 2.0.3) into "
             f"the venv running the workflow editor. The LLM fallback "
             f"remains available."
         ) from exc
@@ -349,6 +349,32 @@ def render_text(
     if not result.get("ok"):
         raise ParserUnavailable(result.get("error", "subprocess error"))
     return result["text"]
+
+
+def populate_media(
+    procedure_json: dict[str, Any],
+    project_root: Optional[Path] = None,
+) -> tuple[dict[str, Any], int]:
+    """Populate ``media[]`` on step ops via the wheel's pack-side
+    deterministic media extractor (``rules.v2_0_2.media``).
+
+    Returns ``(procedure_json, n_populated)`` — the subprocess path
+    returns a fresh dict, the in-proc path mutates and returns the
+    input. Raises :class:`ParserUnavailable` when the installed wheel
+    predates the media module (callers fall back to the project's
+    ``config/text_parser.py`` plugin)."""
+    if project_root is None:
+        return _inproc_populate_media(procedure_json)
+
+    project_python = _resolve_project_python(project_root)
+    result = _subprocess_call(
+        project_python,
+        {"op": "populate_media", "procedure_json": procedure_json},
+        timeout=_timeout(),
+    )
+    if not result.get("ok"):
+        raise ParserUnavailable(result.get("error", "subprocess error"))
+    return result["json"], result.get("n_populated", 0)
 
 
 def renumber_steps_text(
@@ -1317,6 +1343,20 @@ def _inproc_parse_text(
 def _inproc_render_text(procedure_json: dict[str, Any]) -> str:
     wheel = _inproc_import_wheel()
     return wheel.render(procedure_json)
+
+
+def _inproc_populate_media(
+    procedure_json: dict[str, Any],
+) -> tuple[dict[str, Any], int]:
+    try:
+        from rules_packager_base.rules.v2_0_2 import media as _media
+    except ImportError as exc:
+        raise ParserUnavailable(
+            f"rules_packager_base.rules.v2_0_2.media is not importable: {exc}. "
+            f"The installed wheel predates the pack-side media extractor."
+        ) from exc
+    n = _media.populate_media(procedure_json)
+    return procedure_json, n
 
 
 def _inproc_renumber_steps(text: str) -> str:

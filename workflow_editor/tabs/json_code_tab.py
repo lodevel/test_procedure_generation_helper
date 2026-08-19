@@ -553,7 +553,7 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         imports (else LLM-only), and enabled iff every equipment type in the
         current JSON has a pack providing the ``codegen`` capability — else
         disabled with a tooltip naming the missing pack."""
-        from ..llm import pack_parsers
+        from ..pack_ops import pack_parsers
         project_root = getattr(self.project_manager, "project_root", None)
         available, _ = pack_parsers.is_available(project_root)
         self.quick_code_btn.setVisible(available)
@@ -563,7 +563,7 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
     def _apply_codegen_gating(self, project_root):
         """Enable Quick Code only if every equipment type in the JSON has a
         codegen-capable pack. Best-effort: any failure leaves it enabled."""
-        from ..llm import pack_parsers
+        from ..pack_ops import pack_parsers
         try:
             import json as _json
             doc = _json.loads(self.json_editor.toPlainText() or "{}")
@@ -584,7 +584,7 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
 
     def _on_quick_code(self):
         """Deterministic JSON → Code without LLM (rule-based, instant)."""
-        from ..llm import pack_parsers
+        from ..pack_ops import pack_parsers
         json_text = self.json_editor.toPlainText().strip()
         if not json_text:
             self.show_warning("No Content", "JSON editor is empty. Add JSON before generating code.")
@@ -763,7 +763,7 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
                 self._code_blocks_by_n[block.step_number] = block
 
         # Display-text lookup from procedure_text.md.
-        from ..llm.pack_parsers import step_texts_from_canonical
+        from ..pack_ops.pack_parsers import step_texts_from_canonical
         proc_text = self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT)
         canonical_lookup = step_texts_from_canonical(proc_text or "")
 

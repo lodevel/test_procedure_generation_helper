@@ -18,7 +18,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, Optional
 
-from . import pack_parsers, section_ownership
+from . import section_ownership
+from ..pack_ops import pack_parsers
 
 
 def pipeline_ownership(

@@ -353,7 +353,7 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
     def _pp(self):
         from tests._qt_stub import ensure_workflow_editor_importable
         ensure_workflow_editor_importable()
-        from workflow_editor.llm import pack_parsers as pp
+        from workflow_editor.pack_ops import pack_parsers as pp
         return pp
 
     def _session(self, batch_result):
@@ -450,7 +450,7 @@ class RemoteSessionLiveTransportTests(unittest.TestCase):
     def _live_session(self):
         from tests._qt_stub import ensure_workflow_editor_importable
         ensure_workflow_editor_importable()
-        from workflow_editor.llm import pack_parsers as pp
+        from workflow_editor.pack_ops import pack_parsers as pp
         s = pp.RemoteSession(_proc_file(self), Path("/nonexistent"))
         runner = Path(pp.__file__).resolve().parent / "_execute_op_subprocess.py"
 

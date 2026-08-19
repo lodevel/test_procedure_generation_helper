@@ -44,7 +44,7 @@ FILE_BUDGET: dict[str, int] = {
     "dialogs/settings_dialog.py": 1298,  # +4: bare-except cleanup log lines
     "llm/_execute_op_subprocess.py": 1005,
     "llm/opencode_backend.py": 1251,  # +9: bare-except cleanup log lines
-    "llm/pack_parsers.py": 1682,
+    "pack_ops/pack_parsers.py": 1721,  # +39: populate_media bridge (pack-side media extractor)
     "llm/tab_context.py": 1057,
     "llm/validator_dispatch.py": 1163,
     "main_window.py": 1980,  # post-carve (controllers/ project+document split)

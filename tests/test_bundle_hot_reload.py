@@ -29,7 +29,7 @@ from PySide6.QtCore import QFileSystemWatcher, QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from workflow_editor.core.task_config import TaskConfigManager  # noqa: E402
-from workflow_editor.llm import pack_parsers as pp  # noqa: E402
+from workflow_editor.pack_ops import pack_parsers as pp  # noqa: E402
 from workflow_editor.main_window import MainWindow  # noqa: E402
 
 

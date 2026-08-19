@@ -139,7 +139,7 @@ class ProjectManager:
     # _load_parser, _last_load_errors, get_parser_load_error) was
     # deleted. Validators and Quick Parse / Quick Code now import from
     # the rules_packager_base wheel directly via
-    # workflow_editor.llm.pack_parsers. Project-local
+    # workflow_editor.pack_ops.pack_parsers. Project-local
     # config/parsers/<kind>/*.py wrappers are no longer consulted; the
     # folder is left in place for legacy projects but inert.
 
@@ -161,7 +161,7 @@ class ProjectManager:
         # 1. Pack-declared bench fields (single source) → one constant-matching
         #    pattern per declared field name (VISA, BAUD, MANUAL_OVERRIDE, ...).
         try:
-            from workflow_editor.llm.pack_parsers import bench_fields as _bench_fields
+            from workflow_editor.pack_ops.pack_parsers import bench_fields as _bench_fields
             declared = _bench_fields(self.project_root)
         except Exception:
             declared = {}

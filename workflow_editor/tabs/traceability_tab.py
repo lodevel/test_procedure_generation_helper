@@ -185,7 +185,7 @@ class TraceabilityTab(BaseTab):
         # step.get("text") on those returns "" and the column shows
         # empty. The procedure_text.md has canonical "<n>. <prose>."
         # for every step.
-        from ..llm.pack_parsers import step_texts_from_canonical
+        from ..pack_ops.pack_parsers import step_texts_from_canonical
         proc_text = self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT)
         canonical_lookup = step_texts_from_canonical(proc_text or "")
 
@@ -288,7 +288,7 @@ class TraceabilityTab(BaseTab):
             # Step description prefers procedure_text.md (covers op-call
             # JSON steps that carry no top-level "text" field). Same
             # resolution chain as _build_step_list.
-            from ..llm.pack_parsers import step_texts_from_canonical
+            from ..pack_ops.pack_parsers import step_texts_from_canonical
             proc_text = self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT)
             canonical_lookup = step_texts_from_canonical(proc_text or "")
             step_text = canonical_lookup.get(step_num, "")

@@ -76,7 +76,7 @@ def test_is_loop_available_runs_probe_when_enabled_true(tmp_path, monkeypatch):
     # Simulate wheel-missing so the probe returns False (the test runs
     # in a venv where the wheel may or may not be installed; we don't
     # want availability tied to that).
-    from workflow_editor.llm import pack_parsers
+    from workflow_editor.pack_ops import pack_parsers
     monkeypatch.setattr(
         pack_parsers, "is_available",
         lambda project_root=None: (False, "rules_packager_base not importable in test venv"),
@@ -99,9 +99,9 @@ def test_is_loop_available_surfaces_wheel_import_error(tmp_path, monkeypatch):
     Regression for the user-report 2026-05-11: validator stayed greyed
     out because the host venv had a wheel missing `check_name_fidelity`.
     """
-    from workflow_editor.llm import pack_parsers
+    from workflow_editor.pack_ops import pack_parsers
     fake_error = (
-        "rules_packager_base.rules.v2_0_1.parser is not importable: "
+        "rules_packager_base.rules.v2_0_2.parser is not importable: "
         "cannot import name 'check_name_fidelity'. Reinstall the "
         "rules_packager_base wheel (>= 2.0.1)."
     )
@@ -198,7 +198,7 @@ def test_validate_procedure_button_hidden_when_wheel_unavailable(monkeypatch):
     from workflow_editor.core.validators_registry import (
         ensure_builtins_registered, unregister_all,
     )
-    from workflow_editor.llm import pack_parsers
+    from workflow_editor.pack_ops import pack_parsers
     from workflow_editor.tabs.base_tab import BaseTab
     unregister_all()
     ensure_builtins_registered()

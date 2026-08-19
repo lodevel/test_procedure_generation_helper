@@ -29,6 +29,7 @@ Ops:
                       "code": str, "line": int|null, "column": int|null,
                       "fix_hint": str, "findings": [{...}]}
   render_text   → {"ok": true, "text": str}
+  populate_media → {"ok": true, "json": dict, "n_populated": int}
   renumber_steps → {"ok": true, "text": str}
   sync_equipment → {"ok": true, "text": str, "warnings": [str]}
   sync_meta     → {"ok": true, "text": str, "warnings": [str]}
@@ -95,7 +96,7 @@ def _op_is_available(spec: dict) -> dict:
             "available": False,
             "reason": (
                 f"rules_packager_base.rules.v2_0_2.parser is not importable: {exc}. "
-                f"Reinstall the rules_packager_base wheel (>= 2.0.1)."
+                f"Reinstall the rules_packager_base wheel (>= 2.0.3)."
             ),
         }
 
@@ -158,6 +159,17 @@ def _op_render_text(spec: dict) -> dict:
     wheel = _import_wheel()
     text = wheel.render(procedure_json)
     return {"ok": True, "text": text}
+
+
+def _op_populate_media(spec: dict) -> dict:
+    """Populate media[] on step ops via the pack-side deterministic
+    media extractor. ImportError on wheels predating the media module
+    is surfaced as ParserUnavailable by main(), which the GUI treats
+    as "fall back to the project's config/text_parser.py plugin"."""
+    procedure_json = spec["procedure_json"]
+    from rules_packager_base.rules.v2_0_2 import media
+    n = media.populate_media(procedure_json)
+    return {"ok": True, "json": procedure_json, "n_populated": n}
 
 
 def _op_renumber_steps(spec: dict) -> dict:
@@ -310,6 +322,7 @@ _OPS = {
     "supports": _op_supports,
     "parse_text": _op_parse_text,
     "render_text": _op_render_text,
+    "populate_media": _op_populate_media,
     "renumber_steps": _op_renumber_steps,
     "sync_equipment": _op_sync_equipment,
     "sync_meta": _op_sync_meta,

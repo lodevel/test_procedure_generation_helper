@@ -273,7 +273,7 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         merge as max(declared, observed) — bench headroom survives.
         Refuses (text untouched) when declared lines don't parse.
         Outcome + warnings posted to the chat panel."""
-        from ..llm import pack_parsers
+        from ..pack_ops import pack_parsers
         original = self.text_editor.toPlainText()
         if not original:
             return
@@ -325,7 +325,7 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         rules_pack / labscpi_pack / fncore_pack version pins) from the active
         bundle, deterministically (no LLM). board / format_version and extra
         keys are preserved; pack versions are re-pinned to the bundle."""
-        from ..llm import pack_parsers
+        from ..pack_ops import pack_parsers
         original = self.text_editor.toPlainText()
         if not original:
             return
@@ -362,7 +362,7 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         through the bundle's parser so the convention stays
         bundle-defined. Skips setPlainText when nothing changed so
         the dirty flag doesn't flip needlessly. Confirmation in chat."""
-        from ..llm import pack_parsers
+        from ..pack_ops import pack_parsers
         original = self.text_editor.toPlainText()
         if not original:
             return
@@ -427,7 +427,7 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         missing pack so an unsupported-equipment procedure can't dump a cryptic
         EQP_TYPE_UNKNOWN / ValueError.
         """
-        from ..llm import pack_parsers
+        from ..pack_ops import pack_parsers
         project_root = getattr(self.project_manager, "project_root", None)
         available, _ = pack_parsers.is_available(project_root)
         self.parse_and_generate_btn.setVisible(available)
@@ -441,7 +441,7 @@ class TextOnlyTab(LLMTabMixin, BaseTab):
         """Enable ⚡ Parse + Generate only if every equipment type the procedure
         uses has a parse+codegen-capable pack. Best-effort: any failure leaves
         the button enabled (gating is UX, never a correctness gate)."""
-        from ..llm import pack_parsers
+        from ..pack_ops import pack_parsers
         try:
             text = self.text_editor.toPlainText()
             missing = []

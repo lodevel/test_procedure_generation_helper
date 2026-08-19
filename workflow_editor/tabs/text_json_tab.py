@@ -308,7 +308,7 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         (conflicts are warned, never flipped) and ratings merge as
         max(declared, observed). Refuses (text untouched) when
         declared lines don't parse. Outcome + warnings → chat panel."""
-        from ..llm import pack_parsers
+        from ..pack_ops import pack_parsers
         from .text_only_tab import _post_to_chat, _format_chat_warnings
         original = self.text_editor.toPlainText()
         if not original:
@@ -360,7 +360,7 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         """Regenerate the ``## Meta`` block (format_version / board + pack pins)
         from the active bundle, deterministically (no LLM). Acts only on the
         LEFT (text) editor; board / format_version are preserved."""
-        from ..llm import pack_parsers
+        from ..pack_ops import pack_parsers
         from .text_only_tab import _post_to_chat, _format_chat_warnings
         original = self.text_editor.toPlainText()
         if not original:
@@ -396,7 +396,7 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         """Rewrite the leading ``N.`` on every step in ``## Steps`` to be
         sequential 1..N. Routed through the bundle's parser so the
         numbering convention stays bundle-defined. Confirmation in chat."""
-        from ..llm import pack_parsers
+        from ..pack_ops import pack_parsers
         from .text_only_tab import _post_to_chat
         original = self.text_editor.toPlainText()
         if not original:
@@ -504,7 +504,7 @@ class TextJsonTab(LLMTabMixin, BaseTab):
           an unsupported-equipment procedure cannot dump a cryptic
           EQP_TYPE_UNKNOWN / ValueError — the operator is told to use the LLM.
         """
-        from ..llm import pack_parsers
+        from ..pack_ops import pack_parsers
         project_root = getattr(self.project_manager, "project_root", None)
         available, _ = pack_parsers.is_available(project_root)
         self.quick_parse_btn.setVisible(available)
@@ -520,7 +520,7 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         """Enable/disable the ⚡ buttons per the current procedure's equipment
         capabilities. Best-effort: any failure leaves buttons enabled (gating
         is UX, never a correctness gate)."""
-        from ..llm import pack_parsers
+        from ..pack_ops import pack_parsers
         try:
             text = self.text_editor.toPlainText()
         except Exception:
@@ -551,7 +551,7 @@ class TextJsonTab(LLMTabMixin, BaseTab):
 
     def _on_quick_parse(self):
         """Deterministic Text → JSON without LLM (rule-based, instant)."""
-        from ..llm import pack_parsers
+        from ..pack_ops import pack_parsers
         text = self.text_editor.toPlainText().strip()
         if not text:
             self.show_warning("No Content", "Procedure text is empty. Add text before parsing.")
@@ -586,7 +586,7 @@ class TextJsonTab(LLMTabMixin, BaseTab):
         # parser produces v2 op shapes without media; this post-process
         # adds them so the procedure GUI can render PCB images.
         # Always re-extracts (media is derived from current step text).
-        from ..llm.media_extraction import populate_media_on_steps
+        from ..pack_ops.media_extraction import populate_media_on_steps
         populate_media_on_steps(result, self.project_manager.project_root)
 
         result_str = json.dumps(result, indent=2)
@@ -628,7 +628,7 @@ class TextJsonTab(LLMTabMixin, BaseTab):
 
     def _on_quick_render(self):
         """Deterministic JSON → Text without LLM (rule-based, instant)."""
-        from ..llm import pack_parsers
+        from ..pack_ops import pack_parsers
         json_text = self.json_editor.toPlainText().strip()
         if not json_text:
             self.show_warning(
@@ -897,7 +897,7 @@ class TextJsonTab(LLMTabMixin, BaseTab):
             # workflow editor injects it post-application so the procedure
             # GUI can render PCB images via the ODB CLI.
             if proposed_dict is not None:
-                from ..llm.media_extraction import populate_media_on_steps
+                from ..pack_ops.media_extraction import populate_media_on_steps
                 project_root = self.project_manager.project_root
                 populate_media_on_steps(proposed_dict, project_root)
                 content_str = json.dumps(proposed_dict, indent=2, ensure_ascii=False)

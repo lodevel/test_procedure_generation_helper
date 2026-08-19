@@ -199,7 +199,7 @@ def _inventory_from_code(
 
     # Map each suffix to its inventory-side field name. Mirrors the
     # codegen's _FIELD_SUFFIX table in
-    # rules_packager_base/rules/v2_0_1/parser/codegen.py.
+    # rules_packager_base/rules/v2_0_2/parser/codegen.py.
     suffix_to_field = {
         "_VISA": "visa",
         "_CHANNEL": "channel",
@@ -334,7 +334,7 @@ def _import_validator(project_root: Optional[Path] = None):
     """Resolve the (validate_fn, deterministic_path_available_fn) pair.
 
     Phase 5.1: imports directly from the rules_packager_base wheel via
-    :mod:`workflow_editor.llm.pack_parsers`. The legacy project-local
+    :mod:`workflow_editor.pack_ops.pack_parsers`. The legacy project-local
     wrapper layer (``<project>/config/parsers/text_renderer/*.py``) is
     gone; one parser version per pack, the wheel is the source of truth.
 
@@ -346,7 +346,7 @@ def _import_validator(project_root: Optional[Path] = None):
     so downstream handlers don't need to thread it explicitly.
     """
     try:
-        from . import pack_parsers
+        from ..pack_ops import pack_parsers
     except Exception as exc:  # noqa: BLE001
         log.info("pack_parsers import failed (%s); GUI falls back to LLM-only.", exc)
         return None, None
@@ -639,7 +639,7 @@ def _fill_parser_owned_meta(
     """
     if not isinstance(json_obj, dict):
         return
-    from . import pack_parsers
+    from ..pack_ops import pack_parsers
 
     try:
         derived = pack_parsers.sync_meta_json(json_obj, project_root=project_root)
@@ -905,7 +905,7 @@ def validate_response(
     """
     if project_root is None:
         return _skipped("no active project")
-    from . import pack_parsers
+    from ..pack_ops import pack_parsers
     import functools
     available, reason = pack_parsers.is_available(project_root)
     if not available:
@@ -969,7 +969,7 @@ def is_loop_available(project_root: Optional[Path]) -> tuple[bool, str]:
     if not _is_enabled(project_root):
         return False, "disabled in project settings (validator_loop.enabled=false)"
     # 2. Wheel-import probe via the project's own venv Python.
-    from . import pack_parsers
+    from ..pack_ops import pack_parsers
     available, reason = pack_parsers.is_available(project_root)
     if not available:
         return False, f"deterministic validator unavailable — {reason}"
@@ -1108,7 +1108,7 @@ def validate_current_state(
     benefits from seeing soft-warning codes too — operators can read them and
     decide whether to act.
     """
-    from . import pack_parsers
+    from ..pack_ops import pack_parsers
     available, reason = pack_parsers.is_available(project_root)
     if not available:
         return _skipped(f"Validator unavailable: {reason}")

@@ -57,7 +57,7 @@ def labscpi_psu_reconstruct_available() -> bool:
         from tests._qt_stub import ensure_workflow_editor_importable
 
         ensure_workflow_editor_importable()
-        from workflow_editor.llm import pack_parsers
+        from workflow_editor.pack_ops import pack_parsers
 
         report = pack_parsers.reconstruct_text(
             _PSU_FRAGMENT, _PSU_PRIOR, project_root=None

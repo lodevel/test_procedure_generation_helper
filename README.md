@@ -25,7 +25,7 @@ only as logged deprecation shims. See the host repo's
 - **Diff-gated edits.** Every LLM-proposed change to an artifact is shown in a
   side-by-side diff (`dialogs/diff_viewer.py`) and applied only on explicit accept.
 - **Pack-driven parsing/validation.** Parsing, codegen, and validation are dispatched
-  to the *project's* venv via `workflow_editor/llm/pack_parsers.py` (which spawns
+  to the *project's* venv via `workflow_editor/pack_ops/pack_parsers.py` (which spawns
   `_pack_parsers_subprocess.py` against the `rules_packager_base` wheel), so the
   rules/wheel used are the ones bundled with the active project — not the editor's
   own interpreter.
@@ -252,7 +252,7 @@ and it is driven by the main GUI's interactive/manual runner
   `app.py::_bootstrap_editor_on_path` sys.path hack survives only as a logged
   deprecation shim.
 - Several main-GUI modules import from `workflow_editor` directly —
-  `llm.pack_parsers` (e.g. `bench_fields`, `bench_constant_names`,
+  `pack_ops.pack_parsers` (e.g. `bench_fields`, `bench_constant_names`,
   `build_manual_run`/`build_manual_result`), `llm.section_ownership`, and
   `core.task_config`.
 - The interactive/manual runner (`guided_manual_execution_dialog.py`) uses

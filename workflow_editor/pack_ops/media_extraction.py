@@ -6,15 +6,25 @@ Per the v1 design (restored 2026-04-28): every step optionally carries
 derived from the step's free-text description. The procedure GUI uses
 these to render PCB images via the ODB CLI.
 
-The extraction logic is **delegated** to the project's
-``config/text_parser.py`` plugin when one exists — that plugin owns
-the regex catalogue (per `<project>/CLAUDE.md`'s media-refs section).
-When no plugin is available, this module falls back to no-op (empty
-media arrays) so the procedure remains schema-valid.
+The extraction logic is **delegated**, in order of preference:
+
+1. The bundle wheel's pack-side extractor
+   (``rules_packager_base.rules.v2_0_2.media``, via
+   :mod:`pack_parsers`) — the regex catalogue implements the pack's
+   own writing conventions (canonical rules §"Test-point (TP)
+   prefixing rule"), so it is bundle-versioned alongside the parser
+   and schema.
+2. The project's ``config/text_parser.py`` plugin — legacy fallback
+   for projects whose installed wheel predates the media module.
+3. No-op (empty media arrays) so the procedure remains schema-valid.
 
 Per-op text sources:
 
-  - ``connect`` / ``note``: extract from the op's ``text`` field.
+  - ``connect`` / ``note`` / ``move``: extract from the op's ``text``
+    field.
+  - Ops with structured probe-point fields (``operator.read`` /
+    ``operator.read_diff``): extract from ``location`` /
+    ``location_a`` / ``location_b``.
   - All other ops: no free-text component refs (the structured fields
     point at equipment ids, channels, resource ids — not PCB
     components). ``media`` stays empty for them.
@@ -117,7 +127,12 @@ def _extract_media_from_text(parser: Any, text: str) -> list[dict[str, Any]]:
 # Op types whose `text` field carries free-text component refs worth
 # scanning. Other ops are structured (device, channel, resource id) and
 # don't carry PCB component references.
-_TEXT_BEARING_OPS: frozenset[str] = frozenset({"connect", "note"})
+_TEXT_BEARING_OPS: frozenset[str] = frozenset({"connect", "note", "move"})
+
+# Structured step fields that name a probe point on the PCB (e.g.
+# ``operator.read``'s ``location``, ``operator.read_diff``'s
+# ``location_a``/``location_b``). Scanned on every op that carries them.
+_LOCATION_FIELDS: tuple[str, ...] = ("location", "location_a", "location_b")
 
 
 def populate_media_on_steps(
@@ -142,6 +157,27 @@ def populate_media_on_steps(
     """
     if project_root is None:
         return 0
+
+    # Preferred route: the bundle wheel's pack-side extractor, so the
+    # media policy is versioned with the parser and schema it belongs
+    # to. ParserUnavailable (wheel predates the media module) and any
+    # subprocess hiccup fall through to the project plugin below.
+    try:
+        from . import pack_parsers
+        updated, n_populated = pack_parsers.populate_media(
+            procedure_json, project_root
+        )
+        if updated is not procedure_json and isinstance(
+            updated.get("steps"), list
+        ):
+            procedure_json["steps"] = updated["steps"]
+        return n_populated
+    except Exception as exc:  # noqa: BLE001 — any failure falls back
+        log.debug(
+            "media_extraction: pack-side populate_media unavailable "
+            "(%s); falling back to project text_parser plugin.", exc,
+        )
+
     parser = _load_project_text_parser(project_root)
     if parser is None:
         return 0
@@ -154,19 +190,32 @@ def populate_media_on_steps(
     for step in steps:
         if not isinstance(step, dict):
             continue
-        op = step.get("op")
-        if op not in _TEXT_BEARING_OPS:
-            # Non-text-bearing op — strip any stale media that might
-            # have been left behind by an older parser pass.
+        sources: list[str] = []
+        if step.get("op") in _TEXT_BEARING_OPS:
+            text = step.get("text")
+            if isinstance(text, str) and text.strip():
+                sources.append(text)
+        for field_name in _LOCATION_FIELDS:
+            value = step.get(field_name)
+            if isinstance(value, str) and value.strip():
+                sources.append(value)
+        if not sources:
+            # Nothing scannable on this op — strip any stale media that
+            # might have been left behind by an older parser pass.
             step.pop("media", None)
             continue
-        text = step.get("text")
-        if not isinstance(text, str) or not text.strip():
-            step.pop("media", None)
-            continue
-        media = _extract_media_from_text(parser, text)
+        media: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for source in sources:
+            for entry in _extract_media_from_text(parser, source):
+                key = repr(sorted((entry.get("ref") or {}).items())) + repr(
+                    entry.get("caption")
+                )
+                if key not in seen:
+                    seen.add(key)
+                    media.append(entry)
         # Always assign — even an empty list — for round-trip
-        # consistency: every text-bearing op carries the field.
+        # consistency: every scannable op carries the field.
         step["media"] = media
         if media:
             n_populated += 1

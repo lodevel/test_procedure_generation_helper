@@ -187,9 +187,16 @@ def populate_media_on_steps(
         return 0
 
     n_populated = 0
-    for step in steps:
+    # Depth-first over steps INCLUDING block bodies ("body" of
+    # for/if/... blocks) — mirrors the pack-side extractor.
+    stack: list = list(reversed(steps))
+    while stack:
+        step = stack.pop()
         if not isinstance(step, dict):
             continue
+        body = step.get("body")
+        if isinstance(body, list):
+            stack.extend(reversed(body))
         sources: list[str] = []
         if step.get("op") in _TEXT_BEARING_OPS:
             text = step.get("text")

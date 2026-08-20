@@ -30,6 +30,8 @@ Ops:
                       "fix_hint": str, "findings": [{...}]}
   render_text   → {"ok": true, "text": str}
   populate_media → {"ok": true, "json": dict, "n_populated": int}
+  export_rows   → {"ok": true, "steps": [rows], "expected": [rows]}
+                  (batch: input {"procedures": [...]} → {"ok": true, "results": [...]})
   renumber_steps → {"ok": true, "text": str}
   sync_equipment → {"ok": true, "text": str, "warnings": [str]}
   sync_meta     → {"ok": true, "text": str, "warnings": [str]}
@@ -159,6 +161,45 @@ def _op_render_text(spec: dict) -> dict:
     wheel = _import_wheel()
     text = wheel.render(procedure_json)
     return {"ok": True, "text": text}
+
+
+def _op_export_rows(spec: dict) -> dict:
+    """Full-fidelity document-export rows, computed IN THE PROJECT VENV
+    where every bundle pack (labscpi/fncore/...) is importable — the GUI
+    process typically lacks them, so pack ops would render blank there.
+    Raises AttributeError -> ParserUnavailable on wheels predating the
+    export API; the GUI falls back to its in-process path."""
+    from rules_packager_base.rules.v2_0_2 import extractors as _extractors
+
+    def _ser(rows):
+        out = []
+        for r in rows:
+            media = []
+            for m in r.media:
+                media.append({
+                    "component": m.component,
+                    "pin": m.pin,
+                    "is_tp": bool(getattr(m, "is_tp", False)),
+                    "caption": m.caption,
+                    "type": m.type,
+                })
+            out.append({"idx": r.idx, "text": r.text, "media": media})
+        return out
+
+    procedures = spec.get("procedures")
+    single = procedures is None
+    if single:
+        procedures = [spec["procedure_json"]]
+    results = [
+        {
+            "steps": _ser(_extractors.extract_export_steps(pj)),
+            "expected": _ser(_extractors.extract_export_expected(pj)),
+        }
+        for pj in procedures
+    ]
+    if single:
+        return {"ok": True, **results[0]}
+    return {"ok": True, "results": results}
 
 
 def _op_populate_media(spec: dict) -> dict:
@@ -323,6 +364,7 @@ _OPS = {
     "parse_text": _op_parse_text,
     "render_text": _op_render_text,
     "populate_media": _op_populate_media,
+    "export_rows": _op_export_rows,
     "renumber_steps": _op_renumber_steps,
     "sync_equipment": _op_sync_equipment,
     "sync_meta": _op_sync_meta,

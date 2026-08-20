@@ -377,6 +377,47 @@ def populate_media(
     return result["json"], result.get("n_populated", 0)
 
 
+def export_rows(
+    procedure_json: dict[str, Any],
+    project_root: Optional[Path] = None,
+) -> tuple[list[dict], list[dict]]:
+    """Document-export rows (steps, expected) computed by the project
+    venv's wheel — the only environment guaranteed to have every bundle
+    pack importable, so pack ops render their canonical clause instead
+    of blank. Raises :class:`ParserUnavailable` when the installed
+    wheel predates the export API."""
+    if project_root is None:
+        raise ParserUnavailable("export_rows requires a project venv")
+
+    project_python = _resolve_project_python(project_root)
+    result = _subprocess_call(
+        project_python,
+        {"op": "export_rows", "procedure_json": procedure_json},
+        timeout=_timeout(),
+    )
+    if not result.get("ok"):
+        raise ParserUnavailable(result.get("error", "subprocess error"))
+    return result.get("steps", []), result.get("expected", [])
+
+
+def export_rows_batch(
+    procedures: list[dict[str, Any]],
+    project_root: Path,
+) -> list[dict]:
+    """Batched :func:`export_rows` — one project-venv spawn for a whole
+    export run. Returns one ``{"steps": [...], "expected": [...]}`` per
+    input procedure. Raises :class:`ParserUnavailable` on old wheels."""
+    project_python = _resolve_project_python(project_root)
+    result = _subprocess_call(
+        project_python,
+        {"op": "export_rows", "procedures": procedures},
+        timeout=_timeout(),
+    )
+    if not result.get("ok"):
+        raise ParserUnavailable(result.get("error", "subprocess error"))
+    return result.get("results", [])
+
+
 def renumber_steps_text(
     text: str,
     project_root: Optional[Path] = None,

@@ -255,7 +255,7 @@ def _inproc_import_wheel():
     except ImportError as exc:
         raise ParserUnavailable(
             f"{_REQUIRED_WHEEL} is not importable: {exc}. "
-            f"Reinstall the rules_packager_base wheel (>= 2.0.3) into "
+            f"Reinstall the rules_packager_base wheel (>= 2.0.4) into "
             f"the venv running the workflow editor. The LLM fallback "
             f"remains available."
         ) from exc

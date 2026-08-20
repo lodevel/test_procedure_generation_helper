@@ -96,7 +96,7 @@ def _op_is_available(spec: dict) -> dict:
             "available": False,
             "reason": (
                 f"rules_packager_base.rules.v2_0_2.parser is not importable: {exc}. "
-                f"Reinstall the rules_packager_base wheel (>= 2.0.3)."
+                f"Reinstall the rules_packager_base wheel (>= 2.0.4)."
             ),
         }
 

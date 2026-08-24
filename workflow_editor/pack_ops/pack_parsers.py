@@ -150,8 +150,7 @@ def _subprocess_call(
     venv is for test execution, not the editor UI. Invoking by path
     sets ``__name__ == "__main__"`` and skips the package init.
 
-    ``runner_name`` selects the sibling runner script — the default parser
-    runner, or ``_execute_op_subprocess.py`` for live single-op execution.
+    ``runner_name`` selects the sibling runner script in ``pack_ops/``.
     """
     runner_path = Path(__file__).resolve().parent / runner_name
 
@@ -805,8 +804,8 @@ def bench_constant_names(etype: str, eid: str, project_root: Optional[Path] = No
 class RemoteSession:
     """Persistent daemon channel for ONE guided-manual run.
 
-    Holds a long-lived subprocess (``_execute_op_subprocess.py`` in the project
-    venv) that keeps ``per_session`` devices OPEN across steps, so a held PSU
+    Holds a long-lived subprocess (``llm/_execute_op_subprocess.py`` in the
+    project venv) keeping ``per_session`` devices OPEN across steps, so a held PSU
     output survives between ops — the whole reason the daemon exists.  The dialog
     creates ONE per run, routes ⚡/auto-run through it, and sends ``shutdown``
     (or, on a wedge, ``kill`` + a fresh :func:`safe_off_remote`) at the end.
@@ -843,7 +842,8 @@ class RemoteSession:
     def _start(self) -> None:
         py = _resolve_project_python(self._project_root)   # may raise ParserUnavailable
         self._bundle_dir = str(py.parents[2] / "bundle")
-        runner = Path(__file__).resolve().parent / "_execute_op_subprocess.py"
+        # Daemon stayed in llm/ when pack_parsers moved to pack_ops/ (29e5f66).
+        runner = Path(__file__).resolve().parent.parent / "llm" / "_execute_op_subprocess.py"
         self._proc = subprocess.Popen(
             [str(py), str(runner)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

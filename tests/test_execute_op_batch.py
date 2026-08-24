@@ -452,7 +452,7 @@ class RemoteSessionLiveTransportTests(unittest.TestCase):
         ensure_workflow_editor_importable()
         from workflow_editor.pack_ops import pack_parsers as pp
         s = pp.RemoteSession(_proc_file(self), Path("/nonexistent"))
-        runner = Path(pp.__file__).resolve().parent / "_execute_op_subprocess.py"
+        runner = _RUNNER   # the llm/ daemon script (module-level, verified on import)
 
         def _start():               # use THIS interpreter (no project venv in test env)
             s._bundle_dir = None

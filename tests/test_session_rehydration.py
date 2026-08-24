@@ -7,12 +7,14 @@ Covers the three pure/mockable seams of the rehydration feature:
 
 All HTTP is mocked; the backend is built with ``object.__new__`` (bypassing
 ``__init__``) and only the touched attrs are set, so no Qt/pack is needed.
+Since the opencode_client migration (7985722) the seams live in
+``opencode_client.client``; the desktop module only re-exports them.
 """
+import importlib
 import json
 
 import pytest
 
-from workflow_editor.llm import opencode_backend as ocb
 from workflow_editor.llm.opencode_backend import OpenCodeBackend
 from workflow_editor.llm.backend_base import LLMRequest, LLMResponse, LLMTask
 from workflow_editor.llm.tab_context import ChatMessage
@@ -161,7 +163,12 @@ def _make_backend(create_session_returns="new"):
     from types import SimpleNamespace
 
     be = object.__new__(OpenCodeBackend)
-    be.config = SimpleNamespace(server_url="http://x", request_timeout=30)
+    be.config = SimpleNamespace(
+        server_url="http://x", request_timeout=30, startup_timeout=5)
+    # _base_url() delegates to the lifecycle seam since the opencode_client
+    # migration (7985722): stub it to hand back the fixed URL.
+    be._lifecycle = SimpleNamespace(
+        ensure_running=lambda timeout=None: "http://x")
     be._session_id = "old"
     state = {"create_calls": 0, "bodies": [], "prompts": []}
 
@@ -182,8 +189,11 @@ def _make_backend(create_session_returns="new"):
 
 
 def _patch_post(monkeypatch, responses):
-    """Patch opencode_backend.requests.post to pop FakeResponses in order and
-    record (url, json) per call. Returns the calls list."""
+    """Patch requests.post as seen by the module that DEFINES OpenCodeBackend
+    (opencode_client.client since the 7985722 migration; workflow_editor's
+    opencode_backend is a re-export shim with no ``requests`` of its own).
+    Pops FakeResponses in order, records (url, json) per call, returns the
+    calls list."""
     calls = []
     seq = list(responses)
 
@@ -191,7 +201,8 @@ def _patch_post(monkeypatch, responses):
         calls.append({"url": url, "json": json})
         return seq.pop(0)
 
-    monkeypatch.setattr(ocb.requests, "post", fake_post)
+    client_mod = importlib.import_module(OpenCodeBackend.__module__)
+    monkeypatch.setattr(client_mod.requests, "post", fake_post)
     return calls
 
 

@@ -41,19 +41,19 @@ _SKIP_DIRS = {"__pycache__", "build", "dist", ".venv"}
 
 FILE_BUDGET: dict[str, int] = {
     "core/task_config.py": 1289,
-    "dialogs/settings_dialog.py": 1298,  # +4: bare-except cleanup log lines
+    "dialogs/settings_dialog.py": 1305,  # +7: opencode-client migration settings wiring (7985722)
     "llm/_execute_op_subprocess.py": 1005,
     "llm/opencode_backend.py": 1251,  # +9: bare-except cleanup log lines
-    "pack_ops/pack_parsers.py": 1721,  # +39: populate_media bridge (pack-side media extractor)
+    "pack_ops/pack_parsers.py": 1763,  # +42: export_rows op (project-venv document exports, 0d448bc)
     "llm/tab_context.py": 1057,
     "llm/validator_dispatch.py": 1163,
-    "main_window.py": 1980,  # post-carve (controllers/ project+document split)
+    "main_window.py": 2064,  # +84: post-carve growth (opencode session keep-alive, ecbb421 et al.)
     "theme.py": 1981,  # light/dark Fluent QSS deduped into one template + token dicts
 }
 
 CLASS_METHOD_BUDGET: dict[tuple[str, str], int] = {
     ("dock/skill_chat_widget.py", "SkillChatWidget"): 42,
-    ("main_window.py", "MainWindow"): 90,
+    ("main_window.py", "MainWindow"): 92,  # +2: opencode session keep-alive handlers (ecbb421 era)
     ("tabs/json_code_tab.py", "JsonCodeTab"): 42,
     ("tabs/text_json_tab.py", "TextJsonTab"): 43,
 }

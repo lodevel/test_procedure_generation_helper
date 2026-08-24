@@ -765,6 +765,31 @@ class BenchClientLiveTests(unittest.TestCase):
         self.assertTrue(out.get("ok"), out)
         self.assertTrue(c.dead)
 
+    def test_daemon_dead_between_exchanges_is_session_dead_no_respawn(self):
+        # A holder killed BETWEEN exchanges must surface SessionDead from
+        # run_test so the host runs its crash-recovery safe-off (design
+        # row 5) — the inherited lazy _start must NOT silently hand the run
+        # to a fresh daemon holding nothing (S6 e2e finding).
+        c = self._client()
+        starts: list = []
+        orig_start = c._start
+
+        def counting_start():
+            starts.append(1)
+            orig_start()
+        c._start = counting_start
+        acq = c.acquire_run([
+            {"test_id": "T", "local_name": "PSU1", "etype": "psu",
+             "bench": {"remote": False}}])
+        self.assertTrue(acq.get("ok"), acq)
+        c._proc.kill()
+        c._proc.wait(timeout=30)
+        res = c.run_test(acq["run_id"], "whatever.py", "results")
+        self.assertFalse(res.get("ok"))
+        self.assertEqual(res.get("kind"), "SessionDead")
+        self.assertEqual(len(starts), 1)      # no silent respawn
+        self.assertTrue(c.dead)
+
 
 if __name__ == "__main__":
     unittest.main()

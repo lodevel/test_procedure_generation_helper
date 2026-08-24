@@ -111,6 +111,14 @@ class BenchSessionClient(RemoteSession):
                 return {"ok": False, "kind": "SessionDead",
                         "error": "remote session already dead",
                         "stderr": list(self._stderr_tail)}
+            if self._proc is not None and not self._alive():
+                # The holder died BETWEEN exchanges (e.g. killed). Lazy
+                # respawn here would hand the run to a FRESH daemon holding
+                # nothing (UnknownRun) and silently skip the host's
+                # crash-recovery safe-off (design row 5) — report the crash.
+                rc = self._proc.poll()
+                return self._dead_resp(
+                    "SessionDead", f"daemon died between exchanges (exit={rc})")
             try:
                 if not self._alive():
                     self._start()

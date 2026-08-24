@@ -67,6 +67,12 @@ corrupt a frame.  Tracebacks travel inside the response JSON, never printed.
      "subtype": str, "text": "<one raw command line>", "bench_map": {device: {...}}}
     {"cmd": "shutdown"}        # safe-off all held + close (unlock) + exit
     {"cmd": "ping"}            # liveness probe
+  Bench-session frames (S3; full contract in _bench_session_runner.py):
+    {"cmd": "acquire_run"|"release_run"|"run_test"|"cancel_run"|
+     "prompt_response", ...}   # run handles over endpoint-keyed held devices
+  "end_session" is NOT a frame — it IS the existing "shutdown".  During
+  run_test the daemon streams {"kind": "output"|"prompt"|"ack"|"reject"}
+  frames (same channel as "progress") before the final response.
 
   Response (one line):
     exec_ops : {"ok": true, "results": [...], "aborted": bool, "log": [str],
@@ -457,7 +463,9 @@ class _Session:
         self.energized: dict = {}   # device -> {channels} touched (held only)
         self.lifecycle: dict = {}
         self.bundle_loaded = False
-        self.procedure_json: dict | None = None
+        self.procedure_json: dict | None = None   # the CURRENT frame's document
+        self.procedures: dict = {}  # path -> document (per-run docs, no single latch)
+        self.bench = None           # BenchState (bench-session runs; sibling-owned)
         self._in_teardown = False   # run-once latch (also signal re-entrancy guard)
 
 
@@ -468,7 +476,16 @@ def _safe_name(device: str) -> str:
 
 def _ensure_held(session: _Session, bench_map: dict, device: str, etype: str) -> None:
     """Open a per_session device ONCE (no reset) into ``held`` + bind it in the
-    shared namespace.  Idempotent — a held device is reused across commands."""
+    shared namespace.  Idempotent — a held device is reused across commands.
+    Bench-session routing: when the active run's view claims ``device`` onto a
+    HELD canonical endpoint, bind the local name to that instance instead of
+    opening a second session on the same physical endpoint."""
+    if session.bench is not None:
+        key = session.bench.enter(session, device)
+        if key != device:              # run-view routed onto a held endpoint
+            session.ns[_safe_name(device)] = session.held[key]
+            session.etype_of.setdefault(device, etype)
+            return
     if device in session.held:
         return
     if device not in bench_map:
@@ -521,7 +538,10 @@ def _safe_off_all_held(session: _Session) -> list:
             continue
         cleanup = (session.lifecycle.get(etype) or {}).get("cleanup")
         if cleanup:
-            declared[device] = set(_device_channels(session.procedure_json or {}, device))
+            chans = set(_device_channels(session.procedure_json or {}, device))
+            if session.bench is not None:  # + UNION of channels seen across runs
+                chans |= session.bench.channels_for(session, device)
+            declared[device] = chans
     unsafe: list = []
     if declared:
         try:
@@ -857,6 +877,28 @@ _SESSION: _Session | None = None
 # "progress" frames so the GUI advances the cursor live during a batch.
 _PROTO_OUT = None
 
+# Bench-session frames — ALL new machinery lives in the sibling module
+# _bench_session_runner.py; this file only dispatches.  "end_session" is
+# deliberately NOT in this set: it IS the existing "shutdown" frame.
+_BENCH_CMDS = ("acquire_run", "release_run", "run_test", "cancel_run",
+               "prompt_response")
+_BENCH_MOD = None
+
+
+def _bench():
+    """Lazy sibling import (file-path invocation puts llm/ on sys.path; the
+    import must NOT go through the workflow_editor package — PySide6 is
+    absent from project venvs)."""
+    global _BENCH_MOD
+    if _BENCH_MOD is None:
+        try:
+            import _bench_session_runner as m
+        except ImportError:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            import _bench_session_runner as m
+        _BENCH_MOD = m
+    return _BENCH_MOD
+
 
 def _write_frame(out, obj: dict) -> None:
     out.write(json.dumps(obj, default=str) + "\n")
@@ -896,26 +938,29 @@ def _load_bundle(session: _Session, req: dict) -> None:
 
 
 def _load_procedure(session: _Session, req: dict):
-    """Latch the procedure document ONCE per session from the frame's
-    ``procedure_path`` (sibling of :func:`_load_bundle`). The document is
-    frozen at the first frame that carries the key — a file regenerated
-    mid-session is deliberately NOT re-read. A frame without the key is
-    fine (ping/shutdown need no document); a path that cannot be read (or
-    holds a non-dict) returns an error response — fatal for exec_ops
-    ONLY (see _dispatch)."""
-    if session.procedure_json is not None:
-        return None
+    """Load the frame's procedure document, cached PER PATH (bench-session:
+    the old one-document-per-session latch is gone — a shared holder serves
+    multiple dialogs/runs, each with its own document).  The doc named by
+    THIS frame's ``procedure_path`` becomes ``session.procedure_json``; each
+    path is still read only once per session (a file regenerated mid-session
+    is deliberately NOT re-read).  A frame without the key keeps the current
+    document (ping/shutdown need none); a path that cannot be read (or holds
+    a non-dict) returns an error response — fatal for exec_ops ONLY
+    (see _dispatch)."""
     path = req.get("procedure_path")
     if not path:
         return None
-    try:
-        doc = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return {"ok": False, "kind": "NoProcedure",
-                "error": f"cannot read procedure file {path!r}: {exc}"}
-    if not isinstance(doc, dict):
-        return {"ok": False, "kind": "NoProcedure",
-                "error": f"procedure file {path!r} is not a JSON object"}
+    doc = session.procedures.get(path)
+    if doc is None:
+        try:
+            doc = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return {"ok": False, "kind": "NoProcedure",
+                    "error": f"cannot read procedure file {path!r}: {exc}"}
+        if not isinstance(doc, dict):
+            return {"ok": False, "kind": "NoProcedure",
+                    "error": f"procedure file {path!r} is not a JSON object"}
+        session.procedures[path] = doc
     session.procedure_json = doc
     return None
 
@@ -942,6 +987,8 @@ def _dispatch(session: _Session, req: dict):
             return _cmd_safe_off(session, req), False
         if cmd == "shutdown":
             return _cmd_shutdown(session, req), True
+        if cmd in _BENCH_CMDS:
+            return _bench().handle(globals(), session, req)
         return {"ok": False, "kind": "Protocol",
                 "error": f"unknown cmd {cmd!r}"}, False
     except _NotRemote as exc:
@@ -978,10 +1025,13 @@ def main() -> None:
         except Exception:  # noqa: BLE001 — not all signals settable on Windows
             pass
 
-    stdin = sys.stdin
+    # THE one reader thread + queue (bench-session S3): the main loop and any
+    # in-run waits (prompt/cancel) consume from the same queue; the reader
+    # signals EOF through it so this loop still reaches the final _teardown.
+    reader = _bench().start_reader(sys.stdin)
     while True:
-        line = stdin.readline()        # readline is partial-read safe (full line or EOF)
-        if not line:                   # EOF — parent closed the pipe
+        line = reader.next_line()      # blocking; None = EOF (parent closed pipe)
+        if line is None:
             break
         line = line.strip()
         if not line:

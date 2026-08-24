@@ -8,7 +8,9 @@ Transport discipline (plan S3):
 
 * Control frames (acquire/release/idle-cancel) ride the inherited
   ``_request`` — its short per-frame timeout + ``_dead_resp``
-  kill-on-timeout machinery stays untouched and confined to them.
+  kill-on-timeout machinery stays untouched and confined to them — behind
+  this class's ``_request`` override, which turns a daemon dead between
+  exchanges into ``SessionDead`` instead of the base class's lazy respawn.
 * ``run_test`` uses NO per-frame timeout: liveness is the process poll plus
   the ``output`` / ``prompt`` frames the daemon streams.  A wedged run is
   ended by the operator (``cancel_run``, or kill+recovery if the daemon is
@@ -42,6 +44,26 @@ class BenchSessionClient(RemoteSession):
 
     # ``end_session`` IS shutdown (safe-off all held + close/unlock + exit).
     end_session = RemoteSession.shutdown
+
+    # -- transport guard ----------------------------------------------------
+    def _request(self, frame: dict[str, Any], timeout: float,
+                 on_progress=None) -> dict[str, Any]:
+        """Inherited transport MINUS its lazy respawn. Invariant: once this
+        client has started a holder, a daemon found dead between exchanges
+        is ``SessionDead`` on EVERY frame — the base ``_request``'s
+        ``if not self._alive(): self._start()`` must never hand a control
+        frame (acquire/release/cancel/shutdown/ping) to a FRESH daemon
+        holding nothing, silently skipping the host's crash-recovery
+        safe-off (design row 5). A NEVER-started client still lazy-starts
+        on its first frame."""
+        with self._lock:
+            if (not self._dead and self._proc is not None
+                    and not self._alive()):
+                rc = self._proc.poll()
+                return self._dead_resp(
+                    "SessionDead",
+                    f"daemon died between exchanges (exit={rc})")
+        return super()._request(frame, timeout, on_progress)
 
     # -- control frames (short timeouts, inherited transport) ---------------
     def acquire_run(self, claims: list[dict[str, Any]], *,

@@ -790,6 +790,33 @@ class BenchClientLiveTests(unittest.TestCase):
         self.assertEqual(len(starts), 1)      # no silent respawn
         self.assertTrue(c.dead)
 
+    def test_acquire_after_daemon_death_is_session_dead_no_respawn(self):
+        # Same invariant for the CONTROL frames: acquire_run rides the
+        # inherited _request, whose lazy _start would silently hand the
+        # frame to a FRESH daemon holding nothing — the
+        # BenchSessionClient._request override must report the crash so the
+        # host runs its recovery safe-off (design row 5) instead.
+        c = self._client()
+        starts: list = []
+        orig_start = c._start
+
+        def counting_start():
+            starts.append(1)
+            orig_start()
+        c._start = counting_start
+        claims = [{"test_id": "T", "local_name": "PSU1", "etype": "psu",
+                   "bench": {"remote": False}}]
+        acq = c.acquire_run(claims)
+        self.assertTrue(acq.get("ok"), acq)
+        c._proc.kill()
+        c._proc.wait(timeout=30)
+        res = c.acquire_run(claims)
+        self.assertFalse(res.get("ok"))
+        self.assertEqual(res.get("kind"), "SessionDead")
+        self.assertIn("died between exchanges", res.get("error", ""))
+        self.assertEqual(len(starts), 1)      # no silent respawn
+        self.assertTrue(c.dead)
+
 
 if __name__ == "__main__":
     unittest.main()

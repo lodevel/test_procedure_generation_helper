@@ -877,6 +877,142 @@ class HealthCheckTests(_BenchBase):
 
 
 # ---------------------------------------------------------------------------
+# Sticky IdentityChanged (F-H6): an unresolved mismatch never silently passes.
+# ---------------------------------------------------------------------------
+
+
+class StickyIdentityTests(_BenchBase):
+    """After a rebuild lands on a DIFFERENT instrument, the mismatch is
+    recorded per endpoint and EVERY refusing boundary (guided op, raw line,
+    acquire_run, run_test) keeps returning the typed IdentityChanged —
+    a healthy liveness probe of the impostor can never clear it.  Only
+    end_session (a fresh daemon BenchState) forgets the flag; safe_off
+    bypasses it and offs whatever answers."""
+
+    def setUp(self):
+        super().setUp()
+        self.idn_box = idn_box = {"idn": "ACME PSU,SN1"}
+        calls = self.calls
+
+        class _IdnFake(_Fake):
+            def __init__(self, *a):
+                super().__init__(*a)
+                self.idn = idn_box["idn"]
+        er._build_device = lambda bench, etype, lifecycle, log: _IdnFake(
+            etype, bench.get("_dev", "?"), calls)
+
+    def _set_v(self, device, volts=5.0):
+        return {"node_path": "s", "op": {
+            "op": "psu.set_voltage", "device": device, "channel": 1,
+            "volts": volts, "volts_unit": "V"}}
+
+    def _guided(self, s):
+        return er._cmd_exec_ops(s, {
+            "ops": [self._set_v("PSU1")],
+            "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}}})
+
+    def _flag(self, s):
+        """Acquire+release PSU1, kill the link, swap the instrument, then a
+        guided op takes the FIRST IdentityChanged (the rebuild boundary)."""
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        r = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        self.assertTrue(r["ok"], r)
+        self._dispatch(s, {"cmd": "release_run", "run_id": r["run_id"]})
+        _kill_link(s.held[_EP_A])
+        self.idn_box["idn"] = "ACME PSU,SN9"   # a DIFFERENT instrument answers
+        first = self._guided(s)
+        self.assertEqual(first["kind"], "IdentityChanged")
+
+    def test_guided_second_call_still_refused_nothing_executes(self):
+        # The reviewer's probe: first call refused, SECOND call must NOT
+        # succeed — the impostor answers *IDN? "healthy", but the recorded
+        # mismatch refuses before any probe, and set_voltage never runs.
+        s = self._session()
+        self._flag(s)
+        r2 = self._guided(s)
+        self.assertFalse(r2["ok"])
+        self.assertEqual(r2["kind"], "IdentityChanged")
+        self.assertEqual(r2["endpoints"], [_EP_A])
+        self.assertEqual(r2["changes"][_EP_A],
+                         {"cached": "ACME PSU,SN1", "current": "ACME PSU,SN9"})
+        self.assertEqual(len(self._devcalls("PHYS", "set_voltage")), 0)
+        self.assertEqual(s.bench.fingerprints[_EP_A], "ACME PSU,SN1")
+
+    def test_raw_second_call_still_refused(self):
+        s = self._session()
+        self._flag(s)
+        r2 = er._cmd_raw(s, {"device": "PSU1", "etype": "psu", "subtype": "",
+                             "text": "MEAS:VOLT?",
+                             "bench_map": {"PSU1": {"visa": _ADDR_A,
+                                                    "_dev": "GUIDED"}}})
+        self.assertFalse(r2["ok"])
+        self.assertEqual(r2["kind"], "IdentityChanged")
+        self.assertNotIn("HealthRefusal", json.dumps(r2))
+        # refused BEFORE the probe: the impostor never saw a single query
+        self.assertEqual(len(self._devcalls("PHYS", "query_raw")), 0)
+        self.assertEqual(s.bench.fingerprints[_EP_A], "ACME PSU,SN1")
+
+    def test_acquire_run_on_flagged_endpoint_refused(self):
+        s = self._session()
+        self._flag(s)
+        r2 = self._acquire(s, [_claim("T-B", "PSU1", dev="PHYS")])
+        self.assertFalse(r2["ok"])
+        self.assertEqual(r2["kind"], "IdentityChanged")
+        self.assertEqual(r2["endpoints"], [_EP_A])
+        self.assertIsNone(s.bench.active)          # no run created
+        self.assertEqual(s.bench.fingerprints[_EP_A], "ACME PSU,SN1")
+
+    def test_run_test_on_stale_handle_refused_after_flag(self):
+        # A run handle acquired BEFORE the boundary flagged its endpoint
+        # must not execute on the unverified instrument.
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        r = self._acquire(s, [_claim("BENCH-Q", "PSU1", dev="PHYS")])
+        self.assertTrue(r["ok"], r)
+        _kill_link(s.held[_EP_A])
+        self.idn_box["idn"] = "ACME PSU,SN9"
+        g = self._guided(s)
+        self.assertEqual(g["kind"], "IdentityChanged")
+        resp, stop = self._dispatch(s, {
+            "cmd": "run_test", "run_id": r["run_id"],
+            "module_path": "unused.py", "results_dir": self.tmp.name})
+        self.assertFalse(stop)                     # benign refusal, no ladder
+        self.assertFalse(resp["ok"])
+        self.assertEqual(resp["kind"], "IdentityChanged")
+        self.assertEqual(len(self._devcalls("PHYS", "set_voltage")), 0)
+        self.assertIn(_EP_A, s.held)               # session untouched
+
+    def test_safe_off_bypasses_flag_and_offs_the_impostor(self):
+        # A SAFETY action ignores the sticky flag: whatever instrument
+        # answers at the endpoint gets its outputs driven off — and the
+        # flag survives (safe-off is not a resolution).
+        s = self._session()
+        self._flag(s)
+        r = er._cmd_safe_off(s, {
+            "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
+            "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}]})
+        self.assertTrue(r["ok"], r)
+        self.assertNotIn("unsafe", r)
+        self.assertEqual([c[1] for c in self._offs()], ["PHYS"])
+        self.assertIn(_EP_A, s.bench.identity_mismatch)
+        r2 = self._guided(s)                       # still refused after
+        self.assertEqual(r2["kind"], "IdentityChanged")
+
+    def test_flag_dies_with_session_matching_identity_proceeds(self):
+        s = self._session()
+        self._flag(s)
+        resp, stop = self._dispatch(s, {"cmd": "shutdown"})
+        self.assertTrue(stop)                      # end_session == shutdown
+        # fresh daemon session; the RIGHT instrument answers again
+        s2 = self._session()
+        self.idn_box["idn"] = "ACME PSU,SN1"
+        r = self._acquire(s2, [_claim("T-C", "PSU1", dev="PHYS")])
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["identities"][_EP_A], "ACME PSU,SN1")
+        self.assertEqual(s2.bench.identity_mismatch, {})
+
+
+# ---------------------------------------------------------------------------
 # run_test: happy path, prompts, cancel, ladder, reimport, rejection.
 # ---------------------------------------------------------------------------
 

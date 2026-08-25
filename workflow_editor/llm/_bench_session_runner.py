@@ -43,16 +43,28 @@ Bench-session frames (requests ride the daemon's NDJSON protocol)
     probed.  A dead endpoint gets exactly ONE rebuild through the normal
     construction path, then its identity is compared to the session's
     fingerprint: mismatch -> {"ok": false, "kind": "IdentityChanged",
-    "endpoints", "changes"} with the fingerprint untouched; session
-    keep_state ON + a rebuilt POWER endpoint (its lifecycle has a safe-off
-    action) -> {"ok": false, "kind": "StateLost", "endpoints"} — fires
-    once: the rebuilt instance stays held, so the NEXT acquire probes
-    healthy and proceeds.  Rebuild failure -> the errored ladder (safe-off
-    all held, teardown, "session_ended": true, daemon stops).  The same
-    check guards the guided-op held-reuse routing (``_ensure_held``);
-    the safe_off and raw contexts run the same probe + rebuild but never
-    raise StateLost (``probe_refuse=False``) — a safety action proceeds on
-    the rebuilt instance, and a raw line only refuses on IdentityChanged.
+    "endpoints", "changes"} with the fingerprint untouched — and the
+    mismatch is STICKY: it is recorded per endpoint in
+    ``BenchState.identity_mismatch``, and every later acquire_run, guided
+    op, raw line and run_test claiming that endpoint keeps returning the
+    same typed refusal.  The rebuilt (unverified) instance stays held, but
+    its healthy liveness probe can never clear the flag, and no in-session
+    identity re-read clears it either: the ONLY resolution is ending the
+    session (end_session == shutdown -> a fresh daemon holds a fresh
+    BenchState), after which the host's Start-Bench-Session preflight
+    surfaces the cached-vs-observed CHANGED row for explicit operator
+    confirmation.  Session keep_state ON + a rebuilt POWER endpoint (its
+    lifecycle has a safe-off action) -> {"ok": false, "kind": "StateLost",
+    "endpoints"} — fires once: the rebuilt instance stays held, so the
+    NEXT acquire probes healthy and proceeds.  Rebuild failure -> the
+    errored ladder (safe-off all held, teardown, "session_ended": true,
+    daemon stops).  The same check guards the guided-op held-reuse routing
+    (``_ensure_held``).  Context contract: the raw context suppresses ONLY
+    StateLost (``probe_refuse=False``) — it still refuses on
+    IdentityChanged, fresh or sticky; the safe_off context ignores BOTH
+    refusal kinds (``identity_gate=False`` too) — a safety action always
+    proceeds and drives OFF whatever instrument answers at the endpoint,
+    flagged or not.
 
   {"cmd": "release_run", "run_id"} -> {"ok": true}   # devices STAY held
 
@@ -212,6 +224,11 @@ class BenchState:
         self.keep_state = False    # last acquire's keep_state (guided F-H6 gate)
         self.fingerprints: dict = {}  # endpoint -> identity last read at acquire
         self.bench_of: dict = {}   # endpoint -> admission bench dict (rebuilds)
+        # endpoint -> {"was","now"}: UNRESOLVED post-rebuild identity mismatch.
+        # STICKY — set once by check_held, never cleared in-session (only a
+        # fresh BenchState, i.e. end_session/shutdown, forgets it); safe_off
+        # is the one context allowed to act on a flagged endpoint.
+        self.identity_mismatch: dict = {}
         self.run_seq = itertools.count(1)
         self.prompt_seq = itertools.count(1)
 
@@ -303,22 +320,49 @@ def _probe(d: dict, dev) -> bool:
         return False
 
 
-def check_held(d: dict, session, key: str) -> str:
+def identity_refusal(st: BenchState, endpoints) -> HealthRefusal:
+    """The typed IdentityChanged refusal for flagged endpoints, built from
+    the sticky ``BenchState.identity_mismatch`` records (single message
+    shape for the fresh raise, the sticky re-raise and the run_test gate)."""
+    eps = sorted(endpoints)
+    return HealthRefusal({
+        "ok": False, "kind": "IdentityChanged", "endpoints": eps,
+        "changes": {k: {"cached": st.identity_mismatch[k]["was"],
+                        "current": st.identity_mismatch[k]["now"]}
+                    for k in eps},
+        "error": (
+            "equipment identity changed at " + ", ".join(eps) + " after a "
+            "lost connection was re-established (connected instrument "
+            "differs from the held fingerprint). Run Start Bench Session "
+            "to review and confirm the change before executing.")})
+
+
+def check_held(d: dict, session, key: str, identity_gate: bool = True) -> str:
     """Boundary health check for ONE bench-held endpoint — shared by
     ``acquire_run`` and the guided-op held-reuse routing in ``_ensure_held``.
 
-    A device that answers the probe is healthy: returns "ok", nothing
-    touched.  Dead -> exactly ONE rebuild attempt: best-effort close/drop,
-    reconstruct through the NORMAL construction path from the stored
-    admission bench, then compare the fresh identity to the session's
-    fingerprint.  Mismatch -> ``HealthRefusal`` (IdentityChanged) with the
-    fingerprint untouched (the rebuilt instance stays held; nothing runs);
-    match or no cache -> "rebuilt".  A failed rebuild raises RuntimeError
-    with the dead instance dropped: held-endpoint-gone for the caller's
-    existing ladder.
+    An endpoint flagged in ``identity_mismatch`` refuses FIRST — before any
+    probe, so a healthy liveness answer from the unverified instrument can
+    never clear the sticky refusal.  Otherwise: a device that answers the
+    probe is healthy — returns "ok", nothing touched.  Dead -> exactly ONE
+    rebuild attempt: best-effort close/drop, reconstruct through the NORMAL
+    construction path from the stored admission bench, then compare the
+    fresh identity to the session's fingerprint.  Mismatch -> recorded
+    STICKY in ``identity_mismatch`` (fingerprint untouched, rebuilt
+    instance stays held; nothing runs), then ``HealthRefusal``
+    (IdentityChanged); match or no cache -> "rebuilt".  A failed rebuild
+    raises RuntimeError with the dead instance dropped: held-endpoint-gone
+    for the caller's existing ladder.
+
+    ``identity_gate=False`` is the safe_off context ONLY: the sticky flag
+    and a fresh mismatch are logged instead of raised — a safety action
+    offs whatever instrument answers at the endpoint (the mismatch is
+    still recorded for every refusing context).
     """
     dev = session.held.get(key)
     st = _state(session)
+    if key in st.identity_mismatch and identity_gate:
+        raise identity_refusal(st, [key])
     bench = st.bench_of.get(key)
     if dev is None or bench is None or _probe(d, dev):
         return "ok"
@@ -333,15 +377,13 @@ def check_held(d: dict, session, key: str) -> str:
     ident = _read_identity(session.held[key])
     cached = st.fingerprints.get(key)
     if cached is not None and ident is not None and ident != cached:
-        raise HealthRefusal({
-            "ok": False, "kind": "IdentityChanged", "endpoints": [key],
-            "changes": {key: {"cached": cached, "current": ident}},
-            "error": (
-                f"equipment identity changed at {key} after a lost "
-                "connection was re-established (connected instrument "
-                "differs from the held fingerprint). Run Start Bench "
-                "Session to review and confirm the change before "
-                "executing.")})
+        st.identity_mismatch[key] = {"was": cached, "now": ident}
+        if identity_gate:
+            raise identity_refusal(st, [key])
+        session.res.log.append(
+            f"{key} connection lost — re-established with a DIFFERENT "
+            f"identity ({cached!r} -> {ident!r}); safety action proceeding")
+        return "rebuilt"
     session.res.log.append(
         f"{key} connection lost — re-established, identity verified")
     return "rebuilt"
@@ -751,6 +793,12 @@ def _cmd_run_test(d: dict, session, req: dict):
     if run is None:
         return {"ok": False, "kind": "UnknownRun",
                 "error": f"unknown run_id {req.get('run_id')!r}"}, False
+    flagged = set(run.view.values()) & set(st.identity_mismatch)
+    if flagged:
+        # Sticky IdentityChanged: a run handle acquired BEFORE a guided/raw
+        # boundary flagged one of its endpoints must not execute on the
+        # unverified instrument.  Benign typed refusal — session untouched.
+        return identity_refusal(st, flagged).resp, False
     results_dir = req.get("results_dir") or run.results_dir or "."
     rdir = Path(results_dir)
     try:

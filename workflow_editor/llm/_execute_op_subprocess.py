@@ -475,25 +475,29 @@ def _safe_name(device: str) -> str:
 
 
 def _ensure_held(session: _Session, bench_map: dict, device: str, etype: str,
-                 probe_refuse: bool = True) -> None:
+                 probe_refuse: bool = True, identity_gate: bool = True) -> None:
     """Open a per_session device ONCE (no reset) into ``held`` + bind it in the
     shared namespace.  Idempotent — a held device is reused across commands.
     Bench-session routing: when the active run's view — or, run active or not,
     the op's OWN bench dict folded to a canonical endpoint — lands ``device`` on
     a HELD endpoint, bind that instance instead of opening a second session.
-    ``probe_refuse=False`` (safe-off / raw-terminal contexts): the F-H6 probe
-    and one-rebuild still run — repairing a dead link in order to act on the
-    device is exactly right there — but the StateLost refusal is suppressed:
-    the caller proceeds on the rebuilt instance (a safety action must never
-    refuse to run; keep_state is irrelevant to it).  A rebuild failure still
-    propagates as the ordinary error it always was."""
+    The F-H6 probe and one-rebuild always run on that routed reuse; the two
+    flags select which refusals a context retains:
+    * ``probe_refuse=False`` (safe-off / raw-terminal contexts) suppresses
+      StateLost — the caller proceeds on the rebuilt instance (keep_state
+      semantics apply to neither a safety action nor a terminal line);
+    * ``identity_gate=False`` (safe-off context ONLY) additionally ignores
+      IdentityChanged, sticky or fresh — a safety action offs whatever
+      instrument answers.  The raw context keeps the gate ON: a raw line
+      still refuses, typed, on an unresolved identity mismatch.
+    A rebuild failure still propagates as the ordinary error it always was."""
     if session.bench is not None:
         key = session.bench.enter(session, device, bench_map.get(device), etype)
         if key != device:              # run-view routed onto a held endpoint
             # Boundary health check (F-H6): same probe + one-rebuild +
             # identity check as acquire_run, before reusing the instance.
             b = _bench()
-            if (b.check_held(globals(), session, key) == "rebuilt"
+            if (b.check_held(globals(), session, key, identity_gate) == "rebuilt"
                     and probe_refuse):
                 refusal = b.state_lost_refusal(session, [key])
                 if refusal is not None:
@@ -800,7 +804,8 @@ def _cmd_raw(session: _Session, req: dict) -> dict:
             # Hold, reuse if armed.  probe_refuse=False: a raw command may
             # repair (probe + one rebuild) a dead held link, but StateLost
             # semantics don't apply to a terminal line — it proceeds on the
-            # rebuilt instance.  IdentityChanged still surfaces, typed, below.
+            # rebuilt instance.  IdentityChanged still surfaces, typed, below
+            # (identity_gate stays ON: fresh mismatch AND sticky flag alike).
             _ensure_held(session, bench_map, device, namespace,
                          probe_refuse=False)
             # A guided name routed onto a bench endpoint holds the instance
@@ -868,10 +873,11 @@ def _cmd_safe_off(session: _Session, req: dict) -> dict:
     Doubles as the fresh-recovery path: a brand-new daemon opens the targets
     here, offs them, and a following ``shutdown`` closes+unlocks them.
     A SAFETY action never refuses (F-H6): a dead held endpoint is probed and
-    rebuilt (``probe_refuse=False`` — no StateLost, keep_state irrelevant) and
-    the off runs on the rebuilt instance; a target that cannot be (re)opened at
-    all lands in ``unsafe`` so the host latches UNSAFE, exactly as a pre-F-H6
-    dead-link off failure did."""
+    rebuilt (``probe_refuse=False`` — no StateLost, keep_state irrelevant;
+    ``identity_gate=False`` — a sticky or fresh IdentityChanged is bypassed
+    too) and the off runs on whatever instrument answers at the endpoint; a
+    target that cannot be (re)opened at all lands in ``unsafe`` so the host
+    latches UNSAFE, exactly as a pre-F-H6 dead-link off failure did."""
     guard = _require_lifecycle(session)
     if guard:
         return guard
@@ -887,22 +893,12 @@ def _cmd_safe_off(session: _Session, req: dict) -> dict:
     for t in targets:
         device, etype = t.get("device"), t.get("etype")
         try:
-            try:
-                _ensure_held(session, bench_map, device, etype,
-                             probe_refuse=False)
-            except Exception as exc:  # noqa: BLE001
-                if not (session.bench is not None
-                        and isinstance(exc, _bench().HealthRefusal)):
-                    raise
-                # Health refusal (identity changed on a rebuilt link) during a
-                # SAFETY action: never refuse — whatever instrument answers at
-                # that endpoint gets its outputs driven off.  The rebuilt
-                # instance is held and healthy, so the second pass probes
-                # clean and binds it.
-                session.res.log.append(
-                    f"safe-off {device}: proceeding despite {exc}")
-                _ensure_held(session, bench_map, device, etype,
-                             probe_refuse=False)
+            # Health check bypass for a SAFETY action: never refuse —
+            # probe_refuse=False drops StateLost, identity_gate=False drops
+            # IdentityChanged (sticky flag included) — whatever instrument
+            # answers at the endpoint gets its outputs driven off.
+            _ensure_held(session, bench_map, device, etype,
+                         probe_refuse=False, identity_gate=False)
             todo[device] = set(t.get("channels") or [1])
         except Exception as exc:  # noqa: BLE001
             # Open/rebuild failed: these outputs could NOT be powered down —

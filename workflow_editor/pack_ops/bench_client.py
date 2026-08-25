@@ -1,7 +1,8 @@
 """Bench-session client channel (S3): the host side of the run-handle frames.
 
 Thin subclass of :class:`~workflow_editor.pack_ops.pack_parsers.RemoteSession`
-adding ``acquire_run`` / ``run_test`` / ``cancel_run`` / ``release_run``.
+adding ``acquire_run`` / ``plan_only`` (dry-run reconcile) / ``run_test`` /
+``cancel_run`` / ``release_run``.
 ``end_session()`` IS the inherited ``shutdown()`` — deliberately no new frame.
 
 Transport discipline (plan S3):
@@ -77,6 +78,19 @@ class BenchSessionClient(RemoteSession):
         frame: dict[str, Any] = {"cmd": "acquire_run", "claims": claims,
                                  "keep_state": bool(keep_state),
                                  "results_dir": str(results_dir)}
+        if policies:
+            frame["policies"] = policies
+        return self._request(frame, timeout or _TIMEOUT_REMOTE_EXEC)
+
+    def plan_only(self, claims: list[dict[str, Any]],
+                  policies: Optional[dict] = None, *,
+                  timeout: Optional[int] = None) -> dict[str, Any]:
+        """Dry-run reconcile: the full endpoint plan (or precise conflict)
+        WITHOUT opening any endpoint, holding anything, creating a run, or
+        reading identities.  Same claims/policies shapes as ``acquire_run``;
+        allowed even while a run holds the bench (it takes nothing)."""
+        frame: dict[str, Any] = {"cmd": "acquire_run", "claims": claims,
+                                 "dry_run": True}
         if policies:
             frame["policies"] = policies
         return self._request(frame, timeout or _TIMEOUT_REMOTE_EXEC)

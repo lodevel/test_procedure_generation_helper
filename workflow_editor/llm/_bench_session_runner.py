@@ -23,7 +23,11 @@ Bench-session frames (requests ride the daemon's NDJSON protocol)
    "claims": [{"test_id", "local_name", "etype", "subtype"?, "bench": {...}}],
    "policies"?: {test_id: {local_name: "per_step"|"per_session"}},
    "profile_defaults"?: {etype: policy}, "keep_state"?: bool,
-   "results_dir"?: str}
+   "results_dir"?: str, "dry_run"?: true}
+    With "dry_run": reconcile only — the full plan (or conflict) comes back
+    but NO endpoint is opened, nothing is held, no run is created and no
+    identity is read: {"ok": true, "dry_run": true, "plan": {...}}.  A dry
+    run is allowed even while a run holds the bench (it takes nothing).
     -> {"ok": true, "run_id": str,
         "plan": {"endpoints": [{"endpoint","etype","policy","promoted",
                                 "usages": [labels]}],
@@ -64,12 +68,26 @@ own exceptions):
   res.aborted -> ordered safe-off of held power equipment ONLY — session and
                  connections remain, devices stay held.
   escaped exception (backstop) -> same as res.error.
+  import / context-build failure (broken test file, held endpoint gone) ->
+                 same as res.error — a test that cannot even load mid-session
+                 is an UNEXPECTED execution failure, never a benign refusal.
+                 Genuinely-benign refusals (UnknownRun, RunActive,
+                 unsupported_test/bundle, frame rejections) stay plain errors
+                 with the session untouched.
   plain PASS/FAIL -> nothing (host applies between-test behavior).
+
+During ``main(ctx)`` the daemon's CWD is the run's results dir (restored
+after, ladder paths included) so RELATIVE artifact writes — generated scope
+ops emit relative screenshot filenames — land beside results.json, matching
+the legacy subprocess path.  Outside ``run_test`` the CWD stays the parent's
+choice (guided-manual screenshot tmp dir): the exec_ops harvesting contract
+is unchanged.
 """
 from __future__ import annotations
 
 import itertools
 import json
+import os
 import queue
 import signal
 import sys
@@ -176,14 +194,36 @@ class BenchState:
         self.run_seq = itertools.count(1)
         self.prompt_seq = itertools.count(1)
 
-    def enter(self, session, device: str) -> str:
+    def enter(self, session, device: str, bench=None, etype: str = "") -> str:
         """Hold key for a name-keyed op: the ACTIVE run's endpoint when the
-        name is claimed onto a held endpoint; else the name itself (today's
-        guided-manual semantics, preserved bit-for-bit)."""
+        name is claimed onto a held endpoint; else — run active or not — the
+        op's OWN bench dict folded to a canonical endpoint (the same wheel
+        fold ``acquire_run`` uses) when THAT endpoint is held.  A guided op
+        addressing a held endpoint must land on the held instance: a second
+        same-process connection would contend the instrument's remote lock
+        (the EA supply drops its output over exactly that).  Only a genuinely
+        un-held endpoint keeps today's name-keyed guided-manual semantics;
+        so does an old wheel without ``bench_endpoints`` (the same
+        unsupported-bundle conditional pattern as ``acquire_run``)."""
         run = self.runs.get(self.active) if self.active else None
         key = run.view.get(device) if run is not None else None
         if key is not None and key in session.held:
             return key
+        if bench:
+            try:
+                from rules_packager_base import bench_endpoints as be
+            except ImportError:      # old wheel: name-keyed, as today
+                return device
+            try:
+                key = be.canonical_endpoint(
+                    bench, (session.lifecycle or {}).get(etype))
+            except ValueError:       # no address: name-keyed, as today
+                return device
+            if key in session.held:
+                # Record the routing so channels_for's safe-off union sees
+                # channels this guided name energizes on the held endpoint.
+                self.alias[device] = key
+                return key
         return device
 
     def channels_for(self, session, key: str) -> set:
@@ -363,7 +403,9 @@ def _cmd_acquire_run(d: dict, session, req: dict) -> dict:
                 "error": "installed wheel lacks bench_endpoints; regenerate "
                          "the bundle with rules_packager >= 2.0.5"}
     st = _state(session)
-    if st.active is not None:
+    dry = bool(req.get("dry_run"))
+    if not dry and st.active is not None:
+        # A dry run takes nothing, so it may plan even while a run is active.
         return {"ok": False, "kind": "RunActive",
                 "error": f"run {st.active!r} still holds the bench; "
                          "release it first"}
@@ -402,27 +444,36 @@ def _cmd_acquire_run(d: dict, session, req: dict) -> dict:
                             "error": f"{u.claim.local_name!r} claims two "
                                      f"endpoints in one run ({prev} and "
                                      f"{spec.endpoint})"}
-            namespace = d["_namespace_for"](spec.etype, spec.subtype)
-            bench = dict(spec.usages[0].claim.bench)
-            bench.update(spec.merged_connection)
-            # Lazy admission: open ONCE (no reset) under the ENDPOINT key.
-            d["_ensure_held"](session, {spec.endpoint: bench},
-                              spec.endpoint, namespace)
-            chans = st.channels.setdefault(spec.endpoint, set())
-            for u in spec.usages:
-                chans.update(_claim_channels(u.claim.bench))
                 view[u.claim.local_name] = spec.endpoint
-                st.alias[u.claim.local_name] = spec.endpoint
-            dev = session.held[spec.endpoint]
-            for attr in ("identity", "idn"):   # stored *IDN? where present
-                ident = getattr(dev, attr, None)
-                if ident is not None and not callable(ident):
-                    identities[spec.endpoint] = str(ident)
-                    break
+            if not dry:
+                namespace = d["_namespace_for"](spec.etype, spec.subtype)
+                bench = dict(spec.usages[0].claim.bench)
+                bench.update(spec.merged_connection)
+                # Lazy admission: open ONCE (no reset) under the ENDPOINT key.
+                d["_ensure_held"](session, {spec.endpoint: bench},
+                                  spec.endpoint, namespace)
+                chans = st.channels.setdefault(spec.endpoint, set())
+                for u in spec.usages:
+                    chans.update(_claim_channels(u.claim.bench))
+                    st.alias[u.claim.local_name] = spec.endpoint
+                dev = session.held[spec.endpoint]
+                for attr in ("identity", "idn"):   # stored *IDN? where present
+                    ident = getattr(dev, attr, None)
+                    if ident is not None and not callable(ident):
+                        identities[spec.endpoint] = str(ident)
+                        break
         summary.append({"endpoint": spec.endpoint, "etype": spec.etype,
                         "policy": spec.effective_policy,
                         "promoted": spec.promoted,
                         "usages": [u.claim.label for u in spec.usages]})
+    if dry:
+        # Plan only: nothing opened, nothing held, no run handle, no
+        # identity reads — the full plan (or the conflict above) is the
+        # whole answer.
+        return {"ok": True, "dry_run": True,
+                "plan": {"endpoints": summary,
+                         "manual": [c.label for c in plan.manual_usages],
+                         "per_step": per_step}}
     run_id = f"run-{next(st.run_seq)}"
     st.runs[run_id] = _Run(
         run_id=run_id, keep_state=bool(req.get("keep_state")),
@@ -547,13 +598,16 @@ def _cmd_run_test(d: dict, session, req: dict):
         return {"ok": False, "kind": "UnknownRun",
                 "error": f"unknown run_id {req.get('run_id')!r}"}, False
     results_dir = req.get("results_dir") or run.results_dir or "."
+    rdir = Path(results_dir)
     try:
         from rules_packager_base.execution_context import ExecutionContext
         mod = _import_test(req.get("module_path") or "")
-    except Exception as exc:  # noqa: BLE001 — nothing ran; no ladder
-        return {"ok": False, "kind": "ExecError",
-                "error": f"test import failed: {type(exc).__name__}: {exc}",
-                "traceback": traceback.format_exc()}, False
+    except Exception as exc:  # noqa: BLE001 — broken test file: errored ladder
+        # A test file that cannot import mid-session is an UNEXPECTED
+        # execution failure (design ladder: abort, safe-off all held, end
+        # session) — not a benign refusal.  The session must not stay hot
+        # behind an ExecError.
+        return _ladder(d, session, run, None, exc, rdir)
     finally:
         _reassert_signals(d)
     if getattr(mod, "BENCH_SESSION_API", None) != 1:
@@ -565,14 +619,15 @@ def _cmd_run_test(d: dict, session, req: dict):
     for name, key in run.view.items():
         inst = session.held.get(key)
         if inst is None:
-            return {"ok": False, "kind": "ExecError",
-                    "error": f"held endpoint for {name!r} ({key}) is gone; "
-                             "restart the bench session"}, False
+            # Context-build failure: the session lost a held endpoint — same
+            # errored ladder as res.error (unexpected failure, session ends).
+            gone = RuntimeError(f"held endpoint for {name!r} ({key}) is "
+                                "gone; restart the bench session")
+            return _ladder(d, session, run, None, gone, rdir)
         devices[name] = inst
         owned[name] = False           # held: never reset/closed by the test
     for name in run.manual:
         devices.setdefault(name, None)   # None-for-manual
-    rdir = Path(results_dir)
     try:
         rdir.mkdir(parents=True, exist_ok=True)
     except OSError:
@@ -585,14 +640,28 @@ def _cmd_run_test(d: dict, session, req: dict):
     )
     out = _FrameStdout(d)
     saved_stdout = sys.stdout
+    saved_cwd = os.getcwd()
     sys.stdout = out
     ctx.install()                     # route test_helpers.prompt() to frames
     res, escaped = None, None
     try:
+        if rdir.is_dir():
+            # Generated scope ops write RELATIVE artifact filenames (e.g.
+            # save_screenshot) — run with CWD at the results dir so they
+            # land beside results.json, exactly like the legacy subprocess
+            # path whose CWD was the results dir.  The daemon is
+            # single-threaded with one run at a time; the prior CWD (the
+            # guided-manual screenshot tmp dir) is restored below so the
+            # exec_ops harvesting contract is unchanged.
+            os.chdir(rdir)
         res = mod.main(ctx=ctx)
     except BaseException as exc:  # noqa: BLE001 — backstop: same as res.error
         escaped = exc
     finally:
+        try:
+            os.chdir(saved_cwd)       # restored even on the ladder paths
+        except OSError:
+            pass
         ctx.restore()
         sys.stdout = saved_stdout
         out.close()

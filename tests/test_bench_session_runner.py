@@ -15,6 +15,7 @@ from __future__ import annotations
 import functools
 import importlib.util
 import json
+import os
 import queue
 import signal
 import subprocess
@@ -107,12 +108,24 @@ _TEXT_WAIT = _TEXT_QUICK.replace(
     "3. Wait 30 s.\n4. Operator: read DC voltage on TP VOUT with DMM1 as {1}.",
 ).replace("# BENCH-Q", "# BENCH-W")
 
+# Same, plus a scope screenshot (a RELATIVE artifact filename) before the read.
+_TEXT_SHOT = _TEXT_QUICK.replace(
+    "3. Operator: read DC voltage on TP VOUT with DMM1 as {1}.",
+    '3. Save SCOPE1 screenshot as "shot.png".\n'
+    "4. Operator: read DC voltage on TP VOUT with DMM1 as {1}.",
+).replace(
+    "DMM1 : dmm",
+    "SCOPE1 : scope channels=[1]\nDMM1 : dmm",
+).replace("# BENCH-Q", "# BENCH-S")
+
+_TEXTS = {"quick": _TEXT_QUICK, "wait": _TEXT_WAIT, "shot": _TEXT_SHOT}
+
 
 @functools.lru_cache(maxsize=None)
 def _code(kind: str) -> str:
     from rules_packager_base.rules.v2_0_2.parser import parse
     from rules_packager_base.rules.v2_0_2.parser.codegen import generate
-    r = parse(_TEXT_QUICK if kind == "quick" else _TEXT_WAIT)
+    r = parse(_TEXTS[kind])
     assert r.success and not r.findings, [f.code for f in r.findings]
     code = generate(r.json)
     assert "BENCH_SESSION_API = 1" in code
@@ -160,6 +173,17 @@ class _RaisingFake(_Fake):
                 raise RuntimeError(f"driver failure in {name}")
             return boom
         return super().__getattr__(name)
+
+
+class _ShotFake(_Fake):
+    """Like _Fake, but ``save_screenshot`` actually writes its (RELATIVE)
+    filename — the way a real scope driver drops the PNG into the process
+    CWD."""
+
+    def save_screenshot(self, filename=None, **k):
+        self._calls.append((self._e, self._d, "save_screenshot",
+                            {"filename": filename}))
+        Path(filename).write_bytes(b"PNG")
 
 
 class _ProtoCapture:
@@ -416,6 +440,46 @@ class EndpointRekeyTests(_BenchBase):
         self.assertTrue(resp["ok"])
         self.assertEqual(resp["identities"], {_EP_A: "ACME PSU 9080,SN123"})
 
+    def test_dry_run_plans_without_opening_or_holding(self):
+        # F-dryrun: "dry_run": true reconciles and returns the FULL plan
+        # without opening any endpoint, holding anything, creating a run,
+        # or reading identities.
+        s = self._session()
+        claims = [
+            _claim("T-A", "PSU1", _ADDR_A, dev="PHYS"),
+            _claim("T-C", "MAIN_SUPPLY", _ADDR_A2, dev="PHYS"),
+            {"test_id": "T-A", "local_name": "DMM1", "etype": "dmm",
+             "bench": {"remote": False}},
+        ]
+        dry = self._acquire(s, claims, dry_run=True)
+        self.assertTrue(dry["ok"], dry)
+        self.assertTrue(dry["dry_run"])
+        self.assertNotIn("run_id", dry)
+        self.assertNotIn("identities", dry)         # no identity reads
+        self.assertFalse(s.held)                    # nothing opened or held
+        self.assertEqual(self.calls, [])
+        self.assertFalse(s.bench.runs)              # no run created
+        # the dry plan IS the real plan: a following real acquire matches
+        real = self._acquire(s, claims)
+        self.assertTrue(real["ok"], real)
+        self.assertEqual(dry["plan"], real["plan"])
+        # and a dry run is allowed even while that run holds the bench
+        dry2 = self._acquire(s, claims, dry_run=True)
+        self.assertTrue(dry2["ok"], dry2)
+        self.assertEqual(dry2["plan"], real["plan"])
+
+    def test_dry_run_conflict_reported_nothing_opened(self):
+        s = self._session()
+        resp = self._acquire(s, [
+            _claim("T-A", "PSU1", _ADDR_A, etype="psu"),
+            _claim("T-B", "LOAD", _ADDR_A, etype="eload"),
+        ], dry_run=True)
+        self.assertFalse(resp["ok"])
+        self.assertEqual(resp["kind"], "EndpointConflict")
+        self.assertTrue(resp["conflicts"])
+        self.assertEqual(self.calls, [])
+        self.assertFalse(s.held)
+
     def test_manual_claims_never_form_endpoints(self):
         s = self._session()
         resp = self._acquire(s, [
@@ -453,18 +517,63 @@ class GuidedRoutingTests(_BenchBase):
         self.assertEqual(len(self._devcalls("PHYS", "set_voltage")), 1)
         self.assertEqual(set(s.held), {_EP_A})            # no name key added
 
-    def test_named_op_opens_own_device_without_a_run(self):
+    def test_named_op_reuses_held_endpoint_without_a_run(self):
+        # F-H1: with NO active run, a name-keyed guided op whose bench dict
+        # addresses an already-held endpoint (in ANOTHER spelling) lands on
+        # the held instance — ONE connection, never a second same-process
+        # session contending the endpoint's remote lock.
         s = self._session()
         s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
         r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
         self._dispatch(s, {"cmd": "release_run", "run_id": r1["run_id"]})
         r = er._cmd_exec_ops(s, {"ops": [self._set_v("PSU1")],
+                                 "bench_map": {"PSU1": {"visa": _ADDR_A2,
+                                                        "_dev": "GUIDED"}}})
+        self.assertFalse(r["aborted"], r)
+        self.assertEqual(len(self._devcalls("GUIDED", "connect")), 0)
+        self.assertEqual(len(self._devcalls("PHYS", "connect")), 1)
+        self.assertEqual(len(self._devcalls("PHYS", "set_voltage")), 1)
+        self.assertEqual(set(s.held), {_EP_A})            # no name key added
+
+    def test_named_op_opens_own_device_for_unheld_endpoint(self):
+        # Fallback preserved: a genuinely UN-HELD endpoint still opens
+        # name-keyed, today's guided-manual semantics.
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        self._dispatch(s, {"cmd": "release_run", "run_id": r1["run_id"]})
+        r = er._cmd_exec_ops(s, {"ops": [self._set_v("PSU1")],
+                                 "bench_map": {"PSU1": {"visa": _ADDR_B,
+                                                        "_dev": "GUIDED"}}})
+        self.assertFalse(r["aborted"], r)
+        self.assertEqual(len(self._devcalls("GUIDED", "connect")), 1)
+        self.assertEqual(len(self._devcalls("GUIDED", "set_voltage")), 1)
+        self.assertEqual(len(self._devcalls("PHYS", "set_voltage")), 0)
+        self.assertEqual(set(s.held), {_EP_A, "PSU1"})
+
+    def test_named_op_stays_name_keyed_on_old_wheel(self):
+        # Old-wheel venv (no bench_endpoints): the canonical fold is
+        # unavailable, so the op keeps today's name-keyed behavior (the same
+        # unsupported-bundle conditional pattern as acquire_run).
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        self._dispatch(s, {"cmd": "release_run", "run_id": r1["run_id"]})
+        import rules_packager_base as rpb
+        saved_attr = rpb.bench_endpoints
+        saved_mod = sys.modules.get("rules_packager_base.bench_endpoints")
+        del rpb.bench_endpoints
+        sys.modules["rules_packager_base.bench_endpoints"] = None
+
+        def _restore():
+            rpb.bench_endpoints = saved_attr
+            sys.modules["rules_packager_base.bench_endpoints"] = saved_mod
+        self.addCleanup(_restore)
+        r = er._cmd_exec_ops(s, {"ops": [self._set_v("PSU1")],
                                  "bench_map": {"PSU1": {"visa": _ADDR_A,
                                                         "_dev": "GUIDED"}}})
         self.assertFalse(r["aborted"], r)
-        # today's name-keyed guided semantics: its own instance under the name
         self.assertEqual(len(self._devcalls("GUIDED", "connect")), 1)
-        self.assertEqual(len(self._devcalls("GUIDED", "set_voltage")), 1)
         self.assertEqual(set(s.held), {_EP_A, "PSU1"})
 
 
@@ -571,6 +680,7 @@ class RunTestTests(_BenchBase):
             etype, bench.get("_dev", "?"), self.calls, "set_voltage")
         s = self._session()
         rid = self._acquired(s)
+        cwd_before = os.getcwd()
         resp, stop = self._run(s, rid, self._module(_code("quick")),
                                [self._hold()])
         self.assertTrue(stop)                       # respond then STOP (like shutdown)
@@ -582,6 +692,113 @@ class RunTestTests(_BenchBase):
         self.assertTrue(self._offs())
         self.assertEqual(len(self._devcalls("PHYS", "close")), 1)
         self.assertFalse(s.held)
+        # F-H5 guard: CWD restored even on the errored-ladder path
+        self.assertEqual(os.getcwd(), cwd_before)
+
+    def test_import_failure_ends_session_via_ladder(self):
+        # F-H3a: a test file that cannot even import mid-session is an
+        # UNEXPECTED execution failure — errored ladder: safe-off all held,
+        # teardown, session_ended, stop.  Never an ExecError leaving the
+        # session hot with no safe-off.
+        s = self._session()
+        rid = self._acquired(s)
+        module = Path(self.tmp.name) / "broken_import.py"
+        module.write_text("this is not python !!!\n", encoding="utf-8")
+        self._reader([])
+        resp, stop = self._dispatch(s, {"cmd": "run_test", "run_id": rid,
+                                        "module_path": str(module),
+                                        "results_dir": self.tmp.name})
+        self.assertTrue(stop)                       # respond then STOP
+        self.assertTrue(resp["ok"], resp)
+        self.assertTrue(resp["session_ended"])
+        self.assertTrue(resp["result"]["error"])
+        self.assertEqual(resp["result"]["overall"], "ERROR")
+        self.assertEqual(resp["result"]["exception_type"], "SyntaxError")
+        self.assertIn("traceback", resp["result"])
+        self.assertTrue(self._offs())               # safe-off all held ran
+        self.assertEqual(len(self._devcalls("PHYS", "close")), 1)
+        self.assertFalse(s.held)
+
+    def test_held_endpoint_gone_ends_session_via_ladder(self):
+        # F-H3a (context-build failure): a vanished held endpoint is the
+        # same unexpected-failure ladder — session ends, stop.
+        s = self._session()
+        rid = self._acquired(s)
+        s.held.clear()                    # the held instance vanished
+        self._reader([])
+        resp, stop = self._dispatch(s, {"cmd": "run_test", "run_id": rid,
+                                        "module_path":
+                                            str(self._module(_code("quick"))),
+                                        "results_dir": self.tmp.name})
+        self.assertTrue(stop)
+        self.assertTrue(resp["session_ended"])
+        self.assertTrue(resp["result"]["error"])
+        self.assertIn("restart the bench session",
+                      resp["result"]["exception_message"])
+
+    def test_unknown_run_refusal_is_benign_session_untouched(self):
+        # F-H3a counterpart: the genuinely-benign refusal class stays a
+        # plain error — no ladder, no teardown, session hot.
+        s = self._session()
+        self._acquired(s)
+        resp, stop = self._dispatch(s, {"cmd": "run_test", "run_id": "nope",
+                                        "module_path": "x",
+                                        "results_dir": self.tmp.name})
+        self.assertFalse(stop)
+        self.assertFalse(resp["ok"])
+        self.assertEqual(resp["kind"], "UnknownRun")
+        self.assertEqual(set(s.held), {_EP_A})
+        self.assertFalse(self._offs())
+        self.assertFalse(any(c[2] == "close" for c in self.calls))
+
+    def test_scope_screenshot_relative_write_lands_in_results_dir(self):
+        # F-H5: generated scope ops write RELATIVE artifact filenames; the
+        # daemon runs main(ctx) with CWD at the results dir, so the PNG
+        # lands beside results.json (like the legacy subprocess path) — and
+        # the prior CWD is restored afterwards.
+        er._build_device = lambda bench, etype, lifecycle, log: _ShotFake(
+            etype, bench.get("_dev", "?"), self.calls)
+        s = self._session()
+        resp = self._acquire(s, [
+            _claim("BENCH-S", "PSU1", dev="PHYS"),
+            _claim("BENCH-S", "SCOPE1", _ADDR_B, etype="scope", dev="SCOPE"),
+            {"test_id": "BENCH-S", "local_name": "DMM1", "etype": "dmm",
+             "bench": {"remote": False}},
+        ])
+        self.assertTrue(resp["ok"], resp)
+        cwd_before = os.getcwd()
+        r, stop = self._run(s, resp["run_id"], self._module(_code("shot")),
+                            [_answer("3.3"), self._hold()])
+        self.assertFalse(stop)
+        self.assertEqual(r["result"]["overall"], "PASS", r)
+        self.assertEqual(os.getcwd(), cwd_before)   # CWD restored after run
+        shot = self._results_dir() / "shot.png"
+        self.assertTrue(shot.exists(),
+                        sorted(p.name for p in self._results_dir().iterdir()))
+        self.assertFalse((Path(cwd_before) / "shot.png").exists())
+        # the evidence path in results.json refers to the file BESIDE it
+        data = json.loads((self._results_dir() / "results.json")
+                          .read_text(encoding="utf-8"))
+        self.assertEqual([e["file"] for e in data["evidence"]], ["shot.png"])
+
+    def test_exec_ops_relative_write_stays_in_daemon_cwd(self):
+        # Guided-manual screenshot harvesting contract (UNCHANGED by F-H5):
+        # outside run_test the daemon CWD is the parent's choice (the
+        # RemoteSession screenshot tmp dir) — an exec_ops relative write
+        # lands THERE, never in a results dir.
+        er._build_device = lambda bench, etype, lifecycle, log: _ShotFake(
+            etype, bench.get("_dev", "?"), self.calls)
+        cwd0 = os.getcwd()
+        os.chdir(self.tmp.name)           # stand-in for the daemon tmp CWD
+        self.addCleanup(os.chdir, cwd0)
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "SCOPE1", "type": "scope"}]}
+        r = er._cmd_exec_ops(s, {"ops": [{"node_path": "s", "op": {
+            "op": "scope.screenshot", "device": "SCOPE1",
+            "filename": "guided_shot.png"}}],
+            "bench_map": {"SCOPE1": {"visa": _ADDR_B, "_dev": "GUIDED"}}})
+        self.assertFalse(r["aborted"], r)
+        self.assertTrue((Path(self.tmp.name) / "guided_shot.png").exists())
 
     def test_escaped_exception_backstop_same_as_error(self):
         s = self._session()
@@ -764,6 +981,25 @@ class BenchClientLiveTests(unittest.TestCase):
         out = c.end_session()
         self.assertTrue(out.get("ok"), out)
         self.assertTrue(c.dead)
+
+    def test_plan_only_holds_nothing_and_matches_acquire(self):
+        # F-dryrun client seam: plan_only == acquire_run + dry_run over the
+        # live channel; nothing held, and it still answers while a run
+        # holds the bench.
+        c = self._client()
+        claims = [
+            {"test_id": "T", "local_name": "PSU1", "etype": "psu",
+             "bench": {"remote": False}}]
+        dry = c.plan_only(claims)
+        self.assertTrue(dry.get("ok"), dry)
+        self.assertTrue(dry.get("dry_run"))
+        self.assertNotIn("run_id", dry)
+        acq = c.acquire_run(claims)
+        self.assertTrue(acq.get("ok"), acq)
+        self.assertEqual(dry["plan"], acq["plan"])
+        dry2 = c.plan_only(claims)          # run active: dry-run still allowed
+        self.assertTrue(dry2.get("ok"), dry2)
+        self.assertEqual(dry2["plan"], acq["plan"])
 
     def test_daemon_dead_between_exchanges_is_session_dead_no_respawn(self):
         # A holder killed BETWEEN exchanges must surface SessionDead from

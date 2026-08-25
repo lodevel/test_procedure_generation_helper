@@ -477,11 +477,11 @@ def _safe_name(device: str) -> str:
 def _ensure_held(session: _Session, bench_map: dict, device: str, etype: str) -> None:
     """Open a per_session device ONCE (no reset) into ``held`` + bind it in the
     shared namespace.  Idempotent — a held device is reused across commands.
-    Bench-session routing: when the active run's view claims ``device`` onto a
-    HELD canonical endpoint, bind the local name to that instance instead of
-    opening a second session on the same physical endpoint."""
+    Bench-session routing: when the active run's view — or, run active or not,
+    the op's OWN bench dict folded to a canonical endpoint — lands ``device`` on
+    a HELD endpoint, bind that instance instead of opening a second session."""
     if session.bench is not None:
-        key = session.bench.enter(session, device)
+        key = session.bench.enter(session, device, bench_map.get(device), etype)
         if key != device:              # run-view routed onto a held endpoint
             session.ns[_safe_name(device)] = session.held[key]
             session.etype_of.setdefault(device, etype)

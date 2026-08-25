@@ -32,9 +32,24 @@ Bench-session frames (requests ride the daemon's NDJSON protocol)
         "plan": {"endpoints": [{"endpoint","etype","policy","promoted",
                                 "usages": [labels]}],
                  "manual": [labels], "per_step": [endpoints]},
-        "identities": {endpoint: str}}          # from held drivers' .identity/.idn
+        "identities": {endpoint: str},          # from held drivers' .identity/.idn
+        "reconnected"?: [endpoints]}   # held endpoints found dead and rebuilt
     -> {"ok": false, "kind": "unsupported_bundle"} on an old wheel (no
        bench_endpoints in the project venv); "RunActive"; "EndpointConflict".
+    Boundary health check (F-H6, ``check_held``): every ALREADY-HELD
+    per_session endpoint the incoming run claims is probed (a live *IDN?
+    through the raw seam — the same read that stocks the ``.identity``
+    fingerprint) before reuse; per_step and manual equipment are never
+    probed.  A dead endpoint gets exactly ONE rebuild through the normal
+    construction path, then its identity is compared to the session's
+    fingerprint: mismatch -> {"ok": false, "kind": "IdentityChanged",
+    "endpoints", "changes"} with the fingerprint untouched; session
+    keep_state ON + a rebuilt POWER endpoint (its lifecycle has a safe-off
+    action) -> {"ok": false, "kind": "StateLost", "endpoints"} — fires
+    once: the rebuilt instance stays held, so the NEXT acquire probes
+    healthy and proceeds.  Rebuild failure -> the errored ladder (safe-off
+    all held, teardown, "session_ended": true, daemon stops).  The same
+    check guards the guided-op held-reuse routing (``_ensure_held``).
 
   {"cmd": "release_run", "run_id"} -> {"ok": true}   # devices STAY held
 
@@ -191,6 +206,9 @@ class BenchState:
         self.active: str | None = None   # the exclusive run holding the bench
         self.alias: dict = {}      # local name -> endpoint, union across ALL runs
         self.channels: dict = {}   # endpoint -> set(int), union across ALL runs
+        self.keep_state = False    # last acquire's keep_state (guided F-H6 gate)
+        self.fingerprints: dict = {}  # endpoint -> identity last read at acquire
+        self.bench_of: dict = {}   # endpoint -> admission bench dict (rebuilds)
         self.run_seq = itertools.count(1)
         self.prompt_seq = itertools.count(1)
 
@@ -242,6 +260,121 @@ def _state(session) -> BenchState:
     if session.bench is None:
         session.bench = BenchState()
     return session.bench
+
+
+# ---------------------------------------------------------------------------
+# Boundary health check (F-H6): probe + one rebuild for held endpoints.
+# ---------------------------------------------------------------------------
+
+
+class HealthRefusal(Exception):
+    """Typed health-check refusal (IdentityChanged / StateLost) carrying its
+    response dict — folded into the acquire_run response at that call site,
+    raised through ``_ensure_held`` on the guided-op held-reuse path."""
+
+    def __init__(self, resp: dict) -> None:
+        super().__init__(resp.get("error") or resp.get("kind"))
+        self.resp = resp
+
+
+def _read_identity(dev):
+    """Stored *IDN? string where the driver exposes one (the same attribute
+    read that stocks the acquire response's ``identities``)."""
+    for attr in ("identity", "idn"):
+        ident = getattr(dev, attr, None)
+        if ident is not None and not callable(ident):
+            return str(ident)
+    return None
+
+
+def _probe(d: dict, dev) -> bool:
+    """Live liveness probe: ``*IDN?`` through the daemon's raw seam.  A
+    driver exposing no public raw interface is not probeable — treated as
+    healthy rather than falsely rebuilt."""
+    if not (hasattr(dev, "query_raw") or hasattr(dev, "raw_command")):
+        return True
+    try:
+        d["_raw_send"](dev, "*IDN?")
+        return True
+    except Exception:  # noqa: BLE001 — any I/O failure == dead link
+        return False
+
+
+def check_held(d: dict, session, key: str) -> str:
+    """Boundary health check for ONE bench-held endpoint — shared by
+    ``acquire_run`` and the guided-op held-reuse routing in ``_ensure_held``.
+
+    A device that answers the probe is healthy: returns "ok", nothing
+    touched.  Dead -> exactly ONE rebuild attempt: best-effort close/drop,
+    reconstruct through the NORMAL construction path from the stored
+    admission bench, then compare the fresh identity to the session's
+    fingerprint.  Mismatch -> ``HealthRefusal`` (IdentityChanged) with the
+    fingerprint untouched (the rebuilt instance stays held; nothing runs);
+    match or no cache -> "rebuilt".  A failed rebuild raises RuntimeError
+    with the dead instance dropped: held-endpoint-gone for the caller's
+    existing ladder.
+    """
+    dev = session.held.get(key)
+    st = _state(session)
+    bench = st.bench_of.get(key)
+    if dev is None or bench is None or _probe(d, dev):
+        return "ok"
+    etype = session.etype_of.get(key, "")
+    d["_close_held_device"](session, key)
+    try:
+        d["_ensure_held"](session, {key: bench}, key, etype)
+    except Exception as exc:
+        raise RuntimeError(
+            f"held endpoint {key} is gone (reconnect failed: {exc}); "
+            "restart the bench session") from exc
+    ident = _read_identity(session.held[key])
+    cached = st.fingerprints.get(key)
+    if cached is not None and ident is not None and ident != cached:
+        raise HealthRefusal({
+            "ok": False, "kind": "IdentityChanged", "endpoints": [key],
+            "changes": {key: {"cached": cached, "current": ident}},
+            "error": (
+                f"equipment identity changed at {key} after a lost "
+                "connection was re-established (connected instrument "
+                "differs from the held fingerprint). Run Start Bench "
+                "Session to review and confirm the change before "
+                "executing.")})
+    session.res.log.append(
+        f"{key} connection lost — re-established, identity verified")
+    return "rebuilt"
+
+
+def state_lost_refusal(session, rebuilt: list) -> dict | None:
+    """StateLost rule: session keep_state promised DUT continuity between
+    tests; a rebuilt POWER endpoint (its lifecycle declares a safe-off
+    action) means the DUT power-cycled behind it.  Returns the typed
+    refusal dict, or None when the rule does not fire.  Fires once — the
+    rebuilt instances stay held, so the operator's re-run probes healthy."""
+    st = _state(session)
+    if not st.keep_state:
+        return None
+    lost = [k for k in rebuilt
+            if (session.lifecycle.get(session.etype_of.get(k)) or {}).get("cleanup")]
+    if not lost:
+        return None
+    return {"ok": False, "kind": "StateLost", "endpoints": lost,
+            "error": (
+                ", ".join(lost) + " reconnected after a lost connection — "
+                "the keep-state chain is broken there (the DUT may have "
+                "power-cycled). Nothing was run; the session is still "
+                "live. Re-run to continue from here.")}
+
+
+def _gone_ladder(d: dict, session, key: str, exc) -> dict:
+    """Rebuild failure at acquire == held-endpoint-gone: the errored ladder
+    (safe-off ALL held, teardown, session ends, daemon stops) — the health
+    check adds a second chance BEFORE the ladder, it never replaces it."""
+    unsafe = d["_teardown"](session)
+    resp = {"ok": False, "kind": "ExecError", "session_ended": True,
+            "error": f"{exc}"}
+    if unsafe:
+        resp["unsafe"] = unsafe
+    return resp
 
 
 # ---------------------------------------------------------------------------
@@ -433,6 +566,9 @@ def _cmd_acquire_run(d: dict, session, req: dict) -> dict:
     identities: dict = {}
     summary: list = []
     per_step: list = []
+    reconnected: list = []
+    if not dry:
+        st.keep_state = bool(req.get("keep_state"))
     for spec in plan.endpoints:
         if spec.effective_policy != "per_session":
             per_step.append(spec.endpoint)   # test self-manages (full lifecycle)
@@ -449,6 +585,16 @@ def _cmd_acquire_run(d: dict, session, req: dict) -> dict:
                 namespace = d["_namespace_for"](spec.etype, spec.subtype)
                 bench = dict(spec.usages[0].claim.bench)
                 bench.update(spec.merged_connection)
+                st.bench_of[spec.endpoint] = bench
+                # Boundary health check (F-H6): a held endpoint this run
+                # claims must still answer; ONE rebuild before the ladder.
+                try:
+                    if check_held(d, session, spec.endpoint) == "rebuilt":
+                        reconnected.append(spec.endpoint)
+                except HealthRefusal as exc:
+                    return exc.resp
+                except Exception as exc:  # noqa: BLE001 — rebuild failed
+                    return _gone_ladder(d, session, spec.endpoint, exc)
                 # Lazy admission: open ONCE (no reset) under the ENDPOINT key.
                 d["_ensure_held"](session, {spec.endpoint: bench},
                                   spec.endpoint, namespace)
@@ -456,12 +602,10 @@ def _cmd_acquire_run(d: dict, session, req: dict) -> dict:
                 for u in spec.usages:
                     chans.update(_claim_channels(u.claim.bench))
                     st.alias[u.claim.local_name] = spec.endpoint
-                dev = session.held[spec.endpoint]
-                for attr in ("identity", "idn"):   # stored *IDN? where present
-                    ident = getattr(dev, attr, None)
-                    if ident is not None and not callable(ident):
-                        identities[spec.endpoint] = str(ident)
-                        break
+                ident = _read_identity(session.held[spec.endpoint])
+                if ident is not None:
+                    identities[spec.endpoint] = ident
+                    st.fingerprints[spec.endpoint] = ident
         summary.append({"endpoint": spec.endpoint, "etype": spec.etype,
                         "policy": spec.effective_policy,
                         "promoted": spec.promoted,
@@ -474,17 +618,24 @@ def _cmd_acquire_run(d: dict, session, req: dict) -> dict:
                 "plan": {"endpoints": summary,
                          "manual": [c.label for c in plan.manual_usages],
                          "per_step": per_step}}
+    if reconnected:
+        refusal = state_lost_refusal(session, reconnected)
+        if refusal is not None:
+            return refusal
     run_id = f"run-{next(st.run_seq)}"
     st.runs[run_id] = _Run(
         run_id=run_id, keep_state=bool(req.get("keep_state")),
         results_dir=str(req.get("results_dir") or ""),
         view=view, manual=tuple(c.local_name for c in plan.manual_usages))
     st.active = run_id
-    return {"ok": True, "run_id": run_id,
+    resp = {"ok": True, "run_id": run_id,
             "plan": {"endpoints": summary,
                      "manual": [c.label for c in plan.manual_usages],
                      "per_step": per_step},
             "identities": identities}
+    if reconnected:
+        resp["reconnected"] = reconnected
+    return resp
 
 
 def _cmd_release_run(d: dict, session, req: dict) -> dict:
@@ -673,7 +824,10 @@ def handle(d: dict, session, req: dict):
     the same contract as the daemon's ``_dispatch`` branches."""
     cmd = req.get("cmd")
     if cmd == "acquire_run":
-        return _cmd_acquire_run(d, session, req), False
+        resp = _cmd_acquire_run(d, session, req)
+        # session_ended only appears on the acquire-time gone-ladder: the
+        # daemon has already safed-off + torn down — stop like shutdown.
+        return resp, bool(resp.get("session_ended"))
     if cmd == "release_run":
         return _cmd_release_run(d, session, req), False
     if cmd == "cancel_run":

@@ -483,6 +483,13 @@ def _ensure_held(session: _Session, bench_map: dict, device: str, etype: str) ->
     if session.bench is not None:
         key = session.bench.enter(session, device, bench_map.get(device), etype)
         if key != device:              # run-view routed onto a held endpoint
+            # Boundary health check (F-H6): same probe + one-rebuild +
+            # identity check as acquire_run, before reusing the instance.
+            b = _bench()
+            if b.check_held(globals(), session, key) == "rebuilt":
+                refusal = b.state_lost_refusal(session, [key])
+                if refusal is not None:
+                    raise b.HealthRefusal(refusal)
             session.ns[_safe_name(device)] = session.held[key]
             session.etype_of.setdefault(device, etype)
             return
@@ -690,6 +697,11 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
                             "has_value": bool(has), "value": value,
                             "unit": unit, "ref": ref})
         except Exception as exc:  # noqa: BLE001 — record + stop the batch
+            if session.bench is not None and isinstance(exc, _bench().HealthRefusal):
+                # Typed health refusal (F-H6) INSTEAD of running the ops:
+                # nothing ran and the rebuilt instance stays held, so no
+                # abnormal-exit safe-off and no broken-device drop.
+                return dict(exc.resp, log=session.res.log[log_mark:])
             failed = True
             results.append({"node_path": node_path, "ok": False,
                             "error": f"{type(exc).__name__}: {exc}"})

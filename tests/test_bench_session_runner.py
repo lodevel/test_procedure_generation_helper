@@ -578,6 +578,196 @@ class GuidedRoutingTests(_BenchBase):
 
 
 # ---------------------------------------------------------------------------
+# Boundary health check (F-H6): probe + one rebuild for held endpoints.
+# ---------------------------------------------------------------------------
+
+
+def _kill_link(dev) -> None:
+    """Dead physical link: the live *IDN? probe raises (the _RaisingFake
+    idiom, applied to the ONE held instance's probe method)."""
+    def boom(*a, **k):
+        raise RuntimeError("VISA link dead")
+    dev.query_raw = boom
+
+
+class HealthCheckTests(_BenchBase):
+    def _set_v(self, device, volts=5.0):
+        return {"node_path": "s", "op": {
+            "op": "psu.set_voltage", "device": device, "channel": 1,
+            "volts": volts, "volts_unit": "V"}}
+
+    def _held_acquire_release(self, s, claims, **kw):
+        r = self._acquire(s, claims, **kw)
+        self.assertTrue(r["ok"], r)
+        self._dispatch(s, {"cmd": "release_run", "run_id": r["run_id"]})
+        return r
+
+    def test_healthy_probe_is_noop(self):
+        s = self._session()
+        self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        r2 = self._acquire(s, [_claim("T-B", "PSU1", dev="PHYS")])
+        self.assertTrue(r2["ok"], r2)
+        self.assertNotIn("reconnected", r2)
+        # probed once (live *IDN?), never rebuilt
+        self.assertEqual(len(self._devcalls("PHYS", "query_raw")), 1)
+        self.assertEqual(len(self._devcalls("PHYS", "connect")), 1)
+        self.assertFalse(any(c[2] == "close" for c in self.calls))
+
+    def test_dead_held_endpoint_rebuilt_and_run_proceeds(self):
+        s = self._session()
+        self._held_acquire_release(s, [
+            _claim("BENCH-Q", "PSU1", dev="PHYS"),
+            {"test_id": "BENCH-Q", "local_name": "DMM1", "etype": "dmm",
+             "bench": {"remote": False}},
+        ])
+        _kill_link(s.held[_EP_A])
+        r2 = self._acquire(s, [
+            _claim("BENCH-Q", "PSU1", dev="PHYS"),
+            {"test_id": "BENCH-Q", "local_name": "DMM1", "etype": "dmm",
+             "bench": {"remote": False}},
+        ])
+        self.assertTrue(r2["ok"], r2)
+        self.assertEqual(r2["reconnected"], [_EP_A])
+        # dead instance dropped (best-effort close), ONE fresh construction
+        self.assertEqual(len(self._devcalls("PHYS", "close")), 1)
+        self.assertEqual(len(self._devcalls("PHYS", "connect")), 2)
+        self.assertIn("re-established", " ".join(s.res.log))
+        # the run proceeds on the rebuilt instance
+        resp, stop = self._run(s, r2["run_id"], self._module(_code("quick")),
+                               [_answer("3.3"), self._hold()])
+        self.assertFalse(stop)
+        self.assertEqual(resp["result"]["overall"], "PASS", resp)
+
+    def test_rebuilt_identity_mismatch_refused_cache_untouched(self):
+        idn_box = {"idn": "ACME PSU,SN1"}
+
+        class _IdnFake(_Fake):
+            def __init__(self, *a):
+                super().__init__(*a)
+                self.idn = idn_box["idn"]
+        er._build_device = lambda bench, etype, lifecycle, log: _IdnFake(
+            etype, bench.get("_dev", "?"), self.calls)
+        s = self._session()
+        self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        self.assertEqual(s.bench.fingerprints, {_EP_A: "ACME PSU,SN1"})
+        _kill_link(s.held[_EP_A])
+        idn_box["idn"] = "ACME PSU,SN9"      # a DIFFERENT instrument answers
+        r2 = self._acquire(s, [_claim("T-B", "PSU1", dev="PHYS")])
+        self.assertFalse(r2["ok"])
+        self.assertEqual(r2["kind"], "IdentityChanged")
+        self.assertEqual(r2["endpoints"], [_EP_A])
+        self.assertEqual(r2["changes"][_EP_A],
+                         {"cached": "ACME PSU,SN1", "current": "ACME PSU,SN9"})
+        # fingerprint cache untouched; rebuilt instance held; no run created
+        self.assertEqual(s.bench.fingerprints[_EP_A], "ACME PSU,SN1")
+        self.assertIn(_EP_A, s.held)
+        self.assertIsNone(s.bench.active)
+
+    def test_rebuild_failure_runs_gone_ladder(self):
+        s = self._session()
+        claims = [_claim("T-A", "PSU1", _ADDR_A, dev="P-A"),
+                  _claim("T-A", "PSU2", _ADDR_B, dev="P-B")]
+        self._held_acquire_release(s, claims)
+        _kill_link(s.held[_EP_A])
+        er._build_device = lambda *a, **k: (_ for _ in ()).throw(
+            RuntimeError("no route to host"))
+        resp, stop = self._dispatch(s, {"cmd": "acquire_run", "claims": claims})
+        self.assertTrue(stop)                       # respond then STOP
+        self.assertFalse(resp["ok"])
+        self.assertTrue(resp["session_ended"])
+        self.assertIn("gone", resp["error"])
+        self.assertIn("restart the bench session", resp["error"])
+        # errored ladder: remaining held equipment safed-off and closed
+        self.assertTrue(any(c[1] == "P-B" for c in self._offs()))
+        self.assertEqual(len(self._devcalls("P-B", "close")), 1)
+        self.assertFalse(s.held)
+
+    def test_state_lost_power_endpoint_keep_state_on(self):
+        s = self._session()
+        claims = [_claim("T-A", "PSU1", dev="PHYS")]
+        self._held_acquire_release(s, claims, keep_state=True)
+        _kill_link(s.held[_EP_A])
+        r2 = self._acquire(s, claims, keep_state=True)
+        self.assertFalse(r2["ok"])
+        self.assertEqual(r2["kind"], "StateLost")
+        self.assertEqual(r2["endpoints"], [_EP_A])
+        self.assertIn("keep-state", r2["error"])
+        # rebuilt instance stays held, session alive, no run created
+        self.assertIn(_EP_A, s.held)
+        self.assertIsNone(s.bench.active)
+        # the incident fires ONCE: the operator's re-run proceeds
+        r3 = self._acquire(s, claims, keep_state=True)
+        self.assertTrue(r3["ok"], r3)
+        self.assertNotIn("reconnected", r3)
+
+    def test_state_lost_not_for_non_power_endpoint(self):
+        s = self._session()
+        claims = [_claim("T-A", "SCOPE1", _ADDR_B, etype="scope", dev="SC")]
+        self._held_acquire_release(s, claims, keep_state=True)
+        _kill_link(s.held[_EP_B])
+        r2 = self._acquire(s, claims, keep_state=True)
+        self.assertTrue(r2["ok"], r2)               # scope: no off action
+        self.assertEqual(r2["reconnected"], [_EP_B])
+
+    def test_keep_state_off_power_rebuild_proceeds(self):
+        s = self._session()
+        claims = [_claim("T-A", "PSU1", dev="PHYS")]
+        self._held_acquire_release(s, claims)       # keep_state OFF (default)
+        _kill_link(s.held[_EP_A])
+        r2 = self._acquire(s, claims)
+        self.assertTrue(r2["ok"], r2)
+        self.assertEqual(r2["reconnected"], [_EP_A])
+
+    def test_per_step_equipment_never_probed(self):
+        s = self._session()
+        self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        dead = s.held[_EP_A]
+        _kill_link(dead)
+        r2 = self._acquire(s, [_claim("T-B", "PSU1", dev="PHYS")],
+                           policies={"T-B": {"PSU1": "per_step"}})
+        self.assertTrue(r2["ok"], r2)               # a probe would have laddered
+        self.assertNotIn("reconnected", r2)
+        self.assertEqual(r2["plan"]["per_step"], [_EP_A])
+        self.assertIs(s.held[_EP_A], dead)          # untouched, never rebuilt
+        self.assertEqual(len(self._devcalls("PHYS", "connect")), 1)
+
+    def test_guided_reuse_probes_and_rebuilds(self):
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        _kill_link(s.held[_EP_A])
+        r = er._cmd_exec_ops(s, {"ops": [self._set_v("PSU1")],
+                                 "bench_map": {"PSU1": {"visa": _ADDR_A2,
+                                                        "_dev": "GUIDED"}}})
+        self.assertFalse(r["aborted"], r)
+        # rebuilt from the STORED admission bench, not the guided op's dict
+        self.assertEqual(len(self._devcalls("GUIDED", "connect")), 0)
+        self.assertEqual(len(self._devcalls("PHYS", "connect")), 2)
+        self.assertEqual(len(self._devcalls("PHYS", "set_voltage")), 1)
+        self.assertTrue(any("re-established" in ln for ln in r["log"]), r)
+
+    def test_guided_reuse_state_lost_refusal_then_proceeds(self):
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")],
+                                   keep_state=True)
+        _kill_link(s.held[_EP_A])
+        r = er._cmd_exec_ops(s, {"ops": [self._set_v("PSU1")],
+                                 "bench_map": {"PSU1": {"visa": _ADDR_A,
+                                                        "_dev": "GUIDED"}}})
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["kind"], "StateLost")
+        self.assertEqual(r["endpoints"], [_EP_A])
+        self.assertEqual(len(self._devcalls("PHYS", "set_voltage")), 0)
+        # rebuilt instance stays held: the next batch probes healthy and runs
+        r2 = er._cmd_exec_ops(s, {"ops": [self._set_v("PSU1")],
+                                  "bench_map": {"PSU1": {"visa": _ADDR_A,
+                                                         "_dev": "GUIDED"}}})
+        self.assertFalse(r2["aborted"], r2)
+        self.assertEqual(len(self._devcalls("PHYS", "set_voltage")), 1)
+
+
+# ---------------------------------------------------------------------------
 # run_test: happy path, prompts, cancel, ladder, reimport, rejection.
 # ---------------------------------------------------------------------------
 

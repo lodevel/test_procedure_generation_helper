@@ -49,7 +49,10 @@ Bench-session frames (requests ride the daemon's NDJSON protocol)
     once: the rebuilt instance stays held, so the NEXT acquire probes
     healthy and proceeds.  Rebuild failure -> the errored ladder (safe-off
     all held, teardown, "session_ended": true, daemon stops).  The same
-    check guards the guided-op held-reuse routing (``_ensure_held``).
+    check guards the guided-op held-reuse routing (``_ensure_held``);
+    the safe_off and raw contexts run the same probe + rebuild but never
+    raise StateLost (``probe_refuse=False``) — a safety action proceeds on
+    the rebuilt instance, and a raw line only refuses on IdentityChanged.
 
   {"cmd": "release_run", "run_id"} -> {"ok": true}   # devices STAY held
 

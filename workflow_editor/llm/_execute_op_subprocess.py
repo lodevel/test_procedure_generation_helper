@@ -474,19 +474,27 @@ def _safe_name(device: str) -> str:
     return _sn(device)
 
 
-def _ensure_held(session: _Session, bench_map: dict, device: str, etype: str) -> None:
+def _ensure_held(session: _Session, bench_map: dict, device: str, etype: str,
+                 probe_refuse: bool = True) -> None:
     """Open a per_session device ONCE (no reset) into ``held`` + bind it in the
     shared namespace.  Idempotent — a held device is reused across commands.
     Bench-session routing: when the active run's view — or, run active or not,
     the op's OWN bench dict folded to a canonical endpoint — lands ``device`` on
-    a HELD endpoint, bind that instance instead of opening a second session."""
+    a HELD endpoint, bind that instance instead of opening a second session.
+    ``probe_refuse=False`` (safe-off / raw-terminal contexts): the F-H6 probe
+    and one-rebuild still run — repairing a dead link in order to act on the
+    device is exactly right there — but the StateLost refusal is suppressed:
+    the caller proceeds on the rebuilt instance (a safety action must never
+    refuse to run; keep_state is irrelevant to it).  A rebuild failure still
+    propagates as the ordinary error it always was."""
     if session.bench is not None:
         key = session.bench.enter(session, device, bench_map.get(device), etype)
         if key != device:              # run-view routed onto a held endpoint
             # Boundary health check (F-H6): same probe + one-rebuild +
             # identity check as acquire_run, before reusing the instance.
             b = _bench()
-            if b.check_held(globals(), session, key) == "rebuilt":
+            if (b.check_held(globals(), session, key) == "rebuilt"
+                    and probe_refuse):
                 refusal = b.state_lost_refusal(session, [key])
                 if refusal is not None:
                     raise b.HealthRefusal(refusal)
@@ -698,10 +706,14 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
                             "unit": unit, "ref": ref})
         except Exception as exc:  # noqa: BLE001 — record + stop the batch
             if session.bench is not None and isinstance(exc, _bench().HealthRefusal):
-                # Typed health refusal (F-H6) INSTEAD of running the ops:
-                # nothing ran and the rebuilt instance stays held, so no
-                # abnormal-exit safe-off and no broken-device drop.
-                return dict(exc.resp, log=session.res.log[log_mark:])
+                # Typed health refusal (F-H6) stops the batch AT this op: the
+                # refused endpoint ran NOTHING (its rebuilt instance stays
+                # held — no abnormal-exit safe-off, no broken-device drop),
+                # but earlier ops in this batch DID execute — their results
+                # ride along so the host records them and a re-run resumes
+                # after them instead of re-executing state-changing ops.
+                return dict(exc.resp, results=results,
+                            log=session.res.log[log_mark:])
             failed = True
             results.append({"node_path": node_path, "ok": False,
                             "error": f"{type(exc).__name__}: {exc}"})
@@ -785,8 +797,17 @@ def _cmd_raw(session: _Session, req: dict) -> dict:
     policy = _policy_for(bench_map.get(device) or {}, namespace, session.lifecycle)
     try:
         if policy == "per_session":
-            _ensure_held(session, bench_map, device, namespace)  # hold, reuse if armed
-            reply = _raw_send(session.held[device], text)
+            # Hold, reuse if armed.  probe_refuse=False: a raw command may
+            # repair (probe + one rebuild) a dead held link, but StateLost
+            # semantics don't apply to a terminal line — it proceeds on the
+            # rebuilt instance.  IdentityChanged still surfaces, typed, below.
+            _ensure_held(session, bench_map, device, namespace,
+                         probe_refuse=False)
+            # A guided name routed onto a bench endpoint holds the instance
+            # under its ENDPOINT key; the name-keyed namespace binding covers
+            # both the routed and the plain name-keyed case.
+            dev = session.held.get(device) or session.ns.get(_safe_name(device))
+            reply = _raw_send(dev, text)
         else:                                                 # per_step: transient
             bench = bench_map.get(device)
             if bench is None:
@@ -815,6 +836,12 @@ def _cmd_raw(session: _Session, req: dict) -> dict:
         return {"ok": True, "response": reply,
                 "log": session.res.log[log_mark:]}
     except Exception as exc:  # noqa: BLE001
+        if session.bench is not None and isinstance(exc, _bench().HealthRefusal):
+            # Typed health refusal (IdentityChanged — StateLost is suppressed
+            # above): kind + clean message pass through like _cmd_exec_ops',
+            # never "ExecError: HealthRefusal: ...".  The rebuilt, healthy
+            # instance stays held — there is nothing to drop.
+            return dict(exc.resp, log=session.res.log[log_mark:])
         # Coherent with exec_ops: a broken per_session handle is dropped so the
         # next command/op re-opens fresh (retry-on-next) instead of wedging.
         # SAFETY SPLIT (deliberate, unlike _cmd_exec_ops): the daemon runs NO
@@ -839,7 +866,12 @@ def _cmd_raw(session: _Session, req: dict) -> dict:
 def _cmd_safe_off(session: _Session, req: dict) -> dict:
     """Turn specified outputs OFF, keeping devices held (the session continues).
     Doubles as the fresh-recovery path: a brand-new daemon opens the targets
-    here, offs them, and a following ``shutdown`` closes+unlocks them."""
+    here, offs them, and a following ``shutdown`` closes+unlocks them.
+    A SAFETY action never refuses (F-H6): a dead held endpoint is probed and
+    rebuilt (``probe_refuse=False`` — no StateLost, keep_state irrelevant) and
+    the off runs on the rebuilt instance; a target that cannot be (re)opened at
+    all lands in ``unsafe`` so the host latches UNSAFE, exactly as a pre-F-H6
+    dead-link off failure did."""
     guard = _require_lifecycle(session)
     if guard:
         return guard
@@ -851,17 +883,36 @@ def _cmd_safe_off(session: _Session, req: dict) -> dict:
     targets = req.get("safe_off") or []   # [{"device","etype","channels":[...]}]
     log_mark = len(session.res.log)
     todo: dict = {}
+    unsafe: list = []
     for t in targets:
         device, etype = t.get("device"), t.get("etype")
         try:
-            _ensure_held(session, bench_map, device, etype)
+            try:
+                _ensure_held(session, bench_map, device, etype,
+                             probe_refuse=False)
+            except Exception as exc:  # noqa: BLE001
+                if not (session.bench is not None
+                        and isinstance(exc, _bench().HealthRefusal)):
+                    raise
+                # Health refusal (identity changed on a rebuilt link) during a
+                # SAFETY action: never refuse — whatever instrument answers at
+                # that endpoint gets its outputs driven off.  The rebuilt
+                # instance is held and healthy, so the second pass probes
+                # clean and binds it.
+                session.res.log.append(
+                    f"safe-off {device}: proceeding despite {exc}")
+                _ensure_held(session, bench_map, device, etype,
+                             probe_refuse=False)
             todo[device] = set(t.get("channels") or [1])
         except Exception as exc:  # noqa: BLE001
+            # Open/rebuild failed: these outputs could NOT be powered down —
+            # they land in ``unsafe`` (not just the log) so the host latches
+            # UNSAFE, the pre-F-H6 dead-link contract.
             session.res.log.append(f"UNSAFE: safe-off open {device} FAILED: {exc}")
-    unsafe: list = []
+            unsafe.extend(f"{device} CH{ch}" for ch in (t.get("channels") or [1]))
     if todo:
-        unsafe = _safe_off(procedure_json, session.ns, todo, session.etype_of,
-                           session.lifecycle, session.res)
+        unsafe.extend(_safe_off(procedure_json, session.ns, todo, session.etype_of,
+                                session.lifecycle, session.res))
         for d in todo:
             session.energized.pop(d, None)
     resp = {"ok": True, "log": session.res.log[log_mark:]}

@@ -766,6 +766,115 @@ class HealthCheckTests(_BenchBase):
         self.assertFalse(r2["aborted"], r2)
         self.assertEqual(len(self._devcalls("PHYS", "set_voltage")), 1)
 
+    def test_safe_off_dead_held_rebuilds_and_offs_never_refuses(self):
+        # A SAFETY action never refuses: keep_state ON + a dead held POWER
+        # endpoint at guided safe-off time -> probe + ONE rebuild (repairing
+        # the link in order to turn outputs off is exactly right), then the
+        # off runs on the rebuilt instance.  No StateLost, no unsafe entry.
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")],
+                                   keep_state=True)
+        _kill_link(s.held[_EP_A])
+        r = er._cmd_safe_off(s, {
+            "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
+            "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}]})
+        self.assertTrue(r["ok"], r)
+        self.assertNotIn("unsafe", r)
+        self.assertNotIn("StateLost", json.dumps(r))
+        # ONE rebuild from the STORED admission bench; the off landed on it
+        self.assertEqual(len(self._devcalls("PHYS", "connect")), 2)
+        self.assertEqual(len(self._devcalls("GUIDED", "connect")), 0)
+        self.assertEqual([c[1] for c in self._offs()], ["PHYS"])
+        self.assertTrue(any("re-established" in ln for ln in r["log"]), r)
+
+    def test_safe_off_rebuild_failure_lands_in_unsafe(self):
+        # Rebuild FAILS at safe-off time -> the target lands in ``unsafe``
+        # exactly as the pre-F-H6 dead-link off failure did (the host latches
+        # UNSAFE) — never swallowed as a log-only line.
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        _kill_link(s.held[_EP_A])
+        er._build_device = lambda *a, **k: (_ for _ in ()).throw(
+            RuntimeError("no route to host"))
+        r = er._cmd_safe_off(s, {
+            "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
+            "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}]})
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["unsafe"], ["PSU1 CH1"])
+        self.assertTrue(any("UNSAFE" in ln for ln in r["log"]), r)
+
+    def test_exec_refusal_carries_prior_batch_results(self):
+        # A StateLost refusal mid-batch returns the results/log of the ops
+        # that ALREADY executed (a re-run must not re-execute state-changing
+        # ops), plus the typed refusal for the endpoint that ran nothing.
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"},
+                                          {"id": "PSU2", "type": "psu"}]}
+        self._held_acquire_release(
+            s, [_claim("T-A", "PSU2", _ADDR_B, dev="PHYS-B")], keep_state=True)
+        _kill_link(s.held[_EP_B])
+        meas = {"node_path": "a", "op": {"op": "psu.measure_voltage",
+                                        "device": "PSU1", "channel": 1,
+                                        "ref": 7}}
+        r = er._cmd_exec_ops(s, {
+            "ops": [meas, self._set_v("PSU2")],
+            "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED-A"},
+                          "PSU2": {"visa": _ADDR_B, "_dev": "GUIDED-B"}}})
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["kind"], "StateLost")
+        self.assertEqual(r["endpoints"], [_EP_B])
+        # op A's executed result rides along with the refusal
+        self.assertEqual(len(r["results"]), 1)
+        self.assertEqual(r["results"][0]["node_path"], "a")
+        self.assertTrue(r["results"][0]["ok"])
+        self.assertTrue(r["results"][0]["has_value"])
+        # the refused endpoint itself ran nothing
+        self.assertEqual(len(self._devcalls("PHYS-B", "set_voltage")), 0)
+
+    def test_raw_refusal_typed_kind_no_class_name_leak(self):
+        # A health refusal on the raw path surfaces as its typed kind with a
+        # clean message — never "ExecError: HealthRefusal: ...".
+        idn_box = {"idn": "ACME PSU,SN1"}
+
+        class _IdnFake(_Fake):
+            def __init__(self, *a):
+                super().__init__(*a)
+                self.idn = idn_box["idn"]
+        er._build_device = lambda bench, etype, lifecycle, log: _IdnFake(
+            etype, bench.get("_dev", "?"), self.calls)
+        s = self._session()
+        self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        _kill_link(s.held[_EP_A])
+        idn_box["idn"] = "ACME PSU,SN9"      # a DIFFERENT instrument answers
+        r = er._cmd_raw(s, {"device": "PSU1", "etype": "psu", "subtype": "",
+                            "text": "MEAS:VOLT?",
+                            "bench_map": {"PSU1": {"visa": _ADDR_A,
+                                                   "_dev": "GUIDED"}}})
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["kind"], "IdentityChanged")
+        self.assertNotIn("HealthRefusal", json.dumps(r))
+        self.assertIn("identity changed", r["error"])
+        self.assertIn(_EP_A, s.held)         # rebuilt instance stays held
+
+    def test_raw_dead_held_rebuilds_and_sends_no_state_lost(self):
+        # Raw context: probe + rebuild are welcome; StateLost never fires
+        # (keep_state semantics do not apply to a terminal line).
+        s = self._session()
+        self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")],
+                                   keep_state=True)
+        _kill_link(s.held[_EP_A])
+        r = er._cmd_raw(s, {"device": "PSU1", "etype": "psu", "subtype": "",
+                            "text": "MEAS:VOLT?",
+                            "bench_map": {"PSU1": {"visa": _ADDR_A,
+                                                   "_dev": "GUIDED"}}})
+        self.assertTrue(r["ok"], r)
+        self.assertNotIn("StateLost", json.dumps(r))
+        self.assertEqual(r["response"], "1.23")
+        self.assertEqual(len(self._devcalls("PHYS", "connect")), 2)
+        self.assertEqual(len(self._devcalls("GUIDED", "connect")), 0)
+
 
 # ---------------------------------------------------------------------------
 # run_test: happy path, prompts, cancel, ladder, reimport, rejection.

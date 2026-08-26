@@ -945,6 +945,7 @@ class UnconfirmedOffTests(_BenchBase):
             "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}]})
         self.assertTrue(r2["ok"], r2)
         self.assertNotIn("unsafe", r2)
+        self.assertNotIn("unsafe_targets", r2)  # clean == neither form
         self.assertEqual(s.unconfirmed_off, {})
         # reconnect-retry path: the target was NOT held — rebuilt from the
         # stored admission bench, never from the frame's own bench_map
@@ -995,6 +996,45 @@ class UnconfirmedOffTests(_BenchBase):
         self.assertTrue(stop)
         self.assertTrue(resp["ok"], resp)
         self.assertIn(f"{_EP_A} CH2", resp.get("unsafe") or [], resp)
+        # R3: the structured record pins the reviewer composition — claim
+        # CH1, residual CH2 — endpoint-keyed with reconnect data, so the
+        # host recovery can drive the EXACT channel the claims never named.
+        (rec,) = resp["unsafe_targets"]
+        self.assertEqual((rec["device"], rec["etype"], rec["channels"]),
+                         (_EP_A, "psu", [2]))
+        self.assertTrue(rec["bench"], rec)  # stored admission bench
+
+    def test_unsafe_targets_structured_snapshot_rides_unsafe(self):
+        # Every response carrying ``unsafe`` also carries its structured
+        # twin ``unsafe_targets`` (module docstring contract): the
+        # unconfirmed-off memory as endpoint/etype/channels/bench records —
+        # what the host recovery consumes instead of parsing the strings.
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        r = self._fail_safe_off(s)
+        (rec,) = r["unsafe_targets"]
+        self.assertEqual(rec["device"], _EP_A)
+        self.assertEqual(rec["etype"], "psu")
+        self.assertEqual(rec["channels"], [1])
+        self.assertEqual(rec["bench"]["_dev"], "PHYS")  # ADMISSION bench
+        # ...and shutdown's backstop report carries the same records
+        resp, stop = self._dispatch(s, {"cmd": "shutdown"})
+        self.assertTrue(stop)
+        (rec2,) = resp["unsafe_targets"]
+        self.assertEqual((rec2["device"], rec2["channels"]), (_EP_A, [1]))
+
+    def test_unsafe_targets_bench_none_when_never_stored(self):
+        # No admission data was ever stored for the target: the record says
+        # so explicitly (bench=None) — the host keeps its latch rather than
+        # guess a reconnect route.
+        s = self._session()
+        er._record_unconfirmed(s, _EP_B, "psu", {2})
+        resp = er._attach_unsafe(s, {"ok": True}, [f"{_EP_B} CH2"])
+        self.assertEqual(resp["unsafe"], [f"{_EP_B} CH2"])
+        (rec,) = resp["unsafe_targets"]
+        self.assertEqual((rec["device"], rec["channels"], rec["bench"]),
+                         (_EP_B, [2], None))
 
 
 # ---------------------------------------------------------------------------

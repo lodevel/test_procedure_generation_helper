@@ -42,7 +42,7 @@ _SKIP_DIRS = {"__pycache__", "build", "dist", ".venv"}
 FILE_BUDGET: dict[str, int] = {
     "core/task_config.py": 1289,
     "dialogs/settings_dialog.py": 1305,  # +7: opencode-client migration settings wiring (7985722)
-    "llm/_execute_op_subprocess.py": 1262,  # +50: bench-session S3 — frame dispatch,
+    "llm/_execute_op_subprocess.py": 1280,  # +50: bench-session S3 — frame dispatch,
     # reader-thread wiring, and the held-rekey seams (_ensure_held routing,
     # channel-union safe-off fallback, per-path procedure docs); ALL new logic
     # lives in the new sibling llm/_bench_session_runner.py.
@@ -59,6 +59,9 @@ FILE_BUDGET: dict[str, int] = {
     # sweeps in _cmd_safe_off + _safe_off_all_held, and the module-docstring
     # contract (shutdown can no longer report false-clean after a failed off
     # whose handle dropped out of held).
+    # +18: R3 structured unsafe — _attach_unsafe builds the parallel
+    # "unsafe_targets" records from the unconfirmed-off memory on every
+    # unsafe-carrying response (host recovery no longer parses strings).
     "llm/opencode_backend.py": 1251,  # +9: bare-except cleanup log lines
     "pack_ops/pack_parsers.py": 1763,  # +42: export_rows op (project-venv document exports, 0d448bc)
     "llm/tab_context.py": 1057,

@@ -80,6 +80,11 @@ corrupt a frame.  Tracebacks travel inside the response JSON, never printed.
     safe_off : {"ok": true, "log": [str], "unsafe": [str]?}
     raw      : {"ok": true, "response": str, "log": [str]}   # "" reply for a write
     shutdown : {"ok": true, "log": [str], "unsafe": [str]?}   (then exits)
+    Every response carrying "unsafe" also carries "unsafe_targets":
+    [{"device", "etype", "channels", "bench"}] — the unconfirmed-off memory
+    ("device" = canonical endpoint when the bench session routed the name;
+    "bench" = stored reconnect data, null when never stored; power targets
+    only).  Hosts drive recovery from THIS, never by parsing the strings.
     error    : {"ok": false, "kind": "<NotRemote|NoCodegen|NoLifecycle
                 |NoProcedure|ExecError|Protocol>", "error": str,
                 "traceback": str?}
@@ -109,7 +114,10 @@ its held pass did not attempt — reconnecting from the stored bench when the
 target is no longer held — so shutdown reports a still-unconfirmed target in
 ``unsafe`` even when nothing holds it, instead of false-clean, and the
 host's persistent UNSAFE latch survives ``BenchSession.fatal()`` until those
-exact targets are confirmed off.
+exact targets are confirmed off.  Responses surface the memory in BOTH
+forms — display strings in ``unsafe`` plus the structured ``unsafe_targets``
+records (:func:`_attach_unsafe`) — so the host recovery receives the exact
+endpoint/channel set with its stored reconnect data, never a parsed string.
 """
 from __future__ import annotations
 
@@ -661,6 +669,23 @@ def _retry_unconfirmed(session: _Session, devices) -> list:
     return unsafe
 
 
+def _attach_unsafe(session: _Session, resp: dict, unsafe: list) -> dict:
+    """Attach a nonempty unsafe report to a response in BOTH forms: the
+    display strings (``unsafe``) plus ``unsafe_targets`` — the structured
+    snapshot of the unconfirmed-off memory (endpoint/device, etype,
+    channels, stored reconnect bench or None) that the host recovery
+    consumes without parsing strings.  The snapshot is the memory's CURRENT
+    truth, so it may name residuals older than this pass's strings."""
+    if unsafe:
+        resp["unsafe"] = unsafe
+        resp["unsafe_targets"] = [
+            {"device": device, "etype": rec["etype"],
+             "channels": sorted(rec["channels"]) or [1],
+             "bench": dict(rec["bench"]) if rec["bench"] else None}
+            for device, rec in sorted(session.unconfirmed_off.items())]
+    return resp
+
+
 def _safe_off_all_held(session: _Session) -> list:
     """Safe-off EVERY held psu/eload by its DECLARED channels (a superset of the
     tracked energized set), ELOAD-before-PSU.  Returns the ``unsafe`` list of
@@ -894,11 +919,9 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
         # other held device stays up — this is what makes "retry on the next op"
         # work instead of the session wedging until the window is reopened.
         _close_held_device(session, device)
-    resp = {"ok": True, "results": results, "aborted": failed,
-            "log": session.res.log[log_mark:]}
-    if unsafe:
-        resp["unsafe"] = unsafe
-    return resp
+    return _attach_unsafe(session,
+                          {"ok": True, "results": results, "aborted": failed,
+                           "log": session.res.log[log_mark:]}, unsafe)
 
 
 def _cmd_raw(session: _Session, req: dict) -> dict:
@@ -1058,20 +1081,16 @@ def _cmd_safe_off(session: _Session, req: dict) -> dict:
                                 session=session, bench_map=bench_map))
         for d in todo:
             session.energized.pop(d, None)
-    resp = {"ok": True, "log": session.res.log[log_mark:]}
-    if unsafe:
-        resp["unsafe"] = unsafe
-    return resp
+    return _attach_unsafe(session, {"ok": True, "log": session.res.log[log_mark:]},
+                          unsafe)
 
 
 def _cmd_shutdown(session: _Session, req: dict) -> dict:
     del req  # teardown uses the latched session.procedure_json (or none — fine)
     log_mark = len(session.res.log)
     unsafe = _teardown(session)
-    resp = {"ok": True, "log": session.res.log[log_mark:]}
-    if unsafe:
-        resp["unsafe"] = unsafe
-    return resp
+    return _attach_unsafe(session, {"ok": True, "log": session.res.log[log_mark:]},
+                          unsafe)
 
 
 # ---------------------------------------------------------------------------

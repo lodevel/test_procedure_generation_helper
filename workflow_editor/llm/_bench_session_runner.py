@@ -81,7 +81,9 @@ Bench-session frames (requests ride the daemon's NDJSON protocol)
       {"kind": "reject", ...}                         # anything else in-run
     Final response: {"ok": true, "result": {run_id, overall, aborted, error,
     exception_type, exception_message, results_dir}, "unsafe"?: [...],
-    "session_ended"?: true}.  Verdicts are read host-side from results.json.
+    "session_ended"?: true}.  "unsafe_targets" rides with "unsafe" (the
+    structured unconfirmed-off snapshot — daemon module docstring).
+    Verdicts are read host-side from results.json.
 
   {"cmd": "cancel_run", "run_id"} -> sets the flag ``ctx.cancelled()`` reads
     (delivered at step boundaries / _sleep slices / prompt waits).  In-run it
@@ -423,11 +425,11 @@ def _gone_ladder(d: dict, session, key: str, exc) -> dict:
     (safe-off ALL held, teardown, session ends, daemon stops) — the health
     check adds a second chance BEFORE the ladder, it never replaces it."""
     unsafe = d["_teardown"](session)
-    resp = {"ok": False, "kind": "ExecError", "session_ended": True,
-            "error": f"{exc}"}
-    if unsafe:
-        resp["unsafe"] = unsafe
-    return resp
+    return d["_attach_unsafe"](
+        session,
+        {"ok": False, "kind": "ExecError", "session_ended": True,
+         "error": f"{exc}"},
+        unsafe)
 
 
 # ---------------------------------------------------------------------------
@@ -779,18 +781,15 @@ def _ladder(d: dict, session, run: _Run, res, escaped, rdir: Path):
                 traceback.format_exception(type(escaped), escaped,
                                            escaped.__traceback__))
         unsafe = d["_teardown"](session)
-        resp = {"ok": True, "result": summary, "session_ended": True}
-        if unsafe:
-            resp["unsafe"] = unsafe
-        return resp, True
+        return d["_attach_unsafe"](
+            session, {"ok": True, "result": summary, "session_ended": True},
+            unsafe), True
     if aborted:
         # Operator stop: ordered safe-off of held power equipment ONLY —
         # session and connections REMAIN, devices stay held (design row 3).
         unsafe = d["_safe_off_all_held"](session)
-        resp = {"ok": True, "result": summary}
-        if unsafe:
-            resp["unsafe"] = unsafe
-        return resp, False
+        return d["_attach_unsafe"](
+            session, {"ok": True, "result": summary}, unsafe), False
     return {"ok": True, "result": summary}, False
 
 

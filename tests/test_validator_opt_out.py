@@ -12,6 +12,13 @@ off:
 
 The flag defaults to True so existing projects keep their current
 behavior.
+
+Qt ownership note: the validator-button rows below are built as
+``QHBoxLayout(tab)`` — installed on the tab — never as a bare
+``QHBoxLayout()``.  A parentless row of ``QPushButton``s is torn down in
+arbitrary order at interpreter shutdown and kills the process with an
+access violation after pytest has already reported success.  Full
+explanation in ``test_tab_registry_integration.py``'s module docstring.
 """
 
 from __future__ import annotations
@@ -234,7 +241,7 @@ def test_validate_procedure_button_hidden_when_wheel_unavailable(monkeypatch):
     mw.project_manager = SimpleNamespace(project_root=tmp)
     tab = BaseTab(mw)
     tab.tab_id = "text_json"
-    layout = QHBoxLayout()
+    layout = QHBoxLayout(tab)
     tab._build_validator_buttons(layout)
 
     button_ids = []
@@ -294,7 +301,7 @@ def test_all_validator_buttons_hidden_when_master_toggle_off():
     mw.project_manager = SimpleNamespace(project_root=tmp)
     tab = BaseTab(mw)
     tab.tab_id = "text_json"
-    layout = QHBoxLayout()
+    layout = QHBoxLayout(tab)
     added = tab._build_validator_buttons(layout)
     assert added == 0
 

@@ -14,6 +14,20 @@ Verifies the end-to-end wiring that the Phase 2/3 refactor introduced:
 The tests use a real ``TaskConfigManager`` against ``tmp_path`` projects
 and a ``MagicMock`` main_window. The registry is reset before each test
 so built-in registrations don't bleed across cases.
+
+Qt ownership note: every validator-button row below is built as
+``QHBoxLayout(tab)`` — installed on the tab — never as a bare
+``QHBoxLayout()``.  ``BaseTab._build_validator_buttons`` stashes the
+layout on the tab and fills it with ``QPushButton``s; with no parent
+widget the tab, the layout and each button are owned by their own
+Python wrapper, so CPython frees them in an arbitrary order during
+interpreter shutdown and Qt's teardown then walks freed memory.  The
+process dies of an access violation (0xC0000005) *after* pytest has
+printed "N passed" and returned 0: a green run that exits nonzero (5
+under WSL bash, which truncates the Windows status to its low byte,
+and therefore indistinguishable from pytest's own "no tests collected"
+= 5).  Installing the layout on ``tab`` hands the whole row to Qt's
+parent/child ownership, which destroys it deterministically.
 """
 
 from __future__ import annotations
@@ -159,7 +173,7 @@ def test_buttons_built_from_project_validators(tmp_path, qapp):
     mw = _mock_main_window(tmp_path, manager, project_root)
     tab = _make_tab(qapp, mw)
 
-    layout = QHBoxLayout()
+    layout = QHBoxLayout(tab)
     added = tab._build_validator_buttons(layout)
     assert added == 2
 
@@ -182,7 +196,7 @@ def test_disabled_spec_skipped(tmp_path, qapp):
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     tab = _make_tab(qapp, _mock_main_window(tmp_path, manager, project_root))
 
-    layout = QHBoxLayout()
+    layout = QHBoxLayout(tab)
     added = tab._build_validator_buttons(layout)
     assert added == 1
 
@@ -199,7 +213,7 @@ def test_unregistered_id_skipped_with_warning(tmp_path, qapp, caplog):
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     tab = _make_tab(qapp, _mock_main_window(tmp_path, manager, project_root))
 
-    layout = QHBoxLayout()
+    layout = QHBoxLayout(tab)
     with caplog.at_level("WARNING"):
         added = tab._build_validator_buttons(layout)
     assert added == 1
@@ -218,7 +232,7 @@ def test_rebuild_validator_buttons_swaps_set(tmp_path, qapp):
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     tab = _make_tab(qapp, _mock_main_window(tmp_path, manager, project_root))
 
-    layout = QHBoxLayout()
+    layout = QHBoxLayout(tab)
     tab._build_validator_buttons(layout)
     assert _count_validator_buttons(layout) == 1
 
@@ -244,7 +258,7 @@ def test_rebuild_preserves_non_validator_widgets(tmp_path, qapp):
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     tab = _make_tab(qapp, _mock_main_window(tmp_path, manager, project_root))
 
-    layout = QHBoxLayout()
+    layout = QHBoxLayout(tab)
     tab._build_validator_buttons(layout)
     sibling = QPushButton("Format JSON")  # no validator_id property
     layout.addWidget(sibling)
@@ -279,7 +293,7 @@ def test_click_dispatches_through_registry_to_dock(tmp_path, qapp):
 
     register("pack.under_test.recording_validator", _recording)
 
-    layout = QHBoxLayout()
+    layout = QHBoxLayout(tab)
     tab._build_validator_buttons(layout)
     button = next(
         layout.itemAt(i).widget() for i in range(layout.count())
@@ -320,7 +334,7 @@ def test_click_skipped_outcome_surfaces_info_row_in_dock(tmp_path, qapp):
     status_msgs: list[str] = []
     tab.status_message.connect(status_msgs.append)
 
-    layout = QHBoxLayout()
+    layout = QHBoxLayout(tab)
     tab._build_validator_buttons(layout)
     button = next(
         layout.itemAt(i).widget() for i in range(layout.count())
@@ -357,7 +371,7 @@ def test_validator_crash_is_reported_not_propagated(tmp_path, qapp, caplog):
     status_msgs: list[str] = []
     tab.status_message.connect(status_msgs.append)
 
-    layout = QHBoxLayout()
+    layout = QHBoxLayout(tab)
     tab._build_validator_buttons(layout)
     button = next(
         layout.itemAt(i).widget() for i in range(layout.count())

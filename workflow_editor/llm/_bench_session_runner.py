@@ -568,19 +568,25 @@ class _FrameStdout:
 
 
 def _claim_channels(bench) -> set:
-    """Channel numbers a claim's INVENTORY-style bench dict declares (both the
-    singular ``channel`` bench field and a ``channels`` list are honored)."""
-    out: set = set()
-    for c in (bench.get("channels") or []):
-        if isinstance(c, int):
-            out.add(c)
-        elif isinstance(c, dict):
-            cid = c.get("id", c.get("channel", c.get("n")))
-            if isinstance(cid, int):
-                out.add(cid)
-    if isinstance(bench.get("channel"), int):
-        out.add(bench["channel"])
-    return out
+    """Channel numbers a claim's INVENTORY-style bench dict declares — the
+    wheel's ONE normalizer (``channels_of``: ``channels`` list ∪ singular
+    ``channel``, ``[1]`` fallback), so this daemon, host recovery and
+    generated cleanup can never read the contract apart.  The naive branch
+    mirrors it for an old wheel without ``channels_of``."""
+    try:
+        from rules_packager_base.bench_endpoints import channels_of
+    except ImportError:
+        out: set = set()
+        for c in (bench.get("channels") or []):
+            if isinstance(c, dict):
+                c = c.get("id", c.get("channel", c.get("n")))
+            if isinstance(c, int) and not isinstance(c, bool):
+                out.add(c)
+        single = bench.get("channel")
+        if isinstance(single, int) and not isinstance(single, bool):
+            out.add(single)
+        return out or {1}
+    return set(channels_of(bench))
 
 
 def _cmd_acquire_run(d: dict, session, req: dict) -> dict:

@@ -1038,6 +1038,60 @@ class UnconfirmedOffTests(_BenchBase):
 
 
 # ---------------------------------------------------------------------------
+# Multi-channel power contract (round-4 High): the claim's DECLARED channel
+# set — the new INVENTORY "channels" list — reaches the daemon's sweeps.
+# ---------------------------------------------------------------------------
+
+
+class MultiChannelContractTests(_BenchBase):
+    """New-contract inventories carry ``"channels": [1, 2]`` next to the
+    singular ``"channel"``; ``_claim_channels`` reads both through the
+    wheel's ONE normalizer (``bench_endpoints.channels_of``) so the union
+    lands in ``BenchState.channels`` and every declared channel is swept."""
+
+    def test_claim_channels_new_and_old_shapes(self):
+        cc = bsr._claim_channels
+        # New contract: dict entries (codegen refs) and bare ints.
+        self.assertEqual(cc({"channels": [{"channel": 1}, {"channel": 2}]}),
+                         {1, 2})
+        self.assertEqual(cc({"channels": [2, 3]}), {2, 3})
+        # Old generated tests: singular only.
+        self.assertEqual(cc({"channel": 2}), {2})
+        # Both present: union (an operator-edited singular outside the
+        # declared list must stay in the safety set).
+        self.assertEqual(cc({"channels": [1, 2], "channel": 3}), {1, 2, 3})
+        # Nothing usable: the conventional CH1 default.
+        self.assertEqual(cc({}), {1})
+
+    def test_acquire_unions_declared_channels_into_state(self):
+        s = self._session()
+        r = self._acquire(s, [_claim(
+            "T-A", "PSU1", dev="PHYS",
+            channels=[{"channel": 1}, {"channel": 2}])])
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(s.bench.channels[_EP_A], {1, 2})
+        self._dispatch(s, {"cmd": "release_run", "run_id": r["run_id"]})
+
+    def test_shutdown_sweeps_every_declared_claim_channel(self):
+        # The reviewer probe, daemon side: CH1+CH2 declared, nothing ran —
+        # the shutdown sweep must still drive BOTH channels off.
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        r = self._acquire(s, [_claim(
+            "T-A", "PSU1", dev="PHYS",
+            channels=[{"channel": 1}, {"channel": 2}])])
+        self.assertTrue(r["ok"], r)
+        self._dispatch(s, {"cmd": "release_run", "run_id": r["run_id"]})
+        resp, stop = self._dispatch(s, {"cmd": "shutdown"})
+        self.assertTrue(stop)
+        self.assertTrue(resp["ok"], resp)
+        self.assertNotIn("unsafe", resp)
+        off_channels = {c[3].get("channel")
+                        for c in self._offs() if c[1] == "PHYS"}
+        self.assertEqual(off_channels, {1, 2})
+
+
+# ---------------------------------------------------------------------------
 # Sticky IdentityChanged (F-H6): an unresolved mismatch never silently passes.
 # ---------------------------------------------------------------------------
 

@@ -202,7 +202,7 @@ def _inventory_from_code(
     # rules_packager_base/rules/v2_0_2/parser/codegen.py.
     suffix_to_field = {
         "_VISA": "visa",
-        "_CHANNEL": "channel",
+        "_CHANNELS": "channels",
         "_TIMEOUT_MS": "timeout_ms",
         "_TIMEOUT_S": "timeout_s",
         "_REMOTE": "remote",

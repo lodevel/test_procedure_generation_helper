@@ -35,14 +35,14 @@ class ExtractPinnedConstantsTests(unittest.TestCase):
     def test_multiple_constants(self) -> None:
         code = (
             "PSU1_VISA = 'X'\n"
-            "PSU1_CHANNEL = 2\n"
+            "PSU1_CHANNELS = [1, 2]\n"
             "PSU1_REMOTE = True\n"
             "FNCORE_PORT = 'COM22'\n"
             "FNCORE_BAUD = 115200\n"
         )
         out = extract_pinned_constants(code, ["PSU1", "FNCORE"])
         self.assertEqual(out, {
-            "PSU1_VISA": "X", "PSU1_CHANNEL": 2, "PSU1_REMOTE": True,
+            "PSU1_VISA": "X", "PSU1_CHANNELS": [1, 2], "PSU1_REMOTE": True,
             "FNCORE_PORT": "COM22", "FNCORE_BAUD": 115200,
         })
 
@@ -55,11 +55,11 @@ class ExtractPinnedConstantsTests(unittest.TestCase):
         code = (
             "import os\n"
             "PSU1_VISA = os.environ['PSU1_VISA']\n"
-            "PSU1_CHANNEL = 2\n"
+            "PSU1_CHANNELS = [2]\n"
         )
         out = extract_pinned_constants(code, ["PSU1"])
         # Only the literal-valued one survives.
-        self.assertEqual(out, {"PSU1_CHANNEL": 2})
+        self.assertEqual(out, {"PSU1_CHANNELS": [2]})
 
     def test_ann_assign_without_value(self) -> None:
         # Type-only declaration (PEP 526) — no value to extract.
@@ -68,7 +68,7 @@ class ExtractPinnedConstantsTests(unittest.TestCase):
         self.assertEqual(out, {})
 
     def test_skips_tuple_target(self) -> None:
-        code = "PSU1_VISA, PSU1_CHANNEL = 'X', 2\n"
+        code = "PSU1_VISA, PSU1_CHANNELS = 'X', [2]\n"
         out = extract_pinned_constants(code, ["PSU1"])
         # Tuple-targets are operator-unusual; we conservatively skip.
         self.assertEqual(out, {})
@@ -138,25 +138,25 @@ class MergePinnedConstantsTests(unittest.TestCase):
             "TEST_NAME = 'EPO'\n"
             "\n"
             "PSU1_VISA = 'ASRL1::INSTR'\n"
-            "PSU1_CHANNEL = 1\n"
+            "PSU1_CHANNELS = [1]\n"
             "\n"
             "def main():\n"
             "    pass\n"
         )
         merged, replaced = merge_pinned_constants(
             new,
-            {"PSU1_VISA": "TCPIP0::live::INSTR", "PSU1_CHANNEL": 2},
+            {"PSU1_VISA": "TCPIP0::live::INSTR", "PSU1_CHANNELS": [1, 2]},
         )
         self.assertEqual(merged, (
             "TEST_NAME = 'EPO'\n"
             "\n"
             "PSU1_VISA = 'TCPIP0::live::INSTR'\n"
-            "PSU1_CHANNEL = 2\n"
+            "PSU1_CHANNELS = [1, 2]\n"
             "\n"
             "def main():\n"
             "    pass\n"
         ))
-        self.assertEqual(set(replaced), {"PSU1_VISA", "PSU1_CHANNEL"})
+        self.assertEqual(set(replaced), {"PSU1_VISA", "PSU1_CHANNELS"})
 
     def test_no_pins_means_no_change(self) -> None:
         new = "PSU1_VISA = 'ASRL1::INSTR'\n"
@@ -164,27 +164,47 @@ class MergePinnedConstantsTests(unittest.TestCase):
         self.assertEqual(merged, new)
         self.assertEqual(replaced, [])
 
+    def test_channels_list_merges_as_union(self) -> None:
+        # Single-field channel contract: the merged <ID>_CHANNELS is
+        # pinned ∪ generated — a newly DECLARED channel (here CH2) must
+        # never be masked by an older pinned list (cleanup sweeps this
+        # list), while the operator-added CH3 still survives the regen.
+        new = "PSU1_CHANNELS = [1, 2]\n"
+        merged, replaced = merge_pinned_constants(
+            new, {"PSU1_CHANNELS": [1, 3]},
+        )
+        self.assertEqual(merged, "PSU1_CHANNELS = [1, 2, 3]\n")
+        self.assertEqual(replaced, ["PSU1_CHANNELS"])
+
+    def test_channels_union_guard_non_list_generated(self) -> None:
+        # A non-list generated value (hand-edited file) falls back to the
+        # pinned value verbatim rather than raising.
+        new = "PSU1_CHANNELS = None\n"
+        merged, _ = merge_pinned_constants(new, {"PSU1_CHANNELS": [2]})
+        self.assertEqual(merged, "PSU1_CHANNELS = [2]\n")
+
 
 class PreserveBenchConstantsTests(unittest.TestCase):
 
     def test_full_round_trip(self) -> None:
         existing = (
             "PSU1_VISA = 'TCPIP0::psu.lab.local::INSTR'\n"
-            "PSU1_CHANNEL = 2\n"
+            "PSU1_CHANNELS = [2]\n"
         )
         new = (
             "PSU1_VISA = 'ASRL1::INSTR'\n"
-            "PSU1_CHANNEL = 1\n"
+            "PSU1_CHANNELS = [1]\n"
             "PSU1_REMOTE = True\n"  # newly added in regen — keeps default
         )
         merged, replaced = preserve_bench_constants(
             new, existing, ["PSU1"],
         )
-        # Operator pins win; new fields keep their defaults.
+        # Operator pins win; new fields keep their defaults; the channel
+        # list merges as pinned ∪ generated (safety union).
         self.assertIn("PSU1_VISA = 'TCPIP0::psu.lab.local::INSTR'", merged)
-        self.assertIn("PSU1_CHANNEL = 2", merged)
+        self.assertIn("PSU1_CHANNELS = [1, 2]", merged)
         self.assertIn("PSU1_REMOTE = True", merged)
-        self.assertEqual(set(replaced), {"PSU1_VISA", "PSU1_CHANNEL"})
+        self.assertEqual(set(replaced), {"PSU1_VISA", "PSU1_CHANNELS"})
 
     def test_no_existing_code_passthrough(self) -> None:
         new = "PSU1_VISA = 'ASRL1::INSTR'\n"

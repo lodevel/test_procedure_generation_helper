@@ -51,12 +51,12 @@ class TestBenchFieldsAccessor(unittest.TestCase):
 
     def test_constant_names_match_codegen_naming(self):
         self._bundle({
-            "psu": [{"name": "visa"}, {"name": "remote"}, {"name": "channel"}],
+            "psu": [{"name": "visa"}, {"name": "remote"}, {"name": "channels"}],
             "controller": [{"name": "port"}, {"name": "baud"}],
         })
         self.assertEqual(
             pp.bench_constant_names("psu", "PSU1"),
-            ["PSU1_VISA", "PSU1_REMOTE", "PSU1_CHANNEL"],
+            ["PSU1_VISA", "PSU1_REMOTE", "PSU1_CHANNELS"],
         )
         self.assertEqual(
             pp.bench_constant_names("controller", "FNCORE_DSC"),

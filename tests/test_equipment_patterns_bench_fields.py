@@ -44,13 +44,13 @@ class TestEquipmentPatternsFromBenchFields(unittest.TestCase):
 
     def test_patterns_derived_from_bench_fields(self):
         pm = self._pm_with_bench({
-            "psu": [{"name": "visa"}, {"name": "channel"}],
+            "psu": [{"name": "visa"}, {"name": "channels"}],
             "controller": [{"name": "manual_override"}],
         })
         pats = pm.load_equipment_patterns()
         matches = lambda s: any(p.search(s) for p in pats)
         self.assertTrue(matches("PSU1_VISA = 'TCPIP0::x::INSTR'\n"))
-        self.assertTrue(matches("PSU1_CHANNEL = 2\n"))
+        self.assertTrue(matches("PSU1_CHANNELS = [1, 2]\n"))
         self.assertTrue(matches("FNCORE_DSC_MANUAL_OVERRIDE = True\n"))
         # a non-bench constant (a per-op arg / driver call) must NOT be matched
         self.assertFalse(matches("psu1.set_voltage(channel=1, volts=5.0)\n"))

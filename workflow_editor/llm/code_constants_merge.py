@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 # Suffixes that identify a bench-identification module constant.
 # Each becomes ``<EQUIPMENT_ID><SUFFIX>`` in test.py:
 #   PSU1_VISA = "ASRL3::INSTR"
-#   PSU1_CHANNEL = 1
+#   PSU1_CHANNELS = [1, 2]
 #   PSU1_TIMEOUT_MS = 5000
 #   FNCORE_PORT = "COM22"
 #   FNCORE_BAUD = 115200
@@ -42,7 +42,7 @@ _PRESERVED_SUFFIXES: tuple[str, ...] = (
     "_TIMEOUT_S",
     "_REMOTE",
     "_MANUAL_OVERRIDE",
-    "_CHANNEL",
+    "_CHANNELS",
 )
 
 
@@ -75,6 +75,32 @@ def _assign_target_name(node: ast.AST) -> str | None:
             return node.target.id
         return None
     return None
+
+
+def _is_int_list(value: Any) -> bool:
+    return isinstance(value, list) and all(
+        isinstance(v, int) and not isinstance(v, bool) for v in value
+    )
+
+
+def _merge_value(pinned_value: Any, generated_node: ast.AST | None) -> Any:
+    """The value the merge writes for one preserved constant.
+
+    Scalars: the operator's pinned value verbatim. Int lists (the
+    ``<ID>_CHANNELS`` channel contract): the sorted UNION of the pinned
+    list and the freshly generated one — a newly DECLARED channel must
+    never be masked by an older pinned list (cleanup sweeps this list),
+    while operator-added channels still survive the regen.
+    """
+    if not _is_int_list(pinned_value) or generated_node is None:
+        return pinned_value
+    try:
+        generated = ast.literal_eval(generated_node)
+    except (ValueError, SyntaxError):
+        return pinned_value
+    if not _is_int_list(generated):
+        return pinned_value
+    return sorted(set(pinned_value) | set(generated))
 
 
 def extract_pinned_constants(
@@ -121,7 +147,9 @@ def merge_pinned_constants(
     pinned: dict[str, Any],
 ) -> tuple[str, list[str]]:
     """Replace top-level ``<NAME> = ...`` assignments in ``new_code`` with
-    the operator's pinned literal value from ``pinned``.
+    the operator's pinned literal value from ``pinned`` (int-list constants
+    such as ``<ID>_CHANNELS`` merge as pinned ∪ generated instead — see
+    :func:`_merge_value`).
 
     Returns ``(merged_code, replaced_names)``. AST-based span replacement,
     so type-annotated assignments and multi-line values are handled
@@ -156,7 +184,10 @@ def merge_pinned_constants(
         # Build the replacement line. For AnnAssign, drop the annotation
         # — the operator's prior file may have had one; the new file may
         # not. Codegen emits plain assignments, which is the canonical form.
-        new_line = f"{indent}{name} = {_format_literal(pinned[name])}\n"
+        # Int-list constants (<ID>_CHANNELS) merge as pinned ∪ generated —
+        # see _merge_value.
+        value = _merge_value(pinned[name], getattr(node, "value", None))
+        new_line = f"{indent}{name} = {_format_literal(value)}\n"
         replacements.append((start_line, end_line, new_line))
         replaced.append(name)
 

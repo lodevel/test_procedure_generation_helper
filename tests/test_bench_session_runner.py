@@ -268,7 +268,7 @@ _EP_B = "visa:tcpip::10.0.0.6"
 
 
 def _claim(test_id, name, visa=_ADDR_A, etype="psu", dev=None, **extra):
-    bench = {"visa": visa, "_dev": dev or name, "channel": 1,
+    bench = {"visa": visa, "_dev": dev or name, "channels": [1],
              "timeout_ms": 5000}
     bench.update(extra)
     return {"test_id": test_id, "local_name": name, "etype": etype,

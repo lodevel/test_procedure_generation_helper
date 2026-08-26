@@ -89,6 +89,27 @@ held psu/eload by DECLARED channels, ELOAD-before-PSU, then close()->unlock).
 On a hard kill (SIGKILL / Windows TerminateProcess) those do NOT run — the
 PARENT is responsible for killing a wedged daemon and spawning a fresh
 ``safe_off`` runner.
+
+Unconfirmed-off memory
+----------------------
+The daemon is the only party that knows off-confirmation truth, so it keeps
+the memory: ``_Session.unconfirmed_off`` records every safe-off target whose
+OFF failed or errored — recorded AT the failure site (a per-channel off
+failure in ``_safe_off``, an open/rebuild failure in ``_cmd_safe_off``, a
+held-endpoint rebuild failure in ``check_held``) BEFORE any handle drop can
+hide the target, keyed by the canonical endpoint when the bench session
+routed the name (``BenchState.alias``).  An entry carries the channels plus
+the admission bench data needed to reconnect and is removed ONLY when a
+later off of its recorded channels is CONFIRMED (the off op executed without
+error) — never by a handle drop, a failed rebuild, or a rebuild that merely
+succeeded.  Every later safe-off pass retries: ``safe_off`` retries ALL
+recorded targets first (restoring held routing before the frame's own
+targets run), and the teardown/shutdown sweep retries every recorded target
+its held pass did not attempt — reconnecting from the stored bench when the
+target is no longer held — so shutdown reports a still-unconfirmed target in
+``unsafe`` even when nothing holds it, instead of false-clean, and the
+host's persistent UNSAFE latch survives ``BenchSession.fatal()`` until those
+exact targets are confirmed off.
 """
 from __future__ import annotations
 
@@ -383,12 +404,19 @@ def _exec_op(procedure_json: dict, op: dict, ns: dict):
     return False, None, "", meta["ref"]
 
 
-def _safe_off(procedure_json, ns, energized, etype_of, lifecycle, res) -> list:
+def _safe_off(procedure_json, ns, energized, etype_of, lifecycle, res,
+              session=None, bench_map=None) -> list:
     """Drive energized PSU/ELOAD outputs OFF in cleanup-priority order (ELOAD
     priority 10 before PSU priority 20).  Reuses the pack emit by synthesizing an
     ``<etype>.<off_verb> … on=False`` op per touched channel.  Best-effort — a
     failure to turn one off is logged AND returned (the caller surfaces it as
     ``unsafe`` so a bench left energized is never silent).
+
+    With ``session`` set, this is also the unconfirmed-off chokepoint (module
+    docstring): a per-channel failure is RECORDED at this site — before any
+    handle drop can hide the target — and a per-channel success CONFIRMS
+    (removes) the matching record.  ``bench_map`` supplies the reconnect data
+    for name-keyed devices the record would otherwise lack.
 
     ``off_verb`` is the OP-LEVEL verb (default "output", the convention psu/eload
     follow), pack-overridable via ``cleanup.off_op``.  It is NOT the same as
@@ -413,9 +441,14 @@ def _safe_off(procedure_json, ns, energized, etype_of, lifecycle, res) -> list:
             try:
                 _exec_op(procedure_json, off_op, ns)
                 res.log.append(f"safe-off {device} CH{ch}")
+                if session is not None:
+                    _confirm_off(session, device, ch)
             except Exception as exc:  # noqa: BLE001
                 failures.append(f"{device} CH{ch}")
                 res.log.append(f"UNSAFE: safe-off {device} CH{ch} FAILED: {exc}")
+                if session is not None:
+                    _record_unconfirmed(session, device, etype, {ch},
+                                        (bench_map or {}).get(device))
     return failures
 
 
@@ -466,6 +499,10 @@ class _Session:
         self.procedure_json: dict | None = None   # the CURRENT frame's document
         self.procedures: dict = {}  # path -> document (per-run docs, no single latch)
         self.bench = None           # BenchState (bench-session runs; sibling-owned)
+        # device/endpoint -> {"etype","channels","bench"}: safe-off targets
+        # whose OFF was never confirmed (module docstring: unconfirmed-off
+        # memory).  Removed ONLY by _confirm_off; survives handle drops.
+        self.unconfirmed_off: dict = {}
         self._in_teardown = False   # run-once latch (also signal re-entrancy guard)
 
 
@@ -547,10 +584,94 @@ def _exec_transient(session: _Session, bench_map: dict, device: str, etype: str,
         session.ns.pop(safe, None)
 
 
+def _record_unconfirmed(session: _Session, device, etype: str, channels,
+                        bench: dict | None = None) -> None:
+    """Record one safe-off target whose OFF failed or errored (unconfirmed-off
+    memory, module docstring).  Called AT the failure site so a later handle
+    drop can never hide the target.  A bench-session name is folded onto its
+    claimed canonical endpoint (``alias``) so the endpoint-keyed and
+    name-keyed failure sites merge into ONE reconnectable record; only
+    cleanup-bearing (power) equipment is recorded — a scope/controller has
+    nothing to confirm off."""
+    if not (session.lifecycle.get(etype) or {}).get("cleanup"):
+        return
+    bench = dict(bench) if bench else None
+    if session.bench is not None:
+        routed = session.bench.alias.get(device)
+        if routed is not None:
+            device = routed
+            bench = dict(session.bench.bench_of.get(routed) or bench or {}) or None
+    entry = session.unconfirmed_off.setdefault(
+        device, {"etype": etype, "channels": set(), "bench": None})
+    entry["channels"] |= {c for c in channels if c is not None} or {1}
+    if bench and entry["bench"] is None:
+        entry["bench"] = bench
+    elif entry["bench"] is None and session.bench is not None:
+        stored = session.bench.bench_of.get(device)
+        if stored:
+            entry["bench"] = dict(stored)
+
+
+def _confirm_off(session: _Session, device, ch) -> None:
+    """A safe-off of ``device`` CH``ch`` executed without error: that channel
+    is CONFIRMED off — the ONLY event that shrinks/removes an
+    unconfirmed-off record (exact key: a confirmation never guesses across
+    name/endpoint aliases)."""
+    entry = session.unconfirmed_off.get(device)
+    if entry is None:
+        return
+    entry["channels"].discard(ch)
+    if not entry["channels"]:
+        del session.unconfirmed_off[device]
+
+
+def _retry_unconfirmed(session: _Session, devices) -> list:
+    """Second-chance OFF for recorded unconfirmed-off targets in ``devices``:
+    a still-held target is driven directly; one no longer held is RECONNECTED
+    from its stored admission/bench data first (never refusing — safe-off
+    context flags).  Success confirms and removes the record (inside
+    ``_safe_off``); anything still unconfirmed comes back as the usual
+    ``"device CHn"`` unsafe strings so no caller can report false-clean."""
+    unsafe: list = []
+    for device in sorted(devices):
+        entry = session.unconfirmed_off.get(device)
+        if entry is None:
+            continue
+        chans = set(entry["channels"]) or {1}
+        if device not in session.held:
+            bench = entry.get("bench")
+            if not bench:
+                session.res.log.append(
+                    f"UNSAFE: {device} off never confirmed and no stored "
+                    "connection data to retry")
+                unsafe.extend(f"{device} CH{ch}" for ch in sorted(chans))
+                continue
+            try:
+                _ensure_held(session, {device: bench}, device, entry["etype"],
+                             probe_refuse=False, identity_gate=False)
+            except Exception as exc:  # noqa: BLE001
+                session.res.log.append(
+                    f"UNSAFE: retry reconnect {device} FAILED: {exc}")
+                unsafe.extend(f"{device} CH{ch}" for ch in sorted(chans))
+                continue
+        unsafe.extend(_safe_off(
+            session.procedure_json or {}, session.ns, {device: chans},
+            {**session.etype_of, device: entry["etype"]},
+            session.lifecycle, session.res, session=session))
+    return unsafe
+
+
 def _safe_off_all_held(session: _Session) -> list:
     """Safe-off EVERY held psu/eload by its DECLARED channels (a superset of the
     tracked energized set), ELOAD-before-PSU.  Returns the ``unsafe`` list of
-    devices that could not be powered down.  Used by shutdown / atexit / signal."""
+    devices that could not be powered down.  Used by shutdown / atexit / signal.
+
+    Also RETRIES every recorded unconfirmed-off target the held sweep did not
+    attempt — reconnecting from stored bench data when nothing holds it — so
+    a shutdown after a failed-and-dropped off still reports that target in
+    ``unsafe`` (never false-clean), and a retry that genuinely confirms the
+    off makes the clean report legitimate."""
+    prior = set(session.unconfirmed_off)
     declared: dict = {}
     for device, etype in list(session.etype_of.items()):
         if device not in session.held:
@@ -565,11 +686,16 @@ def _safe_off_all_held(session: _Session) -> list:
     if declared:
         try:
             unsafe = _safe_off(session.procedure_json or {}, session.ns, declared,
-                               session.etype_of, session.lifecycle, session.res)
+                               session.etype_of, session.lifecycle, session.res,
+                               session=session)
         except Exception as exc:  # noqa: BLE001
             session.res.log.append(f"UNSAFE: safe-off-all FAILED: {exc}")
+            for device, chans in declared.items():
+                _record_unconfirmed(session, device,
+                                    session.etype_of.get(device, ""), chans)
             unsafe = sorted(declared)
     session.energized.clear()
+    unsafe.extend(_retry_unconfirmed(session, prior - set(declared)))
     return unsafe
 
 
@@ -747,9 +873,13 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
     if failed and session.energized:
         # Abnormal exit: return the bench to safety (outputs off) but KEEP the
         # held session open — the operator can re-arm.  per_step devices are
-        # already closed (per-op).
+        # already closed (per-op).  Failures are recorded unconfirmed-off
+        # (session=) so the per-target/teardown passes keep retrying them;
+        # this mid-batch pass itself does NOT retry old records — no
+        # reconnect stalls inside an exec batch.
         unsafe = _safe_off(procedure_json, session.ns, session.energized,
-                           session.etype_of, session.lifecycle, session.res)
+                           session.etype_of, session.lifecycle, session.res,
+                           session=session, bench_map=bench_map)
         session.energized.clear()
     if failed and policy == "per_session" and device in session.held:
         # Drop ONLY the broken device (AFTER safe-off, so a failed energized PSU
@@ -876,8 +1006,14 @@ def _cmd_safe_off(session: _Session, req: dict) -> dict:
     rebuilt (``probe_refuse=False`` — no StateLost, keep_state irrelevant;
     ``identity_gate=False`` — a sticky or fresh IdentityChanged is bypassed
     too) and the off runs on whatever instrument answers at the endpoint; a
-    target that cannot be (re)opened at all lands in ``unsafe`` so the host
-    latches UNSAFE, exactly as a pre-F-H6 dead-link off failure did."""
+    target that cannot be (re)opened at all lands in ``unsafe`` AND in the
+    unconfirmed-off memory so the host latches UNSAFE, exactly as a
+    pre-F-H6 dead-link off failure did.
+
+    Recorded unconfirmed-off targets are retried FIRST (module docstring) —
+    restoring a dropped endpoint into ``held`` before this frame's targets
+    route — so every safe-off pass gives the bench a second chance and a
+    target is forgotten only once its off is confirmed."""
     guard = _require_lifecycle(session)
     if guard:
         return guard
@@ -889,7 +1025,7 @@ def _cmd_safe_off(session: _Session, req: dict) -> dict:
     targets = req.get("safe_off") or []   # [{"device","etype","channels":[...]}]
     log_mark = len(session.res.log)
     todo: dict = {}
-    unsafe: list = []
+    unsafe = _retry_unconfirmed(session, set(session.unconfirmed_off))
     for t in targets:
         device, etype = t.get("device"), t.get("etype")
         try:
@@ -903,12 +1039,16 @@ def _cmd_safe_off(session: _Session, req: dict) -> dict:
         except Exception as exc:  # noqa: BLE001
             # Open/rebuild failed: these outputs could NOT be powered down —
             # they land in ``unsafe`` (not just the log) so the host latches
-            # UNSAFE, the pre-F-H6 dead-link contract.
+            # UNSAFE, the pre-F-H6 dead-link contract — and in the
+            # unconfirmed-off memory so later passes keep retrying them.
             session.res.log.append(f"UNSAFE: safe-off open {device} FAILED: {exc}")
             unsafe.extend(f"{device} CH{ch}" for ch in (t.get("channels") or [1]))
+            _record_unconfirmed(session, device, etype or "",
+                                t.get("channels") or [1], bench_map.get(device))
     if todo:
         unsafe.extend(_safe_off(procedure_json, session.ns, todo, session.etype_of,
-                                session.lifecycle, session.res))
+                                session.lifecycle, session.res,
+                                session=session, bench_map=bench_map))
         for d in todo:
             session.energized.pop(d, None)
     resp = {"ok": True, "log": session.res.log[log_mark:]}

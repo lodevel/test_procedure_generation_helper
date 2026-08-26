@@ -877,6 +877,113 @@ class HealthCheckTests(_BenchBase):
 
 
 # ---------------------------------------------------------------------------
+# Unconfirmed-off memory (R2 closure): a failed off is never forgotten.
+# ---------------------------------------------------------------------------
+
+
+class UnconfirmedOffTests(_BenchBase):
+    """Reviewer chain R2: a safe-off whose rebuild FAILED dropped the
+    endpoint out of ``held`` (check_held closes the dead instance before
+    reconnecting), and the held-only shutdown sweep then answered
+    false-clean — so the host's ``end()`` cleared the persistent UNSAFE
+    latch on an off that was never confirmed.  The daemon now records every
+    failed off at its failure site (``unconfirmed_off``) and every later
+    safe-off pass retries from the stored admission bench; shutdown lists a
+    still-unconfirmed target even when nothing holds it, and reports clean
+    only once the off genuinely ran."""
+
+    def _held_acquire_release(self, s, claims, **kw):
+        r = self._acquire(s, claims, **kw)
+        self.assertTrue(r["ok"], r)
+        self._dispatch(s, {"cmd": "release_run", "run_id": r["run_id"]})
+        return r
+
+    def _fail_safe_off(self, s):
+        """The reviewer's steps 1-2: dead link + failing rebuild at safe-off
+        time -> unsafe response, endpoint gone from held, memory keeps it."""
+        _kill_link(s.held[_EP_A])
+        er._build_device = lambda *a, **k: (_ for _ in ()).throw(
+            RuntimeError("no route to host"))
+        r = er._cmd_safe_off(s, {
+            "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
+            "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}]})
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["unsafe"], ["PSU1 CH1"])
+        self.assertFalse(s.held)                    # handle dropped...
+        self.assertEqual(set(s.unconfirmed_off), {_EP_A})  # ...memory holds it
+        return r
+
+    def test_rebuild_failure_recorded_shutdown_still_unsafe(self):
+        # Steps 1-3 of the reviewer chain: after the failed off the endpoint
+        # is held by NOTHING, yet shutdown must not answer false-clean — the
+        # unconfirmed target is retried (reconnect still failing) and STILL
+        # lands in shutdown's ``unsafe`` list.
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        self._fail_safe_off(s)
+        resp, stop = self._dispatch(s, {"cmd": "shutdown"})
+        self.assertTrue(stop)
+        self.assertTrue(resp["ok"], resp)
+        self.assertEqual(resp["unsafe"], [f"{_EP_A} CH1"])
+        self.assertTrue(any("retry reconnect" in ln for ln in resp["log"]), resp)
+
+    def test_retry_reconnects_from_stored_bench_then_shutdown_clean(self):
+        # Link restored before the NEXT safe-off pass: the retry reconstructs
+        # the endpoint from the STORED admission bench (dev PHYS — not this
+        # frame's bench_map), confirms the off, removes the record, and the
+        # following shutdown is then LEGITIMATELY clean.
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        self._fail_safe_off(s)
+        calls = self.calls
+        er._build_device = lambda bench, etype, lifecycle, log: _Fake(
+            etype, bench.get("_dev", bench.get("visa", "?")), calls)
+        r2 = er._cmd_safe_off(s, {
+            "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED2"}},
+            "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}]})
+        self.assertTrue(r2["ok"], r2)
+        self.assertNotIn("unsafe", r2)
+        self.assertEqual(s.unconfirmed_off, {})
+        # reconnect-retry path: the target was NOT held — rebuilt from the
+        # stored admission bench, never from the frame's own bench_map
+        self.assertEqual(len(self._devcalls("GUIDED2", "connect")), 0)
+        self.assertEqual(len(self._devcalls("PHYS", "connect")), 2)
+        self.assertTrue(any(c[1] == "PHYS" for c in self._offs()))
+        resp, stop = self._dispatch(s, {"cmd": "shutdown"})
+        self.assertTrue(stop)
+        self.assertTrue(resp["ok"], resp)
+        self.assertNotIn("unsafe", resp)
+
+    def test_failed_off_while_held_recorded_then_confirmed_by_teardown(self):
+        # The plain (no-rebuild) failure site: the off SCPI itself errors on
+        # a healthy held endpoint -> recorded; the device stays held, and the
+        # shutdown sweep's successful off CONFIRMS and removes the record.
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        held = s.held[_EP_A]
+
+        def boom(*a, **k):
+            raise RuntimeError("SCPI error")
+        held.output = boom
+        r = er._cmd_safe_off(s, {
+            "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
+            "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}]})
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["unsafe"], ["PSU1 CH1"])
+        self.assertIn(_EP_A, s.held)                # still held (no drop)
+        self.assertEqual(set(s.unconfirmed_off), {_EP_A})
+        del held.output                             # instrument answers again
+        resp, stop = self._dispatch(s, {"cmd": "shutdown"})
+        self.assertTrue(stop)
+        self.assertTrue(resp["ok"], resp)
+        self.assertNotIn("unsafe", resp)
+        self.assertEqual(s.unconfirmed_off, {})
+
+
+# ---------------------------------------------------------------------------
 # Sticky IdentityChanged (F-H6): an unresolved mismatch never silently passes.
 # ---------------------------------------------------------------------------
 

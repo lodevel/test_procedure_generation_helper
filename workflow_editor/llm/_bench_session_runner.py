@@ -352,7 +352,10 @@ def check_held(d: dict, session, key: str, identity_gate: bool = True) -> str:
     instance stays held; nothing runs), then ``HealthRefusal``
     (IdentityChanged); match or no cache -> "rebuilt".  A failed rebuild
     raises RuntimeError with the dead instance dropped: held-endpoint-gone
-    for the caller's existing ladder.
+    for the caller's existing ladder — but FIRST the endpoint is recorded
+    unconfirmed-off (the daemon's ``_record_unconfirmed``): its outputs may
+    be live and its handle just left ``held``, so without the record every
+    later held-only safe-off sweep would report false-clean.
 
     ``identity_gate=False`` is the safe_off context ONLY: the sticky flag
     and a fresh mismatch are logged instead of raised — a safety action
@@ -371,6 +374,11 @@ def check_held(d: dict, session, key: str, identity_gate: bool = True) -> str:
     try:
         d["_ensure_held"](session, {key: bench}, key, etype)
     except Exception as exc:
+        # Record BEFORE raising: the possibly-energized endpoint has just
+        # left ``held``, and only the unconfirmed-off memory keeps it
+        # visible to every later safe-off/shutdown sweep (R2 closure).
+        d["_record_unconfirmed"](session, key, etype,
+                                 st.channels_for(session, key), bench)
         raise RuntimeError(
             f"held endpoint {key} is gone (reconnect failed: {exc}); "
             "restart the bench session") from exc

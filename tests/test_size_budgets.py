@@ -42,12 +42,14 @@ _SKIP_DIRS = {"__pycache__", "build", "dist", ".venv"}
 FILE_BUDGET: dict[str, int] = {
     "core/task_config.py": 1289,
     "dialogs/settings_dialog.py": 1305,  # +7: opencode-client migration settings wiring (7985722)
-    "llm/_execute_op_subprocess.py": 1254,  # +50: bench-session S3 — frame dispatch,
+    "llm/_execute_op_subprocess.py": 1262,  # +50: bench-session S3 — frame dispatch,
     # reader-thread wiring, and the held-rekey seams (_ensure_held routing,
     # channel-union safe-off fallback, per-path procedure docs); ALL new logic
     # lives in the new sibling llm/_bench_session_runner.py.
     # +12: F-H6 boundary health check — the guided-op probe seam in
     # _ensure_held plus the typed HealthRefusal passthrough in _cmd_exec_ops
+    # +8: R2 backstop — shutdown folds any leftover unconfirmed_off record
+    # into unsafe (residual channel outside the declared sweep).
     # (the check itself lives in _bench_session_runner.check_held).
     # +51: F-H6 safety-never-refuses — probe_refuse seam on _ensure_held,
     # _cmd_safe_off proceed-after-rebuild + open-failures land in unsafe,

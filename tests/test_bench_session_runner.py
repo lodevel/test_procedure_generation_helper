@@ -982,6 +982,20 @@ class UnconfirmedOffTests(_BenchBase):
         self.assertNotIn("unsafe", resp)
         self.assertEqual(s.unconfirmed_off, {})
 
+    def test_residual_channel_outside_declared_still_reported(self):
+        # Backstop: a STILL-HELD device with a recorded channel outside its
+        # declared set is neither swept (held sweep drives declared channels
+        # only) nor retried (the retry set excludes declared devices) —
+        # shutdown must still report it, never answer false-clean.
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        er._record_unconfirmed(s, _EP_A, "psu", {2})
+        resp, stop = self._dispatch(s, {"cmd": "shutdown"})
+        self.assertTrue(stop)
+        self.assertTrue(resp["ok"], resp)
+        self.assertIn(f"{_EP_A} CH2", resp.get("unsafe") or [], resp)
+
 
 # ---------------------------------------------------------------------------
 # Sticky IdentityChanged (F-H6): an unresolved mismatch never silently passes.

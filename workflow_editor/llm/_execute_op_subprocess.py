@@ -696,6 +696,13 @@ def _safe_off_all_held(session: _Session) -> list:
             unsafe = sorted(declared)
     session.energized.clear()
     unsafe.extend(_retry_unconfirmed(session, prior - set(declared)))
+    # Backstop: NEVER report clean while any off is unconfirmed — e.g. a
+    # still-held device with a recorded channel outside its declared set
+    # was neither swept nor retried above.
+    leftover = [f"{d} CH{c}"
+                for d, rec in sorted(session.unconfirmed_off.items())
+                for c in sorted(rec["channels"])]
+    unsafe.extend(x for x in leftover if x not in unsafe)
     return unsafe
 
 

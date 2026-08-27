@@ -525,10 +525,17 @@ def _ensure_held(session: _Session, bench_map: dict, device: str, etype: str,
     shared namespace.  Idempotent — a held device is reused across commands.
     RETURNS the hold key the instance lives under in ``held`` — the routed
     canonical endpoint on the reuse path, else ``device`` (Seam B's key).
-    Bench-session routing: when the active run's view — or, run active or not,
-    the op's OWN bench dict folded to a canonical endpoint — lands ``device`` on
-    a HELD endpoint, bind that instance instead of opening a second session.
-    The F-H6 probe and one-rebuild always run on that routed reuse; the two
+    Resolution rule (owner ruling 2026-08-27, sibling ``_hold_resolution``):
+    ``device`` is whatever its CURRENT bench dict resolves to — the dict is
+    folded to its canonical endpoint FIRST; a held endpoint (active run-view
+    claim, or the fold) reuses that instance; a name-keyed hold PROVABLY at a
+    different endpoint than the fold is stale and never returned — its
+    energized channels are recorded unconfirmed-off under the OLD endpoint,
+    the instance closes via the ``_close_held_device`` chokepoint, and the
+    name re-opens fresh here.  Unprovable staleness (old wheel, no address,
+    no record) keeps today's name-keyed reuse; every reuse REBINDS the
+    namespace slot, so the instance returned is the instance executed.
+    The F-H6 probe and one-rebuild always run on the routed reuse; the two
     flags select which refusals a context retains:
     * ``probe_refuse=False`` (safe-off / raw-terminal contexts) suppresses
       StateLost — the caller proceeds on the rebuilt instance (keep_state
@@ -538,22 +545,10 @@ def _ensure_held(session: _Session, bench_map: dict, device: str, etype: str,
       instrument answers.  The raw context keeps the gate ON: a raw line
       still refuses, typed, on an unresolved identity mismatch.
     A rebuild failure still propagates as the ordinary error it always was."""
-    if session.bench is not None:
-        key = session.bench.enter(session, device, bench_map.get(device), etype)
-        if key != device:              # run-view routed onto a held endpoint
-            # Boundary health check (F-H6): same probe + one-rebuild +
-            # identity check as acquire_run, before reusing the instance.
-            b = _bench()
-            if (b.check_held(globals(), session, key, identity_gate) == "rebuilt"
-                    and probe_refuse):
-                refusal = b.state_lost_refusal(session, [key])
-                if refusal is not None:
-                    raise b.HealthRefusal(refusal)
-            session.ns[_safe_name(device)] = session.held[key]
-            session.etype_of.setdefault(device, etype)
-            return key
-    if device in session.held:
-        return device
+    key = _hold().resolve(globals(), session, bench_map, device, etype,
+                          probe_refuse, identity_gate)
+    if key is not None:
+        return key
     if device not in bench_map:
         raise _NotRemote(f"no connection parameters for {device!r}.")
     dev = _build_device(bench_map[device], etype, session.lifecycle, session.res.log)
@@ -561,6 +556,7 @@ def _ensure_held(session: _Session, bench_map: dict, device: str, etype: str,
     session.held[device] = dev
     session.etype_of[device] = etype
     session.ns[_safe_name(device)] = dev
+    _hold().record_open(session, device, bench_map[device], etype)
     return device
 
 
@@ -1127,22 +1123,24 @@ _PROTO_OUT = None
 # deliberately NOT in this set: it IS the existing "shutdown" frame.
 _BENCH_CMDS = ("acquire_run", "release_run", "run_test", "cancel_run",
                "prompt_response")
-_BENCH_MOD = None
+def _sib(name: str):
+    """Lazy sibling import (file-path invocation puts llm/ on sys.path; the
+    import must NOT go through the workflow_editor package — PySide6 is
+    absent from project venvs).  One accessor serves both siblings;
+    sys.modules is the cache."""
+    try:
+        return sys.modules[name]
+    except KeyError:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        return __import__(name)
 
 
 def _bench():
-    """Lazy sibling import (file-path invocation puts llm/ on sys.path; the
-    import must NOT go through the workflow_editor package — PySide6 is
-    absent from project venvs)."""
-    global _BENCH_MOD
-    if _BENCH_MOD is None:
-        try:
-            import _bench_session_runner as m
-        except ImportError:
-            sys.path.insert(0, str(Path(__file__).resolve().parent))
-            import _bench_session_runner as m
-        _BENCH_MOD = m
-    return _BENCH_MOD
+    return _sib("_bench_session_runner")
+
+
+def _hold():
+    return _sib("_hold_resolution")
 
 
 def _write_frame(out, obj: dict) -> None:

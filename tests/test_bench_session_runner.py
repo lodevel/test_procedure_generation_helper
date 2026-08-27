@@ -263,8 +263,11 @@ def _line(obj) -> str:
 _ADDR_A = "TCPIP0::10.0.0.5::INSTR"          # canonical: visa:tcpip::10.0.0.5
 _ADDR_A2 = "TCPIP::10.0.0.5::inst0::INSTR"   # same endpoint, other spelling
 _ADDR_B = "TCPIP0::10.0.0.6::INSTR"          # canonical: visa:tcpip::10.0.0.6
+_ADDR_B2 = "TCPIP::10.0.0.6::inst0::INSTR"   # same endpoint as B, other spelling
+_ADDR_C = "TCPIP0::10.0.0.7::INSTR"          # canonical: visa:tcpip::10.0.0.7
 _EP_A = "visa:tcpip::10.0.0.5"
 _EP_B = "visa:tcpip::10.0.0.6"
+_EP_C = "visa:tcpip::10.0.0.7"
 
 
 def _claim(test_id, name, visa=_ADDR_A, etype="psu", dev=None, **extra):
@@ -1858,6 +1861,166 @@ class TimeoutRetargetTests(_BenchBase):
         self.assertFalse(r["aborted"], r)
         self.assertIsNone(s.bench)
         self.assertEqual(self._retargets(), [])
+
+
+# ---------------------------------------------------------------------------
+# Hold resolution (owner ruling 2026-08-27): PSU1 for a given op is whatever
+# its CURRENT address resolves to — _ensure_held folds the op's OWN bench
+# dict to its canonical endpoint FIRST and binds the name to the instance
+# that endpoint resolves to (sibling _hold_resolution.py).
+# ---------------------------------------------------------------------------
+
+
+class StaleNameHoldTests(_BenchBase):
+    """Verifier pins for the re-addressed-name family: the op's driver calls
+    land on the CURRENT device's instance, never a remembered one — plus the
+    stale-instance fate (chokepoint close + R2 record under the OLD
+    endpoint), the wheel-less fallback, and safe-off record semantics."""
+
+    def setUp(self):
+        super().setUp()
+        calls = self.calls          # same retarget spy as TimeoutRetargetTests
+        er._build_device = lambda bench, etype, lifecycle, log: _TimeoutFake(
+            etype, bench.get("_dev", bench.get("visa", "?")), calls)
+
+    def _session(self, cap=True):
+        s = super()._session()      # deterministic capability (see retarget tests)
+        s.lifecycle = dict(s.lifecycle)
+        psu = {k: v for k, v in (s.lifecycle.get("psu") or {}).items()
+               if k != "retarget_timeout"}
+        if cap:
+            psu["retarget_timeout"] = dict(_CAP)
+        s.lifecycle["psu"] = psu
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        return s
+
+    def _exec(self, s, visa, dev, timeout=1500):
+        return er._cmd_exec_ops(s, {
+            "ops": [{"node_path": "s", "op": {
+                "op": "psu.set_voltage", "device": "PSU1", "channel": 1,
+                "volts": 5.0, "volts_unit": "V"}}],
+            "bench_map": {"PSU1": {"visa": visa, "_dev": dev,
+                                   "timeout_ms": timeout}}})
+
+    def test_readdressed_name_op_executes_on_own_instance_not_stale_ns(self):
+        # MAJOR pin (the verifier's divergence scenario): PSU1 previously
+        # routed onto held endpoint A, name-keyed at B in between — the op
+        # re-addressed back to B must EXECUTE on B's instance (the hold key
+        # Seam B retargets), never on A's instance left in the namespace
+        # slot by the earlier routing.
+        s = self._session()
+        r1 = self._acquire(s, [_claim("T-A", "PSU1", _ADDR_A, dev="PHYS")])
+        self.assertTrue(r1["ok"], r1)
+        self._dispatch(s, {"cmd": "release_run", "run_id": r1["run_id"]})
+        rb = self._exec(s, _ADDR_B, "GUIDED-B", 1500)   # name-keyed open at B
+        self.assertFalse(rb["aborted"], rb)
+        inst_b = s.held["PSU1"]
+        ra = self._exec(s, _ADDR_A, "GUIDED-A", 5000)   # routed onto held A
+        self.assertFalse(ra["aborted"], ra)
+        self.assertEqual(len(self._devcalls("PHYS", "set_voltage")), 1)
+        r = self._exec(s, _ADDR_B, "GUIDED-B", 2500)    # re-addressed to B
+        self.assertFalse(r["aborted"], r)
+        self.assertIs(s.held["PSU1"], inst_b)           # reused, not reopened
+        self.assertEqual(len(self._devcalls("GUIDED-B", "set_voltage")), 2)
+        self.assertEqual(len(self._devcalls("PHYS", "set_voltage")), 1)
+        self.assertIs(s.ns[er._safe_name("PSU1")], inst_b)
+        self.assertEqual(inst_b.timeouts, [1500, 2500])  # retarget: SAME instance
+        self.assertEqual(s.bench.applied_timeout.get("PSU1"), 2500)
+
+    def test_readdressed_name_drops_stale_hold_via_chokepoint(self):
+        # Stale-instance fate: a name-keyed hold whose name PROVABLY moved
+        # (endpoint differs) is closed through _close_held_device — its
+        # energized channel first recorded unconfirmed-off under the OLD
+        # endpoint with the stored bench, so the next safety pass reconnects
+        # and offs the old physical device (never false-clean).
+        s = self._session()
+        rb = self._exec(s, _ADDR_B, "GUIDED-B")
+        self.assertFalse(rb["aborted"], rb)
+        inst_b = s.held["PSU1"]
+        rc = self._exec(s, _ADDR_C, "GUIDED-C")
+        self.assertFalse(rc["aborted"], rc)
+        self.assertIsNot(s.held["PSU1"], inst_b)
+        self.assertEqual(len(self._devcalls("GUIDED-B", "close")), 1)
+        self.assertEqual(len(self._devcalls("GUIDED-C", "set_voltage")), 1)
+        self.assertEqual(len(self._devcalls("GUIDED-B", "set_voltage")), 1)
+        self.assertIs(s.ns[er._safe_name("PSU1")], s.held["PSU1"])
+        self.assertEqual(s.unconfirmed_off[_EP_B]["channels"], {1})
+        self.assertEqual(s.unconfirmed_off[_EP_B]["bench"]["visa"], _ADDR_B)
+        self.assertIsNone(s.bench)      # pure guided session: no BenchState
+        r = er._cmd_safe_off(s, {"bench_map": {}, "safe_off": []})
+        self.assertTrue(r["ok"], r)
+        self.assertNotIn(_EP_B, s.unconfirmed_off)      # retried + confirmed
+        self.assertEqual(len(self._devcalls("GUIDED-B", "connect")), 2)
+        self.assertEqual(len([c for c in self.calls if c[1] == "GUIDED-B"
+                              and c[3].get("on") is False]), 1)
+
+    def test_same_endpoint_other_spelling_reuses_name_hold(self):
+        # Staleness is judged on the CANONICAL fold, not the raw string: a
+        # re-spelled address of the SAME endpoint reuses the held instance.
+        s = self._session()
+        self._exec(s, _ADDR_B, "GUIDED-B")
+        inst_b = s.held["PSU1"]
+        r = self._exec(s, _ADDR_B2, "GUIDED-B2")
+        self.assertFalse(r["aborted"], r)
+        self.assertIs(s.held["PSU1"], inst_b)
+        self.assertEqual(len(self._devcalls("GUIDED-B", "connect")), 1)
+        self.assertEqual(len(self._devcalls("GUIDED-B2", "connect")), 0)
+        self.assertEqual(len(self._devcalls("GUIDED-B", "close")), 0)
+        self.assertEqual(len(self._devcalls("GUIDED-B", "set_voltage")), 2)
+
+    def test_wheel_less_fallback_keeps_name_keyed_reuse(self):
+        # No canonical_endpoint (old wheel): staleness is unprovable — the
+        # name-keyed hold is reused exactly as today, nothing closed.
+        import rules_packager_base as rpb
+        saved_attr = rpb.bench_endpoints
+        saved_mod = sys.modules.get("rules_packager_base.bench_endpoints")
+        del rpb.bench_endpoints
+        sys.modules["rules_packager_base.bench_endpoints"] = None
+
+        def _restore():
+            rpb.bench_endpoints = saved_attr
+            sys.modules["rules_packager_base.bench_endpoints"] = saved_mod
+        self.addCleanup(_restore)
+        s = self._session()
+        self._exec(s, _ADDR_B, "GUIDED-B")
+        inst_b = s.held["PSU1"]
+        r = self._exec(s, _ADDR_C, "GUIDED-C")          # re-address: unprovable
+        self.assertFalse(r["aborted"], r)
+        self.assertIs(s.held["PSU1"], inst_b)           # today's behavior
+        self.assertEqual(len(self._devcalls("GUIDED-B", "close")), 0)
+        self.assertEqual(len(self._devcalls("GUIDED-C", "connect")), 0)
+        self.assertEqual(len(self._devcalls("GUIDED-B", "set_voltage")), 2)
+        self.assertEqual(s.unconfirmed_off, {})
+
+    def test_safe_off_reaches_recorded_device_after_readdress(self):
+        # Safety semantics: a safe-off frame reaches the device its RECORD
+        # points at (stored bench data).  With PSU1 re-addressed to C, a
+        # record naming B's bench must off B — not the instance currently
+        # answering to the name — and C's interrupted energized state is
+        # recorded under ITS endpoint and swept at shutdown (never
+        # false-clean).
+        s = self._session()
+        self._exec(s, _ADDR_B, "GUIDED-B")              # held at B, CH1 live
+        rc = self._exec(s, _ADDR_C, "GUIDED-C")         # re-addressed: held at C
+        self.assertFalse(rc["aborted"], rc)
+        self.assertIn(_EP_B, s.unconfirmed_off)         # B's fate (test above)
+        r = er._cmd_safe_off(s, {
+            "bench_map": {"PSU1": {"visa": _ADDR_B, "_dev": "GUIDED-B",
+                                   "timeout_ms": 1500}},
+            "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}]})
+        self.assertTrue(r["ok"], r)
+        offs_b = [c for c in self.calls if c[1] == "GUIDED-B"
+                  and c[3].get("on") is False]
+        self.assertTrue(offs_b)                         # record's device reached
+        self.assertEqual([c for c in self.calls if c[1] == "GUIDED-C"
+                          and c[3].get("on") is False], [])
+        self.assertIn(_EP_C, s.unconfirmed_off)         # C not silently forgotten
+        resp, stop = self._dispatch(s, {"cmd": "shutdown"})
+        self.assertTrue(stop)
+        self.assertNotIn("unsafe", resp)
+        self.assertEqual(len([c for c in self.calls if c[1] == "GUIDED-C"
+                              and c[3].get("on") is False]), 1)
+        self.assertEqual(s.unconfirmed_off, {})
 
 
 # ---------------------------------------------------------------------------

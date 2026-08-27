@@ -1542,6 +1542,278 @@ class RunTestTests(_BenchBase):
 
 
 # ---------------------------------------------------------------------------
+# Per-run timeout retargeting (capability-gated pack LIFECYCLE data).
+# ---------------------------------------------------------------------------
+
+_CAP = {"method": "set_timeout", "field": "timeout_ms"}
+
+
+class _TimeoutFake(_Fake):
+    """_Fake plus a REAL ``set_timeout`` recording its positional value both
+    per instance and in the shared calls list (the ``__getattr__`` recorder
+    keeps kwargs only, and the holder calls positionally)."""
+
+    def __init__(self, *a):
+        super().__init__(*a)
+        self.timeouts: list = []
+
+    def set_timeout(self, value):
+        self.timeouts.append(value)
+        self._calls.append((self._e, self._d, "set_timeout", {"value": value}))
+
+
+class TimeoutRetargetTests(_BenchBase):
+    """Design tests 1-8 for the two retarget seams: verbatim native-unit
+    application at acquire, no-op without the capability, non-fatal failure,
+    redundant-skip, the guided seam, safety-path exemption, rebuild
+    invalidation, and the sticky-mismatch ordering guarantee."""
+
+    def setUp(self):
+        super().setUp()
+        calls = self.calls
+        er._build_device = lambda bench, etype, lifecycle, log: _TimeoutFake(
+            etype, bench.get("_dev", bench.get("visa", "?")), calls)
+
+    def _session(self, cap=True):
+        """Session whose psu lifecycle entry deterministically HAS (or has
+        NOT) the capability — independent of the installed pack version.
+        Registry inner dicts are never mutated (get_lifecycle is shallow)."""
+        s = super()._session()
+        s.lifecycle = dict(s.lifecycle)
+        psu = {k: v for k, v in (s.lifecycle.get("psu") or {}).items()
+               if k != "retarget_timeout"}
+        if cap:
+            psu["retarget_timeout"] = dict(_CAP)
+        s.lifecycle["psu"] = psu
+        return s
+
+    def _retargets(self, dev=None):
+        return [c for c in self.calls
+                if c[2] == "set_timeout" and (dev is None or c[1] == dev)]
+
+    def _set_v(self, device, volts=5.0):
+        return {"node_path": "s", "op": {
+            "op": "psu.set_voltage", "device": device, "channel": 1,
+            "volts": volts, "volts_unit": "V"}}
+
+    def _release(self, s, resp):
+        self._dispatch(s, {"cmd": "release_run", "run_id": resp["run_id"]})
+
+    def test_acquire_applies_merged_value_verbatim(self):
+        # Test 1: the run's MAX-merged timeout_ms reaches the held instance
+        # verbatim (native ms, no unit conversion), once, with a log line.
+        s = self._session()
+        r = self._acquire(s, [
+            _claim("T-A", "PSU1", _ADDR_A, dev="PHYS", timeout_ms=3000),
+            _claim("T-B", "MAIN", _ADDR_A2, dev="PHYS", timeout_ms=5000),
+        ])
+        self.assertTrue(r["ok"], r)
+        rt = self._retargets("PHYS")
+        self.assertEqual(len(rt), 1)
+        self.assertEqual(rt[0][3]["value"], 5000)       # max-merged, VERBATIM
+        self.assertIsInstance(rt[0][3]["value"], int)   # native unit, unscaled
+        self.assertEqual(s.bench.applied_timeout, {_EP_A: 5000})
+        self.assertTrue(any(f"{_EP_A} timeout_ms -> 5000" in ln
+                            and "T-A, T-B" in ln for ln in s.res.log), s.res.log)
+
+    def test_capability_absent_is_noop(self):
+        # Test 2: no capability in the namespace -> never called, max stands.
+        s = self._session(cap=False)
+        r = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(self._retargets(), [])
+        self.assertEqual(s.bench.applied_timeout, {})
+
+    def test_malformed_capability_is_noop_not_fatal(self):
+        # R2: register_lifecycle validates nothing — a non-dict truthy
+        # capability must be a silent no-op, never an escaped AttributeError.
+        s = self._session(cap=False)
+        s.lifecycle["psu"] = {**s.lifecycle["psu"], "retarget_timeout": True}
+        r = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(self._retargets(), [])
+
+    def test_set_timeout_failure_is_nonfatal_and_retried_later(self):
+        # Test 3: a raising set_timeout never kills the acquire; the failure
+        # is logged, applied_timeout is NOT stocked, and a later boundary
+        # retries instead of skipping.
+        calls = self.calls
+
+        class _Boom(_Fake):
+            def set_timeout(self, value):
+                calls.append((self._e, self._d, "set_timeout",
+                              {"value": value}))
+                raise RuntimeError("firmware refuses")
+
+        er._build_device = lambda bench, etype, lifecycle, log: _Boom(
+            etype, bench.get("_dev", "?"), calls)
+        s = self._session()
+        r = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        self.assertTrue(r["ok"], r)                       # acquire SUCCEEDS
+        self.assertEqual(len(self._retargets("PHYS")), 1)
+        self.assertNotIn(_EP_A, s.bench.applied_timeout)  # not recorded
+        self.assertTrue(any("timeout retarget failed, keeping max" in ln
+                            for ln in s.res.log), s.res.log)
+        self._release(s, r)
+        r2 = self._acquire(s, [_claim("T-B", "PSU1", dev="PHYS")])
+        self.assertTrue(r2["ok"], r2)
+        self.assertEqual(len(self._retargets("PHYS")), 2)  # retried, not skipped
+
+    def test_redundant_retarget_skipped(self):
+        # Test 4: same value twice -> one driver call; a different value
+        # retargets again.
+        s = self._session()
+        r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        self._release(s, r1)
+        r2 = self._acquire(s, [_claim("T-B", "PSU1", dev="PHYS")])
+        self.assertTrue(r2["ok"], r2)
+        self.assertEqual(len(self._retargets("PHYS")), 1)   # second skipped
+        self._release(s, r2)
+        r3 = self._acquire(s, [_claim("T-C", "PSU1", dev="PHYS",
+                                      timeout_ms=8000)])
+        self.assertTrue(r3["ok"], r3)
+        self.assertEqual([c[3]["value"] for c in self._retargets("PHYS")],
+                         [5000, 8000])
+
+    def test_guided_op_retargets_with_op_bench_value(self):
+        # Test 5: the _cmd_exec_ops per_session seam applies the OP's own
+        # declared timeout to the held endpoint (and skips when redundant).
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        self._release(s, r1)
+        req = {"ops": [self._set_v("PSU1")],
+               "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED",
+                                      "timeout_ms": 1500}}}
+        r = er._cmd_exec_ops(s, req)
+        self.assertFalse(r["aborted"], r)
+        self.assertEqual([c[3]["value"] for c in self._retargets("PHYS")],
+                         [5000, 1500])
+        self.assertEqual(s.bench.applied_timeout[_EP_A], 1500)
+        self.assertEqual(len(self._devcalls("GUIDED", "connect")), 0)
+        r2 = er._cmd_exec_ops(s, dict(req))                 # same value again
+        self.assertFalse(r2["aborted"], r2)
+        self.assertEqual(len(self._retargets("PHYS")), 2)   # skipped
+
+    def test_absent_field_inherits_previous_retarget(self):
+        # Accepted residual (b), pinned: a claim declaring NO timeout is a
+        # no-op — the previous run's retarget stands, not the admission
+        # default.
+        s = self._session()
+        r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        self._release(s, r1)
+        claim = _claim("T-B", "PSU1", dev="PHYS")
+        del claim["bench"]["timeout_ms"]
+        r2 = self._acquire(s, [claim])
+        self.assertTrue(r2["ok"], r2)
+        self.assertEqual(len(self._retargets("PHYS")), 1)   # no second call
+        self.assertEqual(s.bench.applied_timeout[_EP_A], 5000)
+
+    def test_zero_timeout_claim_is_noop(self):
+        # R5: a verbatim 0 would mean non-blocking serial reads / instant
+        # VISA TMO — falsy values are "no declared patience", a no-op.
+        s = self._session()
+        r = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS",
+                                     timeout_ms=0)])
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(self._retargets(), [])
+        self.assertEqual(s.bench.applied_timeout, {})
+
+    def test_safety_paths_never_retarget(self):
+        # Test 6: _cmd_safe_off, the _retry_unconfirmed reconnect and the
+        # shutdown teardown all run with whatever is applied — the spy's
+        # set_timeout never fires on any of them.
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        self._release(s, r1)
+        base = len(self._retargets())
+        r = er._cmd_safe_off(s, {
+            "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED",
+                                   "timeout_ms": 250}},
+            "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}]})
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(len(self._retargets()), base)
+        # R3 consistency: a dropped handle leaves NO stale applied record,
+        # and the _retry_unconfirmed reconnect does not retarget either.
+        er._record_unconfirmed(s, _EP_A, "psu", {1})
+        er._close_held_device(s, _EP_A)
+        self.assertNotIn(_EP_A, s.bench.applied_timeout)
+        r2 = er._cmd_safe_off(s, {"bench_map": {}, "safe_off": []})
+        self.assertTrue(r2["ok"], r2)
+        self.assertEqual(len(self._retargets()), base)
+        self.assertNotIn(_EP_A, s.bench.applied_timeout)
+        resp, stop = self._dispatch(s, {"cmd": "shutdown"})
+        self.assertTrue(stop)
+        self.assertEqual(len(self._retargets()), base)
+
+    def test_rebuild_invalidates_and_reapplies_same_value(self):
+        # Test 7 (the reviewer's guided-rebuild case): after a check_held
+        # rebuild the stale skip record is gone, so the SAME claim value is
+        # re-applied to the NEW instance instead of being skipped while the
+        # device sits at its constructor value.
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        self._release(s, r1)
+        first = s.held[_EP_A]
+        self.assertEqual(first.timeouts, [5000])
+        _kill_link(first)
+        r = er._cmd_exec_ops(s, {"ops": [self._set_v("PSU1")],
+                                 "bench_map": {"PSU1": {"visa": _ADDR_A,
+                                                        "_dev": "GUIDED",
+                                                        "timeout_ms": 5000}}})
+        self.assertFalse(r["aborted"], r)
+        rebuilt = s.held[_EP_A]
+        self.assertIsNot(rebuilt, first)
+        self.assertEqual(rebuilt.timeouts, [5000])      # RE-applied, not skipped
+        self.assertEqual(s.bench.applied_timeout[_EP_A], 5000)
+
+    def test_sticky_identity_mismatch_refuses_before_retarget(self):
+        # Test 8: a fresh IdentityChanged and its sticky re-raise both refuse
+        # BEFORE the seam — the unverified instrument never sees a retarget.
+        idn_box = {"idn": "ACME,SN1"}
+        calls = self.calls
+
+        class _IdnTimeoutFake(_TimeoutFake):
+            def __init__(self, *a):
+                super().__init__(*a)
+                self.idn = idn_box["idn"]
+
+        er._build_device = lambda bench, etype, lifecycle, log: (
+            _IdnTimeoutFake(etype, bench.get("_dev", "?"), calls))
+        s = self._session()
+        r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        self._release(s, r1)
+        _kill_link(s.held[_EP_A])
+        idn_box["idn"] = "ACME,SN9"          # a DIFFERENT instrument answers
+        base = len(self._retargets())
+        r2 = self._acquire(s, [_claim("T-B", "PSU1", dev="PHYS",
+                                      timeout_ms=8000)])
+        self.assertFalse(r2["ok"])
+        self.assertEqual(r2["kind"], "IdentityChanged")
+        self.assertEqual(len(self._retargets()), base)   # fresh mismatch
+        r3 = self._acquire(s, [_claim("T-C", "PSU1", dev="PHYS",
+                                      timeout_ms=8000)])
+        self.assertFalse(r3["ok"])
+        self.assertEqual(r3["kind"], "IdentityChanged")
+        self.assertEqual(len(self._retargets()), base)   # sticky re-raise
+
+    def test_guided_manual_session_never_instantiates_benchstate(self):
+        # R4: the exec_ops seam must not create a BenchState in a pure
+        # guided-manual session — and without one there is no retarget.
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        r = er._cmd_exec_ops(s, {"ops": [self._set_v("PSU1")],
+                                 "bench_map": {"PSU1": {"visa": _ADDR_A,
+                                                        "_dev": "GUIDED",
+                                                        "timeout_ms": 1500}}})
+        self.assertFalse(r["aborted"], r)
+        self.assertIsNone(s.bench)
+        self.assertEqual(self._retargets(), [])
+
+
+# ---------------------------------------------------------------------------
 # Real daemon over a pipe: EOF backstop + the BenchSessionClient channel.
 # ---------------------------------------------------------------------------
 

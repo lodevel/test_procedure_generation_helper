@@ -231,6 +231,12 @@ class BenchState:
         # fresh BenchState, i.e. end_session/shutdown, forgets it); safe_off
         # is the one context allowed to act on a flagged endpoint.
         self.identity_mismatch: dict = {}
+        # endpoint -> last timeout value applied by _retarget_timeout (skip
+        # cache for redundant retargets).  Same lifetime as fingerprints /
+        # bench_of — forgotten at end_session; invalidated per endpoint by
+        # _close_held_device (the rebuilt instance opens from bench_of, so
+        # the next seam call must re-apply instead of skipping).
+        self.applied_timeout: dict = {}
         self.run_seq = itertools.count(1)
         self.prompt_seq = itertools.count(1)
 
@@ -418,6 +424,72 @@ def state_lost_refusal(session, rebuilt: list) -> dict | None:
                 "the keep-state chain is broken there (the DUT may have "
                 "power-cycled). Nothing was run; the session is still "
                 "live. Re-run to continue from here.")}
+
+
+# ---------------------------------------------------------------------------
+# Per-run timeout retargeting (capability-gated, pack-agnostic).
+# ---------------------------------------------------------------------------
+
+
+def _retarget_timeout(session, endpoint: str, namespace: str, bench,
+                      label: str) -> None:
+    """Apply the acquiring claim's declared timeout to a HELD endpoint.
+
+    Capability contract (declared in the owning pack's LIFECYCLE data, so the
+    holder never sees a driver class)::
+
+        "retarget_timeout": {"method": "set_timeout", "field": "timeout_s"}
+
+    ``field`` names the bench-connection field to read from ``bench`` (the
+    claim's merged bench dict at acquire; the op's bench dict on the guided
+    seam); ``method`` names the driver method to call on the held instance.
+    The value passes VERBATIM, in its NATIVE unit — the holder performs no
+    conversion, ever.  Absent/malformed capability, missing/falsy field value
+    (zero = no declared patience), or nothing held at ``endpoint`` -> no-op:
+    the max-merged open value stands.
+
+    Called from exactly TWO seams — acquire_run (after _ensure_held, i.e.
+    after check_held, so sticky identity_mismatch / HealthRefusal raise before
+    any retarget) and the guided-op per_session call site in _cmd_exec_ops.
+    Deliberately NOT inside _ensure_held / BenchState.enter: those are shared
+    with the safety paths (_cmd_safe_off, _retry_unconfirmed, teardown, the
+    gone/errored ladders), which never retarget — they run with whatever is
+    applied.  Accepted consequences of that ruling, documented here:
+
+    * a boundary *IDN?* liveness probe runs at the currently-applied timeout
+      (a long value slows dead-endpoint detection; a short one persists
+      through safe-off/recovery);
+    * a refused acquire (sticky mismatch on endpoint N, or the post-loop
+      StateLost) leaves endpoints 1..N-1 retargeted to the refused run's
+      values with no active run;
+    * a run declaring NO timeout inherits the previous run's retarget, not
+      the admission default (field-absent = no-op).
+
+    NON-fatal by contract: a timeout tweak never kills a session — any
+    failure is logged, the max-merged value stands, and ``applied_timeout``
+    is NOT updated (so a later seam call retries).
+    """
+    st = session.bench
+    if st is None:
+        return
+    cap = (session.lifecycle.get(namespace) or {}).get("retarget_timeout")
+    if not isinstance(cap, dict):
+        return                       # absent/malformed capability: max stands
+    try:
+        field = cap.get("field")
+        value = (bench or {}).get(field)
+        dev = session.held.get(endpoint)
+        if not value or dev is None:
+            return                   # no declared patience / nothing held
+        if st.applied_timeout.get(endpoint) == value:
+            return                   # redundant retarget skipped
+        getattr(dev, cap["method"])(value)
+    except Exception as exc:  # noqa: BLE001 — NON-fatal, see docstring
+        session.res.log.append(
+            f"{endpoint} timeout retarget failed, keeping max: {exc}")
+        return
+    st.applied_timeout[endpoint] = value
+    session.res.log.append(f"{endpoint} {field} -> {value} ({label})")
 
 
 def _gone_ladder(d: dict, session, key: str, exc) -> dict:
@@ -659,6 +731,13 @@ def _cmd_acquire_run(d: dict, session, req: dict) -> dict:
                 # Lazy admission: open ONCE (no reset) under the ENDPOINT key.
                 d["_ensure_held"](session, {spec.endpoint: bench},
                                   spec.endpoint, namespace)
+                # Seam A (per-run timeout retargeting): AFTER _ensure_held —
+                # i.e. after check_held — so a sticky refusal raised above
+                # never retargets.  ``bench`` carries the run's max-merged
+                # connection values (merged_connection update above).
+                _retarget_timeout(
+                    session, spec.endpoint, namespace, bench,
+                    ", ".join(sorted({u.claim.test_id for u in spec.usages})))
                 chans = st.channels.setdefault(spec.endpoint, set())
                 for u in spec.usages:
                     chans.update(_claim_channels(u.claim.bench))

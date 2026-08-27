@@ -745,6 +745,15 @@ def _close_held_device(session: _Session, device) -> None:
     session.ns.pop(_safe_name(device), None)
     session.etype_of.pop(device, None)
     session.energized.pop(device, None)
+    if session.bench is not None:
+        # Timeout-retarget bookkeeping only (safe inside shared/safety
+        # paths): the live instance for this key is gone, so the recorded
+        # applied value no longer describes anything — a rebuilt instance
+        # opens from bench_of and the next retarget seam must RE-APPLY the
+        # claim's value instead of skipping on a stale record.  Covers the
+        # check_held rebuild, the per-op-error drop, _cmd_raw's drop and
+        # the _retry_unconfirmed reconnect alike (all route through here).
+        session.bench.applied_timeout.pop(device, None)
 
 
 def _close_held(session: _Session) -> None:
@@ -855,6 +864,17 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
         try:
             if policy == "per_session":
                 _ensure_held(session, bench_map, device, etype)
+                # Seam B (per-run timeout retargeting): guided ops ONLY —
+                # _cmd_safe_off / _retry_unconfirmed / _cmd_raw call
+                # _ensure_held directly and never pass here.  Gated on an
+                # EXISTING BenchState (never instantiate one for a pure
+                # guided-manual session); the endpoint key comes from the
+                # alias map acquire/enter maintain (name-keyed devices fall
+                # back to their own name).
+                if session.bench is not None:
+                    _bench()._retarget_timeout(
+                        session, session.bench.alias.get(device, device),
+                        etype, bench_map.get(device), device)
                 # Mark energized BEFORE exec: a multi-line driver call that
                 # asserts the output then raises a later line still gets safe-off'd.
                 if _is_state_changing(op, session.lifecycle):

@@ -14,6 +14,12 @@ dependency — no `sys.path` / `PYTHONPATH` glue. The legacy path bootstraps rem
 only as logged deprecation shims. See the host repo's
 `docs/adr/0003-editor-installed-package.md`.
 
+**Non-editable installs** additionally require the vendored `external/opencode_client`
+submodule to be checked out (`git submodule update --init`):
+`workflow_editor.llm.backend_base` imports `opencode_client`, so a plain
+`pip install .` from a clone without the submodule yields a package that cannot
+import its LLM backends.
+
 ## What it does
 
 - **Text → JSON → Code pipeline.** Three authoring tabs (`Text`, `Text-JSON`,

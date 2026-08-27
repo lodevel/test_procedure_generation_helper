@@ -450,7 +450,10 @@ def _retarget_timeout(session, endpoint: str, namespace: str, bench,
 
     Called from exactly TWO seams — acquire_run (after _ensure_held, i.e.
     after check_held, so sticky identity_mismatch / HealthRefusal raise before
-    any retarget) and the guided-op per_session call site in _cmd_exec_ops.
+    any retarget) and the guided-op per_session call site in _cmd_exec_ops
+    (Seam B — keyed by the hold key _ensure_held bound, and SKIPPED while a
+    run is active: the active run's Seam-A values stand until release, so a
+    guided op never re-times a held endpoint mid-run).
     Deliberately NOT inside _ensure_held / BenchState.enter: those are shared
     with the safety paths (_cmd_safe_off, _retry_unconfirmed, teardown, the
     gone/errored ladders), which never retarget — they run with whatever is
@@ -466,7 +469,8 @@ def _retarget_timeout(session, endpoint: str, namespace: str, bench,
       the admission default (field-absent = no-op).
 
     NON-fatal by contract: a timeout tweak never kills a session — any
-    failure is logged, the max-merged value stands, and ``applied_timeout``
+    failure is logged, the currently-applied value stands (the max-merged
+    open value when no earlier retarget landed), and ``applied_timeout``
     is NOT updated (so a later seam call retries).
     """
     st = session.bench
@@ -486,7 +490,7 @@ def _retarget_timeout(session, endpoint: str, namespace: str, bench,
         getattr(dev, cap["method"])(value)
     except Exception as exc:  # noqa: BLE001 — NON-fatal, see docstring
         session.res.log.append(
-            f"{endpoint} timeout retarget failed, keeping max: {exc}")
+            f"{endpoint} timeout retarget failed, keeping current value: {exc}")
         return
     st.applied_timeout[endpoint] = value
     session.res.log.append(f"{endpoint} {field} -> {value} ({label})")

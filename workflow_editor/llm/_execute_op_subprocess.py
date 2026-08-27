@@ -520,9 +520,11 @@ def _safe_name(device: str) -> str:
 
 
 def _ensure_held(session: _Session, bench_map: dict, device: str, etype: str,
-                 probe_refuse: bool = True, identity_gate: bool = True) -> None:
+                 probe_refuse: bool = True, identity_gate: bool = True) -> str:
     """Open a per_session device ONCE (no reset) into ``held`` + bind it in the
     shared namespace.  Idempotent — a held device is reused across commands.
+    RETURNS the hold key the instance lives under in ``held`` — the routed
+    canonical endpoint on the reuse path, else ``device`` (Seam B's key).
     Bench-session routing: when the active run's view — or, run active or not,
     the op's OWN bench dict folded to a canonical endpoint — lands ``device`` on
     a HELD endpoint, bind that instance instead of opening a second session.
@@ -549,9 +551,9 @@ def _ensure_held(session: _Session, bench_map: dict, device: str, etype: str,
                     raise b.HealthRefusal(refusal)
             session.ns[_safe_name(device)] = session.held[key]
             session.etype_of.setdefault(device, etype)
-            return
+            return key
     if device in session.held:
-        return
+        return device
     if device not in bench_map:
         raise _NotRemote(f"no connection parameters for {device!r}.")
     dev = _build_device(bench_map[device], etype, session.lifecycle, session.res.log)
@@ -559,6 +561,7 @@ def _ensure_held(session: _Session, bench_map: dict, device: str, etype: str,
     session.held[device] = dev
     session.etype_of[device] = etype
     session.ns[_safe_name(device)] = dev
+    return device
 
 
 def _exec_transient(session: _Session, bench_map: dict, device: str, etype: str,
@@ -747,12 +750,10 @@ def _close_held_device(session: _Session, device) -> None:
     session.energized.pop(device, None)
     if session.bench is not None:
         # Timeout-retarget bookkeeping only (safe inside shared/safety
-        # paths): the live instance for this key is gone, so the recorded
-        # applied value no longer describes anything — a rebuilt instance
-        # opens from bench_of and the next retarget seam must RE-APPLY the
-        # claim's value instead of skipping on a stale record.  Covers the
-        # check_held rebuild, the per-op-error drop, _cmd_raw's drop and
-        # the _retry_unconfirmed reconnect alike (all route through here).
+        # paths): the live instance for this key is gone — a rebuilt one
+        # opens from bench_of, so the next retarget seam must RE-APPLY
+        # instead of skipping stale.  Endpoint keys reach here ONLY via the
+        # check_held rebuild (per-op-error/_cmd_raw drops are NAME-keyed).
         session.bench.applied_timeout.pop(device, None)
 
 
@@ -863,18 +864,17 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
         policy = _policy_for(bench_map.get(device, {}), etype, session.lifecycle)
         try:
             if policy == "per_session":
-                _ensure_held(session, bench_map, device, etype)
+                hold_key = _ensure_held(session, bench_map, device, etype)
                 # Seam B (per-run timeout retargeting): guided ops ONLY —
                 # _cmd_safe_off / _retry_unconfirmed / _cmd_raw call
                 # _ensure_held directly and never pass here.  Gated on an
-                # EXISTING BenchState (never instantiate one for a pure
-                # guided-manual session); the endpoint key comes from the
-                # alias map acquire/enter maintain (name-keyed devices fall
-                # back to their own name).
-                if session.bench is not None:
+                # EXISTING BenchState; keyed by EXACTLY the hold key just
+                # bound (never the alias map — never popped, so stale-able).
+                # SKIPPED while a run is active: its Seam-A values stand
+                # until release — guided retargets apply between runs only.
+                if session.bench is not None and session.bench.active is None:
                     _bench()._retarget_timeout(
-                        session, session.bench.alias.get(device, device),
-                        etype, bench_map.get(device), device)
+                        session, hold_key, etype, bench_map.get(device), device)
                 # Mark energized BEFORE exec: a multi-line driver call that
                 # asserts the output then raises a later line still gets safe-off'd.
                 if _is_state_changing(op, session.lifecycle):

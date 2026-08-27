@@ -1652,8 +1652,8 @@ class TimeoutRetargetTests(_BenchBase):
         self.assertTrue(r["ok"], r)                       # acquire SUCCEEDS
         self.assertEqual(len(self._retargets("PHYS")), 1)
         self.assertNotIn(_EP_A, s.bench.applied_timeout)  # not recorded
-        self.assertTrue(any("timeout retarget failed, keeping max" in ln
-                            for ln in s.res.log), s.res.log)
+        self.assertTrue(any("timeout retarget failed, keeping current value"
+                            in ln for ln in s.res.log), s.res.log)
         self._release(s, r)
         r2 = self._acquire(s, [_claim("T-B", "PSU1", dev="PHYS")])
         self.assertTrue(r2["ok"], r2)
@@ -1798,6 +1798,53 @@ class TimeoutRetargetTests(_BenchBase):
         self.assertFalse(r3["ok"])
         self.assertEqual(r3["kind"], "IdentityChanged")
         self.assertEqual(len(self._retargets()), base)   # sticky re-raise
+
+    def test_readdressed_name_retargets_own_instance_not_stale_alias(self):
+        # MAJOR pin: Seam B keys the retarget by the hold key _ensure_held
+        # actually bound — NEVER the alias map (written at claim/route time,
+        # never popped).  A name claimed at endpoint A by an earlier run and
+        # re-addressed to un-held B by a guided op opens NAME-keyed; the
+        # retarget lands on that instance, and A's instrument is untouched.
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        self._release(s, r1)
+        self.assertEqual(s.bench.alias, {"PSU1": _EP_A})  # stale for B below
+        r = er._cmd_exec_ops(s, {"ops": [self._set_v("PSU1")],
+                                 "bench_map": {"PSU1": {"visa": _ADDR_B,
+                                                        "_dev": "GUIDED-B",
+                                                        "timeout_ms": 1500}}})
+        self.assertFalse(r["aborted"], r)
+        self.assertIn("PSU1", s.held)                     # name-keyed at B
+        self.assertEqual([c[3]["value"] for c in self._retargets("GUIDED-B")],
+                         [1500])                          # B's OWN instance
+        self.assertEqual([c[3]["value"] for c in self._retargets("PHYS")],
+                         [5000])                          # A: acquire only
+        self.assertEqual(s.bench.applied_timeout.get("PSU1"), 1500)
+        self.assertEqual(s.bench.applied_timeout.get(_EP_A), 5000)
+
+    def test_guided_op_never_retargets_while_run_active(self):
+        # MINOR pin (chosen rule, documented at Seam B): while ANY run is
+        # active the run's Seam-A values stand — a guided op routed onto a
+        # held endpoint does NOT re-time it mid-run; the same op's declared
+        # value applies once the run is released.
+        s = self._session()
+        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
+        r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
+        req = {"ops": [self._set_v("PSU1")],
+               "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED",
+                                      "timeout_ms": 1500}}}
+        r = er._cmd_exec_ops(s, req)
+        self.assertFalse(r["aborted"], r)
+        self.assertEqual([c[3]["value"] for c in self._retargets("PHYS")],
+                         [5000])                          # Seam A only
+        self.assertEqual(s.bench.applied_timeout[_EP_A], 5000)
+        self._release(s, r1)
+        r2 = er._cmd_exec_ops(s, dict(req))               # between runs
+        self.assertFalse(r2["aborted"], r2)
+        self.assertEqual([c[3]["value"] for c in self._retargets("PHYS")],
+                         [5000, 1500])
+        self.assertEqual(s.bench.applied_timeout[_EP_A], 1500)
 
     def test_guided_manual_session_never_instantiates_benchstate(self):
         # R4: the exec_ops seam must not create a BenchState in a pure

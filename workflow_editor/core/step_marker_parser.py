@@ -26,7 +26,7 @@ class StepBlock:
 
 
 class StepMarkerParser:
-    """
+    r"""
     Parses step markers from Python test code.
     
     Regex pattern: ^\s*#\s*Step\s+(\d+)\b (case-insensitive)

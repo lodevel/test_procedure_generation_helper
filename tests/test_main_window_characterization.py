@@ -112,7 +112,10 @@ def make_window(qapp, monkeypatch, mbox):
 
 def _make_project(root: Path, tests=("t1",), with_bundle=True) -> Path:
     (root / "config").mkdir(parents=True, exist_ok=True)
-    (root / "config" / "config.json").write_text("{}", encoding="utf-8")
+    # A project_id: machine-local state (venv, media cache, install stamp) is keyed
+    # by it since projects moved to a share, and without one there is none at all.
+    (root / "config" / "config.json").write_text(
+        json.dumps({"project_id": "aaaaaaaa-1111-2222-3333-444444444444"}), encoding="utf-8")
     if with_bundle:
         (root / "bundle").mkdir(exist_ok=True)
         (root / "bundle" / "bundle.json").write_text("{}", encoding="utf-8")
@@ -663,7 +666,10 @@ def test_bundle_signature_and_stamp_change_detectors(make_window, tmp_path):
     assert w._bundle_signature_changed() is False
 
     assert w._bundle_stamp_changed() is False
-    stamp = root / "config" / ".bundle_installed.json"
+    # The stamp moved out of the project with the venv it describes (share slice 1).
+    from workflow_editor import _project_local_state
+
+    stamp = _project_local_state.install_record(root)
     stamp.write_text("{}", encoding="utf-8")
     assert w._bundle_stamp_changed() is True
     assert w._bundle_stamp_changed() is False
@@ -690,8 +696,9 @@ def test_dir_events_start_debounce_and_funnel_refreshes(make_window,
     assert w._bundle_change_timer.isActive()
     w._bundle_change_timer.stop()
 
-    (root / "config" / ".bundle_installed.json").write_text(
-        "{}", encoding="utf-8")
+    from workflow_editor import _project_local_state
+
+    _project_local_state.install_record(root).write_text("{}", encoding="utf-8")
     w._on_config_dir_changed(str(root / "config"))
     assert w._bundle_change_timer.isActive()
     w._bundle_change_timer.stop()

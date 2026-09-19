@@ -1,0 +1,118 @@
+"""Where a project's MACHINE-LOCAL state is — the editor's one question to the host.
+
+Two things the editor reaches for used to sit inside the project folder and be
+composed from its path:
+
+* the **venv** it dispatches every wheel op into (``<project>/.venv``), and
+* the **media cache** its ODB inspector shares with the main GUI
+  (``<project>/.media_cache``).
+
+Neither is there since projects moved to a share, and neither is the bundle
+install record it watches (``<project>/config/.bundle_installed.json``), which
+describes what is in that venv. All three live under the per-user
+app-data root, keyed by ``project_id``, and only the host's
+``project_services.project_local_state`` knows where — so this module asks, through
+the same guarded import :mod:`_host_services` uses for every other host-backed
+feature, and never composes a path of its own.
+
+The venv answer carries the project's **bundle directory** with it
+(:class:`ProjectVenv`). The bridge used to recover the project root from the
+interpreter (``python.parents[2]``); that expression now names a folder under the
+app-data root, so every op would have run with an empty pack registry. Resolving
+both from the project root together is what makes that impossible to write again.
+
+Standalone — a checkout with no host on ``sys.path`` — there is nothing to ask, so
+every function answers ``None`` and each caller degrades exactly as it already did
+when a venv or a cache was simply missing.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import NamedTuple, Optional
+
+#: The host seam that owns machine-local project state.
+HOST_MODULE = "project_services.project_local_state"
+
+
+class ProjectVenv(NamedTuple):
+    """This project's interpreter and its bundle directory, resolved together."""
+
+    python: Path
+    bundle_dir: Path
+
+
+def _local_state():
+    """The host seam, or ``None`` standalone — the editor's guarded-import rule."""
+    from . import _host_services
+
+    return _host_services.load_optional(HOST_MODULE)
+
+
+def interpreter(project_root: Path) -> Optional[Path]:
+    """Where this project's interpreter would be — no existence check.
+
+    ``None`` when there is no host, or when the project has no ``project_id``
+    and therefore no machine-local state at all.
+    """
+    local_state = _local_state()
+    if local_state is None:
+        return None
+    venv_dir = local_state.venv_dir(project_root)
+    return local_state.venv_python(venv_dir) if venv_dir is not None else None
+
+
+def venv(project_root: Path) -> Optional[ProjectVenv]:
+    """This project's interpreter + bundle dir, or ``None`` when there is no venv."""
+    python = interpreter(project_root)
+    if python is None or not python.exists():
+        return None
+    return ProjectVenv(python, Path(project_root) / "bundle")
+
+
+def why_no_venv(project_root: Path) -> str:
+    """The message a user reads when :func:`venv` answered ``None``.
+
+    The two causes read differently on purpose: a standalone editor can never have
+    a project venv, while an embedded one that cannot find it wants the path it
+    looked at.
+    """
+    if _local_state() is None:
+        return (
+            "This editor is running without the host app, which is the only thing "
+            "that knows where a project's machine-local venv lives. "
+            "The LLM fallback remains available."
+        )
+    python = interpreter(project_root)
+    where = f" (expected {python})" if python is not None else ""
+    return (
+        f"No machine-local venv for {project_root}{where}. "
+        "Reinstall the project bundle to create the venv. "
+        "The LLM fallback remains available."
+    )
+
+
+def install_record(project_root: Optional[Path]) -> Optional[Path]:
+    """The host's record of what it installed into this project's venv.
+
+    Watched as a belt-and-braces bundle-change signal. It moved out of
+    ``<project>/config/`` with the venv it describes, so composing it from the
+    project would now name a file nothing ever writes — a watch that can never
+    fire, which is worse than no watch. ``None`` without a host or a
+    ``project_id``, and the caller then relies on the bundle-dir signature alone.
+    """
+    if project_root is None:
+        return None
+    local_state = _local_state()
+    return None if local_state is None else local_state.install_record(project_root)
+
+
+def media_cache(project_root: Optional[Path]) -> Optional[Path]:
+    """This project's rendered-media cache — the SAME folder the main GUI uses.
+
+    ``None`` without a host or a ``project_id``: the ODB panel then renders nothing
+    and shows nothing, which is the degradation it already had with no cache.
+    """
+    if project_root is None:
+        return None
+    local_state = _local_state()
+    return None if local_state is None else local_state.media_cache_dir(project_root)

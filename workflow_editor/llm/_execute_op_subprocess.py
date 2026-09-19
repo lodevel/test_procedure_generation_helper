@@ -2,7 +2,7 @@
 
 Invoked by FILE PATH (NOT ``-m``) in the *project* venv::
 
-    <project>/.venv/<bin>/python <abs>/_execute_op_subprocess.py
+    <machine-local venv>/<bin>/python <abs>/_execute_op_subprocess.py
 
 Running via ``-m`` would trigger ``workflow_editor/__init__.py`` (PySide6, absent
 from the project venv); invoking by path keeps ``__name__ == "__main__"`` and

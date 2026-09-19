@@ -236,7 +236,11 @@ class _WatcherHarness:
 
 def _armed_harness(tmp_path, qapp, tasks=None, name="wproj"):
     root = _make_project(tmp_path, tasks or [_task("t", "P")], name=name)
-    (root / "config" / "config.json").write_text("{}", encoding="utf-8")
+    # A project_id: the install stamp moved beside the machine-local venv it
+    # describes, and that folder is keyed by the id (share slice 1).
+    (root / "config" / "config.json").write_text(
+        json.dumps({"project_id": "aaaaaaaa-1111-2222-3333-444444444444"}), encoding="utf-8"
+    )
     h = _WatcherHarness(root)
     h._watch_project_config()
     return root, h
@@ -306,12 +310,18 @@ def test_no_reload_storm_on_unrelated_writes(qapp, tmp_path):
 
 
 def test_install_stamp_is_belt_and_braces_trigger(qapp, tmp_path):
-    """The wheel-install stamp lands in config/ as the import's final
-    step — a stamp change alone must fire the debounced reload."""
+    """The wheel-install stamp is written as the import's final step — a stamp
+    change alone must fire the debounced reload. It sits beside the machine-local
+    venv it describes, so the bridge is asked where rather than composing it from
+    the project: composed, it would name a file nothing writes any more and this
+    trigger would be dead while every pin stayed green."""
+    from workflow_editor import _project_local_state
+
     root, h = _armed_harness(tmp_path, qapp)
 
-    (root / "config" / ".bundle_installed.json").write_text(
-        json.dumps({"bundle": "b", "version": "2.0.0"}), encoding="utf-8")
+    stamp = _project_local_state.install_record(root)
+    assert stamp is not None and root not in stamp.parents
+    stamp.write_text(json.dumps({"bundle": "b", "version": "2.0.0"}), encoding="utf-8")
     h._on_config_dir_changed(str(root / "config"))
 
     assert h._bundle_change_timer.isActive()

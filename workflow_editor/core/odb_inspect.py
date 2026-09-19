@@ -18,6 +18,8 @@ import threading
 from pathlib import Path
 from typing import Optional
 
+from .. import _project_local_state
+
 log = logging.getLogger(__name__)
 
 
@@ -233,12 +235,16 @@ def save_hide_prefixes(project_root: Optional[Path], prefixes: list) -> bool:
 
 def cached_image_paths(project_root: Optional[Path], refdes: str,
                        pad: Optional[str]) -> tuple:
-    """(zoomed, wide) cached PNG paths for a target under
-    ``<project>/.media_cache`` (shared layout with the main GUI), or
-    ``(None, None)`` when not present."""
-    if project_root is None or not refdes:
+    """(zoomed, wide) cached PNG paths for a target in the project's MACHINE-LOCAL
+    media cache — the same folder the main GUI uses, which is why it is asked of the
+    host rather than composed (:mod:`workflow_editor._project_local_state`); a cache
+    built here from the project path would stop being shared the moment projects
+    moved to a share. ``(None, None)`` when not present."""
+    if not refdes:
         return (None, None)
-    cache = Path(project_root) / ".media_cache"
+    cache = _project_local_state.media_cache(project_root)
+    if cache is None:
+        return (None, None)
     fname = f"{refdes}_pad{pad}.png" if pad else f"{refdes}.png"
     z = cache / "zoomed" / "images" / fname
     w = cache / "wide" / "images" / fname
@@ -280,8 +286,8 @@ def load_render_params(project_root: Optional[Path]) -> dict:
 
 def render_target(project_root: Optional[Path], refdes: str,
                   pad: Optional[str]) -> tuple:
-    """Render ONE component/pin board image into the SHARED
-    ``<project>/.media_cache`` (zoomed + wide passes via the ODB CLI) and return
+    """Render ONE component/pin board image into the SHARED machine-local media
+    cache (zoomed + wide passes via the ODB CLI) and return
     its ``(zoomed, wide)`` cached paths. Cache-first. **Graceful** ``(None, None)``
     when there is no archive / CLI, or on failure. Only ``mkdir``s the view dirs —
     never touches the GUI's ``.odb_checksum`` (so it can't wipe the shared cache).
@@ -294,7 +300,9 @@ def render_target(project_root: Optional[Path], refdes: str,
     if tgz is None or cli is None or not refdes:
         return (None, None)
     p = load_render_params(project_root)
-    cache = Path(project_root) / ".media_cache"
+    cache = _project_local_state.media_cache(project_root)
+    if cache is None:  # no host, or no project_id: nothing to render into
+        return (None, None)
     target = f"{refdes}:{pad}" if pad else refdes
 
     # Persistent daemon first: warm renders ~0.3-0.4s (board + decoded faces

@@ -2,7 +2,11 @@
 
 Invoked by FILE PATH (NOT ``-m``)::
 
-    <project>/.venv/<bin>/python <abs>/_pack_parsers_subprocess.py
+    <machine-local venv>/<bin>/python <abs>/_pack_parsers_subprocess.py
+
+That venv is machine-local and keyed by ``project_id``, never inside the
+project; this script does not work out where it is, and does not work out where
+the bundle is either — the parent hands both in (``_bundle_dir`` in the spec).
 
 Running via ``-m`` would trigger ``workflow_editor/__init__.py`` (which imports
 PySide6, absent from the project venv); invoking by path keeps

@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Optional
 
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
-from .. import _host_services
+from .. import _host_services, _project_local_state
 
 if TYPE_CHECKING:
     from ..main_window import MainWindow
@@ -298,14 +298,16 @@ def bundle_signature_changed(mw) -> bool:
 
 
 def bundle_stamp_changed(mw) -> bool:
-    """True when config/.bundle_installed.json moved since the last
+    """True when the host's bundle-install record moved since the last
     check. The stamp is written as the final step of every bundle
     install — a change means an import completed even if the
     bundle-dir events were missed mid-swap (task #39
-    belt-and-braces)."""
-    if mw._watched_config_dir is None:
+    belt-and-braces). It sits beside the machine-local venv it
+    describes, not in the project, so the host is asked where
+    (``_project_local_state.install_record``)."""
+    stamp = _project_local_state.install_record(mw._watched_project_root)
+    if stamp is None:
         return False
-    stamp = mw._watched_config_dir / ".bundle_installed.json"
     try:
         mtime: Optional[int] = stamp.stat().st_mtime_ns
     except OSError:

@@ -14,7 +14,12 @@ Mechanism
   It reads a JSON op-spec from stdin and writes a JSON result to stdout.
 - The subprocess is invoked by FILE PATH (not ``-m``)::
 
-      <project>/.venv/Scripts/python.exe <abs>/_pack_parsers_subprocess.py
+      <machine-local venv>/Scripts/python.exe <abs>/_pack_parsers_subprocess.py
+
+  That venv is NOT inside the project any more: it lives under the per-user
+  app-data root, keyed by ``project_id`` (see ``_project_local_state``), whose
+  ``ProjectVenv`` carries the interpreter and the project's bundle dir together
+  because the second can no longer be derived from the first.
 
   Invoking via ``-m`` would trigger ``workflow_editor/__init__.py`` which
   imports PySide6 (the editor GUI). The project venv has the bundle wheels
@@ -30,8 +35,8 @@ the GUI may probe ``is_available()`` during startup before any project is open.
 
 is_available() caching
 -----------------------
-``is_available(project_root)`` is cheap but may be polled on every repaint;
-it is cached per ``(project_root, venv_python_mtime)``.
+``is_available(project_root)`` is cheap but may be polled on every repaint; it is
+cached per ``(interpreter path, mtime)`` — a project root no longer names a venv.
 """
 from __future__ import annotations
 
@@ -40,7 +45,6 @@ import json
 import logging
 import os
 import subprocess
-import sys
 import tempfile
 import threading
 from collections import deque
@@ -48,6 +52,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, NoReturn, Optional
 
+from .. import _project_local_state
 from ..llm import section_ownership
 
 log = logging.getLogger(__name__)
@@ -84,13 +89,6 @@ class ParseFailure(Exception):
 # ---------------------------------------------------------------------------
 
 
-def _venv_python(project_root: Path) -> Path:
-    """Resolve the project venv Python path (Windows or POSIX)."""
-    if sys.platform == "win32" or os.name == "nt":
-        return project_root / ".venv" / "Scripts" / "python.exe"
-    return project_root / ".venv" / "bin" / "python"
-
-
 def _timeout() -> int:
     try:
         return int(os.environ.get(_ENV_TIMEOUT, _TIMEOUT_DEFAULT))
@@ -106,16 +104,16 @@ def _timeout() -> int:
 _IS_AVAILABLE_CACHE: dict[tuple[str, int], tuple[bool, str]] = {}
 
 
-def _cached_is_available(project_python: Path) -> tuple[bool, str]:
+def _cached_is_available(venv: _project_local_state.ProjectVenv) -> tuple[bool, str]:
     try:
-        mtime = project_python.stat().st_mtime_ns
+        mtime = venv.python.stat().st_mtime_ns
     except OSError:
-        return False, f"Project venv Python not found: {project_python}"
-    key = (str(project_python), mtime)
+        return False, f"Project venv Python not found: {venv.python}"
+    key = (str(venv.python), mtime)
     if key in _IS_AVAILABLE_CACHE:
         return _IS_AVAILABLE_CACHE[key]
     result = _subprocess_call(
-        project_python,
+        venv,
         {"op": "is_available"},
         timeout=_TIMEOUT_IS_AVAILABLE,
     )
@@ -133,7 +131,7 @@ def _cached_is_available(project_python: Path) -> tuple[bool, str]:
 
 
 def _subprocess_call(
-    project_python: Path,
+    venv: _project_local_state.ProjectVenv,
     spec: dict[str, Any],
     timeout: int,
     runner_name: str = "_pack_parsers_subprocess.py",
@@ -155,14 +153,15 @@ def _subprocess_call(
     runner_path = Path(__file__).resolve().parent / runner_name
 
     # Tell the child where the project bundle lives so it can populate the pack
-    # registry before running the op. project_python is <project>/.venv/<bin>/python,
-    # so the project root is parents[2] and the bundle is <project>/bundle.
-    # Injected once here rather than in every op-spec builder.
-    spec = {**spec, "_bundle_dir": str(project_python.parents[2] / "bundle")}
+    # registry before running the op. It comes from the PROJECT ROOT, resolved
+    # alongside the interpreter (:class:`ProjectVenv`) — deriving it from the
+    # interpreter's own path stopped being possible the day the venv moved out
+    # of the project. Injected once here rather than in every op-spec builder.
+    spec = {**spec, "_bundle_dir": str(venv.bundle_dir)}
 
     try:
         proc = subprocess.run(
-            [str(project_python), str(runner_path)],
+            [str(venv.python), str(runner_path)],
             input=json.dumps(spec),
             capture_output=True,
             text=True,
@@ -199,16 +198,16 @@ def _subprocess_call(
         }
 
 
-def _resolve_project_python(project_root: Path) -> Path:
-    """Return the project venv Python path; raise ParserUnavailable if absent."""
-    py = _venv_python(project_root)
-    if not py.exists():
-        raise ParserUnavailable(
-            f"No project venv at {py}. "
-            f"Reinstall the project bundle to create the venv. "
-            f"The LLM fallback remains available."
-        )
-    return py
+def _resolve_project_python(project_root: Path) -> _project_local_state.ProjectVenv:
+    """The project's interpreter AND bundle dir; ParserUnavailable when there is none.
+
+    Callers bind the result as ``venv`` and hand it straight to
+    :func:`_subprocess_call`; it is a ``ProjectVenv``, not a path.
+    """
+    resolved = _project_local_state.venv(project_root)
+    if resolved is None:
+        raise ParserUnavailable(_project_local_state.why_no_venv(project_root))
+    return resolved
 
 
 # ---------------------------------------------------------------------------
@@ -297,10 +296,10 @@ def is_available(
             return False, str(exc)
 
     try:
-        project_python = _resolve_project_python(project_root)
+        venv = _resolve_project_python(project_root)
     except ParserUnavailable as exc:
         return False, str(exc)
-    return _cached_is_available(project_python)
+    return _cached_is_available(venv)
 
 
 def parse_text(
@@ -315,9 +314,9 @@ def parse_text(
     if project_root is None:
         return _inproc_parse_text(text)
 
-    project_python = _resolve_project_python(project_root)
+    venv = _resolve_project_python(project_root)
     result = _subprocess_call(
-        project_python,
+        venv,
         {"op": "parse_text", "text": text, "project_root": str(project_root)},
         timeout=_timeout(),
     )
@@ -339,9 +338,9 @@ def render_text(
     if project_root is None:
         return _inproc_render_text(procedure_json)
 
-    project_python = _resolve_project_python(project_root)
+    venv = _resolve_project_python(project_root)
     result = _subprocess_call(
-        project_python,
+        venv,
         {"op": "render_text", "procedure_json": procedure_json},
         timeout=_timeout(),
     )
@@ -365,9 +364,9 @@ def populate_media(
     if project_root is None:
         return _inproc_populate_media(procedure_json)
 
-    project_python = _resolve_project_python(project_root)
+    venv = _resolve_project_python(project_root)
     result = _subprocess_call(
-        project_python,
+        venv,
         {"op": "populate_media", "procedure_json": procedure_json},
         timeout=_timeout(),
     )
@@ -388,9 +387,9 @@ def export_rows(
     if project_root is None:
         raise ParserUnavailable("export_rows requires a project venv")
 
-    project_python = _resolve_project_python(project_root)
+    venv = _resolve_project_python(project_root)
     result = _subprocess_call(
-        project_python,
+        venv,
         {"op": "export_rows", "procedure_json": procedure_json},
         timeout=_timeout(),
     )
@@ -406,9 +405,9 @@ def export_rows_batch(
     """Batched :func:`export_rows` — one project-venv spawn for a whole
     export run. Returns one ``{"steps": [...], "expected": [...]}`` per
     input procedure. Raises :class:`ParserUnavailable` on old wheels."""
-    project_python = _resolve_project_python(project_root)
+    venv = _resolve_project_python(project_root)
     result = _subprocess_call(
-        project_python,
+        venv,
         {"op": "export_rows", "procedures": procedures},
         timeout=_timeout(),
     )
@@ -430,9 +429,9 @@ def renumber_steps_text(
     if project_root is None:
         return _inproc_renumber_steps(text)
 
-    project_python = _resolve_project_python(project_root)
+    venv = _resolve_project_python(project_root)
     result = _subprocess_call(
-        project_python,
+        venv,
         {"op": "renumber_steps", "text": text},
         timeout=_timeout(),
     )
@@ -473,9 +472,9 @@ def sync_equipment_from_steps(
     if project_root is None:
         return _inproc_sync_equipment(text, controller_profiles)
 
-    project_python = _resolve_project_python(project_root)
+    venv = _resolve_project_python(project_root)
     result = _subprocess_call(
-        project_python,
+        venv,
         {
             "op": "sync_equipment",
             "text": text,
@@ -500,9 +499,9 @@ def sync_meta_text(
     if project_root is None:
         return _inproc_sync_meta(text)
 
-    project_python = _resolve_project_python(project_root)
+    venv = _resolve_project_python(project_root)
     result = _subprocess_call(
-        project_python,
+        venv,
         {"op": "sync_meta", "text": text},
         timeout=_timeout(),
     )
@@ -525,11 +524,11 @@ def supports_sync_meta(project_root: Optional[Path] = None) -> bool:
         except ParserUnavailable:
             return False
     try:
-        project_python = _resolve_project_python(project_root)
+        venv = _resolve_project_python(project_root)
     except ParserUnavailable:
         return False
     result = _subprocess_call(
-        project_python,
+        venv,
         {"op": "supports", "attr": "sync_meta_text"},
         timeout=_timeout(),
     )
@@ -594,9 +593,9 @@ def build_manual_run(
             _load_procedure_document(procedure_path),
             measurements, controls, operator_verdicts)
 
-    project_python = _resolve_project_python(project_root)
+    venv = _resolve_project_python(project_root)
     result = _subprocess_call(
-        project_python,
+        venv,
         {
             "op": "build_manual_run",
             "procedure_path": procedure_path,
@@ -622,11 +621,11 @@ def supports_build_manual_run(project_root: Optional[Path] = None) -> bool:
         except ParserUnavailable:
             return False
     try:
-        project_python = _resolve_project_python(project_root)
+        venv = _resolve_project_python(project_root)
     except ParserUnavailable:
         return False
     result = _subprocess_call(
-        project_python,
+        venv,
         {"op": "supports", "attr": "build_manual_run"},
         timeout=_timeout(),
     )
@@ -650,11 +649,11 @@ def supports_guided_manual(project_root: Optional[Path] = None) -> bool:
         except ParserUnavailable:
             return False
     try:
-        project_python = _resolve_project_python(project_root)
+        venv = _resolve_project_python(project_root)
     except ParserUnavailable:
         return False
     result = _subprocess_call(
-        project_python,
+        venv,
         {"op": "supports", "attrs": list(_GUIDED_MANUAL_FNS)},
         timeout=_timeout(),
     )
@@ -681,9 +680,9 @@ def build_manual_result(
             _load_procedure_document(procedure_path),
             measurements, controls, operator_verdicts)
 
-    project_python = _resolve_project_python(project_root)
+    venv = _resolve_project_python(project_root)
     result = _subprocess_call(
-        project_python,
+        venv,
         {
             "op": "build_manual_result",
             "procedure_path": procedure_path,
@@ -840,12 +839,12 @@ class RemoteSession:
 
     # -- lifecycle ---------------------------------------------------------
     def _start(self) -> None:
-        py = _resolve_project_python(self._project_root)   # may raise ParserUnavailable
-        self._bundle_dir = str(py.parents[2] / "bundle")
+        venv = _resolve_project_python(self._project_root)  # may raise ParserUnavailable
+        self._bundle_dir = str(venv.bundle_dir)
         # Daemon stayed in llm/ when pack_parsers moved to pack_ops/ (29e5f66).
         runner = Path(__file__).resolve().parent.parent / "llm" / "_execute_op_subprocess.py"
         self._proc = subprocess.Popen(
-            [str(py), str(runner)],
+            [str(venv.python), str(runner)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1,
             cwd=str(self._screenshot_dir),   # relative file writes (screenshots) land here
@@ -1227,9 +1226,9 @@ def generate_code(
     if project_root is None:
         return _inproc_generate_code(procedure)
 
-    project_python = _resolve_project_python(project_root)
+    venv = _resolve_project_python(project_root)
     result = _subprocess_call(
-        project_python,
+        venv,
         {"op": "generate_code", "procedure": procedure},
         timeout=_timeout(),
     )
@@ -1262,7 +1261,7 @@ def validate(
             check_names=check_names,
         )
 
-    project_python = _resolve_project_python(project_root)
+    venv = _resolve_project_python(project_root)
     spec: dict[str, Any] = {"op": "validate", "mode": mode, "check_names": check_names}
     if text is not None:
         spec["text"] = text
@@ -1271,7 +1270,7 @@ def validate(
     if original_text is not None:
         spec["original_text"] = original_text
 
-    result = _subprocess_call(project_python, spec, timeout=_timeout())
+    result = _subprocess_call(venv, spec, timeout=_timeout())
     if not result.get("ok"):
         raise ParserUnavailable(result.get("error", "subprocess error"))
 
@@ -1305,9 +1304,9 @@ def get_section_ownership(
     override = section_ownership.load_config_override(project_root)
     loaded = section_ownership.load_bundle_ownership(project_root / "bundle")
     if loaded is None:
-        project_python = _resolve_project_python(project_root)
+        venv = _resolve_project_python(project_root)
         result = _subprocess_call(
-            project_python,
+            venv,
             {"op": "section_ownership"},
             timeout=_timeout(),
         )
@@ -1334,9 +1333,9 @@ def reconstruct_text(
         pr = _inproc_import_wheel().reconstruct(fragment, prior, owned_sections)
         return _ReconstructReport.from_parse_result(pr)
 
-    project_python = _resolve_project_python(project_root)
+    venv = _resolve_project_python(project_root)
     result = _subprocess_call(
-        project_python,
+        venv,
         {
             "op": "reconstruct",
             "fragment": fragment,

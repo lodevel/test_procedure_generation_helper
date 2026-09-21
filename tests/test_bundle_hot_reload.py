@@ -84,9 +84,13 @@ def _age_bundle(root: Path, seconds: int = 10) -> None:
 def _make_project(tmp_path: Path, tasks: list, name: str = "proj") -> Path:
     root = tmp_path / name
     (root / "config").mkdir(parents=True)
-    (root / "bundle").mkdir()
+    (root / "bundle" / "wheels").mkdir(parents=True)
     (root / "bundle" / "bundle.json").write_text(
-        json.dumps({"name": "b", "version": "1.0.0"}), encoding="utf-8")
+        json.dumps({"name": "b", "id": "b", "version": "1.0.0"}), encoding="utf-8")
+    # The install stamp lives beside the venv, and the venv is keyed by the bundle:
+    # a manifest plus a wheels/requirements.txt are what make a folder one the host
+    # can answer about at all. Without them the stamp below is simply ``None``.
+    (root / "bundle" / "wheels" / "requirements.txt").write_text("", encoding="utf-8")
     _write_defaults(root, tasks)
     _age_bundle(root)
     return root
@@ -321,6 +325,8 @@ def test_install_stamp_is_belt_and_braces_trigger(qapp, tmp_path):
 
     stamp = _project_local_state.install_record(root)
     assert stamp is not None and root not in stamp.parents
+    # The install writes it; resolving where it goes never creates the folder.
+    stamp.parent.mkdir(parents=True, exist_ok=True)
     stamp.write_text(json.dumps({"bundle": "b", "version": "2.0.0"}), encoding="utf-8")
     h._on_config_dir_changed(str(root / "config"))
 

@@ -58,17 +58,24 @@ def _isolate_project_local_state(monkeypatch, tmp_path):
     autouse sandbox; a no-op in a standalone checkout with no host on sys.path.
     """
     try:
-        from project_services import project_local_state
+        from project_services import project_local_state, venv_pool
     except ImportError:
         yield
         return
     root = tmp_path / "_local_state"
     monkeypatch.setattr(project_local_state, "local_root", lambda: root)
-    # The seam memoizes a resolved folder for the life of the PROCESS, so one test's
-    # folder would otherwise be served to the next under a stale root.
+    # The shared Python environments hang BESIDE that root, one per bundle rather
+    # than one per project, so they need sandboxing in their own right: an editor
+    # test resolving a project's venv must not read — or have the pool's limit
+    # delete — an environment a bench on this machine is running on.
+    monkeypatch.setattr(project_local_state, "venvs_root", lambda: tmp_path / "_venvs")
+    # Both seams memoize for the life of the PROCESS, so one test's answers would
+    # otherwise be served to the next under a stale root.
     project_local_state.forget_resolved()
+    venv_pool.forget_key_cache()
     yield
     project_local_state.forget_resolved()
+    venv_pool.forget_key_cache()
 
 @pytest.fixture
 def sample_llm_request_minimal():

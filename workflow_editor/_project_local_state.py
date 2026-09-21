@@ -10,10 +10,18 @@ composed from its path:
 Neither is there since projects moved to a share, and neither is the bundle
 install record it watches (``<project>/config/.bundle_installed.json``), which
 describes what is in that venv. All three live under the per-user
-app-data root, keyed by ``project_id``, and only the host's
-``project_services.project_local_state`` knows where — so this module asks, through
-the same guarded import :mod:`_host_services` uses for every other host-backed
-feature, and never composes a path of its own.
+app-data root, and only the host's ``project_services.project_local_state`` knows
+where — so this module asks, through the same guarded import :mod:`_host_services`
+uses for every other host-backed feature, and never composes a path of its own.
+
+The venv is SHARED: one per bundle, used by every project on it, and bounded by a
+limit the user sets. Two consequences for this bridge. An interpreter EXISTING is
+no longer proof there is a venv to run — a build that was interrupted leaves one
+sitting there unfinished — so :func:`venv` asks the host's ``existing_venv_python``,
+which answers only for a finished build, and :func:`interpreter` is kept for saying
+where one WOULD be in a message. And the environment can be deleted out from under
+an open editor by another window's clean-up, which reads here exactly as it always
+did when one was missing: the op refuses and names the LLM fallback.
 
 The venv answer carries the project's **bundle directory** with it
 (:class:`ProjectVenv`). The bridge used to recover the project root from the
@@ -51,8 +59,9 @@ def _local_state():
 def interpreter(project_root: Path) -> Optional[Path]:
     """Where this project's interpreter would be — no existence check.
 
-    ``None`` when there is no host, or when the project has no ``project_id``
-    and therefore no machine-local state at all.
+    For MESSAGES, not for dispatch: the path is named even when the environment
+    has not been built, or was left half-built. ``None`` when there is no host, or
+    when the project has no bundle and therefore no environment of its own.
     """
     local_state = _local_state()
     if local_state is None:
@@ -62,11 +71,21 @@ def interpreter(project_root: Path) -> Optional[Path]:
 
 
 def venv(project_root: Path) -> Optional[ProjectVenv]:
-    """This project's interpreter + bundle dir, or ``None`` when there is no venv."""
-    python = interpreter(project_root)
-    if python is None or not python.exists():
+    """This project's interpreter + bundle dir, or ``None`` when there is no venv.
+
+    The host answers, and answers only for a build that FINISHED. Asking whether
+    the file exists would have been enough when a venv was a folder this app made
+    in one go; with a shared pool, a killed install leaves an interpreter that can
+    import half a bundle, and dispatching an op into it is how a wrong answer
+    looks exactly like a right one.
+    """
+    local_state = _local_state()
+    if local_state is None:
         return None
-    return ProjectVenv(python, Path(project_root) / "bundle")
+    python = local_state.existing_venv_python(project_root)
+    if python is None:
+        return None
+    return ProjectVenv(Path(python), Path(project_root) / "bundle")
 
 
 def why_no_venv(project_root: Path) -> str:
@@ -86,7 +105,7 @@ def why_no_venv(project_root: Path) -> str:
     where = f" (expected {python})" if python is not None else ""
     return (
         f"No machine-local venv for {project_root}{where}. "
-        "Reinstall the project bundle to create the venv. "
+        "Open the project in the main app, or reinstall its bundle, to build it. "
         "The LLM fallback remains available."
     )
 
@@ -95,10 +114,11 @@ def install_record(project_root: Optional[Path]) -> Optional[Path]:
     """The host's record of what it installed into this project's venv.
 
     Watched as a belt-and-braces bundle-change signal. It moved out of
-    ``<project>/config/`` with the venv it describes, so composing it from the
-    project would now name a file nothing ever writes — a watch that can never
-    fire, which is worse than no watch. ``None`` without a host or a
-    ``project_id``, and the caller then relies on the bundle-dir signature alone.
+    ``<project>/config/`` with the venv it describes and then again into the
+    shared pool folder that venv lives in, so composing it from the project would
+    name a file nothing ever writes — a watch that can never fire, which is worse
+    than no watch. ``None`` without a host or without a bundle, and the caller
+    then relies on the bundle-dir signature alone.
     """
     if project_root is None:
         return None

@@ -117,8 +117,12 @@ def _make_project(root: Path, tests=("t1",), with_bundle=True) -> Path:
     (root / "config" / "config.json").write_text(
         json.dumps({"project_id": "aaaaaaaa-1111-2222-3333-444444444444"}), encoding="utf-8")
     if with_bundle:
-        (root / "bundle").mkdir(exist_ok=True)
-        (root / "bundle" / "bundle.json").write_text("{}", encoding="utf-8")
+        (root / "bundle" / "wheels").mkdir(parents=True, exist_ok=True)
+        (root / "bundle" / "bundle.json").write_text(
+            json.dumps({"id": "b", "version": "1.0.0"}), encoding="utf-8")
+        # An INSTALLABLE bundle: the install stamp sits beside the venv, and the venv
+        # is keyed by the bundle, so a folder with no requirements.txt has no stamp.
+        (root / "bundle" / "wheels" / "requirements.txt").write_text("", encoding="utf-8")
     for name in tests:
         d = root / "tests" / name
         d.mkdir(parents=True, exist_ok=True)
@@ -670,6 +674,7 @@ def test_bundle_signature_and_stamp_change_detectors(make_window, tmp_path):
     from workflow_editor import _project_local_state
 
     stamp = _project_local_state.install_record(root)
+    stamp.parent.mkdir(parents=True, exist_ok=True)
     stamp.write_text("{}", encoding="utf-8")
     assert w._bundle_stamp_changed() is True
     assert w._bundle_stamp_changed() is False
@@ -698,7 +703,9 @@ def test_dir_events_start_debounce_and_funnel_refreshes(make_window,
 
     from workflow_editor import _project_local_state
 
-    _project_local_state.install_record(root).write_text("{}", encoding="utf-8")
+    stamp = _project_local_state.install_record(root)
+    stamp.parent.mkdir(parents=True, exist_ok=True)
+    stamp.write_text("{}", encoding="utf-8")
     w._on_config_dir_changed(str(root / "config"))
     assert w._bundle_change_timer.isActive()
     w._bundle_change_timer.stop()

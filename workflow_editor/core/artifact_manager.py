@@ -12,6 +12,7 @@ Tool-generated:
 
 import hashlib
 import json
+import logging
 import os
 import tempfile
 import shutil
@@ -146,6 +147,8 @@ class ArtifactManager:
         # never drift from the folder. Mirror the correction back into
         # artifact.content so the editor matches disk.
         artifact.content = self._enforce_folder_id(artifact_type, artifact.content)
+        if artifact_type is ArtifactType.PROCEDURE_JSON:
+            artifact.content = self._refresh_media(artifact.content)
 
         self._atomic_write(artifact.file_path, artifact.content)
         artifact.mark_clean()
@@ -164,6 +167,30 @@ class ArtifactManager:
             ArtifactType.PROCEDURE_TEXT: self.PROCEDURE_TEXT_NAME,
         }
         return enforce_folder_id(self.test_dir, names[artifact_type], content)
+
+    def _refresh_media(self, content: str) -> str:
+        """Derived data follows its source: a procedure.json that did not come
+        from the parser (a hand edit, an accepted LLM proposal) gets its step
+        media recomputed by the pack's one catalogue before it reaches disk;
+        on parser output this changes nothing. Content that is not a JSON
+        object is saved as written; a pack that cannot run is logged and the
+        content saved as written (a save never fails for a picture)."""
+        try:
+            doc = json.loads(content)
+        except ValueError:
+            return content
+        if not isinstance(doc, dict):
+            return content
+        from ..pack_ops import pack_parsers
+        root = self.test_dir.parent.parent if self.test_dir is not None else None
+        if root is None or not (root / "tests").is_dir():
+            root = None                      # no project layout: the editor's own pack
+        try:
+            doc = pack_parsers.refresh_media(doc, root)
+        except pack_parsers.ParserUnavailable as exc:
+            logging.getLogger(__name__).warning("media not refreshed on save: %s", exc)
+            return content
+        return json.dumps(doc, indent=2, ensure_ascii=False)
 
     def save_all(self) -> list[ArtifactType]:
         """Save all dirty artifacts. Returns list of saved artifact types."""

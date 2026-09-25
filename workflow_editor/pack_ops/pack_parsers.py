@@ -349,6 +349,34 @@ def render_text(
     return result["text"]
 
 
+def refresh_media(
+    procedure_json: dict[str, Any],
+    project_root: Optional[Path] = None,
+) -> dict[str, Any]:
+    """Recompute the derived ``media`` of a procedure JSON with the pack's one
+    catalogue. ``parse()`` already does this for its own output, so this is a
+    no-op on a parser-produced JSON and the refresh a hand- or LLM-edited
+    JSON needs. Returns the refreshed dict (a fresh one from the subprocess
+    path). Raises :class:`ParserUnavailable` when the wheel cannot run."""
+    if project_root is None:
+        try:
+            from rules_packager_base.rules.v2_0_2 import media as _media
+        except ImportError as exc:
+            raise ParserUnavailable(f"rules_packager_base media catalogue not importable: {exc}") from exc
+        _media.populate_media(procedure_json)
+        return procedure_json
+
+    venv = _resolve_project_python(project_root)
+    result = _subprocess_call(
+        venv,
+        {"op": "refresh_media", "procedure_json": procedure_json},
+        timeout=_timeout(),
+    )
+    if not result.get("ok"):
+        raise ParserUnavailable(result.get("error", "subprocess error"))
+    return result["json"]
+
+
 def export_rows(
     procedure_json: dict[str, Any],
     project_root: Optional[Path] = None,

@@ -33,6 +33,7 @@ Ops:
                       "code": str, "line": int|null, "column": int|null,
                       "fix_hint": str, "findings": [{...}]}
   render_text   → {"ok": true, "text": str}
+  refresh_media → {"ok": true, "json": dict}
   export_rows   → {"ok": true, "steps": [rows], "expected": [rows]}
                   (batch: input {"procedures": [...]} → {"ok": true, "results": [...]})
   renumber_steps → {"ok": true, "text": str}
@@ -157,6 +158,15 @@ def _op_parse_text(spec: dict) -> dict:
         _format_finding(f) for f in result.findings if f.severity == "warning"
     ]
     return {"ok": True, "json": result.json, "warnings": warnings}
+
+
+def _op_refresh_media(spec: dict) -> dict:
+    """Recompute a procedure JSON's derived media with the pack's one
+    catalogue (what parse() does for its own output; a no-op there)."""
+    from rules_packager_base.rules.v2_0_2 import media
+    procedure_json = spec["procedure_json"]
+    media.populate_media(procedure_json)
+    return {"ok": True, "json": procedure_json}
 
 
 def _op_render_text(spec: dict) -> dict:
@@ -355,6 +365,7 @@ _OPS = {
     "supports": _op_supports,
     "parse_text": _op_parse_text,
     "render_text": _op_render_text,
+    "refresh_media": _op_refresh_media,
     "export_rows": _op_export_rows,
     "renumber_steps": _op_renumber_steps,
     "sync_equipment": _op_sync_equipment,

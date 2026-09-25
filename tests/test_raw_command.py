@@ -33,7 +33,7 @@ _spec.loader.exec_module(er)
 
 class RawSendTierTests(unittest.TestCase):
     """The ``_raw_send`` ladder dispatches on the FIRST interface present, in a
-    load-bearing order: public passthrough -> fncore raw_command/_write_readline
+    load-bearing order: public passthrough -> fncore raw_command
     -> SCPI-session wrapper -> bare resource -> RuntimeError."""
 
     def test_query_raw_for_question(self):
@@ -50,16 +50,10 @@ class RawSendTierTests(unittest.TestCase):
         self.assertEqual(er._raw_send(D(), "RUN"), "")
         self.assertEqual(rec["w"], "RUN")
 
-    def test_raw_command_preferred_over_write_readline(self):
+    def test_raw_command_returns_the_whole_reply(self):
         class D:
             def raw_command(self, t): return "MULTI\nLINE"
-            def _write_readline(self, t): return "SINGLE"
         self.assertEqual(er._raw_send(D(), "help"), "MULTI\nLINE")
-
-    def test_write_readline_fallback(self):
-        class D:
-            def _write_readline(self, t): return "R:" + t
-        self.assertEqual(er._raw_send(D(), "x"), "R:x")
 
     def test_scpi_session_wrapper(self):
         class S:
@@ -90,7 +84,6 @@ class RawSendTierTests(unittest.TestCase):
         class D:  # both present -> the public tier 1 wins
             def query_raw(self, t): return "PUBLIC"
             def raw_command(self, t): return "FNCORE"
-            def _write_readline(self, t): return "PRIVATE"
         self.assertEqual(er._raw_send(D(), "x?"), "PUBLIC")
 
 

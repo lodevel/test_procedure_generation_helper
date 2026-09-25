@@ -218,9 +218,8 @@ def _raw_send(dev, text: str) -> str:
 
     1. a public raw passthrough — ``query_raw`` / ``write_raw`` (psu/eload/scope
        all expose these);
-    2. the fncore line protocol — the public ``raw_command`` (drains the full
-       multi-line reply), or the legacy single-line ``_write_readline`` on older
-       fncore wheels;
+    2. the fncore line protocol — the public ``raw_command`` (the full reply,
+       one line or many);
     3. (defensive) an SCPI-session wrapper ``.s`` / ``._session``;
     4. (defensive) a bare pyvisa ``_resource`` / ``resource``.
 
@@ -237,13 +236,10 @@ def _raw_send(dev, text: str) -> str:
     if (not is_query) and hasattr(dev, "write_raw"):
         dev.write_raw(text)
         return ""
-    # 2. fncore line protocol: prefer the multi-line drain (a terminal command
-    #    like 'help'/'listPins' returns MANY lines); fall back to the single
-    #    echo+value read on older driver wheels that lack raw_command.
+    # 2. fncore line protocol: raw_command reads up to the board's prompt, so a
+    #    terminal command like 'help'/'listPins' comes back whole.
     if hasattr(dev, "raw_command"):
         return str(dev.raw_command(text))
-    if hasattr(dev, "_write_readline"):
-        return str(dev._write_readline(text))
     # 3. SCPI-session wrapper (psu/eload: .s ; scope: ._session) — handles
     #    read/write terminations + error checking the bare resource would not.
     sess = getattr(dev, "s", None) or getattr(dev, "_session", None)
@@ -261,7 +257,7 @@ def _raw_send(dev, text: str) -> str:
         return ""
     raise RuntimeError(
         f"{type(dev).__name__} exposes no raw-command interface "
-        f"(query_raw/write_raw, _write_readline, .s/._session, or a resource).")
+        f"(query_raw/write_raw, raw_command, .s/._session, or a resource).")
 
 
 def _capture_remote_lines(procedure_json: dict, target_op: dict):

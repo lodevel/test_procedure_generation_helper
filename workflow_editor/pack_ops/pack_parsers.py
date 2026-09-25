@@ -800,6 +800,17 @@ def bench_constant_names(etype: str, eid: str, project_root: Optional[Path] = No
             if isinstance(f, dict) and isinstance(f.get("name"), str)]
 
 
+def _in_flight(ops, done: int) -> str:
+    """Which op of a batch the daemon was on: `` while running <device> <op>
+    (op N of M)``; empty for a frame without ops or once the batch was over."""
+    ops = ops or []
+    if done + 1 >= len(ops):
+        return ""
+    op = ops[done + 1].get("op") or {}
+    return (f" while running {op.get('device', '?')} {op.get('op', '?')}"
+            f" (op {done + 2} of {len(ops)})")
+
+
 class RemoteSession:
     """Persistent daemon channel for ONE guided-manual run.
 
@@ -919,6 +930,7 @@ class RemoteSession:
             # ``{"kind": "progress", ...}`` frames first (per-op, for live cursor
             # advance); the timeout is per-frame, so a long batch with steady
             # progress never wedges. ``on_progress`` runs on THIS (worker) thread.
+            done = -1                                 # index of the last op the daemon finished
             while True:
                 box: dict = {}
 
@@ -933,7 +945,8 @@ class RemoteSession:
                 reader.join(timeout)
                 if reader.is_alive():                     # wedged synchronous VISA read
                     return self._dead_resp(               # _dead_resp terminates+reaps
-                        "SessionTimeout", f"daemon unresponsive after {timeout}s")
+                        "SessionTimeout", f"daemon unresponsive after {timeout}s"
+                        + _in_flight(frame.get("ops"), done))
                 if "err" in box or not box.get("line"):
                     rc = self._proc.poll()
                     return self._dead_resp("SessionDead", f"daemon closed pipe (exit={rc})")
@@ -942,6 +955,7 @@ class RemoteSession:
                 except json.JSONDecodeError as exc:
                     return self._dead_resp("SessionDead", f"corrupt frame: {exc}")
                 if isinstance(msg, dict) and msg.get("kind") == "progress":
+                    done = msg.get("i", done)
                     # The daemon streams a progress frame per op for EVERY
                     # exec_ops batch — always consume them (read past to the
                     # final result), whether or not a callback wants them, else a
@@ -980,10 +994,9 @@ class RemoteSession:
             frame["controls"] = controls
         if operator_verdicts is not None:
             frame["operator_verdicts"] = operator_verdicts
-        return self._request(
-            frame,
-            timeout or (_TIMEOUT_REMOTE_EXEC + 5 * len(ops)),
-            on_progress=on_progress)
+        # The deadline is per frame and the daemon streams one progress frame
+        # per op, so one op's budget bounds the wait however long the batch.
+        return self._request(frame, timeout or _TIMEOUT_REMOTE_EXEC, on_progress=on_progress)
 
     def exec_op(self, target_op: dict[str, Any], bench: dict[str, Any],
                 timeout: Optional[int] = None) -> dict[str, Any]:

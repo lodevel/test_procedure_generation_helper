@@ -349,32 +349,6 @@ def render_text(
     return result["text"]
 
 
-def populate_media(
-    procedure_json: dict[str, Any],
-    project_root: Optional[Path] = None,
-) -> tuple[dict[str, Any], int]:
-    """Populate ``media[]`` on step ops via the wheel's pack-side
-    deterministic media extractor (``rules.v2_0_2.media``).
-
-    Returns ``(procedure_json, n_populated)`` — the subprocess path
-    returns a fresh dict, the in-proc path mutates and returns the
-    input. Raises :class:`ParserUnavailable` when the installed wheel
-    predates the media module (callers fall back to the project's
-    ``config/text_parser.py`` plugin)."""
-    if project_root is None:
-        return _inproc_populate_media(procedure_json)
-
-    venv = _resolve_project_python(project_root)
-    result = _subprocess_call(
-        venv,
-        {"op": "populate_media", "procedure_json": procedure_json},
-        timeout=_timeout(),
-    )
-    if not result.get("ok"):
-        raise ParserUnavailable(result.get("error", "subprocess error"))
-    return result["json"], result.get("n_populated", 0)
-
-
 def export_rows(
     procedure_json: dict[str, Any],
     project_root: Optional[Path] = None,
@@ -1396,20 +1370,6 @@ def _inproc_parse_text(
 def _inproc_render_text(procedure_json: dict[str, Any]) -> str:
     wheel = _inproc_import_wheel()
     return wheel.render(procedure_json)
-
-
-def _inproc_populate_media(
-    procedure_json: dict[str, Any],
-) -> tuple[dict[str, Any], int]:
-    try:
-        from rules_packager_base.rules.v2_0_2 import media as _media
-    except ImportError as exc:
-        raise ParserUnavailable(
-            f"rules_packager_base.rules.v2_0_2.media is not importable: {exc}. "
-            f"The installed wheel predates the pack-side media extractor."
-        ) from exc
-    n = _media.populate_media(procedure_json)
-    return procedure_json, n
 
 
 def _inproc_renumber_steps(text: str) -> str:

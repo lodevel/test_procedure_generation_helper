@@ -64,7 +64,6 @@ class LLMTabMixin:
         """
         from ..core import ArtifactType
         from ..pack_ops import pack_parsers
-        from ..pack_ops.media_extraction import populate_media_on_steps
         from ..dialogs import DiffViewer
 
         text = self.text_editor.toPlainText().strip()
@@ -105,7 +104,6 @@ class LLMTabMixin:
             )
             return
 
-        populate_media_on_steps(procedure, project_root)
         # ensure_ascii=False matches the LLM JSON-proposal write path so the
         # diff base (artifact_manager content) doesn't show spurious \uXXXX vs
         # literal-unit-symbol noise (µ, ±, Ω are common in this domain).

@@ -1,6 +1,6 @@
 """Deterministic pack-operation bridges — GUI-side clients of the active
 bundle's ``rules_packager_base`` wheel (parse/render/validate/codegen via
-:mod:`pack_parsers`, media population via :mod:`media_extraction`).
+:mod:`pack_parsers`).
 
 Wheel code runs in the *project's* venv through the sibling
 ``_pack_parsers_subprocess.py`` runner, so the bundle that ships with the

@@ -581,14 +581,6 @@ class TextJsonTab(LLMTabMixin, BaseTab):
             )
             return
 
-        # Populate media[] on each step from the project's
-        # config/text_parser.py extractor. The v2 deterministic text
-        # parser produces v2 op shapes without media; this post-process
-        # adds them so the procedure GUI can render PCB images.
-        # Always re-extracts (media is derived from current step text).
-        from ..pack_ops.media_extraction import populate_media_on_steps
-        populate_media_on_steps(result, self.project_manager.project_root)
-
         result_str = json.dumps(result, indent=2)
 
         current_json = self.json_editor.toPlainText().strip()
@@ -891,15 +883,7 @@ class TextJsonTab(LLMTabMixin, BaseTab):
                 except json.JSONDecodeError:
                     proposed_dict = None
 
-            # Populate `media` arrays on each step from the project's
-            # config/text_parser.py extractor (per the v1 media-restoration
-            # amendment 2026-04-28). The LLM doesn't emit media; the
-            # workflow editor injects it post-application so the procedure
-            # GUI can render PCB images via the ODB CLI.
             if proposed_dict is not None:
-                from ..pack_ops.media_extraction import populate_media_on_steps
-                project_root = self.project_manager.project_root
-                populate_media_on_steps(proposed_dict, project_root)
                 content_str = json.dumps(proposed_dict, indent=2, ensure_ascii=False)
             else:
                 content_str = str(proposal.content)

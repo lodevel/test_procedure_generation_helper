@@ -9,8 +9,13 @@ loaded elsewhere.
 """
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 from typing import Any, Mapping
+
+# Match the generated chat transport budget; reject larger snapshots as a whole.
+BOARD_CONTEXT_MAX_BYTES = 1024 * 1024
 
 # Integrated-circuit reference designators (U1, IC3, ...). The prefix must be
 # immediately followed by a digit so connectors like "USB1" don't match. This is
@@ -18,6 +23,15 @@ from typing import Any, Mapping
 # only ICs carry part-number properties in the component-ids block (passives are
 # skipped, which is the bulk of the property tokens).
 _IC_REFDES_RE = re.compile(r"(?i)^(?:U|IC)\d")
+
+
+def board_revision(path: str) -> str:
+    """Cheap source identity shared by chat instructions and cached tool reads."""
+    resolved = os.path.realpath(path)
+    stat = os.stat(resolved)
+    identity = (resolved, stat.st_dev, stat.st_ino, stat.st_size,
+                stat.st_mtime_ns, stat.st_ctime_ns)
+    return hashlib.sha256(repr(identity).encode("utf-8")).hexdigest()[:20]
 
 
 def _is_ic_refdes(refdes: str) -> bool:
@@ -114,3 +128,60 @@ def format_other_component_ids(board: Mapping[str, Any]) -> str:
     it. Empty values dropped; ``""`` if none."""
     return _format_part_numbers(
         board, lambda r: not _is_ic_refdes(r), "Component part numbers (non-ICs):")
+
+
+def format_board_context(board: Mapping[str, Any]) -> str:
+    """Full connectivity and identities from ONE board snapshot, without caps.
+
+    Validate before formatting: the older optional formatters intentionally skip
+    malformed rows, which must not yield a complete-looking aggregate response.
+    Unknown property names are retained because type/test-point markers are
+    board-specific. Only blank values are omitted by the shared ID formatter.
+    """
+    if not isinstance(board, Mapping) or board.get("error"):
+        raise ValueError(f"Board data unavailable: {board}")
+    components, nets = board.get("components"), board.get("nets")
+    if not isinstance(components, list) or not isinstance(nets, list):
+        raise ValueError("Board connectivity is incomplete (missing components or nets).")
+    if not components and not nets:
+        raise ValueError("No netlist available for this board.")
+    pins = []
+    identities = 0
+    for comp in components:
+        if (not isinstance(comp, Mapping) or not comp.get("refdes")
+                or not isinstance(comp.get("pins"), list)
+                or not isinstance(comp.get("properties"), Mapping)):
+            raise ValueError("Board component connectivity or identities are incomplete.")
+        for pin in comp["pins"]:
+            if not isinstance(pin, Mapping) or "name" not in pin or "net" not in pin:
+                raise ValueError("Board pin connectivity is incomplete.")
+        pins.extend(comp["pins"])
+        identities += bool(any(str(v).strip() for v in comp["properties"].values()))
+    nodes = 0
+    for net in nets:
+        if (not isinstance(net, Mapping) or not net.get("net")
+                or not isinstance(net.get("nodes"), list)):
+            raise ValueError("Board net connectivity is incomplete.")
+        for node in net["nodes"]:
+            if (not isinstance(node, Mapping) or not node.get("refdes")
+                    or "pin" not in node):
+                raise ValueError("Board net nodes are incomplete.")
+        nodes += len(net["nodes"])
+    unknown = sum(pin["net"] is None for pin in pins)
+    counts = (f"components={len(components)}, pins={len(pins)}, nets={len(nets)}, "
+              f"nodes={nodes}, components_with_properties={identities}, "
+              f"pins_with_unknown_net={unknown}")
+    header = (
+        f"Board context: {counts}.\n"
+        "Check these counts and the final BOARD_CONTEXT_END marker; a missing "
+        "marker means truncated data. Do not infer absent connections from a "
+        "partial result. Reuse this snapshot for follow-up questions.\n"
+        "Properties preserve the board's own field names; missing identities "
+        "or unknown nets are unknown, not proof of absence. A single-pin part "
+        "alone is not proof of a test point. Shared nets are direct connections; "
+        "paths through components are indirect."
+    )
+    sections = [header, format_netlist(board),
+                format_component_ids(board), format_other_component_ids(board),
+                f"BOARD_CONTEXT_END: {counts}"]
+    return "\n\n".join(section for section in sections if section)

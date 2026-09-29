@@ -28,8 +28,10 @@ and projection are the whole point.
 import importlib.util
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
+import threading
 
 
 # --- locate the ODB++ CLI relative to THIS file --------------------------------
@@ -72,9 +74,38 @@ def _load_netlist_text():
 _netlist_text = _load_netlist_text()
 
 
+def _load_board_source():
+    """Share the GUI's archive selection without importing its Qt package."""
+    path = os.path.join(os.path.dirname(_AUTHORING_DIR), "board_source.py")
+    spec = importlib.util.spec_from_file_location("_project_board_source", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_board_source = _load_board_source()
+
+
 SERVER_INFO = {"name": "project-tools", "version": "1.0.0"}
 
 TOOLS = [
+    {
+        "name": "board_context",
+        "description": (
+            "Read the complete project board connectivity and compact component "
+            "identities, including board-specific type and test-point properties, "
+            "in ONE request. Call only for board questions when this data is not "
+            "already in the conversation, or the board changed. Reuse the result "
+            "for follow-up questions; a reset or lost context may need another "
+            "request. Check counts and the final BOARD_CONTEXT_END marker: without "
+            "it the result is truncated, so report incomplete data instead of "
+            "guessing or issuing per-pin/net requests. A shared net is a direct "
+            "connection; a path through a resistor is not. Single-pin components "
+            "alone do not prove a test point."
+        ),
+        "inputSchema": {"type": "object", "properties": {},
+                        "additionalProperties": False},
+    },
     {
         "name": "list_property_fields",
         "description": (
@@ -294,28 +325,60 @@ def _run_cli(odb_tgz, extra_args):
 class _Board:
     """Per-process cache of the parsed board (the tgz parse is slow).
 
-    Each distinct artifact (``property_fields`` / ``netlist``) is fetched from
-    the CLI at most once and memoized. ``list_components`` is NOT cached because
-    its filter/fields shape the CLI output; only the schema + full netlist are
-    expensive whole-board reads worth holding.
+    The full netlist includes component properties, so aggregate reads need only
+    one CLI parse. Refresh on file identity changes; construction does no I/O.
+    Filtered component queries retain their existing CLI projection behavior.
     """
 
-    def __init__(self, odb_tgz):
+    def __init__(self, odb_tgz, project_root=""):
         self.odb_tgz = odb_tgz
+        self.project_root = project_root
         self._property_fields = None
         self._netlist = None
+        self._source_identity = None
+        self._lock = threading.Lock()
+
+    def _identity(self):
+        try:
+            if self.project_root:
+                source = _board_source.find_odb_tgz(Path(self.project_root))
+                self.odb_tgz = str(source) if source is not None else ""
+            if not self.odb_tgz:
+                raise OSError("No ODB++ archive configured for this project.")
+            return _netlist_text.board_revision(self.odb_tgz)
+        except OSError as exc:
+            raise _CliError(f"ODB++ archive unavailable: {exc}") from exc
+
+    def _refresh(self):
+        identity = self._identity()
+        if identity != self._source_identity:
+            self._netlist = None
+            self._property_fields = None
+            self._source_identity = identity
+        return identity
 
     def property_fields(self):
-        if self._property_fields is None:
-            self._property_fields = _run_cli(
-                self.odb_tgz, ["--list-property-fields"]
-            )
-        return self._property_fields
+        with self._lock:
+            self._refresh()
+            if self._property_fields is None:
+                self._property_fields = _run_cli(
+                    self.odb_tgz, ["--list-property-fields"]
+                )
+            return self._property_fields
 
     def netlist(self):
-        if self._netlist is None:
-            self._netlist = _run_cli(self.odb_tgz, ["--list-nets"])
-        return self._netlist
+        return self.snapshot()[0]
+
+    def snapshot(self):
+        """Return data and its revision together, even with concurrent tool calls."""
+        with self._lock:
+            identity = self._refresh()
+            if self._netlist is None:
+                data = _run_cli(self.odb_tgz, ["--list-nets"])
+                if self._identity() != identity:
+                    raise _CliError("ODB++ archive changed while being read; request it again.")
+                self._netlist = data
+            return self._netlist, identity
 
     def components(self, fields=None, filter_kv=None, refdes_prefix=None):
         """Component list, narrowed by *fields* / *filter_kv* / *refdes_prefix*
@@ -418,6 +481,24 @@ def _tool_netlist(board, _args):
     return _text_result(_netlist_text.format_netlist(data))
 
 
+def _tool_board_context(board, _args):
+    try:
+        data, revision = board.snapshot()
+        text = f"Board revision: {revision}\n{_netlist_text.format_board_context(data)}"
+        size = len(text.encode("utf-8"))
+        limit = _netlist_text.BOARD_CONTEXT_MAX_BYTES
+        if size > limit:
+            raise ValueError(
+                f"Board context is {size} UTF-8 bytes; the limit is {limit} bytes. "
+                "The complete board cannot fit in one response. Reduce the board "
+                "context at its source; retrying or paging will not provide it here.")
+        return _text_result(text)
+    except (_CliError, ValueError) as exc:
+        result = _err_result(exc)
+        result["isError"] = True
+        return result
+
+
 def _tool_get_bom(board, _args):
     """Best-effort BOM lookup beside the project's ODB archive.
 
@@ -469,6 +550,7 @@ def _tool_list_test_points(board, _args):
 
 
 _DISPATCH = {
+    "board_context": _tool_board_context,
     "list_property_fields": _tool_list_property_fields,
     "list_components": _tool_list_components,
     "get_component": _tool_get_component,
@@ -479,19 +561,19 @@ _DISPATCH = {
 }
 
 
-def _parse_odb_tgz(argv):
-    """Tiny manual argv parse for ``--odb-tgz <path>`` (default: empty)."""
+def _parse_path_arg(argv, name):
+    """Tiny manual path argv parse (default: empty)."""
     odb = ""
     i = 0
     while i < len(argv):
         arg = argv[i]
-        if arg == "--odb-tgz":
+        if arg == name:
             if i + 1 < len(argv):
                 odb = argv[i + 1]
                 i += 2
                 continue
             i += 1
-        elif arg.startswith("--odb-tgz="):
+        elif arg.startswith(name + "="):
             odb = arg.split("=", 1)[1]
             i += 1
         else:
@@ -502,8 +584,9 @@ def _parse_odb_tgz(argv):
 def main(argv=None):
     if argv is None:
         argv = sys.argv[1:]
-    odb_tgz = _parse_odb_tgz(argv)
-    board = _Board(odb_tgz)  # lazy: nothing parsed until a tool is called
+    odb_tgz = _parse_path_arg(argv, "--odb-tgz")
+    project_root = _parse_path_arg(argv, "--project-root")
+    board = _Board(odb_tgz, project_root)  # lazy: nothing parsed until a tool is called
 
     import _mcp_serve  # sibling module (authoring/ is sys.path[0] for the
     # launched script); avoids triggering the heavy authoring/__init__ chain.

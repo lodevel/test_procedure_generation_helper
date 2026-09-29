@@ -302,6 +302,7 @@ def test_tools_list_advertises_all_tools(server):
     resp = server.request(2, "tools/list")
     names = {t["name"] for t in resp["result"]["tools"]}
     assert names == {
+        "board_context",
         "list_property_fields",
         "list_components",
         "get_component",

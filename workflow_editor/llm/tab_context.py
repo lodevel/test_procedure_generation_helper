@@ -151,6 +151,8 @@ class TabContext:
             session_state: DEPRECATED - ignored. Each tab creates its own SessionState.
         """
         self.tab_id = tab_id
+        self.board_data_enabled = False
+        self.board_data_project = None
         self._backend_factory = backend_factory
         self._backend: Optional[LLMBackend] = None  # Lazy initialization
         self.project_manager = project_manager
@@ -644,12 +646,8 @@ class TabContext:
         """
         Build LLM request with tab-specific context and conditional artifact sending.
         
-        This method can be used by tabs to create requests for async execution.
-        
-        Implements Phase 2 Architecture (Conditional Artifacts):
         - Only sends artifacts that are required for the task
         - Only sends artifacts if they've changed since last sent
-        - First interaction sends all required artifacts
         - Subsequent interactions only send modified artifacts
         
         Args:
@@ -720,6 +718,8 @@ class TabContext:
             custom_task_id=kwargs.get('custom_task_id'),
         )
         
+        from .board_chat import configure_board_request
+        configure_board_request(request, self)
         return request
     
     def record_response(self, response: LLMResponse, validate_contract: bool = True):

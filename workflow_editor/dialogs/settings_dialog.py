@@ -178,26 +178,24 @@ def _build_pdf_tools_block(project_root: Optional[Path]) -> dict:
 
 def _build_project_tools_block(project_root: Optional[Path]) -> Optional[dict]:
     """Build the ``project_tools`` MCP block FRESH for ``project_root``, or
-    ``None`` when there's no ODB++ archive to wire.
+    ``None`` when there is no project.
 
-    The server is launched with the project's ODB++ archive (the first ``*.tgz``
-    in the project root, like odb_inspect's auto-detect) via ``--odb-tgz``. No
-    project or no archive -> return ``None`` (the block is dropped from the
-    derived config)."""
+    The server uses the same configured ODB++ archive as the board panel,
+    with the shared root-level ``*.tgz`` fallback, via ``--odb-tgz``. No
+    project -> return ``None``. The server resolves the archive again when
+    queried, so replacing the configured board does not require a restart."""
     from ..llm.mcp_config import build_project_tools_mcp_block
+
+    from ..core.odb_inspect import find_odb_tgz
 
     if project_root is None:
         return None
-    try:
-        tgz = sorted(project_root.glob("*.tgz"))
-    except OSError:
-        tgz = []
-    if not tgz:
-        return None  # no board archive in the project — nothing to wire
+    archive = find_odb_tgz(project_root)
     return build_project_tools_mcp_block(
         venv_python_win=_python_win(),
         mcp_script_win=_mcp_script_win("_project_tools_mcp.py"),
-        odb_tgz_win=str(tgz[0]),
+        odb_tgz_win=str(archive) if archive is not None else "",
+        project_root_win=str(project_root),
     )
 
 
@@ -269,7 +267,7 @@ def build_launch_config(
 
     Reads ``master.json`` (providers + general, no model/mcp), deep-copies it, and
     BUILDS the MCP blocks FRESH — ``pdf_tools`` (documents/rules) always present,
-    ``project_tools`` only when the project has a ``*.tgz`` board archive, plus one
+    ``project_tools`` for the active project (board reads remain lazy), plus one
     block per discovered tool folder (e.g. ``board_tools``). Every path (venv python via ``sys.executable``,
     scripts via ``__file__``, documents/rules/tgz under ``project_root``) is
     computed at RUNTIME, so the derived config self-heals on reinstall/move and
@@ -314,6 +312,8 @@ def build_launch_config(
         log.exception("Failed to build project_tools MCP block")
     if proj_block:
         mcp.update(proj_block)
+        from ..llm.board_chat import allow_complete_board_output
+        allow_complete_board_output(data)
     run_skill_block = None
     try:
         run_skill_block = _build_run_skill_block(

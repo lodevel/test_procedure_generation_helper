@@ -23,6 +23,7 @@ from .. import theme
 from ..widgets.work_timer import WorkTimer
 from .chat_messages import MessageDetailDialog, MessageWidget, ProposalWidget
 from ..llm.context_usage import format_context_usage, latest_message_total
+from ..llm.board_chat import BoardDataCheckBox
 
 
 # Tooltip strings for the validator-status indicator + auto-correct
@@ -121,6 +122,7 @@ class ChatPanel(QWidget):
         """
         log.debug("switch_context called with tab_context=%s", 'None' if tab_context is None else tab_context.tab_id)
         self._current_tab_context = tab_context
+        self.board_data_checkbox.set_context(tab_context)
         
         # Clear current display
         self.clear_messages()
@@ -195,6 +197,9 @@ class ChatPanel(QWidget):
         self.scroll_area.setWidget(self.messages_container)
         layout.addWidget(self.scroll_area, stretch=1)
         
+        self.board_data_checkbox = BoardDataCheckBox(self)
+        layout.addWidget(self.board_data_checkbox)
+
         # Force Mode checkbox
         self.force_mode_checkbox = QCheckBox("Force (resend all artifacts)")
         self.force_mode_checkbox.setToolTip(

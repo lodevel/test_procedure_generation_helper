@@ -53,6 +53,7 @@ def test_web_enabled_exposes_web_tools_and_read_pdf():
     body = _backend()._build_message_body("hi", _req(web_enabled=True))
     assert body["tools"] == {
         **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DOCS_ALWAYS_ON, **_RUN_SKILL_OFF,
+        "project_tools_board_context": False,
         "webfetch": True, "websearch": True, "pdf_tools_read_pdf": True,
         "pdf_tools_save_pdf": False}
 
@@ -63,6 +64,7 @@ def test_web_disabled_sends_explicit_false():
     body = _backend()._build_message_body("hi", _req(web_enabled=False))
     assert body["tools"] == {
         **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DOCS_ALWAYS_ON, **_RUN_SKILL_OFF,
+        "project_tools_board_context": False,
         "webfetch": False, "websearch": False, "pdf_tools_read_pdf": False,
         "pdf_tools_save_pdf": False}
 
@@ -71,6 +73,7 @@ def test_default_request_has_web_off():
     body = _backend()._build_message_body("hi", LLMRequest(task=LLMTask.AD_HOC_CHAT))
     assert body["tools"] == {
         **_BUILTIN_OFF, **_PROJECT_TOOLS_OFF, **_DOCS_ALWAYS_ON, **_RUN_SKILL_OFF,
+        "project_tools_board_context": False,
         "webfetch": False, "websearch": False, "pdf_tools_read_pdf": False,
         "pdf_tools_save_pdf": False}
 

@@ -10,6 +10,7 @@ loaded elsewhere.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 from typing import Any, Mapping
@@ -130,13 +131,96 @@ def format_other_component_ids(board: Mapping[str, Any]) -> str:
         board, lambda r: not _is_ic_refdes(r), "Component part numbers (non-ICs):")
 
 
+_PROPERTY_ROLES = {
+    "identity": (
+        "manufacturerpartnumber", "manufacturerpn", "mpn", "manufacturerreference",
+        "mfgpartnumber", "mfrpartnumber", "mfrpartno", "mfrpn", "mfgref",
+        "vendorpartnumber", "vendorreference", "partnumber", "partno", "pn",
+        "partname", "part", "componentname", "devicename", "name",
+    ),
+    "type": ("componenttype", "devicetype", "boardkind", "type", "category", "kind"),
+    "function": ("componentfunction", "devicefunction", "function"),
+    "value": ("componentvalue", "value"),
+    "description": ("componentdescription", "description", "comment"),
+    "package": ("footprint", "packagename", "package", "landpattern"),
+    "test_access": (
+        "testpoint", "istestpoint", "hastestpoint", "testpointtype", "testpointname",
+        "testaccess", "istestaccess", "hastestaccess", "testaccessibility",
+        "testaccessside", "testaccessmethod", "testpad", "istestpad",
+        "probetype", "probeaccess", "probeaccessible",
+    ),
+}
+
+
+def _property_role(key: str) -> tuple[str, int] | None:
+    """Interpret field names only; arbitrary property values are not evidence."""
+    parts = re.split(r"[.:/]+", str(key))
+    candidates = [re.sub(r"[^a-z0-9]", "", part.casefold())
+                  for part in (str(key), parts[-1])]
+    # Namespace tolerance must not turn Supplier.Name into a component identity.
+    if any(re.sub(r"[^a-z0-9]", "", part.casefold()) in
+           {"supplier", "distributor", "purchasing", "assembly", "document", "geometry"}
+           for part in parts[:-1]):
+        return None
+    for candidate in candidates:
+        for role, names in _PROPERTY_ROLES.items():
+            if candidate in names:
+                if (role == "identity" and candidate == "name"
+                        and (candidates[0] in {"manufacturername", "vendorname"}
+                             or any(part.casefold() in {"manufacturer", "vendor"}
+                                    for part in parts[:-1]))):
+                    return None
+                return role, names.index(candidate)
+    return None
+
+
+def _selected_properties(components: list) -> tuple[str, int, int]:
+    """Project the discovered schema without changing the cached board mapping."""
+    fields = {key for comp in components for key in comp["properties"]}
+    roles = {key: _property_role(key) for key in fields}
+    selected_fields, lines = set(), []
+    missing_identity = 0
+    for comp in components:
+        candidates = {}
+        for key, value in comp["properties"].items():
+            role = roles[key]
+            if role is not None and value is not None and str(value).strip():
+                candidates.setdefault(role[0], []).append((role[1], key))
+        if "type" in candidates or "function" in candidates:
+            candidates.pop("description", None)
+        if len(comp["pins"]) != 1:
+            candidates.pop("package", None)
+        missing_identity += "identity" not in candidates
+        selected = set()
+        for role, choices in candidates.items():
+            if role == "test_access":
+                selected.update(key for _, key in choices)
+            else:
+                selected.add(min(choices, key=lambda item: (item[0], item[1]))[1])
+        selected_fields.update(selected)
+        values = [f"{key}={value!r}" for key, value in comp["properties"].items()
+                  if key in selected]
+        if values:
+            lines.append(f"- {comp['refdes']}: {', '.join(values)}")
+    schema = json.dumps({"selected": sorted(selected_fields),
+                         "omitted": sorted(fields - selected_fields)},
+                        ensure_ascii=False, separators=(",", ":"))
+    header = ("Property fields: " + schema + "\n"
+              "One populated field per identity/type/function/value role; descriptions "
+              "are fallback only, packages are for single-pin candidates. Explicit "
+              "test-access flags are preserved. Other fields are omitted, not absent. "
+              "Components without selected metadata remain in the connectivity.")
+    text = header + ("\nSelected component properties:\n" + "\n".join(lines) if lines else "")
+    return text, len(lines), missing_identity
+
+
 def format_board_context(board: Mapping[str, Any]) -> str:
     """Full connectivity and identities from ONE board snapshot, without caps.
 
     Validate before formatting: the older optional formatters intentionally skip
     malformed rows, which must not yield a complete-looking aggregate response.
-    Unknown property names are retained because type/test-point markers are
-    board-specific. Only blank values are omitted by the shared ID formatter.
+    Select compact metadata locally from the board schema; the independent
+    wizard identity formatters keep their original column semantics.
     """
     if not isinstance(board, Mapping) or board.get("error"):
         raise ValueError(f"Board data unavailable: {board}")
@@ -146,7 +230,6 @@ def format_board_context(board: Mapping[str, Any]) -> str:
     if not components and not nets:
         raise ValueError("No netlist available for this board.")
     pins = []
-    identities = 0
     for comp in components:
         if (not isinstance(comp, Mapping) or not comp.get("refdes")
                 or not isinstance(comp.get("pins"), list)
@@ -156,7 +239,6 @@ def format_board_context(board: Mapping[str, Any]) -> str:
             if not isinstance(pin, Mapping) or "name" not in pin or "net" not in pin:
                 raise ValueError("Board pin connectivity is incomplete.")
         pins.extend(comp["pins"])
-        identities += bool(any(str(v).strip() for v in comp["properties"].values()))
     nodes = 0
     for net in nets:
         if (not isinstance(net, Mapping) or not net.get("net")
@@ -168,9 +250,12 @@ def format_board_context(board: Mapping[str, Any]) -> str:
                 raise ValueError("Board net nodes are incomplete.")
         nodes += len(net["nodes"])
     unknown = sum(pin["net"] is None for pin in pins)
+    properties, identities, missing_identity = _selected_properties(components)
     counts = (f"components={len(components)}, pins={len(pins)}, nets={len(nets)}, "
               f"nodes={nodes}, components_with_properties={identities}, "
-              f"pins_with_unknown_net={unknown}")
+              f"pins_with_unknown_net={unknown}, "
+              f"components_without_selected_properties={len(components) - identities}, "
+              f"components_without_selected_identity={missing_identity}")
     header = (
         f"Board context: {counts}.\n"
         "Check these counts and the final BOARD_CONTEXT_END marker; a missing "
@@ -182,6 +267,6 @@ def format_board_context(board: Mapping[str, Any]) -> str:
         "paths through components are indirect."
     )
     sections = [header, format_netlist(board),
-                format_component_ids(board), format_other_component_ids(board),
+                properties,
                 f"BOARD_CONTEXT_END: {counts}"]
     return "\n\n".join(section for section in sections if section)

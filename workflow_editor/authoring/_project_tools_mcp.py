@@ -22,8 +22,9 @@ response; ``tools/list``; ``tools/call`` returns
 
 Runs as a standalone script (launched by absolute path from an arbitrary cwd),
 so it resolves the CLI path relative to its own location, not the launch cwd.
-Board-agnostic by design: NO property field name is ever hardcoded — discovery
-and projection are the whole point.
+Wizard queries discover arbitrary property names and project requested columns.
+The aggregate chat snapshot selects common semantic property names locally;
+unrecognized fields are explicitly listed as omitted.
 """
 import importlib.util
 import json
@@ -93,7 +94,8 @@ TOOLS = [
         "name": "board_context",
         "description": (
             "Read the complete project board connectivity and compact component "
-            "identities, including board-specific type and test-point properties, "
+            "identities, with locally selected identity/type/value/test-access "
+            "columns and an explicit list of omitted fields, "
             "in ONE request. Call only for board questions when this data is not "
             "already in the conversation, or the board changed. Reuse the result "
             "for follow-up questions; a reset or lost context may need another "

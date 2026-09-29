@@ -89,7 +89,9 @@ def test_one_request_contains_all_wiring_identities_and_completion_marker(board,
     text = _text(result)
     assert text.startswith(f"Board revision: {board_revision(str(archive))}\n")
     counts = ("components=5, pins=7, nets=3, nodes=6, "
-              "components_with_properties=4, pins_with_unknown_net=1")
+              "components_with_properties=4, pins_with_unknown_net=1, "
+              "components_without_selected_properties=1, "
+              "components_without_selected_identity=4")
     assert f"Board context: {counts}" in text
     assert text.endswith(f"BOARD_CONTEXT_END: {counts}")
     for line in ("- MCU_A [TOP]: 24=RESET, 25=GPIO", "- R7 [TOP]: 1=GPIO, 2=PROBE",
@@ -147,7 +149,7 @@ def test_board_context_byte_limit_includes_revision_and_exact_boundary(
 
 def test_oversized_unicode_board_is_rejected_whole_by_bytes_not_characters(board, monkeypatch):
     cached, archive, data, calls = board
-    data["components"][0]["properties"]["Description"] = "界" * 400_000
+    data["components"][0]["properties"]["Vendor reference"] = "界" * 400_000
     complete = (f"Board revision: {board_revision(str(archive))}\n"
                 + server._netlist_text.format_board_context(data))
     limit = server._netlist_text.BOARD_CONTEXT_MAX_BYTES

@@ -203,6 +203,7 @@ class NetlistPanel(QGroupBox):
         self._nets: list = []
         self._hide_prefixes: list = ["Net"]
         self._project_root = None
+        self._load_worker = None
         self._cur_zoom: QPixmap | None = None
         self._cur_wide: QPixmap | None = None
         self._cur_cap: str = ""
@@ -300,6 +301,7 @@ class NetlistPanel(QGroupBox):
         self._hide_prefixes = odb_inspect.load_hide_prefixes(project_root)
         self.set_status("Loading board…")
         worker = _LoadWorker(project_root)
+        self._load_worker = worker
         _LIVE_WORKERS.add(worker)
         worker.done.connect(self._on_loaded)            # auto-dropped if we die
         worker.finished.connect(lambda w=worker: _LIVE_WORKERS.discard(w))
@@ -307,6 +309,9 @@ class NetlistPanel(QGroupBox):
         worker.start()
 
     def _on_loaded(self, data: dict) -> None:
+        # An earlier project/startup load may finish after the current one.
+        if self.sender() is not self._load_worker:
+            return
         comps = data.get("components", []) if isinstance(data, dict) else []
         nets = data.get("nets", []) if isinstance(data, dict) else []
         if comps or nets:

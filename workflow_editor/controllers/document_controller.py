@@ -298,13 +298,16 @@ class DocumentController:
 
         # Switch to appropriate tab only on first test load.
         # When switching between tests, preserve the user's current tab.
+        previous_index = mw.tab_widget.currentIndex()
         if not hasattr(mw, '_has_opened_test'):
             mw._has_opened_test = True
             # Default to the Text tab (text-only authoring view).
             mw.tab_widget.setCurrentWidget(mw.text_only_tab)
 
-        # The _on_tab_changed handler will call switch_context automatically
-        # So we don't need to explicitly call it here - it's handled by the tab change event
+        # Selecting the already-visible tab emits no currentChanged signal.
+        # Bind the dock to the loaded test even on that default startup path.
+        if mw.tab_widget.currentIndex() == previous_index:
+            self.on_tab_changed(previous_index)
 
     def on_test_deleted(self, path: Path):
         """Handle a test folder being deleted."""

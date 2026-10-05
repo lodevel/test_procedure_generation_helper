@@ -364,10 +364,12 @@ def _device_channels(procedure_json: dict, device: str) -> list:
 
 
 def _ns_base(res) -> dict:
+    from rules_packager_base import bytes_to_int   # a pack's bus read binds its bytes through it
     return {
         "results": {}, "res": res, "manual_flags": {}, "_stats": None,
         "float": float, "int": int, "str": str, "bool": bool,
         "abs": abs, "round": round, "min": min, "max": max,
+        "bytes_to_int": bytes_to_int,
     }
 
 

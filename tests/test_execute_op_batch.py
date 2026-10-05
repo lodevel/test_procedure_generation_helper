@@ -478,3 +478,11 @@ class RemoteSessionLiveTransportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_a_bus_read_line_runs_in_the_step_namespace():
+    """A pack wraps a bus read in ``bytes_to_int`` (the base's one conversion):
+    the namespace ⚡ executes step code in must provide it."""
+    ns = er._ns_base(None)
+    exec("value = bytes_to_int('FB 00', 2, signed=True)", ns)
+    assert ns["value"] == -1280

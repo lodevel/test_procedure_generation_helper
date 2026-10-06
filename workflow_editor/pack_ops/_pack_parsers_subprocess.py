@@ -334,8 +334,8 @@ def _op_build_manual_run(spec: dict) -> dict:
     procedure_json, err = _read_procedure(spec)
     if err:
         return err
-    measurements = _int_keyed(spec.get("measurements") or {})
-    controls = spec.get("controls") or {}      # loop-sentinel node_path keys stay strings
+    measurements = spec.get("measurements") or {}   # row node_path keys, as the loop sentinels'
+    controls = spec.get("controls") or {}
     operator_verdicts = _int_keyed(spec.get("operator_verdicts") or {})
     run = _import_wheel().build_manual_run(
         procedure_json, measurements, controls, operator_verdicts)
@@ -352,7 +352,7 @@ def _op_build_manual_result(spec: dict) -> dict:
     procedure_json, err = _read_procedure(spec)
     if err:
         return err
-    measurements = _int_keyed(spec.get("measurements") or {})
+    measurements = spec.get("measurements") or {}
     controls = spec.get("controls") or {}
     operator_verdicts = _int_keyed(spec.get("operator_verdicts") or {})
     result = _import_wheel().build_manual_result(

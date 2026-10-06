@@ -59,7 +59,7 @@ corrupt a frame.  Tracebacks travel inside the response JSON, never printed.
     {"cmd": "exec_ops", "_bundle_dir": "<abs>", "procedure_path": "<abs>",
      "ops": [{"node_path": str, "op": {...}}, ...],
      "bench_map": {device: {"visa"|"port"..., "session_policy": "..."}},
-     "measurements"?: {ref: value}, "controls"?: {node_path: decision},
+     "measurements"?: {node_path: value}, "controls"?: {node_path: decision},
      "operator_verdicts"?: {ref: verdict}}   # prior run state -> live verdicts
     {"cmd": "safe_off", "_bundle_dir": "<abs>", "procedure_path": "<abs>",
      "bench_map": {...}, "safe_off": [{"device","etype","channels":[...]}, ...]}
@@ -843,8 +843,8 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
     # earlier batches) seed the accumulator; each reading this batch produces is
     # folded in as it executes, then materialized into the progress frame so a
     # PASS/FAIL lands the instant the op completes — not at batch end.
-    acc_meas = _int_keyed(req.get("measurements") or {})
-    controls = req.get("controls") or {}      # node_path keys — stay strings
+    acc_meas = dict(req.get("measurements") or {})      # node_path keys, as the controls'
+    controls = req.get("controls") or {}
     operator_verdicts = _int_keyed(req.get("operator_verdicts") or {})
     log_mark = len(session.res.log)
     results: list = []
@@ -899,7 +899,7 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
         last = results[-1]
         verdict = ""
         if last.get("ok") and last.get("has_value") and last.get("ref") is not None:
-            acc_meas[last["ref"]] = last.get("value")
+            acc_meas[node_path] = last.get("value")
             verdict = _live_verdict(procedure_json, acc_meas, controls,
                                     operator_verdicts, node_path)
         # Stream a per-op progress frame so the GUI advances the cursor live AND

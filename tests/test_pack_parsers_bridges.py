@@ -243,8 +243,8 @@ class BuildManualRunInProcTests(unittest.TestCase):
         self.assertTrue(bindings[0].expected_text.startswith("{1} <"))
 
     def test_live_verdicts_from_measurements(self) -> None:
-        # int ref keys must survive into the wheel (in-proc: passed straight through)
-        run = pp.build_manual_run(self.procedure_path, {1: 4.0, 2: 2.0})
+        # readings keyed by row (in-proc: passed straight through)
+        run = pp.build_manual_run(self.procedure_path, {"steps[0]": 4.0, "steps[1]": 2.0})
         by_ref = {s.ref: s.verdict for s in run.steps if s.is_binding}
         self.assertEqual(by_ref, {1: "PASS", 2: "FAIL"})
 
@@ -264,8 +264,8 @@ class BuildManualRunInProcTests(unittest.TestCase):
 
 class BuildManualRunSubprocessMarshallingTests(unittest.TestCase):
     """Cross the JSON boundary explicitly (no real subprocess): the worker op +
-    ``ManualRunResult.from_dict`` must preserve int measurement-ref keys and
-    reconstruct the same verdicts. Guards the int-key serialization fix."""
+    ``ManualRunResult.from_dict`` must carry the row-keyed readings and
+    reconstruct the same verdicts."""
 
     def setUp(self) -> None:
         procedure_json, _ = pp.parse_text(PROC_MANUAL)
@@ -278,12 +278,12 @@ class BuildManualRunSubprocessMarshallingTests(unittest.TestCase):
             "measurements": measurements,
             "controls": None,
         }
-        spec = json.loads(json.dumps(spec))          # int keys -> "1","2" here
+        spec = json.loads(json.dumps(spec))
         result = json.loads(json.dumps(worker._op_build_manual_run(spec)))
         return pp.ManualRunResult.from_dict(result)
 
-    def test_int_keys_survive_and_verdicts_match(self) -> None:
-        run = self._round_trip({1: 4.0, 2: 2.0})
+    def test_row_keys_cross_and_verdicts_match(self) -> None:
+        run = self._round_trip({"steps[0]": 4.0, "steps[1]": 2.0})
         by_ref = {s.ref: s.verdict for s in run.steps if s.is_binding}
         self.assertEqual(by_ref, {1: "PASS", 2: "FAIL"})
         self.assertTrue(all(isinstance(s, pp.ManualStep) for s in run.steps))

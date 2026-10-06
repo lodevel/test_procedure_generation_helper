@@ -581,8 +581,8 @@ def build_manual_run(
     ``procedure_path`` — the wheel-side StepperSession surfaced to the GUI's
     guided-manual execution mode.
 
-    ``measurements`` maps each resolved ``{N}`` ref (int) to the operator's
-    entered value (drives @IF branch selection and live PASS/FAIL verdicts);
+    ``measurements`` maps a row's ``node_path`` (each loop turn its own) to the
+    operator's entered value (drives @IF branches and live PASS/FAIL verdicts);
     ``controls`` maps a loop-sentinel ``node_path`` to its decision. Both are
     optional — omit for the static (no-input) plan. Returns a
     :class:`ManualRunResult` (the GUI never imports the wheel's dataclasses).
@@ -634,10 +634,10 @@ def supports_build_manual_run(project_root: Optional[Path] = None) -> bool:
     return bool(result.get("ok") and result.get("supported"))
 
 
-# Every wheel function the guided-manual mode needs to operate end-to-end
-# (walk the plan AND Finish/Save). The launch button gates on ALL of them so it
-# never enables a mode the operator couldn't complete.
-_GUIDED_MANUAL_FNS = ("build_manual_run", "build_manual_result")
+# Every wheel name the guided-manual mode needs end-to-end (walk the plan, Finish/
+# Save, readings keyed by row: base 2.2.0). The launch button gates on ALL of them
+# so it never enables a mode the operator couldn't complete.
+_GUIDED_MANUAL_FNS = ("build_manual_run", "build_manual_result", "READINGS_BY_ROW")
 
 
 def supports_guided_manual(project_root: Optional[Path] = None) -> bool:

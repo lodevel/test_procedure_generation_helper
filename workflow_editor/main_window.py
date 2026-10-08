@@ -1558,13 +1558,13 @@ class MainWindow(QMainWindow):
             self.server_indicator.setStyleSheet('color: #2e7d32;')  # green
             self.server_indicator.setToolTip('OpenCode server is running.')
         elif getattr(self, '_server_recovery_attempts', 0) >= self._MAX_SERVER_RECOVERY_ATTEMPTS:
-            # Auto-recovery gave up after repeated failures — tell the user to
-            # act (Restart backend re-arms auto-recovery).
             self.server_indicator.setText(
                 'OpenCode: down — auto-restart failed (use Restart backend)')
             self.server_indicator.setStyleSheet('color: #c62828;')  # red
             self.server_indicator.setToolTip(
-                'Auto-recovery gave up after repeated failures. Use Restart backend to try again.')
+                'Auto-recovery gave up after repeated failures. Use Restart backend to try again.'
+                + (f'\n\n{sm.last_status.message}'
+                   if sm.last_status is not None and not sm.last_status.ok else ''))
         else:
             self.server_indicator.setText('OpenCode: down')
             self.server_indicator.setStyleSheet('color: #c62828;')  # red

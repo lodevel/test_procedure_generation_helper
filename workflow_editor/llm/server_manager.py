@@ -508,13 +508,15 @@ class OpenCodeServerManager:
             try:
                 result = subprocess.run(
                     [self._config.wsl_path, "bash", "-ic", "opencode --version"],
-                    capture_output=True, text=True, timeout=5,
+                    capture_output=True, text=True, timeout=self._config.startup_timeout,
                     cwd=safe_wsl_cwd(),
                 )
                 opencode_ok = result.returncode == 0
                 if not opencode_ok:
                     detail = (result.stderr or "").strip()
-            except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            except subprocess.TimeoutExpired as e:
+                return ServerStatus.failure(ServerError.START_TIMEOUT, str(e))
+            except FileNotFoundError as e:
                 return ServerStatus.failure(ServerError.OPENCODE_MISSING, str(e))
 
         err = classify_install(wsl_ok, opencode_ok)

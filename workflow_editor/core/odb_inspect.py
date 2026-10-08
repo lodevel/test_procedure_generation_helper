@@ -131,6 +131,8 @@ def load_board(project_root: Optional[Path]) -> dict:
     try:
         proc = subprocess.run(
             [sys.executable, str(cli), "--odb-tgz", str(tgz), "--list-nets"],
+            # A reader in an ancestor process can lock inherited stdin on Windows.
+            stdin=subprocess.DEVNULL,
             capture_output=True, text=True, timeout=120,
         )
     except (OSError, subprocess.SubprocessError) as exc:

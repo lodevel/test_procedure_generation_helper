@@ -309,6 +309,8 @@ def _run_cli(odb_tgz, extra_args):
     try:
         proc = subprocess.run(
             cmd,
+            # The MCP input loop owns stdin; the noninteractive CLI must not share it.
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

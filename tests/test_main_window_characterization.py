@@ -575,6 +575,29 @@ def test_parse_and_generate_marks_in_sync(make_window, monkeypatch, tmp_path, ta
     assert not w.workspace_widget._is_test_out_of_sync(t1)
 
 
+def test_parse_and_generate_with_nothing_changed_opens_no_review(make_window, monkeypatch, tmp_path):
+    # The diff base keeps the file's final newline, so output identical to the
+    # files on disk is no change at all: no review dialog opens.
+    from workflow_editor.dialogs import DiffViewer
+    from workflow_editor.pack_ops import pack_parsers
+    root = _make_project(tmp_path / "proj")
+    t1 = root / "tests" / "t1"
+    w = make_window()
+    _open_project(w, root)
+    w.open_test(t1)
+    code = (t1 / "test.py").read_text(encoding="utf-8")
+    assert code.endswith("\n")
+    monkeypatch.setattr(pack_parsers, "parse_text",
+                        lambda text, project_root=None: ({"id": "t1", "steps": []}, []))
+    monkeypatch.setattr(pack_parsers, "generate_code", lambda proc, project_root=None: (code, []))
+    reviews = []
+    monkeypatch.setattr(DiffViewer, "exec", lambda self: reviews.append(self) or 0)
+    w.text_only_tab._on_parse_and_generate()
+
+    assert reviews == []
+    assert (t1 / "test.py").read_text(encoding="utf-8") == code
+
+
 def test_sync_indicator_acknowledge_flow(make_window, mbox, tmp_path):
     # Pins _on_sync_indicator_clicked: out-of-sync + user answers Yes ->
     # in-sync restored, hashes re-baselined to current content, session

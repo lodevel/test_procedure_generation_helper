@@ -159,19 +159,17 @@ class DiffViewer(QDialog):
         layout.addLayout(btn_layout)
     
     def _generate_diff(self) -> str:
-        """Generate unified diff."""
-        original_lines = self._original.splitlines(keepends=True)
-        proposed_lines = self._proposed.splitlines(keepends=True)
-        
+        """Generate unified diff, line by line: a final newline present on one
+        side only is not a change."""
         diff = difflib.unified_diff(
-            original_lines,
-            proposed_lines,
+            self._original.splitlines(),
+            self._proposed.splitlines(),
             fromfile='Original',
             tofile='Proposed',
             lineterm=''
         )
         
-        return ''.join(diff)
+        return '\n'.join(diff)
     
     def _calculate_stats(self) -> str:
         """Calculate diff statistics."""
@@ -212,6 +210,8 @@ class DiffViewer(QDialog):
         Returns:
             Tuple of (accepted: bool, content: str)
         """
+        if original.splitlines() == proposed.splitlines():  # no line differs: nothing to review
+            return (True, proposed)
         dialog = DiffViewer(original, proposed, title, parent, banner)
         result = dialog.exec()
         

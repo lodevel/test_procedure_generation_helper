@@ -207,6 +207,8 @@ class LLMTabMixin:
             "⚡ Parse + Generate complete — procedure.json and test.py saved."
         )
         self.status_message.emit("⚡ Parse + Generate complete")
+        # Both files were just generated from the same text: they are in sync.
+        self.main_window._document_controller.mark_in_sync()
         self.artifact_saved.emit()
 
     # ------------------------------------------------------------------ #

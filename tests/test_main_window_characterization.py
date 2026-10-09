@@ -545,6 +545,36 @@ def test_real_edit_save_flips_out_of_sync(make_window, tmp_path):
     assert w.session_state.artifact_hashes == baseline  # not re-seeded
 
 
+@pytest.mark.parametrize("tab", ["text_only_tab", "text_json_tab"])
+def test_parse_and_generate_marks_in_sync(make_window, monkeypatch, tmp_path, tab):
+    # procedure.json and test.py both come from the same text in one action:
+    # an out-of-sync test is in sync afterwards, and stays so on reopen.
+    from workflow_editor.dialogs import DiffViewer
+    from workflow_editor.pack_ops import pack_parsers
+    root = _make_project(tmp_path / "proj")
+    t1 = root / "tests" / "t1"
+    w = make_window()
+    _open_project(w, root)
+    w.open_test(t1)
+    w.text_only_tab.text_editor.setPlainText("# t1\n\nEdited body.\n")
+    w._on_save()
+    assert w.session_state.artifacts_in_sync is False
+
+    monkeypatch.setattr(pack_parsers, "parse_text",
+                        lambda text, project_root=None: ({"id": "t1", "steps": [{"n": 1}]}, []))
+    monkeypatch.setattr(pack_parsers, "generate_code",
+                        lambda proc, project_root=None: ("def main():\n    return 1\n", []))
+    monkeypatch.setattr(DiffViewer, "show_diff", staticmethod(lambda old, new, *a: (True, new)))
+    getattr(w, tab)._on_parse_and_generate()
+
+    assert "return 1" in (t1 / "test.py").read_text(encoding="utf-8")
+    assert w.session_state.artifacts_in_sync is True
+    assert w.sync_indicator.text() == "Sync ✅"
+    assert w.session_state.artifact_hashes == w.artifact_manager.compute_hashes()
+    assert json.loads((t1 / ".llm_session.json").read_text(encoding="utf-8"))["artifacts_in_sync"] is True
+    assert not w.workspace_widget._is_test_out_of_sync(t1)
+
+
 def test_sync_indicator_acknowledge_flow(make_window, mbox, tmp_path):
     # Pins _on_sync_indicator_clicked: out-of-sync + user answers Yes ->
     # in-sync restored, hashes re-baselined to current content, session

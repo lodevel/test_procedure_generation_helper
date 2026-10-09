@@ -79,12 +79,20 @@ class DocumentController:
         )
 
         if result == QMessageBox.Yes:
-            mw.session_state.artifacts_in_sync = True
-            mw.session_state.artifact_hashes = mw.artifact_manager.compute_hashes()
-            mw.session_state.save()
+            self.mark_in_sync()
             self.update_sync_indicator()
             mw.workspace_widget.refresh()
             mw.status_bar.showMessage("Artifacts marked as in sync", 2000)
+
+    def mark_in_sync(self):
+        """Record procedure.json and test.py as coherent: their current hashes
+        become the baseline later saves are compared against."""
+        mw = self._mw
+        if not mw.artifact_manager or not mw.session_state:
+            return
+        mw.session_state.artifacts_in_sync = True
+        mw.session_state.artifact_hashes = mw.artifact_manager.compute_hashes()
+        mw.session_state.save()
 
     def check_artifact_coherence(self) -> bool:
         """Check if JSON and Code artifacts are in sync and warn if not.
@@ -119,9 +127,7 @@ class DocumentController:
         clicked = msg.clickedButton()
 
         if clicked == mark_sync_btn:
-            mw.session_state.artifacts_in_sync = True
-            mw.session_state.artifact_hashes = mw.artifact_manager.compute_hashes()
-            mw.session_state.save()
+            self.mark_in_sync()
             self.update_sync_indicator()
             mw.workspace_widget.refresh()
             return False

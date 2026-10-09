@@ -61,3 +61,24 @@ def test_export_full_report_no_tests_raises(tmp_path):
         assert False, "expected FullReportError"
     except full_report.FullReportError:
         pass
+
+
+@pytest.mark.parametrize("include", [False, True])
+def test_board_images_are_generated_only_when_the_sidecar_includes_them(
+        tmp_path, monkeypatch, include):
+    from docx import Document
+    from workflow_editor.core import full_report
+    from project_services import report_export
+
+    tpl = tmp_path / "tpl.docx"
+    Document().save(str(tpl))
+    test_dir = tmp_path / "proj" / "tests" / "T1"
+    test_dir.mkdir(parents=True)
+    (test_dir / "procedure.json").write_text('{"meta": {"id": "T1"}}', encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(full_report, "_generate_images", lambda *a: calls.append(a))
+
+    sidecar = {**report_export.create_default_sidecar(), "include_images": include}
+    full_report.export_full_report(tmp_path / "proj", [test_dir], tmp_path / "o.docx",
+                                   sidecar=sidecar, template_path=tpl)
+    assert len(calls) == int(include)

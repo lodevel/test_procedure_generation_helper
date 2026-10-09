@@ -45,12 +45,11 @@ def export_full_report(
     *,
     sidecar: dict | None = None,
     template_path: Path | None = None,
-    generate_images: bool = True,
     progress=None,
 ) -> Path:
     """Render a .docx report for ``test_folders`` (each must hold a procedure.json).
 
-    When ``generate_images`` is set, any missing board images are rendered into the
+    When the sidecar includes images, any missing board images are rendered into the
     shared ``.media_cache`` first (via the editor's ODB tooling), so they EMBED in
     the document exactly like the main app — cache-first, and a no-op when there is
     no ODB archive/CLI. ``progress(done, total) -> bool`` is called during image
@@ -83,7 +82,7 @@ def export_full_report(
             "No Word template found in the project's config/templates/exports/ "
             "directory.")
 
-    if generate_images:
+    if report_export.images_included(sidecar):
         _generate_images(project_root, procedures, progress)
 
     report_export.render_report(

@@ -42,12 +42,13 @@ import json
 import logging
 import shutil
 from copy import deepcopy
-from dataclasses import dataclass, asdict, field, fields
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from threading import RLock
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from ..llm.backend_base import LLMTask
+from .fileio import atomic_write_text
 
 log = logging.getLogger(__name__)
 
@@ -622,7 +623,7 @@ class TaskConfigManager:
         # Preserve-and-overlay write.
         existing_full["workflows"] = migrated_workflows
         try:
-            _atomic_write_json(project_cfg_path, existing_full)
+            atomic_write_text(project_cfg_path, json.dumps(existing_full, indent=2, ensure_ascii=False))
         except OSError as e:
             log.error("Failed to write migrated workflows to %s: %s — leaving %s in place.",
                       project_cfg_path, e, legacy)
@@ -816,15 +817,14 @@ class TaskConfigManager:
             if not isinstance(full, dict):
                 full = {}
             full["workflows"] = payload
-            _atomic_write_json(target, full)
+            atomic_write_text(target, json.dumps(full, indent=2, ensure_ascii=False))
             return
 
         # Legacy single-file mode: write merged workflows as the file root.
         if self._fallback_path is None:
             log.error("No save target — project_root=None and no fallback path")
             return
-        self._fallback_path.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_write_json(self._fallback_path, self._build_workflows_section())
+        atomic_write_text(self._fallback_path, json.dumps(self._build_workflows_section(), indent=2, ensure_ascii=False))
 
     def save_config(self) -> bool:
         """Thread-safe atomic save to the active sink."""
@@ -1127,15 +1127,6 @@ def _safe_read_json(path: Path) -> Any:
     except (OSError, json.JSONDecodeError) as e:
         log.warning("Could not read JSON from %s: %s — treating as empty.", path, e)
         return {}
-
-
-def _atomic_write_json(path: Path, data: Any) -> None:
-    """Atomic JSON write: temp file in the same directory, then rename."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    tmp.replace(path)
 
 
 def _clone_selected_rules(value: SelectedRules) -> SelectedRules:

@@ -7,9 +7,7 @@ Implements Section 12.2 of the spec with unified task management.
 import copy
 import json
 import logging
-import os
 import sys
-import tempfile
 from pathlib import Path
 from typing import Optional
 from PySide6.QtWidgets import (
@@ -27,6 +25,7 @@ from ..llm.backend_base import LLMTask
 from ..llm.server_manager import fetch_opencode_models
 from ..theme import muted_text
 from ..core.odb_inspect import load_hide_prefixes, save_hide_prefixes
+from ..core.fileio import atomic_write_text
 
 log = logging.getLogger(__name__)
 
@@ -333,22 +332,7 @@ def build_launch_config(
 
     target = launch_dir / "opencode.json"
     payload = json.dumps(data, indent=2)
-    # Atomic write: temp in the SAME dir as target so os.replace stays on one
-    # filesystem (no EXDEV from /tmp), then rename over the target.
-    tmp_fd, tmp_name = tempfile.mkstemp(
-        dir=str(launch_dir), prefix=".opencode-", suffix=".json.tmp")
-    try:
-        with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
-            fh.write(payload)
-        os.replace(tmp_name, target)
-    except Exception:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            # Best-effort temp-file cleanup on a failed atomic write; the
-            # original exception re-raised below is the one that matters.
-            log.debug("Could not remove temp file %s", tmp_name)
-        raise
+    atomic_write_text(target, payload)  # never a half-written config
     log.info("Built launch config (project=%s, mcp=%s)",
              project_root, sorted(mcp.keys()))
     return launch_dir

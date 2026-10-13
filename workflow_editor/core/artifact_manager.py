@@ -13,18 +13,16 @@ Tool-generated:
 import hashlib
 import json
 import logging
-import os
-import tempfile
-import shutil
-from pathlib import Path
-from enum import Enum, auto
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, Any
+from enum import Enum, auto
+from pathlib import Path
+from typing import Any, Optional
 
-import re
+from .fileio import atomic_write_text
 from .sync_utils import normalize_for_hash
-from .test_id import sanitize_test_id, force_text_id_line, force_json_id
+from .test_id import force_json_id, force_text_id_line, sanitize_test_id
 
 
 class ArtifactType(Enum):
@@ -150,7 +148,7 @@ class ArtifactManager:
         if artifact_type is ArtifactType.PROCEDURE_JSON:
             artifact.content = self._refresh_media(artifact.content)
 
-        self._atomic_write(artifact.file_path, artifact.content)
+        atomic_write_text(artifact.file_path, artifact.content)
         artifact.mark_clean()
         artifact.mark_needs_resync()  # Mark for resync so LLM sees manual changes
         artifact.last_modified = datetime.now()
@@ -201,29 +199,6 @@ class ArtifactManager:
                 self.save_artifact(artifact_type)
                 saved.append(artifact_type)
         return saved
-    
-    def _atomic_write(self, file_path: Path, content: str) -> None:
-        """Write content to file atomically (write temp, then rename)."""
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Write to temp file in same directory
-        temp_fd, temp_path = tempfile.mkstemp(
-            dir=file_path.parent,
-            prefix=f".{file_path.name}.",
-            suffix=".tmp"
-        )
-        os.close(temp_fd)  # Close the file descriptor to avoid Windows file lock
-        temp_path = Path(temp_path)
-        
-        try:
-            temp_path.write_text(content, encoding="utf-8")
-            # Replace original file
-            shutil.move(str(temp_path), str(file_path))
-        except Exception:
-            # Clean up temp file on failure
-            if temp_path.exists():
-                temp_path.unlink()
-            raise
     
     def _get_artifact(self, artifact_type: ArtifactType) -> Artifact:
         """Get artifact by type."""

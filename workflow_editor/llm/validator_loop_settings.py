@@ -33,10 +33,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import tempfile
 from pathlib import Path
 from typing import Any
+
+from ..core.fileio import atomic_write_text
 
 log = logging.getLogger(__name__)
 
@@ -118,34 +118,8 @@ def save_setting(project_root: Path, key: str, value: Any) -> None:
 
     serialized = json.dumps(data, indent=2, ensure_ascii=False)
     try:
-        _atomic_write_text(config_path, serialized)
+        atomic_write_text(config_path, serialized)
     except OSError:
         log.exception("Could not write validator_loop settings to %s", config_path)
 
 
-def _atomic_write_text(target: Path, content: str) -> None:
-    """Write ``content`` to ``target`` atomically (temp-file + rename).
-
-    On Windows, ``os.replace`` overwrites the destination atomically;
-    on POSIX, rename(2) is atomic within the same filesystem. The temp
-    file is created in the destination's parent directory so the rename
-    is guaranteed same-filesystem.
-    """
-    parent = target.parent
-    fd, tmp_name = tempfile.mkstemp(
-        prefix=target.name + ".", suffix=".tmp", dir=str(parent),
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(content)
-        os.replace(tmp_name, target)
-    except Exception:
-        # On any failure, don't leave the temp file lying around.
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            # best-effort: temp file may already be gone (mkstemp/replace
-            # failed early) or be locked on Windows; the original write
-            # failure re-raises below and is what callers must see.
-            pass
-        raise

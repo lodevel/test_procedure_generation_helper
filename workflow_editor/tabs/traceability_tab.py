@@ -15,6 +15,7 @@ import textwrap
 
 from .base_tab import BaseTab
 from ..core import ArtifactType, StepMarkerParser
+from ..core.procedure_steps import numbered_steps
 from ..theme import (
     error_color,
     status_modified,
@@ -23,31 +24,6 @@ from ..theme import (
     traceability_highlight,
 )
 from ..widgets.find_replace_bar import FindReplaceBar, install_find_shortcuts
-
-
-def _flatten_numbered(steps):
-    """Flatten procedure steps[] to the real numbered steps in source order.
-
-    Macro blocks are array entries but not numbered steps: ``block_for`` /
-    ``block_if`` bodies hold the actual ``<n>.`` steps (which codegen emits),
-    while ``block_alloc`` / ``block_table`` carry no ``n``. Recurse into block
-    bodies and keep only nodes with an integer ``n`` so the count, numbering,
-    and code cross-check match the generated test.py instead of the raw
-    top-level array length.
-    """
-    out = []
-    for s in steps or []:
-        if not isinstance(s, dict):
-            continue
-        op = s.get("op")
-        if op in ("block_for", "block_do"):
-            out += _flatten_numbered(s.get("body"))
-        elif op == "block_if":
-            for br in s.get("branches", []):
-                out += _flatten_numbered(br.get("body") if isinstance(br, dict) else None)
-        elif isinstance(s.get("n"), int):
-            out.append(s)
-    return out
 
 
 class TraceabilityTab(BaseTab):
@@ -151,7 +127,7 @@ class TraceabilityTab(BaseTab):
             # Flatten macro blocks → real numbered steps so the count and
             # numbering match the generated code (a @FOR body's steps are the
             # real steps; @ALLOC/@FOR headers are not numbered steps).
-            self._json_steps = _flatten_numbered(json_data["steps"])
+            self._json_steps = numbered_steps(json_data["steps"])
         else:
             self._json_steps = []
         

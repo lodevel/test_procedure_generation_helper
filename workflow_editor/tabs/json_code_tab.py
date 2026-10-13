@@ -23,6 +23,7 @@ from .llm_tab_mixin import LLMTabMixin
 from .json_tab import JsonSyntaxHighlighter
 from .code_tab import PythonSyntaxHighlighter
 from ..core import ArtifactType, StepMarkerParser
+from ..core.procedure_steps import numbered_steps
 from ..llm import TabContext, LLMTask
 from ..dialogs import DiffViewer
 from ..theme import error_color, status_modified, status_saved
@@ -747,7 +748,8 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
             json_content = self.json_editor.toPlainText()
             if json_content.strip():
                 json_data = json.loads(json_content)
-                json_steps = json_data.get("steps", []) or []
+                # Loop / if bodies hold numbered steps too (codegen emits them).
+                json_steps = numbered_steps(json_data.get("steps", []) or [])
         except (json.JSONDecodeError, AttributeError):
             # best-effort: editor JSON may be mid-edit/invalid or non-dict;
             # empty json_steps falls through to the "No steps in JSON" status.

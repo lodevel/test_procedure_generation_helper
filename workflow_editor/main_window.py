@@ -27,7 +27,6 @@ from .llm import (
     LLMBackend,
     LLMRequest, LLMTask,
     OpenCodeConfig,
-    LLMWorker,
 )
 from .llm.server_manager import OpenCodeServerManager
 from .llm.backend_factory import (

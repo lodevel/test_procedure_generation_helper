@@ -1,6 +1,5 @@
-"""Optional, lazy board access for the Text tab's conversation."""
-
-from PySide6.QtWidgets import QCheckBox
+"""Optional, lazy board access for the Text tab's conversation (no Qt; the
+chat panel's checkbox is ``dock.board_data_checkbox``)."""
 
 from ..core.odb_inspect import find_odb_tgz
 
@@ -14,42 +13,6 @@ def allow_complete_board_output(config):
     limits = config.setdefault("tool_output", {})
     for key in ("max_bytes", "max_lines"):
         limits[key] = max(limits.get(key, 0), BOARD_CONTEXT_MAX_BYTES)
-
-
-class BoardDataCheckBox(QCheckBox):
-    def __init__(self, parent=None):
-        super().__init__("Board data", parent)
-        self._context = None
-        self.setToolTip(
-            "Let the chat load the complete netlist and component identities when needed.\n"
-            "Enabling this does not load board data. Disabling stops new reads; "
-            "previously read data stays in the conversation."
-        )
-        self.toggled.connect(self._store)
-        self.set_context(None)
-
-    def _store(self, enabled):
-        if self._context is not None:
-            self._context.board_data_enabled = enabled
-            self._context.board_data_project = self._context.project_manager.project_root
-
-    def set_context(self, context):
-        self._context = context
-        is_text = context is not None and context.tab_id == "text_only"
-        root = context.project_manager.project_root if is_text else None
-        available = root is not None and find_odb_tgz(root) is not None
-        selected = bool(
-            available and getattr(context, "board_data_enabled", False)
-            and getattr(context, "board_data_project", None) == root
-        )
-        self.blockSignals(True)
-        self.setVisible(is_text)
-        self.setEnabled(available)
-        self.setChecked(selected)
-        self.blockSignals(False)
-        if is_text and not selected:
-            context.board_data_enabled = False
-        self.setText("Board data" if available else "Board data (no board available)")
 
 
 def configure_board_request(request, context):

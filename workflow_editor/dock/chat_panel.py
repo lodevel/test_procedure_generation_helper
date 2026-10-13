@@ -23,7 +23,7 @@ from .. import theme
 from ..widgets.work_timer import WorkTimer
 from .chat_messages import MessageDetailDialog, MessageWidget, ProposalWidget
 from ..llm.context_usage import format_context_usage, latest_message_total
-from ..llm.board_chat import BoardDataCheckBox
+from .board_data_checkbox import BoardDataCheckBox
 
 
 # Tooltip strings for the validator-status indicator + auto-correct

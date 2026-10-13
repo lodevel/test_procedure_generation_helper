@@ -1,4 +1,7 @@
-"""LLM Backend modules for the workflow editor."""
+"""LLM Backend modules for the workflow editor.
+
+Importable without Qt: the Qt worker thread lives in ``llm.worker`` and is
+imported from there by the widgets that run it."""
 
 
 def _ensure_opencode_client_on_path() -> None:
@@ -36,10 +39,8 @@ from .response_parser import ResponseParser
 from .prompt_builder import PromptBuilder, TaskPromptNotDeclaredError
 from .output_contracts import get_contract_for_tab, get_allowed_artifacts
 from .tab_context import TabContext, ChatMessage
-from .worker import LLMWorker
 
 __all__ = [
-    "LLMWorker",
     "LLMBackend",
     "LLMResponse",
     "LLMRequest",

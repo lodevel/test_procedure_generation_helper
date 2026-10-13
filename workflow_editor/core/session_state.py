@@ -12,6 +12,9 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import Optional, Any
 
+# The session file of a test folder.
+SESSION_FILE_NAME = ".llm_session.json"
+
 
 @dataclass
 class Question:
@@ -82,7 +85,7 @@ class SessionState:
     
     def set_file_path(self, test_dir: Path) -> None:
         """Set the session file path."""
-        self._file_path = test_dir / ".llm_session.json"
+        self._file_path = test_dir / SESSION_FILE_NAME
     
     def load(self) -> bool:
         """Load session state from disk. Returns True if loaded."""
@@ -252,3 +255,38 @@ class SessionState:
         self.artifact_hashes = {}
         self.artifact_timestamps = {}
         self.artifacts_in_sync = True
+
+
+# -- the sync baseline of a test that is not open ----------------------------
+# Read and merged on the raw file, so a session the dataclass cannot load
+# (an odd decision, a hand edit) is never lost to a Mark In Sync.
+
+def read_sync_baseline(test_dir: Path) -> Optional[tuple[bool, dict[str, str]]]:
+    """(artifacts_in_sync, artifact_hashes) from the test's session file, or None
+    when there is none or it is not a readable JSON object."""
+    try:
+        data = json.loads((test_dir / SESSION_FILE_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    hashes = data.get("artifact_hashes")
+    return bool(data.get("artifacts_in_sync", True)), dict(hashes) if isinstance(hashes, dict) else {}
+
+
+def write_sync_baseline(test_dir: Path, hashes: dict[str, str]) -> None:
+    """Record ``hashes`` (merged over the stored ones) as the acknowledged
+    baseline and mark the test in sync, keeping every other field of the file.
+    A missing or unreadable file starts a fresh one. Raises OSError."""
+    path = test_dir / SESSION_FILE_NAME
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    stored = data.get("artifact_hashes")
+    data["artifact_hashes"] = {**(stored if isinstance(stored, dict) else {}), **hashes}
+    data["artifacts_in_sync"] = True
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")

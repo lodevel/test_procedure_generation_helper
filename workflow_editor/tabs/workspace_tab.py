@@ -19,7 +19,7 @@ from PySide6.QtGui import QColor, QBrush, QPalette
 from .base_tab import BaseTab
 from ..badge_delegate import BADGES_ROLE, CURRENT_ROLE, BadgeDelegate
 from ..core import ArtifactType
-from ..core.artifact_manager import enforced_sync_hash
+from ..core import test_sync
 from ..theme import (
     sync_warning_color, empty_test_color, ready_test_color,
     default_text_color, selected_test_bg, selected_test_fg,
@@ -160,7 +160,7 @@ class WorkspaceTab(BaseTab):
                 item.setSizeHint(QSize(0, 52))
             
             # Check sync status from session file
-            out_of_sync = self._is_test_out_of_sync(info.path)
+            out_of_sync = self._out_of_sync(info.path)
             
             # Build display text with indicators
             indicators = []
@@ -225,56 +225,6 @@ class WorkspaceTab(BaseTab):
                 self.test_list.setCurrentItem(item)
                 break
     
-    def _is_test_out_of_sync(self, test_path: Path) -> bool:
-        """Check if a test's artifacts are out of sync.
-
-        First checks the ``artifacts_in_sync`` flag in ``.llm_session.json``.
-        If the flag reports in-sync, performs a live SHA-256 hash comparison
-        of the canonical artifacts (procedure.json, test.py) against the
-        stored baselines so that external edits made while the editor was
-        closed are detected immediately when the Tests list is loaded.
-
-        Returns False (in sync) if the session file doesn't exist or the
-        stored hashes are absent (first-open / legacy session).
-        """
-        session_file = test_path / ".llm_session.json"
-        if not session_file.exists():
-            return False
-        try:
-            data = json.loads(session_file.read_text(encoding="utf-8"))
-        except Exception:
-            return False
-
-        # If the flag already says out-of-sync, trust it
-        if not data.get("artifacts_in_sync", True):
-            return True
-
-        # Perform a live hash check to catch edits made while the editor was closed
-        stored_hashes: dict = data.get("artifact_hashes", {})
-        if not stored_hashes:
-            # No baseline yet (first open or legacy session) — assume in sync
-            return False
-
-        patterns = self.project_manager.get_equipment_patterns()
-        # Must mirror ArtifactManager._SYNC_TRACKED_NAMES — adding text
-        # so operator edits to procedure_text.md flip the ⚠️ flag too.
-        canonical_files = ("procedure.json", "test.py", "procedure_text.md")
-        for filename in canonical_files:
-            stored = stored_hashes.get(filename)
-            if not stored:
-                continue
-            file_path = test_path / filename
-            if not file_path.exists():
-                continue
-            try:
-                disk_content = file_path.read_text(encoding="utf-8")
-            except Exception:
-                continue
-            disk_hash = enforced_sync_hash(test_path, filename, disk_content, patterns)
-            if disk_hash != stored:
-                return True
-
-        return False
     
     def set_opened_test(self, path: Path):
         """Set the currently opened test and highlight it."""
@@ -300,7 +250,7 @@ class WorkspaceTab(BaseTab):
                 item.setData(CURRENT_ROLE, False)
                 item.setBackground(QBrush())
                 info = item.data(Qt.UserRole + 1)
-                out_of_sync = self._is_test_out_of_sync(item_path)
+                out_of_sync = self._out_of_sync(item_path)
                 if out_of_sync:
                     item.setForeground(sync_warning_color())  # Orange
                 elif info:
@@ -342,7 +292,7 @@ class WorkspaceTab(BaseTab):
         # handled at click time: loaded goes through main_window's
         # acknowledgment flow (in-memory + disk atomically), unloaded
         # writes the hash baseline directly to .llm_session.json.
-        out_of_sync = self._is_test_out_of_sync(path)
+        out_of_sync = self._out_of_sync(path)
         is_loaded = (path == self._current_opened_test)
         mark_sync_action = menu.addAction("Mark Procedure In Sync")
         mark_sync_action.setEnabled(out_of_sync)
@@ -392,65 +342,18 @@ class WorkspaceTab(BaseTab):
             self._delete_test(path)
 
     def _mark_test_in_sync(self, path: Path):
-        """Rebaseline ``.llm_session.json`` for *path*.
-
-        Computes the same normalised SHA-256 hashes that
-        :meth:`_is_test_out_of_sync` compares against, then writes them
-        to the test's session file alongside ``artifacts_in_sync=True``.
-        Preserves any other session-state fields already on disk
-        (intent, decisions, open_questions, …) by reading-then-merging.
-
-        Only called for unloaded tests — the context menu disables
-        this entry when ``path == self._current_opened_test`` so the
-        loaded path stays under main_window control.
-        """
-        session_file = path / ".llm_session.json"
-        if session_file.exists():
-            try:
-                data = json.loads(session_file.read_text(encoding="utf-8"))
-                if not isinstance(data, dict):
-                    data = {}
-            except Exception:
-                data = {}
-        else:
-            data = {}
-
-        patterns = self.project_manager.get_equipment_patterns()
-        # Must mirror ArtifactManager._SYNC_TRACKED_NAMES — adding text
-        # so operator edits to procedure_text.md flip the ⚠️ flag too.
-        canonical_files = ("procedure.json", "test.py", "procedure_text.md")
-        hashes: dict = dict(data.get("artifact_hashes", {}))
-        for filename in canonical_files:
-            file_path = path / filename
-            if not file_path.exists():
-                continue
-            try:
-                content = file_path.read_text(encoding="utf-8")
-            except Exception as e:
-                QMessageBox.critical(
-                    self, "Mark In Sync Failed",
-                    f"Could not read {filename}:\n{e}",
-                )
-                return
-            hashes[filename] = enforced_sync_hash(path, filename, content, patterns)
-
-        data["artifact_hashes"] = hashes
-        data["artifacts_in_sync"] = True
-
+        """Re-baseline an UNLOADED test's session file (core.test_sync). The
+        context menu disables this entry for the opened test, which stays
+        under main_window control."""
         try:
-            session_file.parent.mkdir(parents=True, exist_ok=True)
-            session_file.write_text(
-                json.dumps(data, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
-        except Exception as e:
-            QMessageBox.critical(
-                self, "Mark In Sync Failed",
-                f"Could not write {session_file.name}:\n{e}",
-            )
+            test_sync.mark_in_sync(path, self.project_manager.get_equipment_patterns())
+        except (OSError, ValueError) as e:
+            QMessageBox.critical(self, "Mark In Sync Failed", f"Could not mark {path.name} in sync:\n{e}")
             return
-
         self.refresh()
+
+    def _out_of_sync(self, path: Path) -> bool:
+        return test_sync.is_out_of_sync(path, self.project_manager.get_equipment_patterns())
     
     def _rename_test(self, path: Path):
         """Rename a test folder and keep the id + project references in sync.

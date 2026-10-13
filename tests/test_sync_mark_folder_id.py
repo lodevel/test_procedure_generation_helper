@@ -229,22 +229,15 @@ def _write_wrong_id_test(tmp_path, folder="Foo"):
     return test_dir
 
 
-def _workspace_fake():
-    fake = MagicMock()
-    fake.project_manager.get_equipment_patterns.return_value = []
-    return fake
-
-
 def test_mark_unloaded_wrong_id_test_matches_enforced_baseline(tmp_path):
     """Marking an UNLOADED wrong-id test in sync must store the ENFORCED
     hashes — byte-identical to the loaded path — so opening the test
     later reports no mismatch."""
-    from workflow_editor.tabs.workspace_tab import WorkspaceTab
+    from workflow_editor.core import test_sync
 
     test_dir = _write_wrong_id_test(tmp_path)
-    fake = _workspace_fake()
 
-    WorkspaceTab._mark_test_in_sync(fake, test_dir)
+    test_sync.mark_in_sync(test_dir, [])
 
     session = json.loads(
         (test_dir / ".llm_session.json").read_text(encoding="utf-8")
@@ -265,14 +258,14 @@ def test_mark_unloaded_wrong_id_test_matches_enforced_baseline(tmp_path):
     # ... and no mismatch is reported on open.
     assert am.check_external_changes(session["artifact_hashes"]) == []
     # The Tests list agrees with its own baseline too.
-    assert WorkspaceTab._is_test_out_of_sync(fake, test_dir) is False
+    assert test_sync.is_out_of_sync(test_dir, []) is False
 
 
 def test_workspace_out_of_sync_check_ignores_id_only_drift(tmp_path):
-    """_is_test_out_of_sync must not flag a wrong-id disk file against an
+    """test_sync.is_out_of_sync must not flag a wrong-id disk file against an
     enforced baseline (stored by the loaded path) — id-only drift is
     rewritten at the next save, not an external edit."""
-    from workflow_editor.tabs.workspace_tab import WorkspaceTab
+    from workflow_editor.core import test_sync
 
     test_dir = _write_wrong_id_test(tmp_path)
     am = ArtifactManager()
@@ -285,8 +278,7 @@ def test_workspace_out_of_sync_check_ignores_id_only_drift(tmp_path):
         encoding="utf-8",
     )
 
-    fake = _workspace_fake()
-    assert WorkspaceTab._is_test_out_of_sync(fake, test_dir) is False, (
+    assert test_sync.is_out_of_sync(test_dir, []) is False, (
         "id-only drift flagged as out-of-sync by the Tests list"
     )
 
@@ -294,4 +286,4 @@ def test_workspace_out_of_sync_check_ignores_id_only_drift(tmp_path):
     (test_dir / "procedure_text.md").write_text(
         WRONG_TEXT + "2. do y\n", encoding="utf-8"
     )
-    assert WorkspaceTab._is_test_out_of_sync(fake, test_dir) is True
+    assert test_sync.is_out_of_sync(test_dir, []) is True

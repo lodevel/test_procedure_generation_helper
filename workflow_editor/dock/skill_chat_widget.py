@@ -787,12 +787,13 @@ class SkillChatWidget(QWidget):
         self.conversation_reset.emit()
 
     def _on_restart_backend(self) -> None:
-        """Stop + start the shared OpenCode server to recover from a hung or
+        """Relaunch the shared OpenCode server to recover from a hung or
         unresponsive backend — without relaunching the whole editor (the only
         recovery before). The trash icon resets the chat SESSION only, which
         can't fix a wedged server. Runs off the UI thread (the WSL spawn takes a
         few seconds); the next send re-creates the backend with a fresh session
-        against the new server."""
+        against the new server. ``relaunch`` keeps the manager usable — a
+        ``stop()`` would retire it and leave every tab without a server."""
         sm = getattr(self._backend_factory, "server_manager", None)
         if sm is None:
             self._status.setText("This backend has no restartable server.")
@@ -809,8 +810,7 @@ class SkillChatWidget(QWidget):
 
         def _restart() -> None:
             try:
-                sm.stop()
-                sm.start()
+                sm.relaunch()
             except Exception:
                 log.exception("backend restart failed")
 

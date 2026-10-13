@@ -999,3 +999,53 @@ def test_apply_models_no_ops_after_dialog_closed():
     # dialog — nothing reads it anymore).
     self.opencode_model.clear.assert_not_called()
     self.opencode_models_note.setText.assert_not_called()
+
+
+def test_relaunch_restarts_without_retiring_the_manager(tmp_path, monkeypatch):
+    """The skill chat's Restart relaunches the SHARED server in place: the
+    manager must stay usable (stop() would retire it and start() then refuses,
+    leaving every tab without a server)."""
+    mgr = _mgr(tmp_path)
+    calls = []
+    monkeypatch.setattr(mgr, "_stop_process", lambda: calls.append("stop_process"))
+    monkeypatch.setattr(mgr, "start", lambda: calls.append("start") or True)
+    assert mgr.relaunch() is True
+    assert calls == ["stop_process", "start"]
+    assert mgr._retired is False
+
+
+def test_relaunch_of_a_retired_manager_launches_nothing(tmp_path, monkeypatch):
+    """A manager retired by a swap (the skill chat may still hold it) stays
+    retired: relaunch() launches no server."""
+    from workflow_editor.llm import server_manager
+
+    mgr = _mgr(tmp_path)
+    mgr.stop()
+    spawned = []
+    monkeypatch.setattr(server_manager.subprocess, "Popen", lambda *a, **k: spawned.append(a))
+    assert mgr.relaunch() is False and mgr._retired is True
+    assert spawned == []
+
+
+def test_skill_chat_restart_relaunches_instead_of_stop_start():
+    """The skill chat's Restart button relaunches the shared server in place —
+    never stop() (which retires it) then start()."""
+    import os
+    import time
+    from types import SimpleNamespace
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from workflow_editor.dock.skill_chat_widget import SkillChatWidget
+
+    QApplication.instance() or QApplication([])
+    calls = []
+    sm = SimpleNamespace(relaunch=lambda: calls.append("relaunch"),
+                         stop=lambda: calls.append("stop"), start=lambda: calls.append("start"))
+    widget = SkillChatWidget([], SimpleNamespace(server_manager=sm))
+    widget._on_restart_backend()
+    deadline = time.monotonic() + 5
+    while not calls and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert calls == ["relaunch"]

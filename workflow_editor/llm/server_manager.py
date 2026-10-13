@@ -220,6 +220,14 @@ class OpenCodeServerManager:
             self._running = False
             self._stop_process()
 
+    def relaunch(self) -> bool:
+        """Restart THIS server in place (a hung or unresponsive backend): tear the
+        process down WITHOUT retiring the manager, then start it again. Every
+        holder of the manager (the tabs, the skill chat, the health poll) keeps
+        working against the new process; ``stop()`` would retire it for good."""
+        self._force_stop_for_relaunch()
+        return self.start()
+
     def ensure_running(self) -> bool:
         """Idempotent self-heal: return True if the server is already alive,
         otherwise (re)launch it via ``start()`` and report the outcome.

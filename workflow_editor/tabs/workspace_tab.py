@@ -5,7 +5,6 @@ Implements Section 9.1 of the spec.
 """
 
 from pathlib import Path
-import json
 import logging
 import os
 from PySide6.QtWidgets import (
@@ -19,7 +18,7 @@ from PySide6.QtGui import QColor, QBrush, QPalette
 from .base_tab import BaseTab
 from ..badge_delegate import BADGES_ROLE, CURRENT_ROLE, BadgeDelegate
 from ..core import ArtifactType
-from ..core import test_sync
+from ..core import test_folder_ops, test_sync
 from ..theme import (
     sync_warning_color, empty_test_color, ready_test_color,
     default_text_color, selected_test_bg, selected_test_fg,
@@ -356,17 +355,10 @@ class WorkspaceTab(BaseTab):
         return test_sync.is_out_of_sync(path, self.project_manager.get_equipment_patterns())
     
     def _rename_test(self, path: Path):
-        """Rename a test folder and keep the id + project references in sync.
-
-        The folder name is the single source of truth for the test id
-        (core/test_id.py), so the ``# <id>`` header and procedure.json
-        ``id`` are rewritten immediately rather than waiting for the next
-        save. config.json ``test_order`` and ``scenarios/*.json`` entries
-        follow; historical run reports keep the old name. Only offered
-        for unloaded tests — the context menu disables the entry when the
-        test is open in the editor.
-        """
-        from ..core.test_id import sanitize_test_id, force_text_id_line, force_json_id
+        """Rename a test folder; the id, its sync state and the project's
+        references follow (core.test_folder_ops). Only offered for a test that
+        is not open — the context menu disables it for the open one."""
+        from ..core.test_id import sanitize_test_id
 
         raw, ok = QInputDialog.getText(
             self, "Rename Test", "New test name:", text=path.name,
@@ -376,100 +368,32 @@ class WorkspaceTab(BaseTab):
         new_name = sanitize_test_id(raw.strip())
         if new_name == path.name:
             return
-        new_path = path.parent / new_name
-        if new_path.exists():
-            QMessageBox.critical(
-                self, "Rename Failed",
-                f"A test named '{new_name}' already exists.",
-            )
-            return
+        pm = self.project_manager
         try:
-            path.rename(new_path)
-        except Exception as e:
-            QMessageBox.critical(
-                self, "Rename Failed",
-                f"Could not rename '{path.name}' to '{new_name}':\n{e}",
+            new_path, warnings = test_folder_ops.rename_test(
+                pm.project_root, pm.get_tests_dir(), path, new_name,
+                pm.get_equipment_patterns(),
             )
+        except test_folder_ops.TestFolderError as e:
+            QMessageBox.critical(self, "Rename Failed", str(e))
             return
-
-        # Folder renamed — force the id artifacts to match right away.
-        warnings: list[str] = []
-        for fname, fixer in (
-            ("procedure_text.md", force_text_id_line),
-            ("procedure.json", force_json_id),
-        ):
-            fpath = new_path / fname
-            if not fpath.exists():
-                continue
-            try:
-                fpath.write_text(
-                    fixer(fpath.read_text(encoding="utf-8"), new_name),
-                    encoding="utf-8",
-                )
-            except Exception as e:
-                warnings.append(f"{fname}: {e}")
-
-        warnings += self._update_test_name_references(path.name, new_name)
         if warnings:
             QMessageBox.warning(
                 self, "Renamed With Warnings",
-                "The folder was renamed, but some references could not be "
-                "updated (ids re-sync on the next save):\n\n"
+                "The folder was renamed, but these could not follow "
+                "(ids re-sync on the next save):\n\n"
                 + "\n".join(warnings),
             )
 
         self.refresh()
         self._select_test_by_path(new_path)
 
-    def _update_test_name_references(self, old: str, new: str) -> list[str]:
-        """Best-effort swap of *old* → *new* in config.json ``test_order``
-        and every ``scenarios/*.json`` ``tests`` list. Returns warnings."""
-        warnings: list[str] = []
-
-        def _swap(seq):
-            return [new if entry == old else entry for entry in seq]
-
-        config_dir = self.project_manager.get_config_dir()
-        config_file = (config_dir / "config.json") if config_dir else None
-        if config_file and config_file.exists():
-            try:
-                data = json.loads(config_file.read_text(encoding="utf-8"))
-                order = data.get("test_order", {}).get("order")
-                if isinstance(order, list) and old in order:
-                    data["test_order"]["order"] = _swap(order)
-                    config_file.write_text(
-                        json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-                        encoding="utf-8",
-                    )
-            except Exception as e:
-                warnings.append(f"config.json test_order: {e}")
-
-        project_root = self.project_manager.project_root
-        scenarios_dir = (project_root / "scenarios") if project_root else None
-        if scenarios_dir and scenarios_dir.is_dir():
-            for sc_file in sorted(scenarios_dir.glob("*.json")):
-                try:
-                    data = json.loads(sc_file.read_text(encoding="utf-8"))
-                    tests = data.get("tests")
-                    if isinstance(tests, list) and old in tests:
-                        data["tests"] = _swap(tests)
-                        sc_file.write_text(
-                            json.dumps(data, indent=2, ensure_ascii=False) + "\n",
-                            encoding="utf-8",
-                        )
-                except Exception as e:
-                    warnings.append(f"scenarios/{sc_file.name}: {e}")
-
-        return warnings
-
     def _delete_test(self, path: Path):
-        """Delete a test folder after confirmation."""
-        import shutil
-        
+        """Delete a test folder after confirmation (core.test_folder_ops)."""
         # Count files for the confirmation message
         files = list(path.iterdir()) if path.is_dir() else []
         file_count = len([f for f in files if f.is_file()])
-        
+
         result = QMessageBox.warning(
             self,
             "Delete Test",
@@ -479,23 +403,23 @@ class WorkspaceTab(BaseTab):
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No
         )
-        
+
         if result != QMessageBox.Yes:
             return
-        
+
+        pm = self.project_manager
         try:
-            shutil.rmtree(path)
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Delete Failed",
-                f"Could not delete '{path.name}':\n{e}"
-            )
+            test_folder_ops.delete_test(pm.get_tests_dir(), path)
+        except test_folder_ops.TestFolderError as e:
+            QMessageBox.critical(self, "Delete Failed", str(e))
+            if not path.exists():  # moved aside, partly deleted: it is gone as a test
+                self.test_deleted.emit(path)
+                self.refresh()
             return
-        
+
         # Emit signal so main window can clear editors if needed
         self.test_deleted.emit(path)
-        
+
         # Refresh the list
         self.refresh()
     

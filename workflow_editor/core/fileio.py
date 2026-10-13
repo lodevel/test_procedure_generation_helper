@@ -1,4 +1,5 @@
-"""The editor's one way to write a file the user (or the app) depends on."""
+"""The editor's one way to write a file the user (or the app) depends on, and to
+act on a file another process may be holding for a moment."""
 
 from __future__ import annotations
 
@@ -6,12 +7,28 @@ import os
 import tempfile
 import time
 from pathlib import Path
+from typing import Callable, TypeVar
 
-# On Windows a rename over a file fails while another process holds it open
-# (the host's display sweep or a bench run reading procedure.json for a few
-# milliseconds). Retry for about a second before giving up.
-_REPLACE_ATTEMPTS = 20
-_REPLACE_PAUSE_S = 0.05
+T = TypeVar("T")
+
+# On Windows a rename fails while another process holds the file (or a file
+# inside the folder) open — the host's display sweep or a bench run reading
+# procedure.json for a few milliseconds. Retry for about a second.
+_BUSY_ATTEMPTS = 20
+_BUSY_PAUSE_S = 0.05
+
+
+def retry_while_busy(action: Callable[[], T]) -> T:
+    """Run ``action``, retrying for about a second while Windows reports the
+    target busy (PermissionError); the last error is raised."""
+    for attempt in range(_BUSY_ATTEMPTS):
+        try:
+            return action()
+        except PermissionError:
+            if attempt == _BUSY_ATTEMPTS - 1:
+                raise
+            time.sleep(_BUSY_PAUSE_S)
+    raise AssertionError("unreachable")
 
 
 def atomic_write_text(path: Path, text: str) -> None:
@@ -26,14 +43,7 @@ def atomic_write_text(path: Path, text: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
-        for attempt in range(_REPLACE_ATTEMPTS):
-            try:
-                os.replace(tmp, path)
-                return
-            except PermissionError:
-                if attempt == _REPLACE_ATTEMPTS - 1:
-                    raise
-                time.sleep(_REPLACE_PAUSE_S)
+        retry_while_busy(lambda: os.replace(tmp, path))
     except BaseException:
         try:
             os.unlink(tmp)

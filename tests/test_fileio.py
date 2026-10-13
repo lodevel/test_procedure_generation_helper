@@ -55,7 +55,7 @@ def test_a_target_briefly_held_open_is_retried(tmp_path, monkeypatch):
         real(a, b)
 
     monkeypatch.setattr(fileio.os, "replace", busy_then_free)
-    monkeypatch.setattr(fileio, "_REPLACE_PAUSE_S", 0)
+    monkeypatch.setattr(fileio, "_BUSY_PAUSE_S", 0)
     atomic_write_text(target, "new")
     assert target.read_text(encoding="utf-8") == "new" and os.listdir(tmp_path) == ["procedure.json"]
 
@@ -68,7 +68,7 @@ def test_a_target_held_open_for_good_fails_and_keeps_the_old_file(tmp_path, monk
         raise PermissionError(5, "Access is denied")
 
     monkeypatch.setattr(fileio.os, "replace", always_busy)
-    monkeypatch.setattr(fileio, "_REPLACE_PAUSE_S", 0)
+    monkeypatch.setattr(fileio, "_BUSY_PAUSE_S", 0)
     with pytest.raises(PermissionError):
         atomic_write_text(target, "new")
     assert target.read_text(encoding="utf-8") == "old" and os.listdir(tmp_path) == ["test.py"]

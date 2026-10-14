@@ -1858,13 +1858,12 @@ class MainWindow(QMainWindow):
 
     @_host_services.requires_host
     def _on_bundle_library(self):
-        """File -> Bundle Library: manage installed bundles via the shared
-        BundleLibraryDialog. When a project is open, "Import into Project"
-        targets it.
+        """File -> Bundle Library: the host's Library window, on this PC. When a
+        project is open, "Import into this project" targets it.
         """
-        from project_services.bundle_library_dialog import BundleLibraryDialog
+        from project_services import library_dialog
         root = getattr(self.project_manager, "project_root", None)
-        BundleLibraryDialog(self, project_path=root).exec()
+        library_dialog.open_library(self, side=library_dialog.LOCAL, project_path=root)
         # Library changes may alter which bundle resolves -> refresh gating.
         # Task #39: an "Import into Project" must go live immediately —
         # _handle_config_change reloads TaskConfigManager (task buttons /

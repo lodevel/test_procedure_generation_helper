@@ -2,7 +2,7 @@
 
 ## Overview
 
-This test suite validates the LLM integration for the Workflow Editor, including:
+This test suite validates the LLM integration for Procedo Studio, including:
 - **PromptBuilder**: Constructs prompts for different LLM tasks
 - **ResponseParser**: Parses LLM responses into structured data
 - **Backend Integration**: Tests with real LLM backends (OpenCode or OpenAI)

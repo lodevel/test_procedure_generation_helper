@@ -1,14 +1,14 @@
-# LLM Workflow Editor (`workflow_editor`)
+# Procedo Studio (`workflow_editor`)
 
 A PySide6 Qt desktop application for authoring, editing, and reviewing structured
 test procedures with LLM assistance. It is the **AI-assisted authoring/editing GUI**
-that sits alongside the main Test Procedure GUI: where the main GUI authors and
+that sits alongside Procedo Bench: where Procedo Bench authors and
 *runs* procedures, this editor uses an LLM to transform plain-language intent into
 the canonical `procedure.json` and generated `test.py`, keeping the natural-language
 text, JSON, and code in sync.
 
 It lives in `external/test_procedure_generation_helper/` as a sibling package of the
-main GUI (`src/test_procedure_gui/`). The host's `script.bat` installs it **editable**
+Procedo Bench (`src/test_procedure_gui/`). The host's `script.bat` installs it **editable**
 into the host venv (`pip install -e`), so `workflow_editor` imports like any
 dependency — no `sys.path` / `PYTHONPATH` glue. The legacy path bootstraps remain
 only as logged deprecation shims. See the host repo's
@@ -37,7 +37,7 @@ import its LLM backends.
   own interpreter.
 - **Per-op execution daemon.** `workflow_editor/llm/_execute_op_subprocess.py` is a
   persistent runner that executes individual procedure ops against live equipment
-  (used by the main GUI's interactive/manual runner).
+  (used by Procedo Bench's interactive/manual runner).
 
 ## Project layout
 
@@ -150,17 +150,17 @@ Configuration). The `--llm-backend` and `--llm-profile` flags are parsed and sto
 on the window (`_cli_llm_backend` / `_cli_llm_profile`) but are not currently
 re-read — the saved setting is what selects the backend on startup.
 
-### From the main GUI
+### From Procedo Bench
 
-The main Test Procedure GUI launches this editor for you — via the **Workflow** menu
-("Open Workflow Editor", "Edit Test in Workflow Editor") or the test-list context
-menu ("Edit in Workflow Editor"). `src/test_procedure_gui/main_window.py::_launch_workflow_editor`
+Procedo Bench launches this editor for you — via the **Test** menu
+("Open Procedo Studio…", "Edit…") or the test-list context
+menu ("Edit in Procedo Studio"). `src/test_procedure_gui/main_window.py::_launch_workflow_editor`
 formats a configured command template (its `{python}` placeholder defaults to the
 GUI's `sys.executable`), launches it via `subprocess.Popen`, and appends
 `--project-root`, `--rules-root` (the active bundle's `rules/`), and `--test-name`.
 No `PYTHONPATH` injection: `workflow_editor` is installed editable in the GUI venv
 (ADR 0003). The editor path and command
-template are set in the main GUI's **Workflow Editor Settings** dialog.
+template are set on Procedo Bench's **Settings → Procedo Studio** page.
 Project-specific parsing/validation then runs in the project's own venv via
 `pack_parsers.py`, so the editor does not itself need the project venv.
 
@@ -232,7 +232,7 @@ LLM-driven tabs return a disabled-backend error.
 `workflow_editor/llm/_execute_op_subprocess.py` is a persistent NDJSON-framed daemon
 (one JSON object per line, both directions) that executes individual procedure ops
 against live instruments. It is the only runner that imports the hardware drivers,
-and it is driven by the main GUI's interactive/manual runner
+and it is driven by Procedo Bench's interactive/manual runner
 (`guided_manual_execution_dialog.py`). Key properties:
 
 - **Invoked by file path** in the *project* venv (not `python -m`), so it skips the
@@ -248,13 +248,13 @@ and it is driven by the main GUI's interactive/manual runner
 - **Raw terminal seam:** a `raw` command dispatches on driver attributes by presence —
   `query_raw`/`write_raw` (psu/eload/scope), then `raw_command` (fncore line protocol,
   multi-line drain) or legacy `_write_readline`, with defensive `.s`/`._session` and
-  raw-resource fallbacks. This powers the main GUI's per-equipment raw-command
+  raw-resource fallbacks. This powers Procedo Bench's per-equipment raw-command
   terminal; a new pack's driver becomes terminal-addressable just by exposing those
   surfaces, with no per-driver branch (`_raw_send`, `_execute_op_subprocess.py:174-227`).
 
-## How it ties into the main GUI
+## How it ties into Procedo Bench
 
-- The main GUI imports this package from its venv's editable install; the old
+- Procedo Bench imports this package from its venv's editable install; the old
   `app.py::_bootstrap_editor_on_path` sys.path hack survives only as a logged
   deprecation shim.
 - Several main-GUI modules import from `workflow_editor` directly —
@@ -266,7 +266,7 @@ and it is driven by the main GUI's interactive/manual runner
   its bench Console (per-op output, reconnects, safe-off, and terminal traffic) is
   mirrored into `_console_lines` (capped at `_CONSOLE_SAVE_CAP = 20000`) and persisted
   into `result.json` as `console_log`.
-- The "Edit in Workflow Editor" / "Edit Test in Workflow Editor" actions launch this
+- The "Edit in Procedo Studio" / "Test → Edit…" actions launch this
   editor as a separate process for full LLM-assisted authoring of the selected test.
 
 ## Testing

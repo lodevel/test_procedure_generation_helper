@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         prog="workflow_editor",
-        description="LLM Workflow Editor for structured test procedures"
+        description="Procedo Studio for structured test procedures"
     )
     
     parser.add_argument(
@@ -116,7 +116,7 @@ def main() -> int:
         log.debug("project_services resolved via dev-shim walk-up: %s",
                   _BOOTSTRAPPED_SRC)
     log.info("=" * 50)
-    log.info("Workflow Editor starting")
+    log.info("Procedo Studio starting")
     log.debug(f"CLI args: {args}")
     
     # Validate arguments
@@ -127,7 +127,7 @@ def main() -> int:
     # Create application
     log.debug("Creating QApplication...")
     app = QApplication(sys.argv)
-    app.setApplicationName("LLM Workflow Editor")
+    app.setApplicationName("Procedo Studio")
     app.setApplicationVersion("0.1.0")
     app.setOrganizationName("TestProcedureHelper")
     log.debug("QApplication created")

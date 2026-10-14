@@ -92,7 +92,7 @@ class MainWindow(QMainWindow):
         # thread (AutoConnection -> QueuedConnection from a worker thread).
         self._ui_call.connect(self._run_ui_call)
         log.debug("MainWindow.__init__ starting")
-        self.setWindowTitle("Workflow Editor")
+        self.setWindowTitle("Procedo Studio")
         self.setMinimumSize(1200, 700)
         
         # Store CLI arguments
@@ -1965,8 +1965,8 @@ class MainWindow(QMainWindow):
         """Show about dialog."""
         QMessageBox.about(
             self,
-            "About Workflow Editor",
-            "LLM Workflow Editor\n\n"
+            "About Procedo Studio",
+            "Procedo Studio\n\n"
             "A tool for creating and managing structured test procedures "
             "with LLM assistance.\n\n"
             "Version 0.1.0"

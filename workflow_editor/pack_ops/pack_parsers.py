@@ -254,7 +254,7 @@ def _inproc_import_wheel():
         raise ParserUnavailable(
             f"{_REQUIRED_WHEEL} is not importable: {exc}. "
             f"Reinstall the rules_packager_base wheel (>= 2.0.4) into "
-            f"the venv running the workflow editor. The LLM fallback "
+            f"the venv running Procedo Studio. The LLM fallback "
             f"remains available."
         ) from exc
 
@@ -268,7 +268,7 @@ def _inproc_import_codegen():
         raise ParserUnavailable(
             f"rules_packager_base.rules.v2_0_2.parser.codegen is not "
             f"importable: {exc}. Reinstall the rules_packager_base wheel "
-            f"(>= 2.0.1) into the venv running the workflow editor. The "
+            f"(>= 2.0.1) into the venv running Procedo Studio. The "
             f"LLM fallback remains available."
         ) from exc
 

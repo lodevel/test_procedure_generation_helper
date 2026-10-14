@@ -23,7 +23,6 @@ from .. import theme
 from ..core.task_config import TaskConfig, TaskConfigManager, ChatConfig
 from ..llm.backend_base import LLMTask
 from ..llm.server_manager import fetch_opencode_models
-from ..theme import muted_text
 from ..core.odb_inspect import load_hide_prefixes, save_hide_prefixes
 from ..core.fileio import atomic_write_text
 

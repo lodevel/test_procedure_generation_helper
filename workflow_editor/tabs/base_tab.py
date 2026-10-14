@@ -12,7 +12,7 @@ from PySide6.QtCore import Signal, Qt
 from typing import TYPE_CHECKING, Optional, Callable
 
 from ..llm.backend_base import LLMTask
-from ..theme import groupbox_bg, groupbox_border, groupbox_text, muted_text
+from ..theme import groupbox_bg, groupbox_border, groupbox_text, muted_color
 
 if TYPE_CHECKING:
     from ..main_window import MainWindow
@@ -629,7 +629,7 @@ class BaseTab(QWidget):
         
         if not button_tasks:
             placeholder = QLabel("No LLM tasks configured")
-            placeholder.setStyleSheet(f"color: {muted_text()}; font-style: italic;")
+            placeholder.setStyleSheet(f"color: {muted_color()}; font-style: italic;")
             layout.addWidget(placeholder)
             return
         

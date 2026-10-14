@@ -12,7 +12,7 @@ EXCEPT units that already exceed a cap today; those are grandfathered at their
 current measurement (a ceiling they may only shrink under, never grow past).
 A new 1500-line non-allowlisted module fails immediately.
 
-The god files (``main_window.py``, ``theme.py``, ...) are intentionally NOT
+The god files (``main_window.py``, ...) are intentionally NOT
 carved here; this only freezes their size so the debt cannot compound.
 
 Pure ``pathlib`` + ``ast`` — imports nothing, so it runs headless with no
@@ -75,7 +75,6 @@ FILE_BUDGET: dict[str, int] = {
     "llm/tab_context.py": 1057,
     "llm/validator_dispatch.py": 1163,
     "main_window.py": 2064,  # +84: post-carve growth (opencode session keep-alive, ecbb421 et al.)
-    "theme.py": 1981,  # light/dark Fluent QSS deduped into one template + token dicts
 }
 
 CLASS_METHOD_BUDGET: dict[tuple[str, str], int] = {

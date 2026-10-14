@@ -54,7 +54,7 @@ test_procedure_generation_helper/
     ├── __init__.py                # Package init, __version__ = "0.1.0"
     ├── __main__.py                # CLI entry point (python -m workflow_editor)
     ├── main_window.py             # Main application window
-    ├── theme.py                   # App theming (light/dark, modern workspace)
+    ├── theme.py                   # Studio-only colours (chat, diff, syntax); the app theme is Bench's
     ├── logging_config.py
     ├── core/                      # Non-LLM domain logic
     │   ├── artifact_manager.py    # Shared artifact storage
@@ -116,11 +116,8 @@ live in each *project's* venv and are invoked there by the subprocess runners
 python -m workflow_editor [options]
 ```
 
-Run from a venv **without** the host app, the editor starts in **degraded mode**:
-`project_services`-backed features (package-library tiers, full .docx report, the
-shared project/bundle/scenario/config dialogs) disable or report unavailable —
-nothing crashes. The exact consumed surface and guard rule are Contract C
-(`../../docs/contract_c_editor_host_services.md`).
+Studio needs the host app installed: it wears Bench's theme (`test_procedure_gui.theme`).
+The consumed surface is Contract C (`../../docs/contract_c_editor_host_services.md`).
 
 Command-line options (see `workflow_editor/__main__.py`):
 

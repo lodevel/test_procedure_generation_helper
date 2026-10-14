@@ -25,8 +25,8 @@ from PySide6.QtCore import Qt
 
 # Dev-convenience shim (deprecated): only for STANDALONE runs launched from
 # inside a host checkout — walks up to the host's src/ so `project_services`
-# resolves. Embedded runs get it from the host venv's editable installs; a
-# checkout without the host degrades (see workflow_editor._host_services).
+# resolves. Embedded runs get it from the host venv's editable installs. The host is
+# required: Studio wears Bench's theme (test_procedure_gui.theme).
 _BOOTSTRAPPED_SRC: str | None = None
 
 
@@ -49,7 +49,7 @@ _bootstrap_project_services()
 
 
 from .main_window import MainWindow
-from . import theme
+from test_procedure_gui.theme import apply_app_theme
 
 
 def parse_args() -> argparse.Namespace:
@@ -134,10 +134,7 @@ def main() -> int:
     
     # Enable high DPI scaling
     app.setAttribute(Qt.AA_UseHighDpiPixmaps)
-    applied_theme = theme.apply_app_theme(
-        os.environ.get("TPG_APP_THEME"), app,
-        modern_workspace=(os.environ.get("TPG_APP_LAYOUT") == "modern_workspace"),
-    )
+    applied_theme = apply_app_theme(os.environ.get("TPG_APP_THEME"), app)
     log.debug("Applied application theme: %s", applied_theme)
 
     # Create and show main window

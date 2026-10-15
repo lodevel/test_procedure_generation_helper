@@ -215,7 +215,7 @@ class WorkspaceTab(BaseTab):
                 "as coherent. Rewrites the hash baseline in .llm_session.json."
             )
 
-        rename_action = menu.addAction("Rename Test...")
+        rename_action = menu.addAction("Rename Test…")
         rename_action.setEnabled(not is_loaded)
         if is_loaded:
             rename_action.setToolTip(
@@ -230,7 +230,7 @@ class WorkspaceTab(BaseTab):
             )
 
         menu.addSeparator()
-        delete_action = menu.addAction("Delete Test...")
+        delete_action = menu.addAction("Delete Test…")
         delete_action.setToolTip("Permanently delete this test folder and all its contents")
 
         action = menu.exec(self.test_list.mapToGlobal(position))

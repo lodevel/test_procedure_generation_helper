@@ -10,11 +10,11 @@ import json
 import logging
 import threading
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QMenuBar, QMenu, QMessageBox,
+    QMainWindow, QWidget, QVBoxLayout, QMenuBar, QMessageBox,
     QFileDialog, QDialog, QTextBrowser
 )
 from PySide6.QtCore import Qt, Signal, Slot, QFileSystemWatcher, QTimer
-from PySide6.QtGui import QAction, QIcon, QKeySequence, QShortcut
+from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 
 from .core import (
     ArtifactManager, SessionState, ProjectManager, ArtifactType,
@@ -36,7 +36,7 @@ from .tabs import (
 )
 from .dock import DockWidget
 from .dialogs import SettingsDialog, load_settings
-from . import _host_services, shell
+from . import _host_services, menus, shell
 from .controllers import DocumentController, ProjectController, project_controller
 
 log = logging.getLogger(__name__)
@@ -153,7 +153,7 @@ class StudioWorkspace(QWidget):
         # Prompt builder and response parser
         # Setup UI
         self.menu_bar = QMenuBar()
-        self._setup_menu()
+        menus.setup_menu_bar(self)
         self._setup_central_widget()
         self._setup_workspace_dock()
         self._setup_dock()
@@ -623,174 +623,6 @@ class StudioWorkspace(QWidget):
                 except Exception as e:
                     log.error(f"Error rebuilding validator buttons in {tab.__class__.__name__}: {e}")
 
-    
-    def _setup_menu(self):
-        """Fill ``menu_bar`` (the hosting window shows it)."""
-        menubar = self.menu_bar
-        
-        # File menu
-        file_menu = menubar.addMenu("&File")
-        
-        new_project_action = QAction("&New Project...", self)
-        new_project_action.setShortcut("Ctrl+N")
-        new_project_action.triggered.connect(self._on_new_project)
-        file_menu.addAction(new_project_action)
-        
-        open_action = QAction("&Open Project...", self)
-        open_action.setShortcut(QKeySequence.Open)
-        open_action.triggered.connect(self._on_open_project)
-        file_menu.addAction(open_action)
-        self._open_recent_menu = QMenu("Open &Recent", self)
-        self._open_recent_menu.aboutToShow.connect(self._rebuild_open_recent_menu)
-        file_menu.addMenu(self._open_recent_menu)
-        
-        file_menu.addSeparator()
-        
-        # Save current (context-aware label updated in _on_tab_changed)
-        self.save_action = QAction("&Save", self)
-        self.save_action.setShortcut(QKeySequence.Save)
-        self.save_action.triggered.connect(self._on_save)
-        file_menu.addAction(self.save_action)
-        
-        save_all_action = QAction("Save &All", self)
-        save_all_action.setShortcut("Ctrl+Shift+S")
-        save_all_action.triggered.connect(self._on_save_all)
-        file_menu.addAction(save_all_action)
-        export_menu = self.export_menu = QMenu("&Export", self)  # the header's Export too
-        file_menu.addMenu(export_menu)
-        export_menu.setToolTip("Export the current procedure to Markdown or Word.")
-
-        export_md_action = QAction("Procedure to &Markdown…", self)
-        export_md_action.setToolTip(
-            "Export the current procedure as a Markdown (.md) document."
-        )
-        export_md_action.triggered.connect(self._on_export_markdown)
-        export_menu.addAction(export_md_action)
-
-        export_word_action = QAction("Procedure to &Word…", self)
-        export_word_action.setToolTip(
-            "Export the current procedure as a Word (.docx) document."
-        )
-        export_word_action.triggered.connect(self._on_export_word)
-        export_menu.addAction(export_word_action)
-        
-        file_menu.addSeparator()
-        
-        settings_action = QAction("Se&ttings...", self)
-        settings_action.setShortcut("Ctrl+,")
-        settings_action.triggered.connect(self._on_settings)
-        file_menu.addAction(settings_action)
-
-        project_config_action = QAction("Project &Configuration...", self)
-        project_config_action.setToolTip(
-            "Edit this project's config.json: bundle, equipment profiles/"
-            "patterns, templates, imaging, workflows."
-        )
-        project_config_action.triggered.connect(self._on_project_configuration)
-        file_menu.addAction(project_config_action)
-
-        template_manager_action = QAction("&Template Manager...", self)
-        template_manager_action.setToolTip(
-            "Manage saved customer-configuration templates (reusable bundle + "
-            "equipment + workflow presets)."
-        )
-        template_manager_action.triggered.connect(self._on_template_manager)
-        file_menu.addAction(template_manager_action)
-
-        bundle_library_action = QAction("Bundle &Library...", self)
-        bundle_library_action.setToolTip(
-            "Manage installed bundles; \"Import into Project\" targets the "
-            "open project."
-        )
-        bundle_library_action.triggered.connect(self._on_bundle_library)
-        file_menu.addAction(bundle_library_action)
-
-        scenarios_action = QAction("&Scenarios...", self)
-        scenarios_action.setToolTip(
-            "Create / load / delete named test scenarios (subsets of this "
-            "project's tests). Scenarios are run from the main app."
-        )
-        scenarios_action.triggered.connect(self._on_scenarios)
-        file_menu.addAction(scenarios_action)
-
-        file_menu.addSeparator()
-
-        exit_action = QAction("E&xit", self)
-        exit_action.setShortcut(QKeySequence.Quit)
-        exit_action.triggered.connect(lambda: self.window().close())
-        file_menu.addAction(exit_action)
-        
-        # Edit menu
-        edit_menu = menubar.addMenu("&Edit")
-
-        find_action = QAction("&Find…", self)
-        find_action.setShortcut(QKeySequence.Find)  # Ctrl+F
-        find_action.setToolTip(
-            "Open the find bar on the active tab's text editor "
-            "(or the leftmost editor if focus is elsewhere)."
-        )
-        find_action.triggered.connect(self._on_find)
-        edit_menu.addAction(find_action)
-
-        replace_action = QAction("&Replace…", self)
-        replace_action.setShortcut(QKeySequence("Ctrl+H"))
-        replace_action.setToolTip(
-            "Open the find/replace bar on the active tab's text editor."
-        )
-        replace_action.triggered.connect(self._on_replace)
-        edit_menu.addAction(replace_action)
-
-        edit_menu.addSeparator()
-
-        self.mark_sync_action = QAction("Mark Artifacts In &Sync", self)
-        self.mark_sync_action.setToolTip("Acknowledge that procedure.json and test.py are coherent")
-        self.mark_sync_action.triggered.connect(self._on_sync_indicator_clicked)
-        edit_menu.addAction(self.mark_sync_action)
-
-        # View menu
-        view_menu = menubar.addMenu("&View")
-        
-        # Workspace toggle (will be set after dock creation)
-        self.toggle_workspace_action = QAction("Show &Workspace", self)
-        self.toggle_workspace_action.setShortcut("Ctrl+Shift+E")
-        self.toggle_workspace_action.setCheckable(True)
-        self.toggle_workspace_action.setChecked(True)
-        view_menu.addAction(self.toggle_workspace_action)
-        
-        # Assistant dock toggle
-        self.toggle_dock_action = QAction("Show &Assistant", self)
-        self.toggle_dock_action.setShortcut("Ctrl+Shift+A")
-        self.toggle_dock_action.setCheckable(True)
-        self.toggle_dock_action.setChecked(True)
-        view_menu.addAction(self.toggle_dock_action)
-        
-        # Help menu
-        help_menu = menubar.addMenu("&Help")
-        
-        syntax_action = QAction("&DSL Syntax Reference", self)
-        syntax_action.setShortcut("F1")
-        syntax_action.triggered.connect(self._on_syntax_reference)
-        help_menu.addAction(syntax_action)
-
-        export_kw_action = QAction("Word Export &Keywords...", self)
-        export_kw_action.triggered.connect(self._on_export_keywords)
-        help_menu.addAction(export_kw_action)
-
-        about_action = QAction("&About", self)
-        about_action.triggered.connect(self._on_about)
-        help_menu.addAction(about_action)
-
-        # Packages menu — install skill / wizard / report / grammar
-        # packages (shared project_services flow; same dialog as the main app).
-        packages_menu = menubar.addMenu("&Packages")
-        install_pkg_action = QAction("&Install Package...", self)
-        install_pkg_action.triggered.connect(self._on_install_package)
-        packages_menu.addAction(install_pkg_action)
-
-        # Skills menu (authoring skill-chat); logic lives in
-        # authoring.skill_menu so this mixed-EOL file gains only a call.
-        from .authoring.skill_menu import install_skills_menu
-        install_skills_menu(self)
     
     # ------------------------------------------------------------------
     #  Export (File → Export → Markdown / Word)
@@ -1596,7 +1428,7 @@ class StudioWorkspace(QWidget):
 
     @_host_services.requires_host
     def _on_project_configuration(self):
-        """File -> Project Configuration: edit this project's config.json via the
+        """Project -> Project Configuration: edit this project's config.json via the
         shared ProjectConfigDialog (the same dialog the main app uses).
         """
         root = getattr(self.project_manager, "project_root", None)
@@ -1618,7 +1450,7 @@ class StudioWorkspace(QWidget):
 
     @_host_services.requires_host
     def _on_template_manager(self):
-        """File -> Template Manager: manage saved customer-config templates via
+        """Project -> Template Manager: manage saved customer-config templates via
         the shared TemplateManagerDialog.
         """
         from project_services.config_manager_dialog import TemplateManagerDialog
@@ -1629,7 +1461,7 @@ class StudioWorkspace(QWidget):
 
     @_host_services.requires_host
     def _on_bundle_library(self):
-        """File -> Bundle Library: the host's Library window, on this PC. When a
+        """Packages -> Bundle Library: the host's Library window, on this PC. When a
         project is open, "Import into this project" targets it.
         """
         from project_services import library_dialog
@@ -1644,7 +1476,7 @@ class StudioWorkspace(QWidget):
 
     @_host_services.requires_host
     def _on_scenarios(self):
-        """File -> Scenarios: author named test scenarios via the shared
+        """Project -> Scenarios: author named test scenarios via the shared
         ScenarioManagerDialog. The author DEFINES scenarios here; the main app
         RUNS them. Candidate tests are injected so the dialog stays cycle-safe.
         """

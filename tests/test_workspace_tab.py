@@ -162,8 +162,8 @@ def test_context_menu_open(tab, monkeypatch):
     _choose(monkeypatch, "Open", seen)
     _menu_on(tab, "Beta")
     assert opened == [tab.tmp / "Beta"]
-    assert seen == {"Open": True, "Mark Procedure In Sync": False, "Rename Test...": True,
-                    "Delete Test...": True}
+    assert seen == {"Open": True, "Mark Procedure In Sync": False, "Rename Test…": True,
+                    "Delete Test…": True}
 
 
 def test_context_menu_mark_in_sync_unloaded_then_loaded(tab, monkeypatch):
@@ -180,8 +180,8 @@ def test_context_menu_mark_in_sync_unloaded_then_loaded(tab, monkeypatch):
     assert loaded == [True] and marked == [tab.tmp / "Alpha"]
 
 
-@pytest.mark.parametrize("text, handler", [("Rename Test...", "_rename_test"),
-                                           ("Delete Test...", "_delete_test")])
+@pytest.mark.parametrize("text, handler", [("Rename Test…", "_rename_test"),
+                                           ("Delete Test…", "_delete_test")])
 def test_context_menu_rename_and_delete(tab, monkeypatch, text, handler):
     _load(tab, monkeypatch, "badges")
     calls = []

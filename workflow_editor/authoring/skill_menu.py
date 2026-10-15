@@ -1,10 +1,10 @@
 """The editor's **Skills** menu — discovers chat skills and launches the
 skill-chat dialog.
 
-Kept out of ``main_window`` so that the (mixed-EOL) main window only needs a
-one-line call: ``install_skills_menu(self)``. Everything host-specific is reached
-through the passed-in ``StudioWorkspace`` (project root, backend factory, the text tab
-for the insert, the context sources).
+The menu bar builder (``workflow_editor/menus.py``) calls ``install_skills_menu``
+between Project and Packages. Everything host-specific is reached through the
+passed-in ``StudioWorkspace`` (project root, backend factory, the text tab for the
+insert, the context sources).
 """
 from __future__ import annotations
 
@@ -36,22 +36,12 @@ _AUTHORING_GUIDE = "authoring-a-skill.md"  # under the editor's docs/ folder
 
 
 def install_skills_menu(main_window) -> None:
-    """Add a **Skills** menu to ``main_window``, repopulated each time it opens
-    (so freshly-dropped skills appear without a restart)."""
-    mb = main_window.menu_bar
-    help_act = next((a for a in mb.actions()
-                     if a.menu() is not None and a.text().replace("&", "") == "Help"), None)
-
-    def _add_before_help(title, populate):
-        menu = mb.addMenu(title)
-        if help_act is not None:                 # keep Help rightmost (convention)
-            mb.removeAction(menu.menuAction())
-            mb.insertMenu(help_act, menu)
-        menu.aboutToShow.connect(lambda: populate(main_window, menu))
+    """Append the **Skills** and **Wizards** menus to ``main_window.menu_bar``, each
+    repopulated when it opens (so freshly-dropped skills appear without a restart)."""
+    for title, populate in (("S&kills", _populate), ("&Wizards", _populate_wizards)):
+        menu = main_window.menu_bar.addMenu(title)
+        menu.aboutToShow.connect(lambda m=menu, fill=populate: fill(main_window, m))
         populate(main_window, menu)
-
-    _add_before_help("S&kills", _populate)
-    _add_before_help("&Wizards", _populate_wizards)
 
 
 # --------------------------------------------------------------------------- #
@@ -74,7 +64,9 @@ def _populate(main_window, menu) -> None:
 
     # ONE entry — the skill is chosen inside the dialog (a flat menu of every
     # skill doesn't scale).
-    chat_act = QAction(f"Skill chat…  ({count})" if count else "Skill chat…", menu)
+    # The count sits in the shortcut column (after the tab), as on the Menus board.
+    label = f"Skill chat…\t{count} skill{'s' if count != 1 else ''}" if count else "Skill chat…"
+    chat_act = QAction(label, menu)
     chat_act.setEnabled(count > 0)
     chat_act.setToolTip("Run an authoring skill (choose which one in the window).")
     chat_act.triggered.connect(lambda: launch_skill_chat(main_window))

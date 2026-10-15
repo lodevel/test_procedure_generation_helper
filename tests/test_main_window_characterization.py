@@ -155,9 +155,21 @@ def _menus(w):
             if a.menu() is not None]
 
 
-def _action_texts(menu):
-    return [a.text() for a in menu.actions()
-            if not a.isSeparator() and a.menu() is None]
+def _layout(menu):
+    """A menu's entries in order: action texts, "-" for a separator, submenus by title."""
+    return ["-" if a.isSeparator() else a.text() for a in menu.actions()]
+
+
+def _find_action(menu, text):
+    """The action called *text* in *menu* or one of its submenus."""
+    for a in menu.actions():
+        if a.menu() is not None:
+            found = _find_action(a.menu(), text)
+            if found is not None:
+                return found
+        elif a.text() == text:
+            return a
+    return None
 
 
 # =========================================================================
@@ -205,43 +217,42 @@ def test_construction_smoke_disabled_backend(make_window):
 # =========================================================================
 
 def test_menubar_order_and_menu_contents(make_window):
-    # Pins the full top-level menu bar ORDER. NOTE (suspected bug, pinned
-    # as-is): _setup_menu adds Packages AFTER Help, then install_skills_menu
-    # inserts Skills+Wizards BEFORE Help to keep Help rightmost — the net
-    # result still leaves Packages to the RIGHT of Help, defeating that
-    # convention.
+    # Pins the Menus board (Studio redesign slice 6): the bar in board order
+    # (Bench's Project menu holds Project Configuration, Template Manager and
+    # Scenarios; Bundle Library sits in Packages) and every menu's entries.
     w = make_window()
     entries = _menus(w)  # keeps action refs alive for the whole test
     by_title = {t: m for t, _, m in entries}
     assert [t for t, _, _ in entries] == [
-        "&File", "&Edit", "&View", "S&kills", "&Wizards", "&Help",
-        "&Packages"]
+        "&File", "&Edit", "&View", "&Project", "S&kills", "&Wizards",
+        "&Packages", "&Help"]
 
     # "&Save Text" (not "&Save"): the first addTab fires currentChanged(0)
     # during __init__, so the context-aware Save label is set from birth.
-    assert _action_texts(by_title["&File"]) == [
-        "&New Project...", "&Open Project...", "&Save Text", "Save &All",
-        "Se&ttings...", "Project &Configuration...", "&Template Manager...",
-        "Bundle &Library...", "&Scenarios...", "E&xit"]
-    file_actions = by_title["&File"].actions()  # keep submenu actions alive
-    file_submenus = [a.text() for a in file_actions if a.menu() is not None]
-    assert file_submenus == ["Open &Recent", "&Export"]
-    export_menu = next(a.menu() for a in file_actions
-                       if a.text() == "&Export")
-    assert _action_texts(export_menu) == [
+    assert _layout(by_title["&File"]) == [
+        "&New Project…", "&Open Project…", "Open &Recent", "-",
+        "&Save Text", "Save &All", "&Export", "-",
+        "Se&ttings…", "-",
+        "E&xit"]
+    assert _layout(w.export_menu) == [
         "Procedure to &Markdown…", "Procedure to &Word…"]
-
-    assert _action_texts(by_title["&Edit"]) == [
-        "&Find…", "&Replace…", "Mark Artifacts In &Sync"]
-    assert _action_texts(by_title["&Help"]) == [
-        "&DSL Syntax Reference", "Word Export &Keywords...", "&About"]
-    assert _action_texts(by_title["&Packages"]) == ["&Install Package..."]
+    assert _layout(by_title["&Edit"]) == [
+        "&Find…", "&Replace…", "-", "Mark Artifacts In &Sync"]
+    assert _layout(by_title["&View"]) == ["Show &Workspace", "Show &Assistant"]
+    assert _layout(by_title["&Project"]) == [
+        "Project &Configuration…", "&Template Manager…", "&Scenarios…"]
+    skills = _layout(by_title["S&kills"])
+    assert skills[0].startswith("Skill chat…")
+    assert skills[-3:] == ["-", "Open skills folder…", "How to write a skill…"]
+    assert _layout(by_title["&Wizards"]) == ["Choose a wizard…"]
+    assert _layout(by_title["&Packages"]) == [
+        "Bundle &Library…", "&Install Package…"]
+    assert _layout(by_title["&Help"]) == [
+        "&DSL Syntax Reference", "Word Export &Keywords…", "-", "&About"]
 
     # View menu: both column toggles are checkable and start checked (the
     # columns are fixed; only View hides them).
-    view_actions = {a.text(): a for a in by_title["&View"].actions()}
-    assert set(view_actions) == {"Show &Workspace", "Show &Assistant"}
-    for a in view_actions.values():
+    for a in by_title["&View"].actions():
         assert a.isCheckable()
         assert a.isChecked()
 
@@ -250,22 +261,61 @@ def test_menu_shortcuts(make_window):
     # Pins the keyboard surface a carve must not lose.
     w = make_window()
     entries = _menus(w)  # keeps action refs alive for the whole test
-    all_actions = {}
+    shortcuts = {}
     for _, _, m in entries:
         for a in m.actions():
             if not a.isSeparator() and a.menu() is None:
-                all_actions[a.text()] = a
-    shortcuts = {t: a.shortcut().toString() for t, a in all_actions.items()}
-    assert shortcuts["&New Project..."] == "Ctrl+N"
-    assert shortcuts["&Open Project..."] == "Ctrl+O"
-    assert shortcuts["&Save Text"] == "Ctrl+S"  # context-labelled at birth
-    assert shortcuts["Save &All"] == "Ctrl+Shift+S"
-    assert shortcuts["Se&ttings..."] == "Ctrl+,"
-    assert shortcuts["&Find…"] == "Ctrl+F"
-    assert shortcuts["&Replace…"] == "Ctrl+H"
-    assert shortcuts["&DSL Syntax Reference"] == "F1"
-    assert shortcuts["Show &Workspace"] == "Ctrl+Shift+E"
-    assert shortcuts["Show &Assistant"] == "Ctrl+Shift+A"
+                shortcuts[a.text()] = a.shortcut().toString()
+    assert {t: k for t, k in shortcuts.items() if k} == {
+        "&New Project…": "Ctrl+N",
+        "&Open Project…": "Ctrl+O",
+        "&Save Text": "Ctrl+S",  # context-labelled at birth
+        "Save &All": "Ctrl+Shift+S",
+        "Se&ttings…": "Ctrl+,",
+        "&Find…": "Ctrl+F",
+        "&Replace…": "Ctrl+H",
+        "Show &Workspace": "Ctrl+Shift+E",
+        "Show &Assistant": "Ctrl+Shift+A",
+        "&DSL Syntax Reference": "F1",
+    }
+
+
+# (menu, entry, StudioWorkspace handler) for every handler-backed menu entry.
+_MENU_HANDLERS = [
+    ("&File", "&New Project…", "_on_new_project"),
+    ("&File", "&Open Project…", "_on_open_project"),
+    ("&File", "&Save Text", "_on_save"),
+    ("&File", "Save &All", "_on_save_all"),
+    ("&File", "Procedure to &Markdown…", "_on_export_markdown"),
+    ("&File", "Procedure to &Word…", "_on_export_word"),
+    ("&File", "Se&ttings…", "_on_settings"),
+    ("&Edit", "&Find…", "_on_find"),
+    ("&Edit", "&Replace…", "_on_replace"),
+    ("&Edit", "Mark Artifacts In &Sync", "_on_sync_indicator_clicked"),
+    ("&Project", "Project &Configuration…", "_on_project_configuration"),
+    ("&Project", "&Template Manager…", "_on_template_manager"),
+    ("&Project", "&Scenarios…", "_on_scenarios"),
+    ("&Packages", "Bundle &Library…", "_on_bundle_library"),
+    ("&Packages", "&Install Package…", "_on_install_package"),
+    ("&Help", "&DSL Syntax Reference", "_on_syntax_reference"),
+    ("&Help", "Word Export &Keywords…", "_on_export_keywords"),
+    ("&Help", "&About", "_on_about"),
+]
+
+
+def test_every_menu_entry_triggers_its_handler(make_window, monkeypatch):
+    # The moved entries (Project menu, Bundle Library) and every other one
+    # still reach their handler when triggered from their new place.
+    calls = []
+    for _, _, name in _MENU_HANDLERS:
+        monkeypatch.setattr(mw_mod.StudioWorkspace, name,
+                            lambda self, *a, _name=name: calls.append(_name))
+    w = make_window()
+    entries = _menus(w)  # keeps action refs alive for the whole test
+    by_title = {t: m for t, _, m in entries}
+    for title, text, _ in _MENU_HANDLERS:
+        _find_action(by_title[title], text).trigger()
+    assert calls == [name for _, _, name in _MENU_HANDLERS]
 
 
 # =========================================================================

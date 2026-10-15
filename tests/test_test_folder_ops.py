@@ -267,7 +267,7 @@ def test_the_list_renames_through_the_core(tmp_path, qapp, monkeypatch):
     WorkspaceTab._rename_test(fake, tests / "Foo")
     assert [p.name for p in tests.iterdir()] == ["Bar_"]
     fake.refresh.assert_called_once()
-    fake._select_test_by_path.assert_called_once_with(tests / "Bar_")
+    fake._show_test.assert_called_once_with(tests / "Bar_")
 
 
 @WIN

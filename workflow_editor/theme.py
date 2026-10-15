@@ -18,7 +18,6 @@ from test_procedure_gui.theme import (  # Bench's theme state and shared colours
     is_dark,
     muted_color,
     success_color,
-    text_color,
     warning_color,
 )
 
@@ -199,38 +198,6 @@ def groupbox_border(style: str = "default") -> str:
 def groupbox_text() -> str:
     """Text colour for QGroupBox title and content."""
     return "#f1f5f9" if is_dark() else "#333333"
-
-
-# ── Workspace / test list colours ───────────────────────────────────
-
-def sync_warning_color() -> QColor:
-    """QColor for out-of-sync test items."""
-    return QColor(255, 165, 0)  # Orange — good contrast on both
-
-
-def empty_test_color() -> QColor:
-    """QColor for empty test folders."""
-    return QColor(muted_color())
-
-
-def ready_test_color() -> QColor:
-    """QColor for tests with JSON + code."""
-    return QColor(success_color())
-
-
-def default_text_color() -> QColor:
-    """QColor for normal text items."""
-    return QColor(text_color())
-
-
-def selected_test_bg() -> QColor:
-    """QColor background for the currently opened test."""
-    return QColor(50, 90, 140) if is_dark() else QColor(70, 130, 180)
-
-
-def selected_test_fg() -> QColor:
-    """QColor foreground for the currently opened test."""
-    return QColor(255, 255, 255)
 
 
 # ── Diff viewer colours ─────────────────────────────────────────────

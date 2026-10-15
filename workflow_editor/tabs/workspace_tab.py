@@ -1,95 +1,70 @@
-"""
-Workspace Tab - Project and test folder selection.
+"""The Tests column (board S1): "Tests · N" and the T / J / C legend, the search, one compact
+row per test (its name, then the state of its text, JSON and code), the open test highlighted,
+"+ New test…" at the bottom. Double-click opens a test; its context menu opens it, marks it in
+sync, renames or deletes it.
 
-Implements Section 9.1 of the spec.
+The rows are Bench's test rows (``#testList``, its ``BadgeDelegate``); Bench's Indicators setting
+(``TPG_APP_INDICATORS``) shows the states as squares (Badges) or as marks in the text (Pictos).
 """
 
-from pathlib import Path
-import logging
 import os
+from pathlib import Path
+
+from PySide6.QtCore import QItemSelectionModel, Qt, Signal
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QSplitter, QListWidget, QListWidgetItem,
-    QPushButton, QLabel, QFileDialog, QGroupBox, QFrame, QInputDialog,
-    QLineEdit, QMenu, QMessageBox
+    QAbstractItemView, QFrame, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QMenu, QMessageBox, QPushButton, QVBoxLayout,
 )
-from PySide6.QtCore import Qt, Signal, QSize
-from PySide6.QtGui import QColor, QBrush, QPalette
+
+from project_services import ui_kit
+from test_procedure_gui import ui_indicators
+from test_procedure_gui.badge_delegate import BADGES_ROLE, BadgeDelegate
 
 from .base_tab import BaseTab
-from ..badge_delegate import BADGES_ROLE, CURRENT_ROLE, BadgeDelegate
-from ..core import ArtifactType
 from ..core import test_folder_ops, test_sync
-from ..theme import (
-    sync_warning_color, empty_test_color, ready_test_color,
-    default_text_color, selected_test_bg, selected_test_fg,
-)
-from .. import theme
+
+#: The header's legend of the row letters.
+LEGEND = "T text · J JSON · C code"
+#: A row's artifacts: letter, name, the TestFolderInfo flag that says it is there.
+_ARTIFACTS = (("T", "Text", "has_text"), ("J", "JSON", "has_json"), ("C", "Code", "has_code"))
+#: An artifact's state and its square's tone: there, there but not acknowledged as in sync with
+#: the others (Mark Procedure In Sync clears it), not there.
+_TONES = {"present": "success", "out of sync": "warning", "missing": "missing"}
+_ROW_HEIGHT = 31
+_SQUARE = 17
 
 
-def _modern_workspace_enabled() -> bool:
-    return os.environ.get("TPG_APP_LAYOUT") == "modern_workspace"
+def artifact_states(info, out_of_sync: bool) -> list[tuple[str, str, str]]:
+    """``(letter, name, state)`` of the test's text, JSON and code (states: :data:`_TONES`)."""
+    return [(letter, name, ("out of sync" if out_of_sync else "present")
+             if getattr(info, flag) else "missing")
+            for letter, name, flag in _ARTIFACTS]
 
 
-def _badge_indicators_enabled() -> bool:
-    return os.environ.get("TPG_APP_INDICATORS") == "badges"
+def _show_state(item: QListWidgetItem, info, out_of_sync: bool, badges: bool) -> None:
+    """The row of one test: its name and its artifacts' states (squares, or marks in the text)."""
+    states = artifact_states(info, out_of_sync)
+    item.setToolTip(" · ".join(f"{name}: {state}" for _letter, name, state in states))
+    if badges:
+        item.setText(info.name)
+        item.setData(BADGES_ROLE, [(letter, _TONES[state]) for letter, _name, state in states])
+        return
+    present = [letter for letter, _name, state in states if state != "missing"]
+    marks = f"[{'/'.join(present)}]" if present else "[empty]"
+    item.setText(f"{'⚠️ ' if out_of_sync else ''}{info.name}  {marks}")
 
 
-def _modern_card_list_stylesheet() -> str:
-    if theme.is_dark():
-        bg = "#1b1f27"
-        item_bg = "#252b35"
-        item_hover = "#2c3440"
-        selected_bg = "#314b6f"
-        border = "#465263"
-        selected_border = "#7ab8ff"
-        text = "#f1f5f9"
-    else:
-        bg = "#f5f7fb"
-        item_bg = "#ffffff"
-        item_hover = "#eef4ff"
-        selected_bg = "#dcecff"
-        border = "#d5dce8"
-        selected_border = "#2f7dd3"
-        text = "#1f2937"
-    return f"""
-        QListWidget {{
-            background-color: {bg};
-            border: 1px solid {border};
-            border-radius: 9px;
-            padding: 4px;
-            color: {text};
-        }}
-        QListWidget::item {{
-            background-color: {item_bg};
-            border: 1px solid {border};
-            border-radius: 8px;
-            margin: 3px 1px;
-            padding: 8px;
-            color: {text};
-        }}
-        QListWidget::item:hover {{
-            background-color: {item_hover};
-        }}
-        QListWidget::item:selected {{
-            background-color: {selected_bg};
-            border-color: {selected_border};
-            color: {text};
-        }}
-    """
+def _padded(widget, left: int, top: int, right: int, bottom: int) -> QVBoxLayout:
+    layout = QVBoxLayout()
+    layout.setContentsMargins(left, top, right, bottom)
+    layout.addWidget(widget)
+    return layout
 
 
 class WorkspaceTab(BaseTab):
-    """
-    Workspace tab for project and test folder management.
-    
-    Features:
-    - Project root selection
-    - Test folder listing with artifact indicators
-    - Actions based on detected artifacts
-    """
-    
-    # Signals
-    test_selected = Signal(Path)  # Emitted when a test is selected
+    """The Tests column of Procedo Studio (a project's tests; open, rename, delete, create)."""
+
     test_opened = Signal(Path)    # Emitted when a test should be opened
     test_deleted = Signal(Path)   # Emitted when a test folder was deleted
     # Right-clicking the currently-loaded test → Mark Procedure In Sync.
@@ -97,114 +72,68 @@ class WorkspaceTab(BaseTab):
     # any disk-only write; main_window connects this signal to the
     # existing acknowledgment flow which handles both layers atomically.
     request_mark_loaded_in_sync = Signal()
-    
+
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
-        
-        # Test list only - project selection is in File menu
-        list_group = QGroupBox("Tests")
-        list_layout = QVBoxLayout(list_group)
+        self._current_opened_test = None
+        self.count_label = QLabel()
+        self.count_label.setProperty("muted", True)
+        head = ui_kit.hbox(ui_kit.bold("Tests"), self.count_label, None,
+                           ui_kit.note(LEGEND, wrap=False))
+        head.setContentsMargins(14, 10, 14, 8)
 
-        # Search bar — same semantics as the main GUI's test list filter:
-        # case-insensitive substring on the folder name, applied live.
+        # Same semantics as Bench's test search: a case-insensitive substring of the
+        # folder name, applied live.
         self.search_bar = QLineEdit()
-        self.search_bar.setPlaceholderText("Search tests...")
+        self.search_bar.setPlaceholderText("Search tests…")
         self.search_bar.setClearButtonEnabled(True)
-        self.search_bar.textChanged.connect(self._on_search_changed)
-        list_layout.addWidget(self.search_bar)
+        self.search_bar.textChanged.connect(self._apply_search_filter)
 
+        # Bench's flat rows; the selection is the open test (a click does not move it).
         self.test_list = QListWidget()
-        self.test_list.setObjectName("workflowTestCards")
-        self.test_list.setItemDelegate(BadgeDelegate(self.test_list))
-        # The custom item delegate draws selection from the palette Highlight
-        # role; under the modern card stylesheet the default highlight washes
-        # out, so set a clearly-visible one. Same #0078d4/white the main GUI
-        # test list uses — which is exactly why ITS selection is visible.
-        pal = self.test_list.palette()
-        pal.setColor(QPalette.ColorRole.Highlight, QColor("#0078d4"))
-        pal.setColor(QPalette.ColorRole.HighlightedText, QColor("white"))
-        self.test_list.setPalette(pal)
-        if _modern_workspace_enabled():
-            self.test_list.setSpacing(4)
-            self.test_list.setStyleSheet(_modern_card_list_stylesheet())
-        self.test_list.itemSelectionChanged.connect(self._on_test_selection_changed)
+        self.test_list.setObjectName("testList")
+        self.test_list.setProperty("marks", "open")
+        self.test_list.setItemDelegate(
+            BadgeDelegate(self.test_list, row_height=_ROW_HEIGHT, square=_SQUARE))
+        self.test_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.test_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.test_list.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.test_list.setSpacing(1)
         self.test_list.itemDoubleClicked.connect(self._on_test_double_clicked)
         self.test_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.test_list.customContextMenuRequested.connect(self._on_context_menu)
-        list_layout.addWidget(self.test_list)
-        
-        # New test button
-        self.new_test_btn = QPushButton("Create New Test...")
+
+        rule = QFrame()
+        rule.setObjectName("rowRule")  # the hairline above the button
+        rule.setFrameShape(QFrame.Shape.HLine)
+        self.new_test_btn = QPushButton("+ New test…")
         self.new_test_btn.clicked.connect(self._on_create_new_test)
-        self.new_test_btn.setEnabled(False)
-        list_layout.addWidget(self.new_test_btn)
-        
-        layout.addWidget(list_group, stretch=1)
-        
-        # Track currently opened test
-        self._current_opened_test = None
-    
+        self.new_test_btn.setEnabled(False)  # until a project is open
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addLayout(head)
+        layout.addLayout(_padded(self.search_bar, 12, 0, 12, 8))
+        layout.addLayout(_padded(self.test_list, 8, 0, 8, 8), 1)
+        layout.addWidget(rule)
+        layout.addLayout(_padded(self.new_test_btn, 12, 10, 12, 10))
+
     def _load_test_list(self):
-        """Load test folders into the list."""
+        """List the project's tests (the scroll position kept)."""
+        scroll = self.test_list.verticalScrollBar()
+        top = scroll.value()
         self.test_list.clear()
-        
         folders = self.project_manager.enumerate_test_folders()
-        
+        badges = ui_indicators.uses_badges(os.environ.get("TPG_APP_INDICATORS"))
         for info in folders:
             item = QListWidgetItem()
             item.setData(Qt.UserRole, info.path)
-            item.setData(Qt.UserRole + 1, info)  # Store info for later
-            if _modern_workspace_enabled():
-                item.setSizeHint(QSize(0, 52))
-            
-            # Check sync status from session file
-            out_of_sync = self._out_of_sync(info.path)
-            
-            # Build display text with indicators
-            indicators = []
-            if info.has_text:
-                indicators.append("T")
-            if info.has_json:
-                indicators.append("J")
-            if info.has_code:
-                indicators.append("C")
-            
-            if _badge_indicators_enabled():
-                badges = []
-                if out_of_sync:
-                    badges.append(("OUT OF SYNC", "warning"))
-                if info.has_text:
-                    badges.append(("TEXT", "muted"))
-                if info.has_json:
-                    badges.append(("JSON", "purple"))
-                if info.has_code:
-                    badges.append(("CODE", "success"))
-                if not indicators:
-                    badges.append(("EMPTY", "muted"))
-                item.setText(info.name)
-                item.setData(BADGES_ROLE, badges)
-            else:
-                indicator_str = f"[{'/'.join(indicators)}]" if indicators else "[empty]"
-                sync_flag = "\u26a0\ufe0f " if out_of_sync else ""
-                item.setText(f"{sync_flag}{info.name}  {indicator_str}")
-                item.setData(BADGES_ROLE, [])
-            
-            # Color based on state
-            if out_of_sync:
-                item.setForeground(sync_warning_color())  # Orange for out-of-sync
-            elif not indicators:
-                item.setForeground(empty_test_color())
-            elif info.has_json and info.has_code:
-                item.setForeground(ready_test_color())
-            
+            _show_state(item, info, self._out_of_sync(info.path), badges)
             self.test_list.addItem(item)
-
+        self.count_label.setText(f"· {len(folders)}")
+        self._update_opened_test_highlight()
         self._apply_search_filter()
-
-    def _on_search_changed(self, text: str) -> None:
-        del text  # read live in _apply_search_filter
-        self._apply_search_filter()
+        scroll.setValue(top)
 
     def _apply_search_filter(self) -> None:
         """Hide list items whose folder name doesn't contain the search
@@ -212,66 +141,44 @@ class WorkspaceTab(BaseTab):
         needle = self.search_bar.text().strip().lower()
         for i in range(self.test_list.count()):
             item = self.test_list.item(i)
-            path = item.data(Qt.UserRole)
-            name = path.name if path else item.text()
-            item.setHidden(bool(needle) and needle not in name.lower())
+            item.setHidden(bool(needle) and needle not in item.data(Qt.UserRole).name.lower())
 
-    def _select_test_by_path(self, path: Path):
-        """Select a test in the list by path."""
+    def _show_test(self, path: Path):
+        """Move the list's cursor to *path*'s row and scroll it into view."""
         for i in range(self.test_list.count()):
             item = self.test_list.item(i)
             if item.data(Qt.UserRole) == path:
                 self.test_list.setCurrentItem(item)
+                self.test_list.scrollToItem(item)
                 break
-    
-    
+
     def set_opened_test(self, path: Path):
-        """Set the currently opened test and highlight it."""
+        """Set the currently opened test, highlight it and scroll it into view."""
         self._current_opened_test = path
         self._update_opened_test_highlight()
-    
+        self._show_test(path)
+
     def _update_opened_test_highlight(self):
-        """Update highlight for currently opened test."""
+        """The open test's row selected (the stylesheet's blue) and its name semi-bold."""
+        self.test_list.ensurePolished()
+        bold = QFont(self.test_list.font())
+        bold.setWeight(QFont.Weight.DemiBold)
+        # Through the selection model: a NoSelection list ignores item.setSelected().
+        selection = self.test_list.selectionModel()
+        selection.clearSelection()
         for i in range(self.test_list.count()):
             item = self.test_list.item(i)
-            item_path = item.data(Qt.UserRole)
-            
-            # Check if this is the opened test
-            if item_path == self._current_opened_test:
-                # Highlight opened test. setBackground/Foreground only show in
-                # classic mode — the modern card stylesheet overrides them — so
-                # also flag CURRENT_ROLE for the delegate to frame the card.
-                item.setBackground(QBrush(selected_test_bg()))  # Steel blue
-                item.setForeground(selected_test_fg())  # White text
-                item.setData(CURRENT_ROLE, True)
-            else:
-                # Restore original colors for non-opened tests
-                item.setData(CURRENT_ROLE, False)
-                item.setBackground(QBrush())
-                info = item.data(Qt.UserRole + 1)
-                out_of_sync = self._out_of_sync(item_path)
-                if out_of_sync:
-                    item.setForeground(sync_warning_color())  # Orange
-                elif info:
-                    if not info.has_text and not info.has_json and not info.has_code:
-                        item.setForeground(empty_test_color())
-                    elif info.has_json and info.has_code:
-                        item.setForeground(ready_test_color())
-                    else:
-                        item.setForeground(default_text_color())
-    
-    def _on_test_selection_changed(self):
-        """Handle test selection change."""
-        items = self.test_list.selectedItems()
-        if items:
-            path = items[0].data(Qt.UserRole)
-            self.test_selected.emit(path)
-    
+            is_open = item.data(Qt.UserRole) == self._current_opened_test
+            if is_open:
+                selection.select(self.test_list.indexFromItem(item),
+                                 QItemSelectionModel.SelectionFlag.Select)
+            item.setData(Qt.FontRole, bold if is_open else None)
+
     def _on_test_double_clicked(self, item: QListWidgetItem):
         """Handle test double-click to open."""
         path = item.data(Qt.UserRole)
         self.test_opened.emit(path)
-    
+
     def _on_context_menu(self, position):
         """Show context menu for test list."""
         item = self.test_list.itemAt(position)
@@ -386,7 +293,7 @@ class WorkspaceTab(BaseTab):
             )
 
         self.refresh()
-        self._select_test_by_path(new_path)
+        self._show_test(new_path)
 
     def _delete_test(self, path: Path):
         """Delete a test folder after confirmation (core.test_folder_ops)."""
@@ -437,7 +344,7 @@ class WorkspaceTab(BaseTab):
         path = self.project_manager.create_test_folder(name)
         if path:
             self._load_test_list()
-            self._select_test_by_path(path)
+            self._show_test(path)
             self.test_opened.emit(path)
         else:
             self.show_error(
@@ -449,22 +356,7 @@ class WorkspaceTab(BaseTab):
     def refresh(self):
         """Refresh the test list."""
         if self.project_manager.project_root:
-            # Preserve the currently selected test
-            current_selection = None
-            items = self.test_list.selectedItems()
-            if items:
-                current_selection = items[0].data(Qt.UserRole)
-            
-            # Reload the list
             self._load_test_list()
-            
-            # Reselect the previously selected test if it still exists
-            if current_selection:
-                self._select_test_by_path(current_selection)
-            
-            # Reapply opened test highlight
-            self._update_opened_test_highlight()
-            
             self.new_test_btn.setEnabled(True)
         else:
             self.new_test_btn.setEnabled(False)

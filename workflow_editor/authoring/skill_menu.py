@@ -3,7 +3,7 @@ skill-chat dialog.
 
 Kept out of ``main_window`` so that the (mixed-EOL) main window only needs a
 one-line call: ``install_skills_menu(self)``. Everything host-specific is reached
-through the passed-in ``MainWindow`` (project root, backend factory, the text tab
+through the passed-in ``StudioWorkspace`` (project root, backend factory, the text tab
 for the insert, the context sources).
 """
 from __future__ import annotations
@@ -38,7 +38,7 @@ _AUTHORING_GUIDE = "authoring-a-skill.md"  # under the editor's docs/ folder
 def install_skills_menu(main_window) -> None:
     """Add a **Skills** menu to ``main_window``, repopulated each time it opens
     (so freshly-dropped skills appear without a restart)."""
-    mb = main_window.menuBar()
+    mb = main_window.menu_bar
     help_act = next((a for a in mb.actions()
                      if a.menu() is not None and a.text().replace("&", "") == "Help"), None)
 
@@ -77,7 +77,7 @@ def _populate(main_window, menu) -> None:
     chat_act = QAction(f"Skill chat…  ({count})" if count else "Skill chat…", menu)
     chat_act.setEnabled(count > 0)
     chat_act.setToolTip("Run an authoring skill (choose which one in the window).")
-    chat_act.triggered.connect(lambda: _launch_chat(main_window))
+    chat_act.triggered.connect(lambda: launch_skill_chat(main_window))
     menu.addAction(chat_act)
     if not count:
         hint = QAction("(no skills found — add one via 'Open skills folder…')", menu)
@@ -200,7 +200,7 @@ def _make_insert_callback(main_window):
             return
         existing = editor.toPlainText()
         editor.setPlainText(f"{existing}\n\n{draft}" if existing.strip() else draft)
-        tabs = getattr(main_window, "tab_widget", None)
+        tabs = getattr(main_window, "view_stack", None)
         if tabs is not None and tab is not None:
             tabs.setCurrentWidget(tab)
 
@@ -292,7 +292,8 @@ def _populate_wizards(main_window, menu) -> None:
     menu.addAction(action)
 
 
-def _launch_chat(main_window) -> None:
+def launch_skill_chat(main_window) -> None:
+    """Open the Skill chat window (the Skills menu's entry, the header's Skill chat…)."""
     from ..dock.skill_chat_dialog import SkillChatDialog
 
     root = _project_root(main_window)

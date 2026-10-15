@@ -85,8 +85,9 @@ def mbox(monkeypatch):
 @pytest.fixture
 def make_window(qapp, monkeypatch, mbox):
     """Factory building a MainWindow with the LLM backend disabled, recents
-    writes sandboxed and modals neutralized. Never calls .show() (the
-    showEvent CLI/prewarm/health-poll path stays untriggered)."""
+    writes sandboxed and modals neutralized; returns its StudioWorkspace.
+    Never calls .show() (the showEvent CLI/prewarm/health-poll path stays
+    untriggered)."""
     monkeypatch.setattr(mw_mod, "load_settings", lambda: {"llm_backend": "none"})
     recents: list[str] = []
     monkeypatch.setattr(host_services, "note_recent_project", recents.append)
@@ -94,18 +95,19 @@ def make_window(qapp, monkeypatch, mbox):
     windows = []
 
     def _make(**kwargs):
-        w = mw_mod.MainWindow(**kwargs)
+        window = mw_mod.MainWindow(**kwargs)
+        w = window.workspace
         w._noted_recents = recents  # test-side spy channel
-        windows.append(w)
+        windows.append(window)
         return w
 
     yield _make
-    for w in windows:
+    for window in windows:
         # Drop test/session state so closeEvent's unsaved-changes and
         # coherence prompts can never fire during teardown.
-        w.artifact_manager = None
-        w.session_state = None
-        w.close()
+        window.workspace.artifact_manager = None
+        window.workspace.session_state = None
+        window.close()
 
 
 # --- fixture project helpers -------------------------------------------------
@@ -149,7 +151,7 @@ def _menus(w):
     C++ QMenu when the owning QAction wrapper is garbage-collected (verified
     on PySide6 offscreen — a {title: menu} dict alone goes dangling).
     """
-    return [(a.text(), a, a.menu()) for a in w.menuBar().actions()
+    return [(a.text(), a, a.menu()) for a in w.menu_bar.actions()
             if a.menu() is not None]
 
 
@@ -167,29 +169,25 @@ def test_construction_smoke_disabled_backend(make_window):
     # load_settings returns llm_backend="none": NO server manager is built
     # (the only stub needed for offscreen construction is load_settings —
     # everything else constructs for real), the four tabs exist in workflow
-    # order, and tabs+dock start disabled until a test is loaded.
+    # order, and the views + Assistant start disabled until a test is loaded.
     w = make_window()
 
     assert w._server_manager is None
     assert w._backend_factory.backend_type == BACKEND_TYPE_NONE
-    assert [w.tab_widget.tabText(i) for i in range(w.tab_widget.count())] == [
-        "Text", "Text-JSON", "JSON-Code", "Traceability"]
-    assert w.tab_widget.currentWidget() is w.text_only_tab
-    assert not w.tab_widget.isEnabled()
+    assert [b.text() for b in w.view_buttons.buttons()] == [
+        "Text", "Text–JSON", "JSON–Code", "Traceability"]
+    assert w.view_stack.currentWidget() is w.text_only_tab
+    assert not w.view_column.isEnabled()
     assert not w.dock.isEnabled()
 
-    # Status bar initial state. NOTE (suspected wart, pinned as-is): the
-    # sync indicator is BORN as "Sync ✅" even though no test is loaded —
-    # _update_status_indicators would show "Sync ⚪" — and the rules label
-    # is born "Rules: None" while every later refresh writes
-    # "Rules: ❌ None" (inconsistent no-rules spelling).
-    assert w.test_label.text() == "No test loaded"
-    assert w.text_indicator.text() == "Text ⚪"
-    assert w.json_indicator.text() == "JSON ⚪"
-    assert w.code_indicator.text() == "Code ⚪"
-    assert w.sync_indicator.text() == "Sync ✅"
-    assert w.project_indicator.text() == "Project: None"
-    assert w.rules_indicator.text() == "Rules: None"
+    # Header and footer initial state: nothing loaded, Save all off.
+    assert w.header.title.text() == "No test open"
+    assert [p.text() for p in w.artifact_pills.values()] == [
+        "Text ○", "JSON ○", "Code ○"]
+    assert w.sync_pill.text() == "⇄ Sync"
+    assert w.project_link.text() == "Project: none"
+    assert w.rules_link.text() == "Rules: none"
+    assert not w.save_all_btn.isEnabled()
 
     # The first addTab fires currentChanged(0) during __init__, so the
     # Save action is already context-labelled at construction.
@@ -239,15 +237,13 @@ def test_menubar_order_and_menu_contents(make_window):
         "&DSL Syntax Reference", "Word Export &Keywords...", "&About"]
     assert _action_texts(by_title["&Packages"]) == ["&Install Package..."]
 
-    # View menu: both dock toggles are checkable. They are created checked
-    # in _setup_menu but immediately re-synced to dock.isVisible() during
-    # dock setup — False for a never-shown window, so on an offscreen
-    # (unshown) window both start UNCHECKED. Pinned as-is.
+    # View menu: both column toggles are checkable and start checked (the
+    # columns are fixed; only View hides them).
     view_actions = {a.text(): a for a in by_title["&View"].actions()}
     assert set(view_actions) == {"Show &Workspace", "Show &Assistant"}
     for a in view_actions.values():
         assert a.isCheckable()
-        assert not a.isChecked()
+        assert a.isChecked()
 
 
 def test_menu_shortcuts(make_window):
@@ -330,8 +326,8 @@ def test_open_project_dialog_happy_path(make_window, mbox, monkeypatch,
                                         tmp_path):
     # Pins the whole _on_open_project -> _refresh_after_open wiring: root
     # set, shared recents noted, test list loaded + New Test enabled,
-    # status-bar indicators updated ("Rules: ❌ None" when the project has
-    # no rules), and the task-#39 watcher set armed (config.json file,
+    # footer updated (the project by name, "Rules: none" when the project
+    # has no rules), and the task-#39 watcher set armed (config.json file,
     # config dir, project root AND bundle dir) with the bundle-signature
     # baseline seeded.
     root = _make_project(tmp_path / "proj")
@@ -344,8 +340,9 @@ def test_open_project_dialog_happy_path(make_window, mbox, monkeypatch,
     assert w.project_manager.project_root == root
     assert w._noted_recents == [str(root)]
     assert w.workspace_widget.new_test_btn.isEnabled()
-    assert w.project_indicator.text() == f"Project: {root}"
-    assert w.rules_indicator.text() == "Rules: ❌ None"
+    assert w.project_link.text() == "Project: proj"
+    assert str(root) in w.project_link.toolTip()
+    assert w.rules_link.text() == "Rules: none"
 
     assert w._watched_config_path == root / "config" / "config.json"
     assert w._watched_config_dir == root / "config"
@@ -359,7 +356,7 @@ def test_open_project_dialog_happy_path(make_window, mbox, monkeypatch,
     assert w._bundle_signature is not None
     assert w._bundle_signature_changed() is False
     # Opening a project does NOT load any test: tabs stay disabled.
-    assert not w.tab_widget.isEnabled()
+    assert not w.view_column.isEnabled()
     assert mbox.warning == []
 
 
@@ -417,7 +414,7 @@ def test_open_recent_menu_and_missing_dir(make_window, mbox, monkeypatch,
 def test_open_test_loads_tabs_and_seeds_session(make_window, tmp_path):
     # Pins _on_test_opened end to end: managers rebuilt for the folder,
     # editors filled from disk (editor.toPlainText IS the live content
-    # source afterwards), tabs+dock enabled, status row updated to ✅ for
+    # source afterwards), views + Assistant enabled, header pills ✓ for
     # every non-empty artifact, FIRST open lands on the Text tab, and the
     # sync baseline is seeded + persisted to .llm_session.json on open.
     root = _make_project(tmp_path / "proj")
@@ -429,17 +426,16 @@ def test_open_test_loads_tabs_and_seeds_session(make_window, tmp_path):
 
     assert w.artifact_manager.test_dir == t1
     assert w.session_state._file_path == t1 / ".llm_session.json"
-    assert w.tab_widget.isEnabled() and w.dock.isEnabled()
-    assert w.test_label.text() == "Test: t1"
-    assert w.tab_widget.currentWidget() is w.text_only_tab
+    assert w.view_column.isEnabled() and w.dock.isEnabled()
+    assert w.header.title.text() == "t1"
+    assert w.view_stack.currentWidget() is w.text_only_tab
     assert w.text_only_tab.text_editor.toPlainText() == \
         (t1 / "procedure_text.md").read_text(encoding="utf-8")
     assert w.text_json_tab.json_editor.toPlainText() == \
         (t1 / "procedure.json").read_text(encoding="utf-8")
-    assert w.text_indicator.text() == "Text ✅"
-    assert w.json_indicator.text() == "JSON ✅"
-    assert w.code_indicator.text() == "Code ✅"
-    assert w.sync_indicator.text() == "Sync ✅"
+    assert [p.text() for p in w.artifact_pills.values()] == [
+        "Text ✓", "JSON ✓", "Code ✓"]
+    assert w.sync_pill.text() == "⇄ JSON ↔ Code in sync"
     # First-open baseline: hashes for all three tracked artifacts, saved.
     assert set(w.session_state.artifact_hashes) == {
         "procedure.json", "test.py", "procedure_text.md"}
@@ -457,18 +453,18 @@ def test_open_second_test_preserves_current_tab(make_window, tmp_path):
     _open_project(w, root)
 
     w.open_test(root / "tests" / "t1")
-    w.tab_widget.setCurrentWidget(w.json_code_tab)
+    w.view_stack.setCurrentWidget(w.json_code_tab)
     w.open_test(root / "tests" / "t2")
 
     assert w.artifact_manager.test_dir == root / "tests" / "t2"
-    assert w.tab_widget.currentWidget() is w.json_code_tab
-    assert w.test_label.text() == "Test: t2"
+    assert w.view_stack.currentWidget() is w.json_code_tab
+    assert w.header.title.text() == "t2"
 
 
 def test_reopen_after_external_edit_flips_sync_state(make_window, tmp_path):
     # Pins _check_for_external_changes: an artifact edited on disk while
     # the stored baseline exists (here: between two opens of the same test)
-    # marks the session out-of-sync and shows the ⚠️ indicator. Never
+    # marks the session out-of-sync and shows the Sync pill unconfirmed. Never
     # auto-restores — only user acknowledgment does.
     root = _make_project(tmp_path / "proj")
     t1 = root / "tests" / "t1"
@@ -482,7 +478,7 @@ def test_reopen_after_external_edit_flips_sync_state(make_window, tmp_path):
     w.open_test(t1)
 
     assert w.session_state.artifacts_in_sync is False
-    assert w.sync_indicator.text() == "Sync ⚠️"
+    assert w.sync_pill.text() == "⇄ Sync unconfirmed · acknowledge"
     on_disk = json.loads(
         (t1 / ".llm_session.json").read_text(encoding="utf-8"))
     assert on_disk["artifacts_in_sync"] is False
@@ -506,7 +502,7 @@ def test_save_enforces_folder_id_without_flipping_sync(make_window, tmp_path):
     w = make_window()
     _open_project(w, root)
     w.open_test(t1)
-    assert w.tab_widget.currentWidget() is w.text_only_tab
+    assert w.view_stack.currentWidget() is w.text_only_tab
     assert w.session_state.artifacts_in_sync is True
 
     w._on_save()  # current tab = Text -> saves procedure_text.md only
@@ -518,8 +514,8 @@ def test_save_enforces_folder_id_without_flipping_sync(make_window, tmp_path):
     assert w.text_only_tab.text_editor.toPlainText().startswith("# t1\n")
     # id-only enforcement is NOT a divergence (the #41 fix)
     assert w.session_state.artifacts_in_sync is True
-    assert w.sync_indicator.text() == "Sync ✅"
-    assert w.status_bar.currentMessage() == "Saved"
+    assert w.sync_pill.text() == "⇄ JSON ↔ Code in sync"
+    assert w.footer.note.text() == "Saved"
 
 
 def test_real_edit_save_flips_out_of_sync(make_window, tmp_path):
@@ -541,7 +537,7 @@ def test_real_edit_save_flips_out_of_sync(make_window, tmp_path):
     assert "New paragraph." in \
         (t1 / "procedure_text.md").read_text(encoding="utf-8")
     assert w.session_state.artifacts_in_sync is False
-    assert w.sync_indicator.text() == "Sync ⚠️"
+    assert w.sync_pill.text() == "⇄ Sync unconfirmed · acknowledge"
     assert w.session_state.artifact_hashes == baseline  # not re-seeded
 
 
@@ -569,7 +565,7 @@ def test_parse_and_generate_marks_in_sync(make_window, monkeypatch, tmp_path, ta
 
     assert "return 1" in (t1 / "test.py").read_text(encoding="utf-8")
     assert w.session_state.artifacts_in_sync is True
-    assert w.sync_indicator.text() == "Sync ✅"
+    assert w.sync_pill.text() == "⇄ JSON ↔ Code in sync"
     assert w.session_state.artifact_hashes == w.artifact_manager.compute_hashes()
     assert json.loads((t1 / ".llm_session.json").read_text(encoding="utf-8"))["artifacts_in_sync"] is True
     assert not w.workspace_widget._out_of_sync(t1)
@@ -623,7 +619,7 @@ def test_sync_indicator_acknowledge_flow(make_window, mbox, tmp_path):
     assert [t for t, _ in mbox.question] == ["Acknowledge Sync"] * 2
     assert w.session_state.artifacts_in_sync is True
     assert w.session_state.artifact_hashes != old_baseline
-    assert w.sync_indicator.text() == "Sync ✅"
+    assert w.sync_pill.text() == "⇄ JSON ↔ Code in sync"
     on_disk = json.loads(
         (t1 / ".llm_session.json").read_text(encoding="utf-8"))
     assert on_disk["artifacts_in_sync"] is True
@@ -646,7 +642,7 @@ def test_tab_change_syncs_previous_tab_and_switches_context(make_window,
     w = make_window()
     _open_project(w, root)
     w.open_test(root / "tests" / "t1")
-    assert w.tab_widget.currentWidget() is w.text_only_tab
+    assert w.view_stack.currentWidget() is w.text_only_tab
     assert w.save_action.text() == "&Save Text"
 
     calls = []
@@ -659,11 +655,11 @@ def test_tab_change_syncs_previous_tab_and_switches_context(make_window,
     w.dock.session_viewer.switch_context = lambda ctx: None
     w.dock.raw_viewer.switch_context = lambda ctx: None
 
-    w.tab_widget.setCurrentWidget(w.json_code_tab)
+    w.view_stack.setCurrentWidget(w.json_code_tab)
 
     assert calls == ["sync_prev", "deactivate_prev", "activate_new"]
     assert switched == [w.json_code_tab.tab_context]
-    assert w.save_action.text() == "&Save JSON-Code"
+    assert w.save_action.text() == "&Save JSON–Code"
 
 
 def test_switch_to_tab_name_mapping(make_window):
@@ -677,10 +673,10 @@ def test_switch_to_tab_name_mapping(make_window):
         ("code", "json_code_tab"), ("JSON", "text_json_tab"),
     ]:
         w.switch_to_tab(name)
-        assert w.tab_widget.currentWidget() is getattr(w, expected), name
-    current = w.tab_widget.currentWidget()
+        assert w.view_stack.currentWidget() is getattr(w, expected), name
+    current = w.view_stack.currentWidget()
     w.switch_to_tab("nonsense")  # unknown name = silent no-op
-    assert w.tab_widget.currentWidget() is current
+    assert w.view_stack.currentWidget() is current
 
 
 def test_current_procedure_text_prefers_active_then_text_json(make_window,
@@ -908,12 +904,12 @@ def test_close_event_cancel_keeps_window_clean_accepts(make_window, mbox,
 
     mbox.question_answer = QMessageBox.StandardButton.Cancel
     ev = QCloseEvent()
-    w.closeEvent(ev)
+    w.window().closeEvent(ev)
     assert not ev.isAccepted()
 
     mbox.question_answer = QMessageBox.StandardButton.Save
     ev2 = QCloseEvent()
-    w.closeEvent(ev2)
+    w.window().closeEvent(ev2)
     assert ev2.isAccepted()
     assert "Not saved yet." in \
         (t1 / "procedure_text.md").read_text(encoding="utf-8")
@@ -937,7 +933,7 @@ def test_open_other_test_with_unsaved_changes_cancel_aborts(make_window,
 
     assert w.artifact_manager is am_before
     assert w.artifact_manager.test_dir == root / "tests" / "t1"
-    assert w.test_label.text() == "Test: t1"
+    assert w.header.title.text() == "t1"
 
 
 # =========================================================================
@@ -946,7 +942,7 @@ def test_open_other_test_with_unsaved_changes_cancel_aborts(make_window,
 
 def test_test_deleted_clears_loaded_state(make_window, tmp_path):
     # Pins _on_test_deleted for the CURRENTLY-open test: managers dropped,
-    # all five editors cleared, tabs+dock disabled, status label reset.
+    # all five editors cleared, views+Assistant disabled, header reset.
     # NOTE (suspected staleness, pinned by absence): the tab CONTEXTS keep
     # their references to the dead ArtifactManager/SessionState — only the
     # next _on_test_opened rewires them.
@@ -965,14 +961,14 @@ def test_test_deleted_clears_loaded_state(make_window, tmp_path):
     assert w.text_json_tab.json_editor.toPlainText() == ""
     assert w.json_code_tab.json_editor.toPlainText() == ""
     assert w.json_code_tab.code_editor.toPlainText() == ""
-    assert not w.tab_widget.isEnabled()
+    assert not w.view_column.isEnabled()
     assert not w.dock.isEnabled()
-    assert w.test_label.text() == "No test loaded"
+    assert w.header.title.text() == "No test open"
     # current behavior: tab contexts still hold the retired manager
     assert w.text_only_tab.tab_context.artifact_manager is ctx_am
 
-    # Deleting a NON-open test is a status-bar-only event.
+    # Deleting a NON-open test is a status-line-only event.
     w.open_test(root / "tests" / "t2")
     w._on_test_deleted(root / "tests" / "t1")
     assert w.artifact_manager is not None
-    assert w.test_label.text() == "Test: t2"
+    assert w.header.title.text() == "t2"

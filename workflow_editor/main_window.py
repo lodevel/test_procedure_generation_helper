@@ -8,15 +8,13 @@ from pathlib import Path
 from typing import Optional
 import json
 import logging
-import os
 import threading
 from PySide6.QtWidgets import (
-    QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
-    QStatusBar, QMenuBar, QMenu, QToolBar, QMessageBox, QLabel, QDockWidget,
+    QMainWindow, QWidget, QVBoxLayout, QMenuBar, QMenu, QMessageBox,
     QFileDialog, QDialog, QTextBrowser
 )
 from PySide6.QtCore import Qt, Signal, Slot, QFileSystemWatcher, QTimer
-from PySide6.QtGui import QAction, QKeySequence, QShortcut, QCursor
+from PySide6.QtGui import QAction, QIcon, QKeySequence, QShortcut
 
 from .core import (
     ArtifactManager, SessionState, ProjectManager, ArtifactType,
@@ -38,36 +36,26 @@ from .tabs import (
 )
 from .dock import DockWidget
 from .dialogs import SettingsDialog, load_settings
-from . import _host_services
+from . import _host_services, shell
 from .controllers import DocumentController, ProjectController, project_controller
 
 log = logging.getLogger(__name__)
 
 
-class ClickableLabel(QLabel):
-    """Label that emits clicked signal and shows pointer cursor."""
-    clicked = Signal()
-    
-    def __init__(self, text: str = "", parent=None):
-        super().__init__(text, parent)
-        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-    
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
-        super().mousePressEvent(event)
-
-
-
-class MainWindow(QMainWindow):
+class StudioWorkspace(QWidget):
     """
-    Main application window.
-    
-    Contains:
-    - Tab widget for main panels (Workspace, JSON, Code, Text, Traceability)
-    - Dock widget for assistant panels (Chat, Session, Findings, Raw)
-    - Menu bar and toolbar
-    - Status bar
+    Procedo Studio's whole content, embeddable: it never assumes it owns the
+    window it sits in (Bench may host it beside its run mode).
+
+    Contains (laid out by ``shell``):
+    - the header band: the open test, its Text / JSON / Code and Sync pills,
+      the OpenCode pill and menu, Export, Skill chat, Save all
+    - the four views (Text, Text-JSON, JSON-Code, Traceability) behind a
+      segmented switch
+    - the Workspace (tests) and Assistant (Chat, Session, Findings, Raw)
+      columns
+    - the status line: project, rules, bundle, validator
+    - ``menu_bar``, for the window that hosts it to show
     """
     
     # Thread-safe UI marshal: a daemon (health probe / recover) emits a
@@ -91,10 +79,8 @@ class MainWindow(QMainWindow):
         # Cross-thread UI marshal: queue daemon-posted callables onto the UI
         # thread (AutoConnection -> QueuedConnection from a worker thread).
         self._ui_call.connect(self._run_ui_call)
-        log.debug("MainWindow.__init__ starting")
-        self.setWindowTitle("Procedo Studio")
-        self.setMinimumSize(1200, 700)
-        
+        log.debug("StudioWorkspace.__init__ starting")
+
         # Store CLI arguments
         self._cli_project_root = project_root
         self._cli_rules_root = rules_root
@@ -102,7 +88,6 @@ class MainWindow(QMainWindow):
         self._cli_test_dir = test_dir
         self._cli_llm_backend = llm_backend
         self._cli_llm_profile = llm_profile
-        self._modern_workspace_layout = os.environ.get("TPG_APP_LAYOUT") == "modern_workspace"
 
         # Controllers carved out of this god-class (mechanical move):
         # each owns one cohesive slice of behavior; the thin delegates
@@ -167,11 +152,12 @@ class MainWindow(QMainWindow):
         
         # Prompt builder and response parser
         # Setup UI
+        self.menu_bar = QMenuBar()
         self._setup_menu()
         self._setup_central_widget()
         self._setup_workspace_dock()
         self._setup_dock()
-        self._setup_status_bar()
+        shell.build_frame(self)
         
         # Apply settings
         self._apply_settings()
@@ -179,8 +165,8 @@ class MainWindow(QMainWindow):
         # Setup keyboard shortcuts
         self._setup_shortcuts()
 
-        # Disable tabs and dock until a test is loaded
-        self.tab_widget.setEnabled(False)
+        # Disable the views and the Assistant until a test is loaded
+        self.view_column.setEnabled(False)
         self.dock.setEnabled(False)
 
         # Refresh button labels whenever the active project's workflow
@@ -361,8 +347,8 @@ class MainWindow(QMainWindow):
         
         log.info(f"Backend infrastructure initialized: type={config.backend_type}")
         
-        # Update LLM status display
-        self._update_llm_status()
+        # Update the OpenCode pill
+        self._refresh_server_indicator()
         
         # Update all tab contexts with new factory (if tabs are already initialized)
         self._update_all_tab_contexts()
@@ -512,7 +498,7 @@ class MainWindow(QMainWindow):
             backend = getattr(ctx, "_backend", None)
             if backend is not None:
                 backend._context_window = None
-        self._update_llm_status()
+        self._refresh_server_indicator()
         log.info(
             "Applied LLM settings live (model=%s) — server + session kept",
             live.model,
@@ -611,8 +597,8 @@ class MainWindow(QMainWindow):
         log.info("Refreshing button labels across all tabs")
         
         # Iterate through all tabs and refresh labels if supported
-        for i in range(self.tab_widget.count()):
-            tab = self.tab_widget.widget(i)
+        for i in range(self.view_stack.count()):
+            tab = self.view_stack.widget(i)
             # Rebuild dynamic buttons if supported (for text_json, json_code tabs)
             if hasattr(tab, 'rebuild_llm_buttons'):
                 try:
@@ -639,8 +625,8 @@ class MainWindow(QMainWindow):
 
     
     def _setup_menu(self):
-        """Setup the menu bar."""
-        menubar = self.menuBar()
+        """Fill ``menu_bar`` (the hosting window shows it)."""
+        menubar = self.menu_bar
         
         # File menu
         file_menu = menubar.addMenu("&File")
@@ -670,8 +656,8 @@ class MainWindow(QMainWindow):
         save_all_action.setShortcut("Ctrl+Shift+S")
         save_all_action.triggered.connect(self._on_save_all)
         file_menu.addAction(save_all_action)
-        
-        export_menu = file_menu.addMenu("&Export")
+        export_menu = self.export_menu = QMenu("&Export", self)  # the header's Export too
+        file_menu.addMenu(export_menu)
         export_menu.setToolTip("Export the current procedure to Markdown or Word.")
 
         export_md_action = QAction("Procedure to &Markdown…", self)
@@ -731,7 +717,7 @@ class MainWindow(QMainWindow):
 
         exit_action = QAction("E&xit", self)
         exit_action.setShortcut(QKeySequence.Quit)
-        exit_action.triggered.connect(self.close)
+        exit_action.triggered.connect(lambda: self.window().close())
         file_menu.addAction(exit_action)
         
         # Edit menu
@@ -818,7 +804,7 @@ class MainWindow(QMainWindow):
         then the text/json tab which always owns procedure_text.
         """
         candidates = [
-            self.tab_widget.currentWidget(),
+            self.view_stack.currentWidget(),
             getattr(self, "text_json_tab", None),
             getattr(self, "text_only_tab", None),
         ]
@@ -881,7 +867,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Export Failed",
                                  f"Could not write Markdown:\n{e}")
             return
-        self.status_bar.showMessage(
+        self.footer.show_message(
             f"Exported {len(selected)} test(s) to Markdown -> {path}", 5000)
 
     def _export_markdown_single(self):
@@ -907,7 +893,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Export Failed",
                                  f"Could not write Markdown:\n{e}")
             return
-        self.status_bar.showMessage(f"Exported Markdown -> {path}", 5000)
+        self.footer.show_message(f"Exported Markdown -> {path}", 5000)
 
     @_host_services.requires_host
     def _on_export_word(self):
@@ -985,7 +971,7 @@ class MainWindow(QMainWindow):
             return
         finally:
             prog.close()
-        self.status_bar.showMessage(
+        self.footer.show_message(
             f"Exported {len(selected)}-test report -> {output_path}", 5000)
 
     def _export_word_single(self):
@@ -1014,17 +1000,13 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Export Failed",
                                  f"Could not write Word document:\n{e}")
             return
-        self.status_bar.showMessage(f"Exported Word -> {path}", 5000)
+        self.footer.show_message(f"Exported Word -> {path}", 5000)
 
     def _setup_central_widget(self):
-        """Setup central widget with tabs."""
-        # Tab widget (no container needed)
-        self.tab_widget = QTabWidget()
-        self.tab_widget.setObjectName("workflowTabs")
+        """The four views behind the segmented switch (``shell.build_view_column``)."""
         self._previous_tab_index = 0
-        self.tab_widget.currentChanged.connect(self._on_tab_changed)
-        
-        # Create tabs (workspace moved to dock)
+
+        # Create the views (the test list is the Workspace column)
         # Text-only is a lighter-context sibling of Text-JSON that edits
         # the same procedure_text artifact.
         self.text_only_tab = TextOnlyTab(self)
@@ -1033,29 +1015,18 @@ class MainWindow(QMainWindow):
         self.traceability_tab = TraceabilityTab(self)
 
         # Connect artifact_saved signals so per-tab save buttons
-        # trigger the sync check and status indicator update
-        for tab in (self.text_only_tab, self.text_json_tab, self.json_code_tab, self.traceability_tab):
+        # trigger the sync check and status indicator update; an edit
+        # repaints the header's pills and Save all
+        views = (self.text_only_tab, self.text_json_tab, self.json_code_tab, self.traceability_tab)
+        for tab in views:
             tab.artifact_saved.connect(self._on_tab_artifact_saved)
+            tab.content_changed.connect(lambda: shell.refresh_header(self))
 
-        # Add tabs in workflow order: Text → Text-JSON → JSON-Code → Traceability
-        self.tab_widget.addTab(self.text_only_tab, "Text")
-        self.tab_widget.addTab(self.text_json_tab, "Text-JSON")
-        self.tab_widget.addTab(self.json_code_tab, "JSON-Code")
-        self.tab_widget.addTab(self.traceability_tab, "Traceability")
-        
-        if self._modern_workspace_layout:
-            central = QWidget()
-            central.setObjectName("mainCentral")
-            layout = QVBoxLayout(central)
-            layout.setContentsMargins(10, 10, 10, 10)
-            layout.setSpacing(10)
-            layout.addWidget(self.tab_widget)
-            self.setCentralWidget(central)
-        else:
-            self.setCentralWidget(self.tab_widget)
-    
+        # Views in workflow order: Text → Text-JSON → JSON-Code → Traceability
+        shell.build_view_column(self, list(views))
+
     def _setup_workspace_dock(self):
-        """Setup workspace as a left sidebar dock."""
+        """The test list: the Workspace column (``shell.build_frame`` lays it out)."""
         # Create workspace widget
         self.workspace_widget = WorkspaceTab(self)
         self.workspace_widget.test_opened.connect(self._on_test_opened)
@@ -1066,38 +1037,10 @@ class MainWindow(QMainWindow):
         self.workspace_widget.request_mark_loaded_in_sync.connect(
             self._on_sync_indicator_clicked,
         )
-        
-        # Create dock widget
-        self.workspace_dock = QDockWidget("Workspace", self)
-        self.workspace_dock.setWidget(self.workspace_widget)
-        if self._modern_workspace_layout:
-            self.workspace_dock.setMinimumWidth(280)
-        
-        # Dock configuration
-        self.workspace_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
-        self.workspace_dock.setFeatures(
-            QDockWidget.DockWidgetClosable |    # Can close
-            QDockWidget.DockWidgetMovable       # Can move
-        )
-        
-        # Add to main window
-        self.addDockWidget(Qt.LeftDockWidgetArea, self.workspace_dock)
-        
-        # Default size
-        self.workspace_dock.setMinimumWidth(280 if self._modern_workspace_layout else 200)
-        self.workspace_dock.resize(300 if self._modern_workspace_layout else 250, self.height())
-        
-        # Connect toggle action
-        self.toggle_workspace_action.setChecked(self.workspace_dock.isVisible())
-        self.toggle_workspace_action.triggered.connect(self._on_toggle_workspace)
-        self.workspace_dock.visibilityChanged.connect(self._on_workspace_visibility_changed)
     
     def _setup_dock(self):
-        """Setup the dock widget."""
+        """The Assistant column (``shell.build_frame`` lays it out)."""
         self.dock = DockWidget(self)
-        if self._modern_workspace_layout:
-            self.dock.setMinimumWidth(320)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.dock)
         
         # Update context limit based on backend config
         self._update_context_limit()
@@ -1106,13 +1049,7 @@ class MainWindow(QMainWindow):
         self.dock.chat_panel.message_sent.connect(self._on_chat_message)
         self.dock.chat_panel.reset_requested.connect(self._on_reset_session)
         self.dock.chat_panel.cancel_requested.connect(self._on_cancel_llm)
-        self.dock.chat_panel.restart_requested.connect(self._on_restart_backend)
         self.dock.chat_panel.compact_requested.connect(self._on_compact_session)
-        
-        # Connect toggle action
-        self.toggle_dock_action.setChecked(self.dock.isVisible())
-        self.toggle_dock_action.triggered.connect(self._on_toggle_dock)
-        self.dock.visibilityChanged.connect(self._on_dock_visibility_changed)
     
     def _update_context_limit(self):
         """Update chat panel's 'Tokens: X/Y' indicator from common_llm.context_window.
@@ -1131,103 +1068,16 @@ class MainWindow(QMainWindow):
         )
         self.dock.chat_panel.set_context_limit(context_limit)
     
-    def _setup_status_bar(self):
-        """Setup the status bar."""
-        self.status_bar = QStatusBar()
-        self.setStatusBar(self.status_bar)
-        
-        # Create container for two-row layout
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-        
-        # First row: Test name + Artifact indicators
-        row1 = QWidget()
-        row1_layout = QHBoxLayout(row1)
-        row1_layout.setContentsMargins(0, 0, 0, 0)
-        row1_layout.setSpacing(8)
-        
-        self.test_label = QLabel("No test loaded")
-        row1_layout.addWidget(self.test_label)
-        
-        row1_layout.addWidget(QLabel(" | "))
-        
-        self.text_indicator = QLabel("Text ⚪")
-        row1_layout.addWidget(self.text_indicator)
-        
-        self.json_indicator = QLabel("JSON ⚪")
-        row1_layout.addWidget(self.json_indicator)
-        
-        self.code_indicator = QLabel("Code ⚪")
-        row1_layout.addWidget(self.code_indicator)
-        
-        row1_layout.addWidget(QLabel(" | "))
-        
-        self.sync_indicator = ClickableLabel("Sync ✅")
-        self.sync_indicator.setToolTip("JSON ↔ Code coherence status. Click to acknowledge sync.")
-        self.sync_indicator.clicked.connect(self._on_sync_indicator_clicked)
-        row1_layout.addWidget(self.sync_indicator)
-        
-        layout.addWidget(row1)
-        
-        # Second row: Project/Rules indicators
-        row2 = QWidget()
-        row2_layout = QHBoxLayout(row2)
-        row2_layout.setContentsMargins(0, 0, 0, 0)
-        row2_layout.setSpacing(8)
-        
-        self.project_indicator = ClickableLabel("Project: None")
-        self.project_indicator.clicked.connect(self._on_project_indicator_clicked)
-        row2_layout.addWidget(self.project_indicator)
-        
-        self.rules_indicator = ClickableLabel("Rules: None")
-        self.rules_indicator.clicked.connect(self._on_rules_indicator_clicked)
-        row2_layout.addWidget(self.rules_indicator)
-        
-        layout.addWidget(row2)
-        
-        self.status_bar.addWidget(container)
-        
-        # LLM status
-        self.llm_status = QLabel("")
-        self.status_bar.addPermanentWidget(self.llm_status)
-
-        # Always-visible OpenCode server health signal (running / down).
-        # A crashed mid-session server otherwise gave no at-a-glance cue —
-        # the user only found out when the model picker said "unreachable".
-        # _refresh_server_indicator (driven by a periodic poll) keeps this
-        # current and triggers auto-recovery when it reads down.
-        self.server_indicator = QLabel("")
-        self.server_indicator.setToolTip(
-            "OpenCode server health. A down server auto-recovers in the "
-            "background.")
-        self.status_bar.addPermanentWidget(self.server_indicator)
-    
     def _update_project_rules_indicators(self):
-        """Update project and rules indicators in status bar."""
-        if self.project_manager is None:
-            self.project_indicator.setText("Project: None")
-            self.rules_indicator.setText("Rules: None")
-            return
-        
-        # Update project indicator - show full path
-        project_root = self.project_manager.project_root
-        if project_root:
-            self.project_indicator.setText(f"Project: {project_root}")
-        else:
-            self.project_indicator.setText("Project: None")
-        
-        # Update rules indicator - show full path
-        rules_root = self.project_manager.rules_root
-        if rules_root:
-            self.rules_indicator.setText(f"Rules: ✅ {rules_root}")
-        else:
-            self.rules_indicator.setText("Rules: ❌ None")
+        """Repaint the header (the test and its project) and the footer (project,
+        rules, bundle, validator); refresh what follows the project (syntax
+        reference, board netlist)."""
+        shell.refresh_header(self)
+        shell.refresh_footer(self)
 
         # Live-refresh the syntax reference if it's open (project/bundle changed).
         from .dialogs.syntax_reference import SyntaxReferenceDialog
-        SyntaxReferenceDialog.refresh_if_open(rules_root)
+        SyntaxReferenceDialog.refresh_if_open(self.project_manager.rules_root)
 
         # Reload the Text tab's board-netlist for the current project — the panel
         # loads on tab-show, which can precede project setup (e.g. Text is now the
@@ -1258,7 +1108,7 @@ class MainWindow(QMainWindow):
         # Set rules root
         if self.project_manager.set_rules_root(rules_path):
             self._update_project_rules_indicators()
-            self.status_bar.showMessage(f"Rules loaded from: {rules_path}", 3000)
+            self.footer.show_message(f"Rules loaded from: {rules_path}", 3000)
         else:
             QMessageBox.warning(
                 self,
@@ -1276,36 +1126,11 @@ class MainWindow(QMainWindow):
         # Tab switching (Ctrl+1-4 for new 4-tab structure)
         for i in range(4):
             shortcut = QShortcut(QKeySequence(f"Ctrl+{i+1}"), self)
-            shortcut.activated.connect(lambda idx=i: self.tab_widget.setCurrentIndex(idx))
+            shortcut.activated.connect(lambda idx=i: self.view_stack.setCurrentIndex(idx))
     
     def _update_status_indicators(self):
-        """Update artifact status indicators in status bar."""
-        if self.artifact_manager is None:
-            circle = "\u26aa"  # White circle
-            self.text_indicator.setText(f"Text {circle}")
-            self.json_indicator.setText(f"JSON {circle}")
-            self.code_indicator.setText(f"Code {circle}")
-            self.sync_indicator.setText("Sync \u26aa")
-            self.sync_indicator.setToolTip("No test loaded")
-            self._update_project_rules_indicators()
-            return
-        
-        # Check if artifacts exist
-        text_ok = bool(self.artifact_manager.procedure_text.content and self.artifact_manager.procedure_text.content.strip())
-        json_ok = bool(self.artifact_manager.procedure_json.content and self.artifact_manager.procedure_json.content.strip())
-        code_ok = bool(self.artifact_manager.test_code.content and self.artifact_manager.test_code.content.strip())
-        
-        circle = "\u26aa"  # White circle
-        check = "✅"  # Green check
-        
-        self.text_indicator.setText(f"Text {check if text_ok else circle}")
-        self.json_indicator.setText(f"JSON {check if json_ok else circle}")
-        self.code_indicator.setText(f"Code {check if code_ok else circle}")
-        
-        # Update sync indicator
-        self._document_controller.update_sync_indicator()
-        
-        # Also update project/rules indicators
+        """Repaint the header (test, Text/JSON/Code and Sync pills, Save all)
+        and the footer."""
         self._update_project_rules_indicators()
     
     def _update_menu_state(self):
@@ -1330,27 +1155,6 @@ class MainWindow(QMainWindow):
         """Handle a test folder being deleted (body in controllers/)."""
         self._document_controller.on_test_deleted(path)
 
-    def _update_llm_status(self):
-        """Update status bar with LLM backend information."""
-        # Check if UI is initialized yet
-        if not hasattr(self, 'llm_status'):
-            return
-        
-        if not hasattr(self, '_backend_factory') or self._backend_factory is None:
-            self.llm_status.setText("LLM: None")
-            return
-        
-        backend_type = self._backend_factory.backend_type
-        
-        if backend_type == BACKEND_TYPE_OPENCODE:
-            server_status = "ready" if self._server_manager and self._server_manager.is_available() else "not started"
-            self.llm_status.setText(f"LLM: OpenCode ({server_status})")
-        else:
-            self.llm_status.setText("LLM: Disabled")
-        # Keep the always-visible server signal in sync on every LLM-status
-        # refresh too (cheap; uses cached process state, no HTTP).
-        self._refresh_server_indicator()
-    
     def _start_server_health_poll(self):
         """Poll OUR OpenCode server's liveness on a timer and auto-recover a
         crash.
@@ -1460,7 +1264,7 @@ class MainWindow(QMainWindow):
             return
         self._server_recovering = True
         log.warning('OpenCode server detected down; auto-recovering...')
-        self.status_bar.showMessage('OpenCode server down — recovering…', 4000)
+        self.footer.show_message('OpenCode server down — recovering…', 4000)
         try:
             threading.Thread(target=lambda: self._recover(sm), daemon=True).start()
         except Exception:
@@ -1528,19 +1332,18 @@ class MainWindow(QMainWindow):
         self._ui_call.emit(fn)
 
     def _refresh_server_indicator(self, alive=None):
-        """Update the always-visible 'OpenCode: running / down' status label.
+        """Paint the header's OpenCode pill: the model while the server runs,
+        recovering / down otherwise, "LLM off" without an OpenCode backend.
 
         ``alive`` may be passed by the poll (avoids a redundant process poll);
-        otherwise we read it. When no OpenCode manager is configured the label
-        is blank (the backend isn't OpenCode, so 'down' would be misleading).
-        Colour follows a success / error palette.
+        otherwise the last off-thread probe's verdict is used.
         """
-        if not hasattr(self, 'server_indicator'):
+        if not hasattr(self, 'server_pill'):
             return
         sm = getattr(self, '_server_manager', None)
         if sm is None:
-            self.server_indicator.setText('')
-            self.server_indicator.setToolTip('')
+            shell.show_server_state(self, 'neutral', 'LLM off',
+                                    'No LLM backend: choose one in LLM settings.')
             return
         if alive is None:
             # Use the cached verdict from the last off-thread probe — NEVER
@@ -1548,27 +1351,20 @@ class MainWindow(QMainWindow):
             # runs on the UI thread). None (no probe yet) is treated as down.
             alive = getattr(self, '_last_server_alive', None)
         if getattr(self, '_server_recovering', False) and not alive:
-            self.server_indicator.setText('OpenCode: recovering…')
-            self.server_indicator.setStyleSheet('color: #b8860b;')  # amber
-            self.server_indicator.setToolTip('Relaunching the OpenCode server…')
-            return
-        if alive:
-            self.server_indicator.setText('OpenCode: running')
-            self.server_indicator.setStyleSheet('color: #2e7d32;')  # green
-            self.server_indicator.setToolTip('OpenCode server is running.')
+            shell.show_server_state(self, 'warning', '● OpenCode · recovering…',
+                                    'Relaunching the OpenCode server…')
+        elif alive:
+            shell.show_server_state(self, 'success', f'● OpenCode · {sm.config.model or "default model"}',
+                                    'OpenCode server is running.')
         elif getattr(self, '_server_recovery_attempts', 0) >= self._MAX_SERVER_RECOVERY_ATTEMPTS:
-            self.server_indicator.setText(
-                'OpenCode: down — auto-restart failed (use Restart backend)')
-            self.server_indicator.setStyleSheet('color: #c62828;')  # red
-            self.server_indicator.setToolTip(
-                'Auto-recovery gave up after repeated failures. Use Restart backend to try again.'
+            shell.show_server_state(
+                self, 'danger', '● OpenCode · down',
+                'Auto-recovery gave up after repeated failures. Use Restart server to try again.'
                 + (f'\n\n{sm.last_status.message}'
                    if sm.last_status is not None and not sm.last_status.ok else ''))
         else:
-            self.server_indicator.setText('OpenCode: down')
-            self.server_indicator.setStyleSheet('color: #c62828;')  # red
-            self.server_indicator.setToolTip(
-                'OpenCode server is down — auto-recovery will relaunch it.')
+            shell.show_server_state(self, 'danger', '● OpenCode · down',
+                                    'OpenCode server is down — auto-recovery will relaunch it.')
 
     def _on_reset_session(self):
         """Reset all LLM sessions (clears conversation history and rules cache)."""
@@ -1585,7 +1381,7 @@ class MainWindow(QMainWindow):
         # Clear chat panel UI and re-switch to current tab's context
         if hasattr(self, 'dock') and hasattr(self.dock, 'chat_panel'):
             # Get current tab's context before clearing
-            current_tab = self.tab_widget.currentWidget()
+            current_tab = self.view_stack.currentWidget()
             current_tab_context = None
             if hasattr(current_tab, 'tab_context'):
                 current_tab_context = current_tab.tab_context
@@ -1599,12 +1395,12 @@ class MainWindow(QMainWindow):
                 "🔄 Session reset - starting fresh. Rules will be sent on next interaction."
             )
         
-        self._update_llm_status()
+        self._refresh_server_indicator()
     
     def _on_cancel_llm(self):
         """Handle LLM cancellation request."""
         # Check current tab for a running per-tab worker
-        current_tab = self.tab_widget.currentWidget()
+        current_tab = self.view_stack.currentWidget()
         worker = getattr(current_tab, '_worker', None)
         if worker and worker.isRunning():
             log.info("User requested LLM cancellation (per-tab worker)")
@@ -1614,7 +1410,7 @@ class MainWindow(QMainWindow):
             self.dock.chat_panel.set_llm_active(False)
             self.dock.chat_panel.remove_thinking_message()
             self.dock.chat_panel.add_system_message("Request cancelled by user")
-            self.status_bar.showMessage("LLM request cancelled", 3000)
+            self.footer.show_message("LLM request cancelled", 3000)
 
     def _on_restart_backend(self):
         """Restart the shared OpenCode server to recover a hung / unresponsive
@@ -1632,7 +1428,7 @@ class MainWindow(QMainWindow):
         except Exception:
             log.exception("cancel before backend restart failed")
         self.dock.chat_panel.add_message("system", "Restarting backend…")
-        self.status_bar.showMessage("Restarting backend…", 3000)
+        self.footer.show_message("Restarting backend…", 3000)
 
         # A manager is single-use after stop() (its _retired flag is
         # permanent), so we can NOT stop+start the SAME object. Stand up a
@@ -1647,7 +1443,7 @@ class MainWindow(QMainWindow):
         request (a network POST to the OpenCode server) off the UI thread;
         the readout reflects the freed context on the next turn (the server
         reports the reduced total then), and we refresh it now best-effort."""
-        current_tab = self.tab_widget.currentWidget()
+        current_tab = self.view_stack.currentWidget()
         tab_context = getattr(current_tab, "tab_context", None)
         if tab_context is None:
             self.dock.chat_panel.add_system_message(
@@ -1655,7 +1451,7 @@ class MainWindow(QMainWindow):
             return
         backend = tab_context.backend
         self.dock.chat_panel.add_message("system", "Compacting session…")
-        self.status_bar.showMessage("Compacting session…", 3000)
+        self.footer.show_message("Compacting session…", 3000)
 
         def _done(ok):
             if ok:
@@ -1684,32 +1480,6 @@ class MainWindow(QMainWindow):
 
         threading.Thread(target=_compact, daemon=True).start()
 
-    def _on_toggle_workspace(self):
-        """Toggle workspace dock visibility."""
-        if self.workspace_dock.isVisible():
-            self.workspace_dock.hide()
-        else:
-            self.workspace_dock.show()
-    
-    def _on_workspace_visibility_changed(self, visible: bool):
-        """Update action when workspace visibility changes."""
-        self.toggle_workspace_action.blockSignals(True)
-        self.toggle_workspace_action.setChecked(visible)
-        self.toggle_workspace_action.blockSignals(False)
-    
-    def _on_toggle_dock(self):
-        """Toggle dock visibility."""
-        if self.dock.isVisible():
-            self.dock.hide()
-        else:
-            self.dock.show()
-    
-    def _on_dock_visibility_changed(self, visible: bool):
-        """Update action when dock visibility changes."""
-        self.toggle_dock_action.blockSignals(True)
-        self.toggle_dock_action.setChecked(visible)
-        self.toggle_dock_action.blockSignals(False)
-    
     @_host_services.requires_host
     def _on_new_project(self):
         """Handle new project creation (body in controllers/project_controller.py)."""
@@ -1816,12 +1586,13 @@ class MainWindow(QMainWindow):
             # + auto-correct checkbox so the master toggle in Settings →
             # Validator takes effect immediately (Phase 4.6).
             try:
-                current = self.tab_widget.currentWidget()
+                current = self.view_stack.currentWidget()
                 ctx = getattr(current, "tab_context", None)
                 if ctx is not None:
                     self.dock.chat_panel._refresh_validator_ui_for_context(ctx)
             except Exception:
                 log.debug("post-settings validator UI refresh failed", exc_info=True)
+            shell.refresh_footer(self)  # the validator's on/off and attempts
 
     @_host_services.requires_host
     def _on_project_configuration(self):
@@ -1902,7 +1673,7 @@ class MainWindow(QMainWindow):
         self._show_find_bar(replace=True)
 
     def _show_find_bar(self, *, replace: bool) -> None:
-        current = self.tab_widget.currentWidget()
+        current = self.view_stack.currentWidget()
         bar = getattr(current, "find_bar", None)
         if bar is None:
             # Active tab has no find bar (e.g. workspace placeholder); nothing to do.
@@ -1976,7 +1747,7 @@ class MainWindow(QMainWindow):
         """Handle chat message from user."""
         # Set intent based on current tab
         if self.session_state:
-            current_tab = self.tab_widget.currentWidget()
+            current_tab = self.view_stack.currentWidget()
             if current_tab == self.text_only_tab:
                 self.session_state.intent = "Help write a clear, complete procedure text"
             elif current_tab == self.text_json_tab:
@@ -1989,7 +1760,7 @@ class MainWindow(QMainWindow):
                 self.session_state.intent = "General assistance with test procedure development"
         
         # Get current active tab
-        current_tab = self.tab_widget.currentWidget()
+        current_tab = self.view_stack.currentWidget()
         
         # Check if chat is enabled for this tab
         tab_id = getattr(current_tab, 'tab_id', None)
@@ -2046,7 +1817,7 @@ class MainWindow(QMainWindow):
         
         tab = name_map.get(tab_name.lower())
         if tab:
-            self.tab_widget.setCurrentWidget(tab)
+            self.view_stack.setCurrentWidget(tab)
     
     def open_test(self, path: Path):
         """Open a test folder programmatically."""
@@ -2056,6 +1827,25 @@ class MainWindow(QMainWindow):
         """Set project root programmatically."""
         self.workspace_widget.set_project_root(path)
     
-    def closeEvent(self, event):
-        """Handle window close (body in controllers/document_controller.py)."""
+    def confirm_close(self, event):
+        """The hosting window is closing: save the session, ask about unsaved
+        work, stop the servers; ``event`` ignored when the user cancels (body
+        in controllers/document_controller.py)."""
         self._document_controller.on_close_event(event)
+
+
+class MainWindow(QMainWindow):
+    """Procedo Studio's window: its title, icon and menu bar around the
+    ``StudioWorkspace`` (which never assumes it owns this window)."""
+
+    def __init__(self, **workspace_args):
+        super().__init__()
+        self.setWindowTitle("Procedo Studio")
+        self.setWindowIcon(QIcon(str(shell.WINDOW_ICON_SVG)))
+        self.setMinimumSize(1200, 700)
+        self.workspace = StudioWorkspace(**workspace_args)
+        self.setMenuBar(self.workspace.menu_bar)
+        self.setCentralWidget(self.workspace)
+
+    def closeEvent(self, event):
+        self.workspace.confirm_close(event)

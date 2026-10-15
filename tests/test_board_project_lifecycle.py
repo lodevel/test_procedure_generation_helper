@@ -41,7 +41,7 @@ def test_cli_startup_discards_late_no_project_result(make_window, qapp, tmp_path
     monkeypatch.setattr(odb_inspect, "load_board", load)
     window = make_window(project_root=root, test_name="t1")
     try:
-        window.show()
+        window.window().show()
         panel = window.text_only_tab._netlist_panel
         _until(qapp, lambda: bool(panel._components))
         assert window.project_manager.project_root == root
@@ -61,9 +61,9 @@ def test_cli_startup_binds_chat_when_text_is_already_selected(make_window, qapp,
     monkeypatch.setattr(odb_inspect, "load_board", lambda project: _board("U_CURRENT"))
     window = make_window(project_root=root, test_name="t1")
     try:
-        window.show()
+        window.window().show()
         _until(qapp, lambda: not _LIVE_WORKERS)
-        assert window.tab_widget.currentWidget() is window.text_only_tab
+        assert window.view_stack.currentWidget() is window.text_only_tab
         chat = window.dock.chat_panel
         assert chat._current_tab_context is window.text_only_tab.tab_context
         assert not chat.board_data_checkbox.isHidden()

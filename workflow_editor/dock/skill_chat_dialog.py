@@ -16,7 +16,7 @@ The dialog adds only what is window-specific:
 * close-time teardown — a QWidget's ``closeEvent`` does NOT fire when embedded,
   so the dialog forwards its own close to ``widget.shutdown()``.
 
-The public constructor signature is UNCHANGED so ``skill_menu._launch_chat``
+The public constructor signature is UNCHANGED so ``skill_menu.launch_skill_chat``
 keeps working verbatim.
 """
 

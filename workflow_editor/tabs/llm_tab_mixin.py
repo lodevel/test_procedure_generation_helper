@@ -24,7 +24,6 @@ from ..llm import LLMTask, ChatMessage
 from ..llm.prompt_builder import PromptBuilder, TaskPromptNotDeclaredError
 from ..llm.output_contracts import get_contract_for_tab
 from ..llm.reconstruction import pipeline_ownership
-from ..core.task_config import DEFAULT_MAX_VALIDATOR_ATTEMPTS
 from ..llm.backend_base import ValidationIssue
 from ..llm.run_state import LLMRunState, RunStateKind
 from ..llm.tab_context import ChatMessage as _ChatMessage
@@ -661,7 +660,7 @@ class LLMTabMixin:
           2. **Per-project setting** — ``validator_loop.max_attempts`` in
              the project's ``config/config.json``. Surfaced via the
              Settings dialog's Validator tab (Phase 4).
-          3. **Built-in default** — :data:`DEFAULT_MAX_VALIDATOR_ATTEMPTS`.
+          3. **Built-in default** — ``task_config.DEFAULT_MAX_VALIDATOR_ATTEMPTS``.
 
         Each layer is read defensively; transient I/O glitches at one
         layer fall through to the next rather than failing the run.
@@ -677,20 +676,9 @@ class LLMTabMixin:
             except Exception:
                 log.debug("Couldn't read max_validator_attempts from TaskConfig", exc_info=True)
 
-        # 2. Per-project setting from Validator-tab persistence.
-        project_root = getattr(self.tab_context.project_manager, "project_root", None)
-        if project_root is not None:
-            try:
-                from ..llm.validator_loop_settings import load_settings
-                section = load_settings(project_root)
-                project_value = section.get("max_attempts")
-                if project_value is not None:
-                    return max(1, int(project_value))
-            except Exception:
-                log.debug("Couldn't read validator_loop.max_attempts", exc_info=True)
-
-        # 3. Hardcoded default.
-        return DEFAULT_MAX_VALIDATOR_ATTEMPTS
+        # 2. Per-project setting from Validator-tab persistence, 3. the default.
+        from ..llm.validator_loop_settings import max_attempts
+        return max_attempts(getattr(self.tab_context.project_manager, "project_root", None))
 
     def _is_auto_correct_enabled(self) -> bool:
         """Operator's runtime toggle — read from the chat-panel checkbox.
@@ -925,7 +913,7 @@ class LLMTabMixin:
 
     def _is_active_tab(self) -> bool:
         """Return True if this tab is the currently visible tab."""
-        return self.main_window.tab_widget.currentWidget() is self
+        return self.main_window.view_stack.currentWidget() is self
 
     def _create_assistant_message(
         self,

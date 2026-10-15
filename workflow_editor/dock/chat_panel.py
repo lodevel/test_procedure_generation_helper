@@ -79,7 +79,6 @@ class ChatPanel(QWidget):
     message_sent = Signal(str)  # Emitted when user sends a message
     reset_requested = Signal()  # Emitted when user clicks reset button
     cancel_requested = Signal()  # Emitted when user clicks cancel button
-    restart_requested = Signal()  # Emitted when user clicks restart-backend
     compact_requested = Signal()  # Emitted when user clicks compact-session
     
     def __init__(self, main_window: "MainWindow", parent=None):
@@ -256,13 +255,6 @@ class ChatPanel(QWidget):
         self.reset_btn.clicked.connect(self._on_reset)
         btn_layout.addWidget(self.reset_btn)
         
-        self.restart_btn = QPushButton("🔄")
-        self.restart_btn.setToolTip("Restart the backend server (recover a hung / unresponsive backend without relaunching)")
-        self.restart_btn.setObjectName("iconButton")
-        self.restart_btn.setStyleSheet("QPushButton { padding: 4px 8px; min-width: 0; }")
-        self.restart_btn.clicked.connect(self._on_restart)
-        btn_layout.addWidget(self.restart_btn)
-        
         self.compact_btn = QPushButton("🗜️")
         self.compact_btn.setToolTip("Compact the LLM session (summarize history to free up context when it gets long)")
         self.compact_btn.setObjectName("iconButton")
@@ -319,10 +311,6 @@ class ChatPanel(QWidget):
     def _on_cancel(self):
         """Handle cancel button click."""
         self.cancel_requested.emit()
-    
-    def _on_restart(self):
-        """Handle restart-backend button click."""
-        self.restart_requested.emit()
     
     def _on_compact(self):
         """Handle compact-session button click."""

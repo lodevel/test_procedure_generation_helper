@@ -641,9 +641,9 @@ def test_wait_for_server_aborts_when_retired_mid_wait(tmp_path):
 # --------------------------------------------------------------------------- #
 
 class _FakeSM:
-    """A minimal server-manager stand-in for the MainWindow recovery seam.
+    """A minimal server-manager stand-in for the StudioWorkspace recovery seam.
 
-    The MainWindow tick + recovery finally now read the strong predicate
+    The StudioWorkspace tick + recovery finally now read the strong predicate
     ``is_alive`` (process up AND /health 200), so the fake exposes both. By
     default ``is_alive`` tracks ``is_running``; ``wedged=True`` models a
     hung server (process up, /health dead) where ``is_running`` is True but
@@ -672,9 +672,9 @@ class _FakeSM:
 
 def _fake_window(sm):
     """A bare object carrying just what the recovery methods touch, so the
-    MainWindow methods can be driven unbound (no Qt)."""
+    StudioWorkspace methods can be driven unbound (no Qt)."""
     import types
-    from workflow_editor.main_window import MainWindow
+    from workflow_editor.main_window import StudioWorkspace
     w = types.SimpleNamespace()
     w._server_manager = sm
     w._server_recovering = False
@@ -682,10 +682,10 @@ def _fake_window(sm):
     # Off-thread health-probe state the new tick path reads/writes.
     w._last_server_alive = None
     w._health_probe_inflight = False
-    # The cap is a MainWindow class attribute the unbound method reads off self.
-    w._MAX_SERVER_RECOVERY_ATTEMPTS = MainWindow._MAX_SERVER_RECOVERY_ATTEMPTS
-    # status_bar.showMessage / _refresh_server_indicator are side-effect-only.
-    w.status_bar = MagicMock()
+    # The cap is a StudioWorkspace class attribute the unbound method reads off self.
+    w._MAX_SERVER_RECOVERY_ATTEMPTS = StudioWorkspace._MAX_SERVER_RECOVERY_ATTEMPTS
+    # footer.show_message / _refresh_server_indicator are side-effect-only.
+    w.footer = MagicMock()
     w._refresh_server_indicator = MagicMock()
     return w
 
@@ -702,7 +702,7 @@ def _run_tick_sync(w):
     spawned thread body inline on ``.start()`` and (b) run every ``_post_to_ui``
     callback inline. The bound methods resolve off ``w`` (a SimpleNamespace), so
     we install an inline ``_post_to_ui`` on ``w`` itself."""
-    from workflow_editor.main_window import MainWindow
+    from workflow_editor.main_window import StudioWorkspace
 
     def _inline_thread(target, daemon=False):
         t = MagicMock()
@@ -715,13 +715,13 @@ def _run_tick_sync(w):
     w._post_to_ui = _inline_post_to_ui
     # Bind the UI-thread continuations as methods on the SimpleNamespace so the
     # inline _post_to_ui callbacks (which call self._on_*) resolve them.
-    w._on_health_probe_result = lambda sm, alive: MainWindow._on_health_probe_result(w, sm, alive)
-    w._recover = lambda sm: MainWindow._recover(w, sm)
-    w._on_recover_done = lambda sm, ok: MainWindow._on_recover_done(w, sm, ok)
+    w._on_health_probe_result = lambda sm, alive: StudioWorkspace._on_health_probe_result(w, sm, alive)
+    w._recover = lambda sm: StudioWorkspace._recover(w, sm)
+    w._on_recover_done = lambda sm, ok: StudioWorkspace._on_recover_done(w, sm, ok)
 
     with patch("workflow_editor.main_window.threading.Thread",
                side_effect=_inline_thread):
-        MainWindow._on_server_health_tick(w)
+        StudioWorkspace._on_server_health_tick(w)
 
 
 def test_post_to_ui_uses_signal_not_singleshot():
@@ -730,13 +730,13 @@ def test_post_to_ui_uses_signal_not_singleshot():
     # called from a non-Qt daemon thread, creates the timer in the calling
     # thread and the callback can be lost (probe/recover would wedge forever).
     import types
-    from workflow_editor.main_window import MainWindow
+    from workflow_editor.main_window import StudioWorkspace
 
     w = types.SimpleNamespace()
     w._ui_call = MagicMock()  # stand-in for the bound Signal
     payload = object()
     with patch("PySide6.QtCore.QTimer") as qtimer:
-        MainWindow._post_to_ui(w, payload)
+        StudioWorkspace._post_to_ui(w, payload)
     # Marshalled by emitting the signal with the exact callable...
     w._ui_call.emit.assert_called_once_with(payload)
     # ...and NOT by the lost-from-daemon QTimer.singleShot path.
@@ -746,7 +746,7 @@ def test_post_to_ui_uses_signal_not_singleshot():
 def test_auto_recovery_gives_up_after_three_failures():
     # A server that stays down: each tick relaunches and increments the failure
     # count; after MAX (3) consecutive failures we STOP spawning recoveries.
-    from workflow_editor.main_window import MainWindow
+    from workflow_editor.main_window import StudioWorkspace
     sm = _FakeSM(alive=False)
     w = _fake_window(sm)
 
@@ -755,7 +755,7 @@ def test_auto_recovery_gives_up_after_three_failures():
     # Three relaunch attempts, three failures recorded.
     assert sm.ensure_calls == 3
     assert w._server_recovery_attempts == 3
-    assert w._server_recovery_attempts >= MainWindow._MAX_SERVER_RECOVERY_ATTEMPTS
+    assert w._server_recovery_attempts >= StudioWorkspace._MAX_SERVER_RECOVERY_ATTEMPTS
 
     # A FOURTH tick must NOT relaunch — auto-recovery has given up.
     _run_tick_sync(w)
@@ -765,7 +765,7 @@ def test_auto_recovery_gives_up_after_three_failures():
 def test_auto_recovery_resets_when_server_back_alive():
     # After the give-up cap, the moment the server reads alive again the tick
     # resets the counter so a FUTURE crash is auto-recovered.
-    from workflow_editor.main_window import MainWindow
+    from workflow_editor.main_window import StudioWorkspace
     sm = _FakeSM(alive=False)
     w = _fake_window(sm)
     for _ in range(3):
@@ -787,14 +787,14 @@ def test_auto_recovery_resets_when_server_back_alive():
 def test_reset_server_recovery_rearms_after_giveup():
     # A manual action (Restart backend / Start server) calls _reset_server_recovery
     # which clears the give-up state so the next tick auto-recovers again.
-    from workflow_editor.main_window import MainWindow
+    from workflow_editor.main_window import StudioWorkspace
     sm = _FakeSM(alive=False)
     w = _fake_window(sm)
     for _ in range(3):
         _run_tick_sync(w)
     assert w._server_recovery_attempts == 3  # gave up
 
-    MainWindow._reset_server_recovery(w)
+    StudioWorkspace._reset_server_recovery(w)
     assert w._server_recovery_attempts == 0
     assert w._server_recovering is False
 
@@ -823,7 +823,7 @@ def test_stop_manager_async_sets_retired_synchronously():
     # thread that races into the old manager's start() must already see
     # _retired==True the instant _stop_manager_async returns. We block stop()
     # on an event so it provably has NOT run yet, then assert _retired is True.
-    from workflow_editor.main_window import MainWindow
+    from workflow_editor.main_window import StudioWorkspace
 
     stop_gate = threading.Event()
 
@@ -841,8 +841,8 @@ def test_stop_manager_async_sets_retired_synchronously():
 
     mgr = _FakeManager()
     # Call the method unbound — it only spawns the stop thread; it touches no
-    # MainWindow instance state, so a bare object suffices as `self`.
-    MainWindow._stop_manager_async(object(), mgr)
+    # StudioWorkspace instance state, so a bare object suffices as `self`.
+    StudioWorkspace._stop_manager_async(object(), mgr)
 
     # SYNCHRONOUS guarantee: _retired is already armed even though stop()'s
     # teardown is still blocked on the gate (deferred off this thread).
@@ -854,14 +854,14 @@ def test_stale_health_probe_does_not_clear_live_inflight_flag():
     # Residual #1: a probe spawned for an OLD manager must not clear the CURRENT
     # manager's in-flight flag — otherwise the next tick stacks a 2nd concurrent
     # probe. The flag clear must happen AFTER the stale-manager guard returns.
-    from workflow_editor.main_window import MainWindow
+    from workflow_editor.main_window import StudioWorkspace
     current_sm = _FakeSM(alive=True)
     w = _fake_window(current_sm)
     w._health_probe_inflight = True  # the CURRENT manager's probe is in flight
 
     old_sm = _FakeSM(alive=True)  # a different (swapped-out) manager
     # A late result from the OLD manager's probe marshals back.
-    MainWindow._on_health_probe_result(w, old_sm, True)
+    StudioWorkspace._on_health_probe_result(w, old_sm, True)
 
     # Dropped by the stale-manager guard WITHOUT clearing the live flag.
     assert w._health_probe_inflight is True
@@ -872,12 +872,12 @@ def test_stale_health_probe_does_not_clear_live_inflight_flag():
 def test_current_health_probe_clears_inflight_flag():
     # The complement: the CURRENT manager's probe DOES clear its own in-flight
     # flag (so the next tick is unblocked).
-    from workflow_editor.main_window import MainWindow
+    from workflow_editor.main_window import StudioWorkspace
     sm = _FakeSM(alive=True)
     w = _fake_window(sm)
     w._health_probe_inflight = True
 
-    MainWindow._on_health_probe_result(w, sm, True)
+    StudioWorkspace._on_health_probe_result(w, sm, True)
 
     assert w._health_probe_inflight is False
     w._refresh_server_indicator.assert_called_once_with(True)

@@ -64,6 +64,20 @@ def is_enabled(project_root: Path | None) -> bool:
     return bool(val)
 
 
+def max_attempts(project_root: Path | None) -> int:
+    """The project's validator retry budget (``validator_loop.max_attempts``), else the
+    built-in default."""
+    from ..core.task_config import DEFAULT_MAX_VALIDATOR_ATTEMPTS
+    if project_root is not None:
+        value = load_settings(project_root).get("max_attempts")
+        try:
+            if value is not None:
+                return max(1, int(value))
+        except (TypeError, ValueError):
+            log.debug("validator_loop.max_attempts is not an int: %r", value)
+    return DEFAULT_MAX_VALIDATOR_ATTEMPTS
+
+
 def load_settings(project_root: Path) -> dict[str, Any]:
     """Read the ``validator_loop`` section from the project's config.
 

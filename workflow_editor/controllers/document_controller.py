@@ -1,11 +1,11 @@
-"""Document/test lifecycle controller carved out of MainWindow.
+"""Document/test lifecycle controller carved out of the Studio workspace.
 
 Owns the test-document path: tab-change syncing, the test-opened /
 test-deleted lifecycle, the save choke-point (the task-#41 id=folder
 enforcement rides ArtifactManager through these save paths), sync-hash
 state + indicator + coherence prompts, the unsaved-changes prompt and
 the window-close flow. Method bodies were moved verbatim from
-``main_window.MainWindow`` (``self`` -> ``mw``); MainWindow keeps thin
+``main_window.StudioWorkspace`` (``self`` -> ``mw``); the workspace keeps thin
 delegating methods for every name its tests and Qt connections pin.
 """
 
@@ -16,42 +16,43 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QMessageBox
 
+from project_services.ui_kit import set_pill
+
 from ..core import ArtifactManager, ArtifactType, SessionState
+from ..shell import VIEWS
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ..main_window import MainWindow
+    from ..main_window import StudioWorkspace
 
 log = logging.getLogger(__name__)
 
 
 class DocumentController:
-    """Test-document lifecycle + save/sync logic for MainWindow."""
+    """Test-document lifecycle + save/sync logic for the Studio workspace."""
 
-    def __init__(self, window: MainWindow) -> None:
+    def __init__(self, window: StudioWorkspace) -> None:
         self._mw = window
 
     def update_sync_indicator(self):
-        """Update the JSON\u2194Code sync indicator in the status bar."""
+        """Paint the header's JSON\u2194Code Sync pill (a click acknowledges)."""
         mw = self._mw
         if not mw.session_state:
-            mw.sync_indicator.setText("Sync \u26aa")
-            mw.sync_indicator.setToolTip("No test loaded")
-            return
-
-        if mw.session_state.artifacts_in_sync:
-            mw.sync_indicator.setText("Sync \u2705")
-            mw.sync_indicator.setToolTip(
+            set_pill(mw.sync_pill, "neutral", "\u21c4 Sync")
+            mw.sync_pill.setToolTip("No test loaded")
+        elif mw.session_state.artifacts_in_sync:
+            set_pill(mw.sync_pill, "success", "\u21c4 JSON \u2194 Code in sync")
+            mw.sync_pill.setToolTip(
                 "procedure.json and test.py are in sync.\n"
                 "Click to view status."
             )
         else:
-            mw.sync_indicator.setText("Sync \u26a0\ufe0f")
-            mw.sync_indicator.setToolTip(
+            set_pill(mw.sync_pill, "warning", "\u21c4 Sync unconfirmed \u00b7 acknowledge")
+            mw.sync_pill.setToolTip(
                 "procedure.json and test.py may be out of sync!\n"
                 "One was modified without the other.\n"
-                "Click to acknowledge sync."
+                "Click to acknowledge that they are coherent."
             )
 
     def on_sync_indicator_clicked(self):
@@ -82,7 +83,7 @@ class DocumentController:
             self.mark_in_sync()
             self.update_sync_indicator()
             mw.workspace_widget.refresh()
-            mw.status_bar.showMessage("Artifacts marked as in sync", 2000)
+            mw.footer.show_message("Artifacts marked as in sync", 2000)
 
     def mark_in_sync(self):
         """Record procedure.json and test.py as coherent: their current hashes
@@ -144,8 +145,8 @@ class DocumentController:
         # We must not sync all non-current tabs, as they may hold stale
         # content for shared artifacts (e.g. procedure.json).
         if hasattr(mw, '_previous_tab_index'):
-            prev_tab = mw.tab_widget.widget(mw._previous_tab_index)
-            if prev_tab is not None and prev_tab != mw.tab_widget.widget(index):
+            prev_tab = mw.view_stack.widget(mw._previous_tab_index)
+            if prev_tab is not None and prev_tab != mw.view_stack.widget(index):
                 if hasattr(prev_tab, 'sync_editors_to_artifacts'):
                     prev_tab.sync_editors_to_artifacts()
                 if hasattr(prev_tab, 'on_deactivated'):
@@ -153,7 +154,7 @@ class DocumentController:
 
         mw._previous_tab_index = index
 
-        tab = mw.tab_widget.widget(index)
+        tab = mw.view_stack.widget(index)
         if hasattr(tab, 'on_activated') and mw.artifact_manager is not None:
             tab.on_activated()
 
@@ -206,8 +207,7 @@ class DocumentController:
                 )
 
         # Update save action label to be context-aware
-        tab_name = mw.tab_widget.tabText(index)
-        mw.save_action.setText(f"&Save {tab_name}")
+        mw.save_action.setText(f"&Save {VIEWS[index][0]}")
 
         # Update menu state based on current artifacts
         mw._update_menu_state()
@@ -265,17 +265,14 @@ class DocumentController:
                   f"Code: {mw.artifact_manager.test_code.exists_on_disk}, "
                   f"Text: {mw.artifact_manager.procedure_text.exists_on_disk}")
 
-        # Update status
-        mw.test_label.setText(f"Test: {path.name}")
-
         # Highlight the opened test in workspace
         mw.workspace_widget.set_opened_test(path)
 
         # Detect rules (result stored in project_manager.rules_root)
         mw.project_manager.detect_rules_root()
 
-        # Enable tabs and dock now that a test is loaded
-        mw.tab_widget.setEnabled(True)
+        # Enable the views and the Assistant now that a test is loaded
+        mw.view_column.setEnabled(True)
         mw.dock.setEnabled(True)
 
         # Refresh tabs
@@ -304,15 +301,15 @@ class DocumentController:
 
         # Switch to appropriate tab only on first test load.
         # When switching between tests, preserve the user's current tab.
-        previous_index = mw.tab_widget.currentIndex()
+        previous_index = mw.view_stack.currentIndex()
         if not hasattr(mw, '_has_opened_test'):
             mw._has_opened_test = True
             # Default to the Text tab (text-only authoring view).
-            mw.tab_widget.setCurrentWidget(mw.text_only_tab)
+            mw.view_stack.setCurrentWidget(mw.text_only_tab)
 
         # Selecting the already-visible tab emits no currentChanged signal.
         # Bind the dock to the loaded test even on that default startup path.
-        if mw.tab_widget.currentIndex() == previous_index:
+        if mw.view_stack.currentIndex() == previous_index:
             self.on_tab_changed(previous_index)
 
     def on_test_deleted(self, path: Path):
@@ -332,18 +329,17 @@ class DocumentController:
             mw.json_code_tab.json_editor.clear()
             mw.json_code_tab.code_editor.clear()
 
-            # Disable tabs and dock
-            mw.tab_widget.setEnabled(False)
+            # Disable the views and the Assistant
+            mw.view_column.setEnabled(False)
             mw.dock.setEnabled(False)
 
-            # Reset status
-            mw.test_label.setText("No test loaded")
+            # Reset the header
             mw._update_status_indicators()
 
             # Clear opened test highlight
             mw.workspace_widget.set_opened_test(None)
 
-        mw.status_bar.showMessage(f"Deleted test: {path.name}", 3000)
+        mw.footer.show_message(f"Deleted test: {path.name}", 3000)
 
     def on_save(self):
         """Save artifacts managed by the current tab.
@@ -356,7 +352,7 @@ class DocumentController:
         if not mw.artifact_manager:
             return
 
-        current_tab = mw.tab_widget.currentWidget()
+        current_tab = mw.view_stack.currentWidget()
 
         if hasattr(current_tab, 'save_all_artifacts'):
             current_tab.save_all_artifacts()
@@ -370,7 +366,7 @@ class DocumentController:
         mw._update_status_indicators()
         # Refresh workspace test list to update artifact indicators
         mw.workspace_widget.refresh()
-        mw.status_bar.showMessage("Saved", 2000)
+        mw.footer.show_message("Saved", 2000)
 
     def check_sync_hashes(self):
         """Compare current artifact content hashes against the last-acknowledged baseline.
@@ -442,7 +438,7 @@ class DocumentController:
 
         # Sync only the current tab — inactive tabs may hold stale content
         # for shared artifacts like procedure.json
-        current_tab = mw.tab_widget.currentWidget()
+        current_tab = mw.view_stack.currentWidget()
         if hasattr(current_tab, 'sync_editors_to_artifacts'):
             current_tab.sync_editors_to_artifacts()
 
@@ -464,7 +460,7 @@ class DocumentController:
         mw._update_status_indicators()
         # Refresh workspace test list to update artifact indicators
         mw.workspace_widget.refresh()
-        mw.status_bar.showMessage("All saved", 2000)
+        mw.footer.show_message("All saved", 2000)
 
     def check_unsaved_changes(self) -> bool:
         """Check for unsaved changes and prompt user.
@@ -483,7 +479,7 @@ class DocumentController:
 
         # Sync only the CURRENT tab to catch un-saved editor changes.
         # Inactive tabs may have stale content for shared artifacts.
-        current_tab = mw.tab_widget.currentWidget()
+        current_tab = mw.view_stack.currentWidget()
         if hasattr(current_tab, 'sync_editors_to_artifacts'):
             current_tab.sync_editors_to_artifacts()
 

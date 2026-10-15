@@ -74,12 +74,12 @@ FILE_BUDGET: dict[str, int] = {
     "pack_ops/pack_parsers.py": 1763,  # +42: export_rows op (project-venv document exports, 0d448bc)
     "llm/tab_context.py": 1057,
     "llm/validator_dispatch.py": 1163,
-    "main_window.py": 2064,  # +84: post-carve growth (opencode session keep-alive, ecbb421 et al.)
+    "main_window.py": 1852,  # -212: the status bar, docks and tab widget left for shell.py (Studio redesign slice 2)
 }
 
 CLASS_METHOD_BUDGET: dict[tuple[str, str], int] = {
     ("dock/skill_chat_widget.py", "SkillChatWidget"): 42,
-    ("main_window.py", "MainWindow"): 92,  # +2: opencode session keep-alive handlers (ecbb421 era)
+    ("main_window.py", "StudioWorkspace"): 86,  # the former MainWindow, less the status bar and dock handlers (slice 2)
     ("tabs/json_code_tab.py", "JsonCodeTab"): 42,
     ("tabs/text_json_tab.py", "TextJsonTab"): 43,
 }

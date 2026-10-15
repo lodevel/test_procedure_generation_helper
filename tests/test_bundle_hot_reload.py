@@ -8,7 +8,7 @@ Covers the three seams:
   defaults.json — tasks appear/disappear and prompt templates swap.
 * ``pack_parsers._load_bundle_equipment_profiles`` resolves
   project-root-first with the env var as legacy fallback.
-* The editor's bundle watcher plumbing (real ``MainWindow`` methods
+* The editor's bundle watcher plumbing (real ``StudioWorkspace`` methods
   bound to a light harness): bundle-dir / project-root events fire ONE
   debounced reload, unrelated writes fire none, and the
   ``.bundle_installed.json`` stamp is a belt-and-braces trigger.
@@ -30,7 +30,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from workflow_editor.core.task_config import TaskConfigManager  # noqa: E402
 from workflow_editor.pack_ops import pack_parsers as pp  # noqa: E402
-from workflow_editor.main_window import MainWindow  # noqa: E402
+from workflow_editor.main_window import StudioWorkspace  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -194,20 +194,20 @@ def test_equipment_profiles_project_first(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Watcher plumbing — real MainWindow methods on a light harness
+# Watcher plumbing — real StudioWorkspace methods on a light harness
 # ---------------------------------------------------------------------------
 
 class _WatcherHarness:
     """Carries exactly the state the bundle-watch methods touch; the
-    methods themselves are the REAL MainWindow implementations."""
+    methods themselves are the REAL StudioWorkspace implementations."""
 
-    _watch_project_config = MainWindow._watch_project_config
-    _watch_project_bundle = MainWindow._watch_project_bundle
-    _bundle_signature_changed = MainWindow._bundle_signature_changed
-    _bundle_stamp_changed = MainWindow._bundle_stamp_changed
-    _on_config_dir_changed = MainWindow._on_config_dir_changed
-    _on_config_file_changed = MainWindow._on_config_file_changed
-    _on_bundle_change_debounced = MainWindow._on_bundle_change_debounced
+    _watch_project_config = StudioWorkspace._watch_project_config
+    _watch_project_bundle = StudioWorkspace._watch_project_bundle
+    _bundle_signature_changed = StudioWorkspace._bundle_signature_changed
+    _bundle_stamp_changed = StudioWorkspace._bundle_stamp_changed
+    _on_config_dir_changed = StudioWorkspace._on_config_dir_changed
+    _on_config_file_changed = StudioWorkspace._on_config_file_changed
+    _on_bundle_change_debounced = StudioWorkspace._on_bundle_change_debounced
 
     def __init__(self, project_root: Path, debounce_ms: int = 60):
         config_dir = project_root / "config"

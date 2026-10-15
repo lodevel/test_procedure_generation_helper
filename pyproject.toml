@@ -41,6 +41,8 @@ include = ["workflow_editor*"]
 # no filesystem walk-up needed (see project_services.workflow_defaults).
 [tool.setuptools.package-data]
 "workflow_editor.core" = ["default_workflows.json"]
+# Procedo Studio's mark (the header) and window icon.
+"workflow_editor" = ["icons/*.svg"]
 
 # --- Lint gate -------------------------------------------------------------
 # GREEN DAY-1: this tree has never been through a format/autofix pass, so the

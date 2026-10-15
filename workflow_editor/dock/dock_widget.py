@@ -1,23 +1,22 @@
 """
-Dock Widget - Container for right-side dock panels.
+Dock Widget - the Assistant column (the right column of Procedo Studio).
 
 Implements the dock panel structure from Section 10.
 """
 
 from PySide6.QtWidgets import (
-    QDockWidget, QWidget, QVBoxLayout, QTabWidget
+    QWidget, QVBoxLayout, QTabWidget
 )
-from PySide6.QtCore import Qt, Signal
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..main_window import MainWindow
+    from ..main_window import StudioWorkspace
     from ..core import ValidationResult
 
 
-class DockWidget(QDockWidget):
+class DockWidget(QWidget):
     """
-    Container dock widget for right panel.
+    The Assistant column: a fixed column of the workspace (no float, no close).
     
     Contains tabbed sections:
     - Chat: LLM conversation
@@ -26,11 +25,10 @@ class DockWidget(QDockWidget):
     - Raw: Debug response viewer
     """
     
-    def __init__(self, main_window: "MainWindow", parent=None):
-        super().__init__("Assistant", parent)
+    def __init__(self, main_window: "StudioWorkspace", parent=None):
+        super().__init__(parent)
         self.main_window = main_window
         
-        self.setAllowedAreas(Qt.RightDockWidgetArea | Qt.LeftDockWidgetArea)
         self.setMinimumWidth(300)
         
         self._findings_count = 0  # Track issue count for badge
@@ -38,8 +36,7 @@ class DockWidget(QDockWidget):
         self._setup_ui()
     
     def _setup_ui(self):
-        container = QWidget()
-        layout = QVBoxLayout(container)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         
         # Toolbar with rule selector button
@@ -78,8 +75,6 @@ class DockWidget(QDockWidget):
         self.tab_widget.addTab(self.raw_viewer, "Raw")
         
         layout.addWidget(self.tab_widget)
-        
-        self.setWidget(container)
     
     def show_chat(self):
         """Show the chat panel."""
@@ -102,7 +97,7 @@ class DockWidget(QDockWidget):
         from PySide6.QtWidgets import QMessageBox
         
         # Get current tab from main window
-        current_widget = self.main_window.tab_widget.currentWidget()
+        current_widget = self.main_window.view_stack.currentWidget()
         
         # Determine tab_id and tab_context
         tab_context = None

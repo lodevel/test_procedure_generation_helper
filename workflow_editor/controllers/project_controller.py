@@ -1,16 +1,16 @@
-"""Project/session controller carved out of MainWindow.
+"""Project/session controller carved out of the Studio workspace.
 
 Owns the project lifecycle: the new/open/recent project flows plus the
 task-#39 live-refresh plumbing (config.json + bundle watchers, the
 edge-triggered change detectors, the debounced reload funnel and the
 ``handle_config_change`` hot-reload funnel). Method bodies were moved
-verbatim from ``main_window.MainWindow`` (``self`` -> ``mw``);
-MainWindow keeps thin delegating methods for every name its tests and
+verbatim from ``main_window.StudioWorkspace`` (``self`` -> ``mw``);
+the workspace keeps thin delegating methods for every name its tests and
 Qt connections pin.
 
 The watcher/funnel slice is deliberately MODULE-LEVEL functions over
 the passed window (not ``ProjectController`` methods):
-``tests/test_bundle_hot_reload.py`` lifts the corresponding MainWindow
+``tests/test_bundle_hot_reload.py`` lifts the corresponding StudioWorkspace
 delegates UNBOUND onto a bare ``_WatcherHarness`` carrying only the
 watcher state, so these bodies must late-bind through the object they
 are handed and never through a stored controller attribute.
@@ -27,15 +27,15 @@ from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 from .. import _host_services, _project_local_state
 
 if TYPE_CHECKING:
-    from ..main_window import MainWindow
+    from ..main_window import StudioWorkspace
 
 log = logging.getLogger(__name__)
 
 
 class ProjectController:
-    """Project new/open/recents flows for MainWindow."""
+    """Project new/open/recents flows for the Studio workspace."""
 
-    def __init__(self, window: MainWindow) -> None:
+    def __init__(self, window: StudioWorkspace) -> None:
         self._mw = window
 
     def on_new_project(self):
@@ -82,16 +82,15 @@ class ProjectController:
         # registered reload callback refreshes button labels.
         mw.task_config_manager.reload(mw.project_manager.project_root)
 
-        # Update status bar indicators
+        # Update the footer (project, rules)
         mw._update_project_rules_indicators()
         mw.text_json_tab.refresh_parser_button()
         mw.text_only_tab.refresh_parser_button()
         mw.json_code_tab.refresh_code_parser_button()
         mw._watch_project_config()
 
-        # Show workspace dock if hidden
-        if mw.workspace_dock.isHidden():
-            mw.workspace_dock.show()
+        # Show the Workspace column if hidden
+        mw.toggle_workspace_action.setChecked(True)
         mw._restart_server_for_project()
 
         # Show success message
@@ -114,8 +113,7 @@ class ProjectController:
         mw.text_only_tab.refresh_parser_button()
         mw.json_code_tab.refresh_code_parser_button()
         mw._watch_project_config()
-        if mw.workspace_dock.isHidden():
-            mw.workspace_dock.show()
+        mw.toggle_workspace_action.setChecked(True)
         mw._restart_server_for_project()
 
     def rebuild_open_recent_menu(self):
@@ -178,16 +176,15 @@ class ProjectController:
                 # Switch task configurations to the detected project root.
                 mw.task_config_manager.reload(mw.project_manager.project_root)
 
-                # Update status bar indicators
+                # Update the footer (project, rules)
                 mw._update_project_rules_indicators()
                 mw.text_json_tab.refresh_parser_button()
                 mw.text_only_tab.refresh_parser_button()
                 mw.json_code_tab.refresh_code_parser_button()
                 mw._watch_project_config()
 
-                # Show workspace dock
-                if mw.workspace_dock.isHidden():
-                    mw.workspace_dock.show()
+                # Show the Workspace column
+                mw.toggle_workspace_action.setChecked(True)
                 mw._restart_server_for_project()
             else:
                 QMessageBox.warning(
@@ -199,7 +196,7 @@ class ProjectController:
 
 
 # --- task-#39 watcher / config-change funnel -------------------------------
-# Module-level on purpose: MainWindow's thin delegates for these names are
+# Module-level on purpose: StudioWorkspace's thin delegates for these names are
 # lifted unbound onto tests' _WatcherHarness (see module docstring), so the
 # bodies bind late through ``mw`` and keep no controller state.
 
@@ -396,7 +393,7 @@ def handle_config_change(mw) -> None:
     # Also refresh the chat panel's validator-status indicator so
     # auto-correct checkbox + dot reflect the new state.
     try:
-        current = mw.tab_widget.currentWidget()
+        current = mw.view_stack.currentWidget()
         ctx = getattr(current, "tab_context", None)
         if ctx is not None:
             mw.dock.chat_panel._refresh_validator_ui_for_context(ctx)

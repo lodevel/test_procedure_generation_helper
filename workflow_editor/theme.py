@@ -2,7 +2,7 @@
 
 Studio wears Bench's theme: its palette and its one app stylesheet, applied by
 ``test_procedure_gui.theme.apply_app_theme``. The helpers below only add the colours of
-Studio's own widgets (chat, proposals, diff, syntax, findings...) and read Bench's theme
+Studio's own widgets (the skill chat, diff, syntax...) and read Bench's theme
 state; the colours both apps share are Bench's, imported here.
 """
 
@@ -18,25 +18,14 @@ from test_procedure_gui.theme import (  # Bench's theme state and shared colours
     is_dark,
     muted_color,
     success_color,
-    warning_color,
 )
 
 
 # ── Chat panel colours ──────────────────────────────────────────────
 
-def chat_user_bg() -> str:
-    """Background for user messages in chat."""
-    return "#1b3a1b" if is_dark() else "#e8f5e9"
-
-
 def chat_user_border() -> str:
     """Border for user messages in chat."""
     return "#2e7d32" if is_dark() else "#c8e6c9"
-
-
-def chat_assistant_bg() -> str:
-    """Background for assistant messages in chat."""
-    return "#1a2433" if is_dark() else "#e3f2fd"
 
 
 def chat_assistant_border() -> str:
@@ -44,79 +33,14 @@ def chat_assistant_border() -> str:
     return "#1565c0" if is_dark() else "#bbdefb"
 
 
-def chat_system_bg() -> str:
-    """Background for system/tool messages in chat."""
-    return "#2b2518" if is_dark() else "#fff3e0"
-
-
 def chat_system_border() -> str:
     """Border for system/tool messages in chat."""
     return "#e65100" if is_dark() else "#ffe0b2"
 
 
-def chat_input_bg() -> str:
-    """Background for the chat input area."""
-    return "#2b2b2b" if is_dark() else "#f5f5f5"
-
-
-def chat_input_border() -> str:
-    """Border for the chat input area."""
-    return "#444" if is_dark() else "#e0e0e0"
-
-
-def chat_role_color() -> str:
-    """Color for the role label in chat messages."""
-    return "#c5ccd6" if is_dark() else "#555"
-
-
-def chat_timestamp_color() -> str:
-    """Color for timestamps in chat."""
-    return "#b8c0cc" if is_dark() else "#777"
-
-
 def chat_content_color() -> str:
     """Color for chat message content."""
     return "#ddd" if is_dark() else "#333"
-
-
-def chat_thinking_border() -> str:
-    """Border for thinking/processing indicators."""
-    return "#5588bb" if is_dark() else "#90caf9"
-
-
-def chat_accept_bg() -> str:
-    """Background for accept/apply buttons."""
-    return "#2e7d32" if is_dark() else "#c8e6c9"
-
-
-def chat_reject_bg() -> str:
-    """Background for reject/cancel buttons."""
-    return "#b71c1c" if is_dark() else "#ffcdd2"
-
-
-# Aliases matching reference API names
-accept_btn_bg = chat_accept_bg
-reject_btn_bg = chat_reject_bg
-
-
-def proposal_bg() -> str:
-    """Background for proposal widgets."""
-    return "#1a3020" if is_dark() else "#e8f5e9"
-
-
-def proposal_border() -> str:
-    """Border for proposal widgets."""
-    return "#2a5040" if is_dark() else "#c8e6c9"
-
-
-def proposal_handled_bg() -> str:
-    """Background for accepted/rejected proposal."""
-    return "#2a2a2a" if is_dark() else "#f5f5f5"
-
-
-def proposal_handled_border() -> str:
-    """Border for accepted/rejected proposal."""
-    return "#444" if is_dark() else "#e0e0e0"
 
 
 def message_bg(role: str) -> str:
@@ -131,73 +55,6 @@ def message_border(role: str) -> str:
     if is_dark():
         return {"user": "#2a5080", "assistant": "#444", "system": "#5a4a20"}.get(role, "#444")
     return {"user": "#bbdefb", "assistant": "#e0e0e0", "system": "#ffe0b2"}.get(role, "#e0e0e0")
-
-
-def toggle_color() -> str:
-    """Colour for collapsible-section toggle text."""
-    return "#b8c0cc" if is_dark() else "#888"
-
-
-def toggle_hover_color() -> str:
-    """Hover colour for toggle text."""
-    return "#ccc" if is_dark() else "#555"
-
-
-def thinking_fg() -> str:
-    """Foreground for thinking/reasoning text."""
-    return "#b8c0cc" if is_dark() else "#777"
-
-
-def thinking_bg() -> str:
-    """Background for thinking/reasoning blocks."""
-    return "rgba(255,255,255,0.05)" if is_dark() else "rgba(0,0,0,0.03)"
-
-
-def thinking_border() -> str:
-    """Left-border colour for thinking blocks."""
-    return "#667080" if is_dark() else "#ccc"
-
-
-def response_fg() -> str:
-    """Foreground for streaming response text."""
-    return "#ddd" if is_dark() else "#333"
-
-
-def response_bg() -> str:
-    """Background for streaming response blocks."""
-    return "rgba(255,255,255,0.03)" if is_dark() else "rgba(0,0,0,0.02)"
-
-
-def response_border() -> str:
-    """Left-border accent for streaming response blocks."""
-    return "#5090c0" if is_dark() else "#90caf9"
-
-
-# ── Group box styling ───────────────────────────────────────────────
-
-def groupbox_bg(style: str = "default") -> str:
-    """Background colour for styled QGroupBox containers."""
-    if style == "file":
-        return "#1a2e3a" if is_dark() else "#e8f4f8"
-    elif style == "llm":
-        return "#2a1a3a" if is_dark() else "#f0e8f8"
-    else:
-        return "#2b2b2b" if is_dark() else "#f5f5f5"
-
-
-def groupbox_border(style: str = "default") -> str:
-    """Border colour for styled QGroupBox containers."""
-    if style == "file":
-        return "#2a5a7a" if is_dark() else "#b3d9e8"
-    elif style == "llm":
-        return "#5a3a7a" if is_dark() else "#d8c8e8"
-    else:
-        return "#667080" if is_dark() else "#cccccc"
-
-
-def groupbox_text() -> str:
-    """Text colour for QGroupBox title and content."""
-    return "#f1f5f9" if is_dark() else "#333333"
 
 
 # ── Diff viewer colours ─────────────────────────────────────────────
@@ -244,16 +101,6 @@ def syntax_comment() -> QColor:
     return QColor("#6a9955") if is_dark() else QColor("#888888")
 
 
-def syntax_step_marker() -> QColor:
-    """Colour for step marker comments."""
-    return QColor("#dcdcaa") if is_dark() else QColor("#cc6600")
-
-
-def syntax_step_bg() -> QColor:
-    """Background highlight for step marker lines."""
-    return QColor("#2a2a1a") if is_dark() else QColor("#fff8e0")
-
-
 def syntax_function() -> QColor:
     """Colour for function/method names."""
     return QColor("#c586c0") if is_dark() else QColor("#660066")
@@ -279,35 +126,6 @@ def json_number() -> QColor:
 def json_keyword() -> QColor:
     """Colour for JSON true/false/null."""
     return QColor("#c586c0") if is_dark() else QColor("#cc00cc")
-
-
-# ── Findings panel colours ──────────────────────────────────────────
-
-def finding_error() -> QColor:
-    """Colour for error findings."""
-    return QColor(error_color())
-
-
-def finding_warning() -> QColor:
-    """Colour for warning findings."""
-    return QColor(warning_color())
-
-
-def finding_info() -> QColor:
-    """Colour for info findings."""
-    return QColor("#42a5f5") if is_dark() else QColor("#1565c0")
-
-
-def finding_success() -> str:
-    """CSS colour string for success status in findings."""
-    return success_color()
-
-
-# ── Traceability highlight ──────────────────────────────────────────
-
-def traceability_highlight() -> QColor:
-    """Background highlight in traceability view."""
-    return QColor("#3a3a1a") if is_dark() else QColor("#fffacd")
 
 
 # ── Danger button ───────────────────────────────────────────────────
@@ -343,13 +161,28 @@ def status_error() -> str:
     return error_color()
 
 
-# ── Status label colours (modified / saved indicators) ──────────────
+# ── procedure_text.md syntax (the boards' text editor) ─────────────
 
-def status_modified() -> str:
-    """CSS colour for modified/unsaved content indicator."""
-    return "#ffa726" if is_dark() else "orange"
+def text_heading() -> QColor:
+    """Colour for ``#`` heading lines."""
+    return QColor("#8ab4f8") if is_dark() else QColor("#1d4fa3")
 
 
-def status_saved() -> str:
-    """CSS colour for saved/clean content indicator."""
-    return success_color()
+def text_step_number() -> QColor:
+    """Colour for a step's leading ``N.``."""
+    return QColor(muted_color())
+
+
+def text_operator() -> QColor:
+    """Colour for a step's ``Operator:``."""
+    return QColor("#f1c27d") if is_dark() else QColor("#7a3f00")
+
+
+def text_meta_key() -> QColor:
+    """Colour for a ``## Meta`` key."""
+    return QColor("#c4a7ff") if is_dark() else QColor("#7c3aed")
+
+
+def text_device() -> QColor:
+    """Colour for an ``## Equipment`` device id."""
+    return QColor("#5eead4") if is_dark() else QColor("#0f766e")

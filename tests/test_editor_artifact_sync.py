@@ -1,16 +1,12 @@
-"""Regression: editor keystrokes must propagate into ``artifact_manager``.
+"""The views' editor cards (redesign slice 4): every keystroke reaches the
+``artifact_manager``, the Saved / ● Modified pill and the card's own Save
+follow the artifact, and Save writes that one artifact.
 
 Bug report (2026-05-11): user typed text in the text tab, hit Review,
-got "No Text" warning even though the editor had content. Root cause:
-``_on_text_changed`` only set a tab-level dirty flag — it did NOT push
-the editor's live content into ``artifact_manager.procedure_text.content``.
-``_on_review_text`` then checked the stale (last-saved) content and
-rejected the unsaved edit.
-
-Fix: each ``_on_<artifact>_changed`` handler now mirrors
-``editor.toPlainText()`` into the matching artifact via
-``artifact_manager.set_content(...)``. Reviews / Validates / token
-counters now see the live state without needing a Save first.
+got "No Text" warning even though the editor had content — the edit had
+not reached ``artifact_manager``. Every card mirrors its editor into its
+artifact on each edit, so Reviews / Validates / token counters and the
+header's pills see the live state without needing a Save first.
 """
 
 from __future__ import annotations
@@ -18,68 +14,79 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from PySide6.QtWidgets import QApplication, QPlainTextEdit
+from PySide6.QtWidgets import QApplication
 
 from workflow_editor.core import ArtifactType
 from workflow_editor.core.artifact_manager import ArtifactManager
-from workflow_editor.tabs.json_code_tab import JsonCodeTab
-from workflow_editor.tabs.text_json_tab import TextJsonTab
-from workflow_editor.tabs.text_only_tab import TextOnlyTab
+from workflow_editor.widgets.editor_card import EditorCard
+
+FILES = {
+    ArtifactType.PROCEDURE_TEXT: "procedure_text.md",
+    ArtifactType.PROCEDURE_JSON: "procedure.json",
+    ArtifactType.TEST_CODE: "test.py",
+}
 
 
 @pytest.fixture
 def qapp():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
+    return QApplication.instance() or QApplication([])
 
 
-def _stub_self(qapp, editor_attr: str, content: str) -> MagicMock:
-    """Build a minimal stand-in for `self` that the handler under test
-    will touch. The handler reads ``self.<editor_attr>.toPlainText()``
-    and writes through ``self.artifact_manager.set_content(...)``; all
-    other attributes are MagicMock-friendly (called freely, return
-    Mocks). ArtifactManager is real so we can read back the stored
-    content."""
-    fake = MagicMock()
-    editor = QPlainTextEdit()
-    editor.setPlainText(content)
-    setattr(fake, editor_attr, editor)
-    fake.artifact_manager = ArtifactManager()
-    return fake
+def _card(kind: ArtifactType, am: ArtifactManager) -> tuple[EditorCard, MagicMock]:
+    tab = MagicMock()
+    tab.artifact_manager = am
+    return EditorCard(tab, kind, FILES[kind]), tab
 
 
-def test_text_only_keystroke_propagates_to_artifact_manager(qapp):
-    """TextOnlyTab._on_text_changed must push text_editor content into
-    artifact_manager.procedure_text."""
-    fake = _stub_self(qapp, "text_editor", "operator just typed this")
-    TextOnlyTab._on_text_changed(fake)
-    assert fake.artifact_manager.procedure_text.content == "operator just typed this", (
+@pytest.mark.parametrize("kind", list(FILES))
+def test_keystrokes_reach_the_artifact_manager(qapp, kind):
+    am = ArtifactManager()
+    card, _tab = _card(kind, am)
+    changed = []
+    card.changed.connect(lambda: changed.append(True))
+    card.editor.setPlainText("operator just typed this")
+    assert am.get_content(kind) == "operator just typed this", (
         "Live editor content was not propagated to artifact_manager — "
         "the Review/Validate empty-checks will see stale content."
     )
+    assert changed
 
 
-def test_text_json_text_keystroke_propagates(qapp):
-    fake = _stub_self(qapp, "text_editor", "fresh procedure text")
-    TextJsonTab._on_text_changed(fake)
-    assert fake.artifact_manager.procedure_text.content == "fresh procedure text"
+def test_the_pill_and_save_follow_the_artifact(qapp, tmp_path):
+    test_dir = tmp_path / "t1"
+    test_dir.mkdir()
+    (test_dir / "test.py").write_text("x = 1\n", encoding="utf-8")
+    am = ArtifactManager()
+    am.set_test_dir(test_dir)
+    am.load_all()
+    card, _tab = _card(ArtifactType.TEST_CODE, am)
+    card.load()
+    assert card.pill.text() == "✓ Saved" and card.pill.property("pill") == "success"
+    assert not card.save_button.isEnabled()
+
+    card.editor.appendPlainText("y = 2")
+    assert card.pill.text() == "● Modified" and card.pill.property("pill") == "warning"
+    assert card.save_button.isEnabled()
+
+    card.set_text("x = 1\n")  # back to what is on disk: nothing to save
+    assert card.pill.text() == "✓ Saved" and not card.save_button.isEnabled()
 
 
-def test_text_json_json_keystroke_propagates(qapp):
-    fake = _stub_self(qapp, "json_editor", '{"id": "DEMO"}')
-    TextJsonTab._on_json_changed(fake)
-    assert fake.artifact_manager.procedure_json.content == '{"id": "DEMO"}'
+def test_the_cards_save_writes_its_artifact(qapp, tmp_path):
+    test_dir = tmp_path / "t1"
+    test_dir.mkdir()
+    am = ArtifactManager()
+    am.set_test_dir(test_dir)
+    am.load_all()
+    card, tab = _card(ArtifactType.TEST_CODE, am)
+    saved = []
+    card.saved.connect(lambda: saved.append(True))
+    card.editor.setPlainText("def run(ctx):\n    pass\n")
 
+    card.save_button.click()
 
-def test_json_code_json_keystroke_propagates(qapp):
-    fake = _stub_self(qapp, "json_editor", '{"id": "JC"}')
-    JsonCodeTab._on_json_changed(fake)
-    assert fake.artifact_manager.procedure_json.content == '{"id": "JC"}'
-
-
-def test_json_code_code_keystroke_propagates(qapp):
-    fake = _stub_self(qapp, "code_editor", "def test_x():\n    pass\n")
-    JsonCodeTab._on_code_changed(fake)
-    assert fake.artifact_manager.test_code.content == "def test_x():\n    pass\n"
+    assert (test_dir / "test.py").read_text(encoding="utf-8") == "def run(ctx):\n    pass\n"
+    assert not am.is_dirty(ArtifactType.TEST_CODE)
+    assert not (test_dir / "procedure.json").exists()  # its own artifact only
+    assert card.pill.text() == "✓ Saved" and saved == [True]
+    tab.artifact_saved.emit.assert_called_once_with()

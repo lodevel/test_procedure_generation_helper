@@ -445,10 +445,9 @@ class DocumentController:
         # Save all dirty artifacts via artifact manager (single source of truth)
         mw.artifact_manager.save_all()
 
-        # Reload all tabs so editors + dirty flags reflect saved state
-        for tab in mw._get_llm_tabs():
-            if hasattr(tab, 'load_content'):
-                tab.load_content()
+        # Reload all views so editors + Saved pills reflect the saved state
+        for i in range(mw.view_stack.count()):
+            mw.view_stack.widget(i).load_content()
 
         if mw.session_state:
             mw.session_state.save()

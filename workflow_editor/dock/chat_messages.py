@@ -1,42 +1,233 @@
-"""Per-message Qt widgets used inside the chat panel.
+"""The chat's messages, as on the approved board S5 (Bench's look: ``project_services.ui_kit`` and
+Bench's stylesheet):
 
-Extracted from ``chat_panel.py`` (which now re-imports them) so each
-class lives at a size that fits in a reader's head:
+  - :class:`MessageWidget` — one message: a bubble (the user's right and tinted, the
+    assistant's left on white, with its "▸ Show thinking" fold and its token line + Details…)
+    or, for a system / validator line, a centred pill in the tone its sender gives.
+  - :class:`StreamingBubble` — the assistant's bubble while a reply streams in
+    ("💭 Thinking… 0:07", "✍ Responding…" and the text so far).
+  - :class:`MessageDetailDialog` — the full prompt and response of one message (Details…, or a
+    double-click on the message).
 
-  - :class:`MessageDetailDialog` — modal that shows the full prompt +
-    response of a single ChatMessage when the operator double-clicks it.
-  - :class:`ProposalWidget` — accept / reject / view-diff card for an
-    LLM-proposed artifact change.
-  - :class:`MessageWidget` — one row in the chat scroll area; carries
-    role-styling, thinking-content collapse, and the double-click signal
-    that opens :class:`MessageDetailDialog`.
-
-The split is purely organisational; no behaviour changed. ``ChatPanel``
-is the only consumer; the classes don't import each other except for
-``MessageDetailDialog`` calling its own static helpers recursively.
+``ChatPanel`` lays them out; the colours are the stylesheet's (``QFrame#chatBubble[role]``,
+``QLabel#chatSystemLine[pill]``, ``QLabel#thinkingText``, ``QLabel#streamText``).
 """
 from __future__ import annotations
 
 import html
 import json
-import logging
+import math
+import re
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal, QEvent
-from PySide6.QtGui import QFont, QMouseEvent
+from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QFont, QMouseEvent, QTextDocument
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
-    QHBoxLayout,
     QLabel,
     QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
 )
 
-from .. import theme
+from project_services import ui_kit
 
-log = logging.getLogger(__name__)
+from ..widgets.work_timer import WorkTimer
+
+#: The share of the chat's width a message may take: the user's bubble, the others.
+USER_SHARE = 0.86
+OTHER_SHARE = 0.92
+#: How much of a streaming thought / reply is shown (the tail).
+_MAX_THINKING, _MAX_RESPONSE = 3000, 5000
+
+
+def token_line(total: int, prompt: int, completion: int) -> str:
+    """``18,646 tokens · 18,234 prompt + 412 completion``."""
+    return f"{total:,} tokens · {prompt:,} prompt + {completion:,} completion"
+
+
+def _natural_width(label: QLabel) -> int:
+    """The width *label*'s text takes on one line per paragraph (its style sheet's font)."""
+    label.ensurePolished()
+    doc = QTextDocument()
+    doc.setDefaultFont(label.font())
+    if label.textFormat() == Qt.TextFormat.RichText:
+        doc.setHtml(label.text())
+    else:
+        doc.setPlainText(label.text())
+    return math.ceil(doc.idealWidth())
+
+
+def _text_label(text: str, name: str, rich: bool = True) -> QLabel:
+    label = QLabel(text)
+    label.setObjectName(name)
+    label.setWordWrap(True)
+    label.setTextFormat(Qt.TextFormat.RichText if rich else Qt.TextFormat.PlainText)
+    label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    return label
+
+
+class _ThinkingFold:
+    """A reply's thought behind a quiet "▸ Show thinking" toggle (#foldToggle): the toggle and
+    the hidden label (#thinkingText) it opens and closes."""
+
+    def __init__(self, rich: bool):
+        self.label = _text_label("", "thinkingText", rich=rich)
+        self.button = QPushButton()
+        self.button.setObjectName("foldToggle")
+        self.button.setFlat(True)
+        self.button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.button.clicked.connect(lambda: self.set_open(self.label.isHidden()))
+        self.set_open(False)
+
+    def set_open(self, shown: bool) -> None:
+        self.label.setVisible(shown)
+        self.button.setText("▾ Hide thinking" if shown else "▸ Show thinking")
+
+
+class MessageWidget(QFrame):
+    """One chat message (see the module): ``role`` user / assistant / system. A double-click,
+    or Details… under an assistant reply, emits ``double_clicked(msg_id)``."""
+
+    double_clicked = Signal(str)  # msg_id (UUID string)
+
+    def __init__(self, role: str, content: str, msg_id: str = "", thinking_content: str = "",
+                 prompt_tokens: int = 0, completion_tokens: int = 0, total_tokens: int = 0,
+                 tone: str = "neutral", parent=None):
+        super().__init__(parent)
+        self._msg_id = msg_id
+        self.role = role.lower()
+        self.share = USER_SHARE if self.role == "user" else OTHER_SHARE
+        layout = QVBoxLayout(self)
+        layout.setSpacing(4)
+        if self.role == "system":
+            # A centred pill in the line's tone (no bubble around it).
+            self.align = Qt.AlignmentFlag.AlignHCenter
+            layout.setContentsMargins(0, 0, 0, 0)
+            self.content_label = _text_label(content, "chatSystemLine", rich=False)
+            self.content_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            ui_kit.set_pill(self.content_label, tone, content)
+            layout.addWidget(self.content_label)
+        else:
+            self.setObjectName("chatBubble")
+            self.setProperty("role", self.role)
+            self.align = (Qt.AlignmentFlag.AlignRight if self.role == "user"
+                          else Qt.AlignmentFlag.AlignLeft)
+            layout.setContentsMargins(11, 8, 11, 8)
+            if thinking_content and self.role == "assistant":
+                self._add_thinking(layout, thinking_content)
+            if self.role == "user":  # the user's < > & show as typed
+                content = html.escape(content)
+            self.content_label = _text_label(format_json_in_content(content), "chatText")
+            layout.addWidget(self.content_label)
+            if total_tokens > 0:
+                tokens = ui_kit.note(token_line(total_tokens, prompt_tokens, completion_tokens))
+                tokens.setObjectName("chatTokens")
+                details = ui_kit.link("Details…", lambda: self.double_clicked.emit(self._msg_id))
+                details.setToolTip("The full prompt and response of this message")
+                row = ui_kit.hbox(tokens, details)
+                row.setAlignment(details, Qt.AlignmentFlag.AlignBottom)
+                layout.addLayout(row)
+        self.content_label.installEventFilter(self)  # its double-clicks open the details
+
+    def width_for(self, limit: int) -> int:
+        """Its width in a chat whose messages may take *limit*: an assistant reply all of it,
+        the user's bubble and a system pill as wide as their text (at most *limit*)."""
+        if self.role == "assistant":
+            return limit
+        margins = self.layout().contentsMargins()
+        pill_padding = 24 if self.role == "system" else 2  # the pill's padding / the border
+        natural = _natural_width(self.content_label) + margins.left() + margins.right() + pill_padding
+        return min(limit, natural)
+
+    def _add_thinking(self, layout: QVBoxLayout, thinking: str) -> None:
+        self._fold = _ThinkingFold(rich=True)
+        self._fold.label.setText(format_json_in_content(thinking))
+        layout.addWidget(self._fold.button, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self._fold.label)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        if self._msg_id:
+            self.double_clicked.emit(self._msg_id)
+        super().mouseDoubleClickEvent(event)
+
+    def eventFilter(self, obj, event):
+        """The content label's double-clicks (it takes the mouse for selection)."""
+        if event.type() == QEvent.Type.MouseButtonDblClick:
+            if self._msg_id:
+                self.double_clicked.emit(self._msg_id)
+            return True
+        return super().eventFilter(obj, event)
+
+
+class StreamingBubble(QFrame):
+    """The assistant's bubble while its reply streams in: "💭 Thinking… 0:07" (the thought
+    folded behind "▸ Show thinking"), then "✍ Responding…" and the reply so far, its tail in mono."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("chatBubble")
+        self.setProperty("role", "assistant")
+        self.role, self.share, self.align = "assistant", OTHER_SHARE, Qt.AlignmentFlag.AlignLeft
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(11, 8, 11, 8)
+        layout.setSpacing(4)
+        self._thinking_header = ui_kit.note("💭 Thinking…", wrap=False)
+        self._fold = _ThinkingFold(rich=False)
+        self._fold.button.setVisible(False)  # until a thought arrives
+        layout.addLayout(ui_kit.hbox(self._thinking_header, self._fold.button, None))
+        layout.addWidget(self._fold.label)
+        self._response_header = ui_kit.note("✍ Responding…", wrap=False)
+        self._response_header.setVisible(False)
+        layout.addWidget(self._response_header)
+        self._response_label = ui_kit.monospace(_text_label("", "streamText", rich=False))
+        self._response_label.setVisible(False)
+        layout.addWidget(self._response_label)
+        self._thinking_text = self._response_text = ""
+        self._timer = WorkTimer(on_tick=self._tick, parent=self)
+        self._timer.start()
+
+    def width_for(self, limit: int) -> int:
+        return limit
+
+    def _tick(self, elapsed: str) -> None:
+        if not self._response_text:
+            self._thinking_header.setText(f"💭 Thinking… {elapsed}")
+
+    def append_thinking(self, text: str) -> None:
+        self._thinking_text += text
+        self._fold.button.setVisible(True)
+        shown = self._thinking_text[-_MAX_THINKING:]
+        self._fold.label.setText(("..." if len(self._thinking_text) > _MAX_THINKING else "") + shown)
+
+    def append_response(self, text: str) -> None:
+        if not self._response_text:  # the thought is over: fold it, show the reply
+            self._thinking_header.setText("💭 Thinking (done)")
+            self._thinking_header.setVisible(bool(self._thinking_text))
+            self._fold.set_open(False)
+            self._response_header.setVisible(True)
+            self._response_label.setVisible(True)
+        self._response_text += text
+        shown = self._response_text[-_MAX_RESPONSE:]
+        self._response_label.setText(("..." if len(self._response_text) > _MAX_RESPONSE else "") + shown)
+
+    def stop(self) -> None:
+        self._timer.stop()
+
+
+def format_json_in_content(content: str) -> str:
+    """The message as rich text: JSON in ``` fences pretty-printed, newlines as ``<br>`` (a
+    rich-text label ignores plain newlines; literal ``\\n`` sequences count as newlines)."""
+
+    def format_json_match(match):
+        try:
+            return f"```\n{json.dumps(json.loads(match.group(1)), indent=2)}\n```"
+        except (json.JSONDecodeError, ValueError):
+            return match.group(0)
+
+    content = re.sub(r'```\n(.*?)\n```', format_json_match, content, flags=re.DOTALL)
+    return content.replace('\\n', '\n').replace('\n', '<br>')
 
 
 class MessageDetailDialog(QDialog):
@@ -143,244 +334,3 @@ class MessageDetailDialog(QDialog):
 
         else:
             return obj
-
-
-class ProposalWidget(QFrame):
-    """Widget showing a code/JSON proposal with accept/reject actions."""
-
-    accepted = Signal(str, str)  # (artifact_type, content)
-    rejected = Signal(str)  # artifact_type
-    view_diff_requested = Signal(str)  # artifact_type
-
-    def __init__(self, artifact_name: str, content: str, artifact_type: str, parent=None):
-        super().__init__(parent)
-        self.setFrameShape(QFrame.StyledPanel)
-        self._artifact_type = artifact_type
-        self._content = content
-        self._artifact_name = artifact_name
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 5, 8, 5)
-        layout.setSpacing(5)
-
-        # Header
-        header = QLabel(f"📄 Proposal: {artifact_name}")
-        header.setStyleSheet("font-weight: bold;")
-        layout.addWidget(header)
-
-        # Preview (first 8 lines)
-        preview_lines = content.split('\n')[:8]
-        preview_text = '\n'.join(preview_lines)
-        if len(content.split('\n')) > 8:
-            preview_text += '\n...'
-
-        self.preview = QPlainTextEdit()
-        self.preview.setPlainText(preview_text)
-        self.preview.setReadOnly(True)
-        self.preview.setMaximumHeight(150)
-        self.preview.setFont(QFont("Consolas", 9))
-        layout.addWidget(self.preview)
-
-        # Buttons
-        btn_layout = QHBoxLayout()
-        self.accept_btn = QPushButton("✓ Accept")
-        self.accept_btn.setStyleSheet(f"background-color: {theme.accept_btn_bg()};")
-        self.accept_btn.clicked.connect(self._on_accept)
-        self.reject_btn = QPushButton("✗ Reject")
-        self.reject_btn.setStyleSheet(f"background-color: {theme.reject_btn_bg()};")
-        self.reject_btn.clicked.connect(self._on_reject)
-        self.diff_btn = QPushButton("View Diff")
-        self.diff_btn.clicked.connect(self._on_view_diff)
-
-        btn_layout.addWidget(self.accept_btn)
-        btn_layout.addWidget(self.reject_btn)
-        btn_layout.addWidget(self.diff_btn)
-        btn_layout.addStretch()
-        layout.addLayout(btn_layout)
-
-        # Style
-        self.setStyleSheet(f"""
-            ProposalWidget {{
-                background-color: {theme.proposal_bg()};
-                border: 1px solid {theme.proposal_border()};
-                border-radius: 5px;
-            }}
-        """)
-
-    def _on_accept(self):
-        self.accepted.emit(self._artifact_type, self._content)
-        self._set_handled("Accepted ✓")
-
-    def _on_reject(self):
-        self.rejected.emit(self._artifact_type)
-        self._set_handled("Rejected ✗")
-
-    def _on_view_diff(self):
-        self.view_diff_requested.emit(self._artifact_type)
-
-    def _set_handled(self, status: str):
-        """Disable buttons and show status after handling."""
-        self.accept_btn.setEnabled(False)
-        self.reject_btn.setEnabled(False)
-        self.diff_btn.setEnabled(False)
-        self.setStyleSheet(f"""
-            ProposalWidget {{
-                background-color: {theme.proposal_handled_bg()};
-                border: 1px solid {theme.proposal_handled_border()};
-                border-radius: 5px;
-            }}
-        """)
-        # Update header with status
-        header = self.layout().itemAt(0).widget()
-        if header:
-            header.setText(f"📄 {self._artifact_name}: {status}")
-
-
-class MessageWidget(QFrame):
-    """A single chat message display."""
-
-    # Signal emitted when message is double-clicked
-    double_clicked = Signal(str)  # msg_id (UUID string)
-
-    def __init__(self, role: str, content: str, msg_id: str = "", thinking_content: str = "", parent=None):
-        super().__init__(parent)
-        self.setFrameShape(QFrame.StyledPanel)
-        self._msg_id = msg_id
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 5, 8, 5)
-        layout.setSpacing(3)
-
-        # Role header
-        role_label = QLabel(role.upper())
-        role_label.setStyleSheet("font-weight: bold; font-size: 10px;")
-        layout.addWidget(role_label)
-
-        # Thinking/reasoning section (collapsible, for assistant messages)
-        if thinking_content and role.lower() == "assistant":
-            self._thinking_visible = False
-            self._toggle_btn = QPushButton("▶ Show thinking")
-            self._toggle_btn.setStyleSheet(
-                f"QPushButton {{ background: transparent; border: none; color: {theme.toggle_color()}; "
-                "font-size: 10px; font-style: italic; text-align: left; padding: 2px 0; }"
-                f"QPushButton:hover {{ color: {theme.toggle_hover_color()}; }}"
-            )
-            self._toggle_btn.setCursor(Qt.PointingHandCursor)
-            self._toggle_btn.clicked.connect(self._toggle_thinking)
-            layout.addWidget(self._toggle_btn)
-
-            formatted_thinking = self._format_json_in_content(thinking_content)
-            self._thinking_label = QLabel(formatted_thinking)
-            self._thinking_label.setWordWrap(True)
-            self._thinking_label.setTextFormat(Qt.RichText)
-            self._thinking_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            self._thinking_label.setStyleSheet(
-                f"color: {theme.thinking_fg()}; font-style: italic; font-size: 11px; "
-                f"padding: 4px 8px; background-color: {theme.thinking_bg()}; "
-                f"border-left: 2px solid {theme.thinking_border()};"
-            )
-            self._thinking_label.setVisible(False)
-            layout.addWidget(self._thinking_label)
-
-        # Escape HTML in user messages so characters like < > & display literally
-        if role.lower() == "user":
-            content = html.escape(content)
-
-        # Content - format JSON if found
-        formatted_content = self._format_json_in_content(content)
-
-        # Content - store as instance variable for updates
-        self.content_label = QLabel(formatted_content)
-        self.content_label.setWordWrap(True)
-        self.content_label.setTextFormat(Qt.RichText)
-        self.content_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        # Install event filter to catch double-clicks on label
-        self.content_label.installEventFilter(self)
-        layout.addWidget(self.content_label)
-
-        # Style based on role
-        if role.lower() == "user":
-            self.setStyleSheet(f"""
-                MessageWidget {{
-                    background-color: {theme.message_bg('user')};
-                    border: 1px solid {theme.message_border('user')};
-                    border-radius: 5px;
-                }}
-            """)
-        elif role.lower() == "assistant":
-            self.setStyleSheet(f"""
-                MessageWidget {{
-                    background-color: {theme.message_bg('assistant')};
-                    border: 1px solid {theme.message_border('assistant')};
-                    border-radius: 5px;
-                }}
-            """)
-        elif role.lower() == "system":
-            self.setStyleSheet(f"""
-                MessageWidget {{
-                    background-color: {theme.message_bg('system')};
-                    border: 1px solid {theme.message_border('system')};
-                    border-radius: 5px;
-                }}
-            """)
-
-    def _toggle_thinking(self):
-        """Toggle visibility of thinking/reasoning content."""
-        if not hasattr(self, '_thinking_label'):
-            return
-        self._thinking_visible = not self._thinking_visible
-        self._thinking_label.setVisible(self._thinking_visible)
-        if self._thinking_visible:
-            self._toggle_btn.setText("▼ Hide thinking")
-        else:
-            self._toggle_btn.setText("▶ Show thinking")
-
-    def mouseDoubleClickEvent(self, event: QMouseEvent):
-        """Handle double-click to show message details."""
-        log.debug("MessageWidget.mouseDoubleClickEvent: msg_id=%s", self._msg_id)
-        if self._msg_id:
-            log.debug("Emitting double_clicked signal for msg_id=%s", self._msg_id)
-            self.double_clicked.emit(self._msg_id)
-        super().mouseDoubleClickEvent(event)
-
-    def eventFilter(self, obj, event):
-        """Catch double-clicks on child widgets (especially the content label)."""
-        if event.type() == QEvent.Type.MouseButtonDblClick:
-            log.debug("eventFilter caught double-click on %s, msg_id=%s", obj.__class__.__name__, self._msg_id)
-            if self._msg_id:
-                log.debug("eventFilter emitting double_clicked signal for msg_id=%s", self._msg_id)
-                self.double_clicked.emit(self._msg_id)
-            return True
-        return super().eventFilter(obj, event)
-
-    @staticmethod
-    def _format_json_in_content(content: str) -> str:
-        """Try to find and format JSON blocks in content for better readability.
-
-        Also converts newlines to <br> tags for proper HTML rendering,
-        since QLabel with RichText format ignores plain newlines.
-        """
-        # Look for JSON blocks in markdown code fences
-        import re
-
-        def format_json_match(match):
-            json_text = match.group(1)
-            try:
-                parsed = json.loads(json_text)
-                formatted = json.dumps(parsed, indent=2)
-                return f"```\n{formatted}\n```"
-            except (json.JSONDecodeError, ValueError):
-                return match.group(0)  # Return original if not valid JSON
-
-        # Try to format JSON in code blocks
-        content = re.sub(r'```\n(.*?)\n```', format_json_match, content, flags=re.DOTALL)
-
-        # Handle literal \n escape sequences that weren't decoded
-        # (occurs when text contains double-escaped \\n from some sources)
-        content = content.replace('\\n', '\n')
-
-        # Convert newlines to <br> tags for HTML rendering
-        # QLabel with Qt.RichText format ignores plain \n characters
-        content = content.replace('\n', '<br>')
-
-        return content

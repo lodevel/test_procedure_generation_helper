@@ -4,12 +4,10 @@ Provides _run_task_async, response handling, validation, and error recovery
 in a single mixin consumed by JsonCodeTab and TextJsonTab.
 
 Tabs that use this mixin must implement:
-  - _sync_editors_for_llm()              — sync editor widgets → artifact manager
   - _apply_proposals(response, task)     — dispatch per-artifact proposals
                                            (task drives the per-task section override)
   - _get_expected_artifact_fields()      — list of artifact field names for contract check
   - _parse_response_to_dict(response)    — map LLMResponse → validated dict
-  - _get_task_description(task, user_message, custom_task_id) -> str
 
 Instance attributes expected on ``self`` (provided by BaseTab / __init__):
   tab_id, tab_context, task_config_manager, main_window, status_message
@@ -65,7 +63,7 @@ class LLMTabMixin:
         from ..pack_ops import pack_parsers
         from ..dialogs import DiffViewer
 
-        text = self.text_editor.toPlainText().strip()
+        text = self.text_card.editor.toPlainText().strip()
         if not text:
             self.show_warning("No Content", "Procedure text is empty. Add text first.")
             return
@@ -73,7 +71,7 @@ class LLMTabMixin:
         project_root = getattr(self.project_manager, "project_root", None)
 
         def _abort(reason: str):
-            self.main_window.dock.chat_panel.add_system_message(reason)
+            self.main_window.dock.chat_panel.add_system_message(reason, tone="danger")
 
         # --- Text → JSON (strict) ---
         try:
@@ -177,15 +175,8 @@ class LLMTabMixin:
                 return
 
         # --- Write: text (if dirty) → JSON → code ---
-        if getattr(self, "_text_dirty", False):
-            self.artifact_manager.set_content(
-                ArtifactType.PROCEDURE_TEXT, self.text_editor.toPlainText(),
-            )
-            self.artifact_manager.save_artifact(ArtifactType.PROCEDURE_TEXT)
-            self.artifact_manager.procedure_text.mark_clean()
-            self._text_dirty = False
-            if hasattr(self, "_update_text_status"):
-                self._update_text_status()
+        if self.text_card.dirty and not self.text_card.save():
+            return
 
         self.artifact_manager.set_content(ArtifactType.PROCEDURE_JSON, procedure_str)
         self.artifact_manager.save_artifact(ArtifactType.PROCEDURE_JSON)
@@ -195,15 +186,13 @@ class LLMTabMixin:
         self.artifact_manager.save_artifact(ArtifactType.TEST_CODE)
         self.artifact_manager.test_code.mark_clean()
 
-        # Reflect the new JSON in the tab's editor widget if it has one.
-        if hasattr(self, "json_editor"):
-            self.json_editor.setPlainText(procedure_str)
-            self._json_dirty = False
-            if hasattr(self, "_update_json_status"):
-                self._update_json_status()
+        # Reflect the new JSON in the tab's editor if it has one.
+        json_card = self.card_for("procedure_json")
+        if json_card is not None:
+            json_card.load()
 
         self.main_window.dock.chat_panel.add_system_message(
-            "⚡ Parse + Generate complete — procedure.json and test.py saved."
+            "⚡ Parse + Generate complete — procedure.json and test.py saved.", tone="success"
         )
         self.status_message.emit("⚡ Parse + Generate complete")
         # Both files were just generated from the same text: they are in sync.
@@ -228,7 +217,7 @@ class LLMTabMixin:
             run_state.start_run(task, self._resolve_max_attempts(task))
         # Sync current editor content to artifact manager so the LLM sees
         # the latest unsaved state, not just the last saved version.
-        self._sync_editors_for_llm()
+        self.sync_editors_to_artifacts()
 
         # Resolve the per-task section-ownership override once and thread the
         # SAME value into both prompt-build paths so the emit-list (here) and
@@ -517,7 +506,7 @@ class LLMTabMixin:
         to the operator without further processing."""
         if is_active:
             self.main_window.dock.chat_panel.add_message(
-                "system", f"❌ {response.error_message}"
+                "system", f"❌ {response.error_message}", tone="danger"
             )
             self.show_error("LLM Error", response.error_message)
 
@@ -751,7 +740,7 @@ class LLMTabMixin:
             self.main_window.dock.show_validation_result_from_list([])
             self.main_window.dock.chat_panel.add_message(
                 "system",
-                self._format_pass_message(run_state),
+                self._format_pass_message(run_state), tone="success",
             )
             run_state.on_validator_pass(outcome)
             return "continue"
@@ -772,7 +761,7 @@ class LLMTabMixin:
                 "Validator rejected the response, but every error is in an "
                 "operator-only field (test ID, description, or pack version) "
                 "that the LLM rewriter does not modify. Edit the original "
-                "procedure to fix the flagged lines, then retry.",
+                "procedure to fix the flagged lines, then retry.", tone="warning",
             )
             return "halt_for_operator"
 
@@ -782,7 +771,7 @@ class LLMTabMixin:
             run_state.give_up_now(outcome)
             self.main_window.dock.chat_panel.add_message(
                 "system",
-                self._format_give_up_message(run_state, auto_correct_off=True),
+                self._format_give_up_message(run_state, auto_correct_off=True), tone="warning",
             )
             return "continue"
 
@@ -790,7 +779,7 @@ class LLMTabMixin:
         if decision == "retry":
             self.main_window.dock.chat_panel.add_message(
                 "system",
-                self._format_retry_message(run_state),
+                self._format_retry_message(run_state), tone="warning",
             )
             self._spawn_retry_worker(outcome)
             return "retry"
@@ -798,7 +787,7 @@ class LLMTabMixin:
         # Out of retries — fall through to operator review with banner.
         self.main_window.dock.chat_panel.add_message(
             "system",
-            self._format_give_up_message(run_state, auto_correct_off=False),
+            self._format_give_up_message(run_state, auto_correct_off=False), tone="warning",
         )
         return "continue"
 

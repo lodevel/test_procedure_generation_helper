@@ -1,15 +1,15 @@
 """
 Test BaseTab button label integration.
 
-Verifies that BaseTab's new methods work correctly:
-- create_action_group()
-- create_task_button()
+Verifies that BaseTab's assistant buttons work correctly:
+- create_task_button() (a split button when the task has a force variant)
 - refresh_button_labels()
+- the action bar's assistant row (_create_action_bar)
 """
 
 import pytest
 from pathlib import Path
-from PySide6.QtWidgets import QApplication, QPushButton, QGroupBox, QVBoxLayout
+from PySide6.QtWidgets import QApplication, QToolButton, QVBoxLayout
 
 from workflow_editor.tabs.base_tab import BaseTab
 from workflow_editor.llm.backend_base import LLMTask
@@ -18,39 +18,6 @@ from workflow_editor.core.task_config import TaskConfigManager
 
 class TestBaseTabButtonLabels:
     """Test BaseTab button label methods."""
-    
-    def test_create_action_group_file_style(self, base_tab):
-        """Test creating action group with file style."""
-        group = base_tab.create_action_group("Test Group", "file")
-        
-        assert isinstance(group, QGroupBox)
-        assert group.title() == "Test Group"
-        
-        # Verify light blue styling is applied
-        stylesheet = group.styleSheet()
-        assert "#e8f4f8" in stylesheet  # Light blue background
-        assert "#b3d9e8" in stylesheet  # Border color
-    
-    def test_create_action_group_llm_style(self, base_tab):
-        """Test creating action group with llm style."""
-        group = base_tab.create_action_group("LLM Actions", "llm")
-        
-        assert isinstance(group, QGroupBox)
-        assert group.title() == "LLM Actions"
-        
-        # Verify light purple styling is applied
-        stylesheet = group.styleSheet()
-        assert "#f0e8f8" in stylesheet  # Light purple background
-        assert "#d8c8e8" in stylesheet  # Border color
-    
-    def test_create_action_group_default_style(self, base_tab):
-        """Test creating action group with unknown style defaults correctly."""
-        group = base_tab.create_action_group("Default Group", "unknown")
-        
-        assert isinstance(group, QGroupBox)
-        stylesheet = group.styleSheet()
-        assert "#f5f5f5" in stylesheet  # Default background
-        assert "#cccccc" in stylesheet  # Default border
     
     def test_create_task_button_basic(self, base_tab):
         """Test creating basic task button."""
@@ -64,31 +31,40 @@ class TestBaseTabButtonLabels:
             callback=callback
         )
         
-        assert isinstance(button, QPushButton)
+        assert isinstance(button, QToolButton)
         assert button.isEnabled()
+        assert button.menu() is None  # no force variant: a plain button
         
         # Check that metadata is stored
         assert button.property("llm_task") == LLMTask.REVIEW_JSON
-        assert button.property("force_mode") is False
         assert button.property("tab_name") == "base"
         
         # Verify callback works
         button.click()
         assert callback_called == [True]
     
-    def test_create_task_button_with_force_mode(self, base_tab):
-        """Test creating task button with force mode."""
+    def test_force_variant_is_the_split_buttons_menu(self, base_tab):
+        """A task with a force variant is ONE split button (owner decision): a
+        click runs the task, its ▾ menu offers the task and its force variant,
+        and the force entry runs the force callback."""
+        calls = []
         button = base_tab.create_task_button(
             task=LLMTask.DERIVE_JSON_FROM_TEXT,
-            callback=lambda: None,
-            force_mode=True
+            callback=lambda: calls.append("strict"),
+            force_callback=lambda: calls.append("force"),
+            force_tooltip="Force generate JSON",
         )
-        
+
         assert button.property("llm_task") == LLMTask.DERIVE_JSON_FROM_TEXT
-        assert button.property("force_mode") is True
-        
-        # Tooltip should mention force mode
-        assert "Force Mode" in button.toolTip()
+        assert button.popupMode() == QToolButton.ToolButtonPopupMode.MenuButtonPopup
+        strict, force = button.menu().actions()
+        assert force.text().startswith(strict.text() + " — force")
+        assert force.toolTip() == "Force generate JSON"
+
+        button.click()
+        force.trigger()
+        strict.trigger()
+        assert calls == ["strict", "force", "strict"]
     
     def test_create_task_button_disabled(self, base_tab):
         """Test creating disabled task button."""
@@ -147,7 +123,7 @@ class TestBaseTabButtonLabels:
             callback=lambda: None
         )
         
-        assert button.text() == "Custom Review Label"
+        assert button.text() == "✦ Custom Review Label"
     
     def test_refresh_button_labels_updates_existing_buttons(self, base_tab, mock_main_window):
         """Test that refresh_button_labels updates all task buttons."""
@@ -210,8 +186,8 @@ class TestBaseTabButtonLabels:
         base_tab.refresh_button_labels()
         
         # Verify buttons were updated
-        assert button1.text() == "New JSON Label"
-        assert button2.text() == "New Code Label"
+        assert button1.text() == "✦ New JSON Label"
+        assert button2.text() == "✦ New Code Label"
         assert button1.text() != original_label1
         assert button2.text() != original_label2
     
@@ -244,26 +220,17 @@ class TestLLMButtonCapabilityGating:
 
     @staticmethod
     def _collect_task_buttons(tab):
-        """Walk the LLM group layout and collect current task buttons
-        (layout traversal, not findChildren — deleteLater'd buttons from
-        a rebuild would still show up as children)."""
-        buttons = []
-
-        def walk(layout):
-            for i in range(layout.count()):
-                item = layout.itemAt(i)
-                w = item.widget()
-                if isinstance(w, QPushButton) and w.property("llm_task") is not None:
-                    buttons.append(w)
-                elif item.layout():
-                    walk(item.layout())
-
-        walk(tab._llm_group_layout)
-        return buttons
+        """The action bar's assistant row's current task buttons (layout
+        traversal, not findChildren — deleteLater'd buttons from a rebuild
+        would still show up as children)."""
+        layout = tab.action_bar.assistant_layout
+        widgets = (layout.itemAt(i).widget() for i in range(layout.count()))
+        return [w for w in widgets
+                if isinstance(w, QToolButton) and w.property("llm_task") is not None]
 
     def test_bare_editor_all_task_buttons_greyed(self, base_tab, mock_main_window):
         base_tab.tab_id = "text_json"
-        base_tab._create_llm_action_group()
+        base_tab._create_action_bar()
 
         buttons = self._collect_task_buttons(base_tab)
         assert len(buttons) > 0
@@ -274,7 +241,7 @@ class TestLLMButtonCapabilityGating:
 
     def test_declared_task_button_enabled_after_rebuild(self, base_tab, mock_main_window):
         base_tab.tab_id = "text_json"
-        base_tab._create_llm_action_group()
+        base_tab._create_action_bar()
 
         declared_id = LLMTask.DERIVE_JSON_FROM_TEXT.value
         mock_main_window.task_config_manager.update_task_config(
@@ -293,9 +260,20 @@ class TestLLMButtonCapabilityGating:
             if task_id != declared_id:
                 assert not btn.isEnabled(), f"{task_id} must stay greyed"
 
+    def test_force_variant_tasks_are_split_buttons(self, base_tab, mock_main_window):
+        """Only the tasks the view maps to a force callback get the ▾ menu."""
+        base_tab.tab_id = "text_json"
+        derive = LLMTask.DERIVE_JSON_FROM_TEXT.value
+        base_tab._get_force_callback_map = lambda: {derive: (lambda: None, "force it")}
+        base_tab._create_action_bar()
+
+        by_id = {b.property("task_id_override"): b for b in self._collect_task_buttons(base_tab)}
+        assert by_id[derive].menu() is not None
+        assert all(b.menu() is None for task_id, b in by_id.items() if task_id != derive)
+
     def test_no_ad_hoc_chat_button(self, base_tab, mock_main_window):
         base_tab.tab_id = "json_code"  # json_code declares an ad_hoc_chat task entry
-        base_tab._create_llm_action_group()
+        base_tab._create_action_bar()
         buttons = self._collect_task_buttons(base_tab)
         ids = {btn.property("task_id_override") for btn in buttons}
         assert LLMTask.AD_HOC_CHAT.value not in ids
@@ -315,7 +293,7 @@ class TestLLMButtonCapabilityGating:
                        button_label="Verify Shunt",
                        prompt_template="Verify the shunt wiring."),
         )
-        base_tab._create_llm_action_group()
+        base_tab._create_action_bar()
 
         buttons = self._collect_task_buttons(base_tab)
         by_id = {btn.property("task_id_override"): btn for btn in buttons}

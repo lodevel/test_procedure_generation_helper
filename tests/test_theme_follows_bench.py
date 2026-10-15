@@ -25,5 +25,5 @@ def test_studio_colours_follow_benchs_theme(app, theme_id, dark):
     bench_theme.apply_app_theme(theme_id, app)
 
     assert theme.is_dark() is dark
-    assert theme.chat_user_bg() == ("#1b3a1b" if dark else "#e8f5e9")
+    assert theme.chat_user_border() == ("#2e7d32" if dark else "#c8e6c9")
     assert theme.muted_color() == app.palette().color(QPalette.ColorRole.PlaceholderText).name()

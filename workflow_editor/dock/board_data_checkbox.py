@@ -6,15 +6,17 @@ from PySide6.QtWidgets import QCheckBox
 from ..core.odb_inspect import find_odb_tgz
 
 
+_TIP = (
+    "Let the chat load the complete netlist and component identities when needed.\n"
+    "Enabling this does not load board data. Disabling stops new reads; "
+    "previously read data stays in the conversation."
+)
+
+
 class BoardDataCheckBox(QCheckBox):
     def __init__(self, parent=None):
         super().__init__("Board data", parent)
         self._context = None
-        self.setToolTip(
-            "Let the chat load the complete netlist and component identities when needed.\n"
-            "Enabling this does not load board data. Disabling stops new reads; "
-            "previously read data stays in the conversation."
-        )
         self.toggled.connect(self._store)
         self.set_context(None)
 
@@ -39,4 +41,4 @@ class BoardDataCheckBox(QCheckBox):
         self.blockSignals(False)
         if is_text and not selected:
             context.board_data_enabled = False
-        self.setText("Board data" if available else "Board data (no board available)")
+        self.setToolTip(_TIP if available else "No board available in this project.\n\n" + _TIP)

@@ -1,7 +1,7 @@
 """Reusable Find/Replace bar for QPlainTextEdit-based tab editors.
 
-Embeds at the bottom of a tab. Hidden by default; show via Ctrl+F
-(find-only) or Ctrl+H (replace expanded). Esc closes. Targets a
+A white card above a view's editors (board S2). Hidden by default; show via
+Ctrl+F (find-only) or Ctrl+H (replace expanded). Esc closes. Targets a
 specific QPlainTextEdit set via :meth:`set_target`.
 
 The bar carries no per-tab state — each tab owns one instance and
@@ -17,17 +17,20 @@ from typing import Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut, QTextCursor, QTextDocument
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QHBoxLayout, QLineEdit, QPlainTextEdit, QPushButton,
-    QVBoxLayout, QWidget,
+    QApplication, QButtonGroup, QFrame, QHBoxLayout, QLineEdit, QPlainTextEdit, QPushButton,
+    QToolButton, QVBoxLayout, QWidget,
 )
 
+from project_services import ui_kit
+from project_services.segmented import segment, segmented
 
-class FindReplaceBar(QWidget):
-    """Two-row docked find/replace strip.
 
-    Row 1 (always visible when shown): Find field + Prev / Next / Close.
-    Row 2 (shown when in replace mode): Replace field + Replace / Replace All.
-    Toggles: case-sensitive, whole-word, regex.
+class FindReplaceBar(QFrame):
+    """Two-row find/replace card.
+
+    Row 1 (always visible when shown): Find field, the match count, Prev / Next,
+    the case-sensitive | whole-word | regex toggles, Close.
+    Row 2 (shown when in replace mode): Replace field + Replace / Replace all.
     """
 
     closed = Signal()
@@ -44,13 +47,14 @@ class FindReplaceBar(QWidget):
         self.hide()
 
     def _setup_ui(self) -> None:
+        self.setObjectName("card")
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(4, 2, 4, 2)
-        outer.setSpacing(2)
+        outer.setContentsMargins(10, 8, 10, 8)
+        outer.setSpacing(6)
 
         # --- Row 1: find ----------------------------------------------------
         find_row = QHBoxLayout()
-        find_row.setSpacing(4)
+        find_row.setSpacing(6)
 
         self.find_field = QLineEdit()
         self.find_field.setPlaceholderText("Find")
@@ -65,40 +69,39 @@ class FindReplaceBar(QWidget):
         self.next_button.setToolTip("Find next (Enter)")
         self.next_button.clicked.connect(self.find_next)
 
-        self.case_toggle = QCheckBox("Aa")
+        self.case_toggle = segment("Aa")
         self.case_toggle.setToolTip("Match case")
 
-        self.word_toggle = QCheckBox("W")
+        self.word_toggle = segment("W")
         self.word_toggle.setToolTip("Whole word")
 
-        self.regex_toggle = QCheckBox(".*")
+        self.regex_toggle = segment(".*")
         self.regex_toggle.setToolTip("Regex")
+        toggles = QButtonGroup(self)  # each one on or off by itself
+        toggles.setExclusive(False)
+        for toggle in (self.case_toggle, self.word_toggle, self.regex_toggle):
+            toggles.addButton(toggle)
 
-        self.status_label = QLineEdit()
-        self.status_label.setReadOnly(True)
-        self.status_label.setFrame(False)
-        self.status_label.setMaximumWidth(120)
-        self.status_label.setStyleSheet("background: transparent;")
+        self.status_label = ui_kit.note(wrap=False)
 
-        self.close_button = QPushButton("✕")
+        self.close_button = QToolButton()
+        self.close_button.setText("✕")
+        self.close_button.setObjectName("paneIconButton")
         self.close_button.setToolTip("Close (Esc)")
-        self.close_button.setMaximumWidth(28)
         self.close_button.clicked.connect(self.close_bar)
 
         find_row.addWidget(self.find_field, 1)
+        find_row.addWidget(self.status_label)
         find_row.addWidget(self.prev_button)
         find_row.addWidget(self.next_button)
-        find_row.addWidget(self.case_toggle)
-        find_row.addWidget(self.word_toggle)
-        find_row.addWidget(self.regex_toggle)
-        find_row.addWidget(self.status_label)
+        find_row.addWidget(segmented(self.case_toggle, self.word_toggle, self.regex_toggle))
         find_row.addWidget(self.close_button)
         outer.addLayout(find_row)
 
         # --- Row 2: replace -------------------------------------------------
         self._replace_row_widgets: list[QWidget] = []
         replace_row = QHBoxLayout()
-        replace_row.setSpacing(4)
+        replace_row.setSpacing(6)
 
         self.replace_field = QLineEdit()
         self.replace_field.setPlaceholderText("Replace with")
@@ -108,13 +111,14 @@ class FindReplaceBar(QWidget):
         self.replace_button.setToolTip("Replace current match")
         self.replace_button.clicked.connect(self.replace_one)
 
-        self.replace_all_button = QPushButton("Replace All")
+        self.replace_all_button = QPushButton("Replace all")
         self.replace_all_button.setToolTip("Replace every match")
         self.replace_all_button.clicked.connect(self.replace_all)
 
         replace_row.addWidget(self.replace_field, 1)
         replace_row.addWidget(self.replace_button)
         replace_row.addWidget(self.replace_all_button)
+        replace_row.addSpacing(self.close_button.sizeHint().width() + 6)  # under row 1's ✕
         outer.addLayout(replace_row)
 
         for w in (self.replace_field, self.replace_button, self.replace_all_button):
@@ -287,9 +291,17 @@ class FindReplaceBar(QWidget):
                 return False
             self._set_status("Wrapped")
         else:
-            self._clear_status()
+            self._set_status(self._match_position(found))
         self._target.setTextCursor(found)
         return True
+
+    def _match_position(self, found: QTextCursor) -> str:
+        """"3 of 9": which of the target's matches *found* is ("" when unsure)."""
+        regex = self._search_regex(self.find_field.text())
+        starts = [m.start() for m in regex.finditer(self._target.toPlainText())]
+        if found.selectionStart() not in starts:
+            return ""
+        return f"{starts.index(found.selectionStart()) + 1} of {len(starts)}"
 
     def _compile_regex(self, pattern: str) -> re.Pattern[str]:
         flags = 0 if self.case_toggle.isChecked() else re.IGNORECASE
@@ -339,16 +351,18 @@ class FindReplaceBar(QWidget):
         self, text: str, pattern: str, replacement: str,
     ) -> tuple[str, int]:
         """Pure helper for ``replace_all`` — exposed for testability."""
-        if self.regex_toggle.isChecked():
-            regex = self._compile_regex(pattern)
-        else:
-            esc = re.escape(pattern)
-            if self.word_toggle.isChecked():
-                esc = rf"\b{esc}\b"
-            flags = 0 if self.case_toggle.isChecked() else re.IGNORECASE
-            regex = re.compile(esc, flags)
-        new_text, count = regex.subn(replacement, text)
+        new_text, count = self._search_regex(pattern).subn(replacement, text)
         return new_text, count
+
+    def _search_regex(self, pattern: str) -> re.Pattern[str]:
+        """*pattern* under the case / whole-word / regex toggles."""
+        if self.regex_toggle.isChecked():
+            return self._compile_regex(pattern)
+        esc = re.escape(pattern)
+        if self.word_toggle.isChecked():
+            esc = rf"\b{esc}\b"
+        flags = 0 if self.case_toggle.isChecked() else re.IGNORECASE
+        return re.compile(esc, flags)
 
 
 # --------------------------------------------------------------------------- #

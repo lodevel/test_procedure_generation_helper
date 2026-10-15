@@ -1,5 +1,7 @@
 """
-Findings Panel - Display validation issues and warnings.
+Findings Panel - Display validation issues and warnings, as on the approved board S5: "Issues"
+with Copy / Clear, the counts as pills, one card per issue (its severity and location pills,
+the message, the fix).
 
 Implements Section 10.3 of the spec.
 
@@ -10,18 +12,90 @@ Callers write issues to session_state.validation_issues, then call display().
 """
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
-    QPushButton, QLabel, QApplication, QMenu
+    QWidget, QVBoxLayout, QListWidget, QListWidgetItem,
+    QPushButton, QLabel, QApplication, QMenu, QFrame
 )
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QKeySequence, QShortcut
+from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtGui import QKeySequence, QShortcut
 from typing import TYPE_CHECKING, Optional
 
-from ..theme import finding_error, finding_warning, finding_info, finding_success
+from project_services import ui_kit
 
 if TYPE_CHECKING:
     from ..main_window import MainWindow
     from ..core.session_state import SessionState
+
+#: An issue's severity -> its pill tone.
+_TONES = {"error": "danger", "warning": "warning"}
+#: The gap under each issue card.
+_CARD_GAP = 8
+
+
+def _count(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 or word == 'info' else 's'}"
+
+
+def _issue_card(issue: dict) -> QWidget:
+    """One issue as a card (#findingCard): severity and location pills, the message, the fix."""
+    card = QFrame()
+    card.setObjectName("findingCard")
+    column = QVBoxLayout(card)
+    column.setContentsMargins(10, 8, 10, 8)
+    column.setSpacing(4)
+    severity = str(issue.get("severity", "info"))
+    head = ui_kit.hbox(ui_kit.set_pill(QLabel(), _TONES.get(severity, "info"), severity.upper()), None)
+    if issue.get("location"):
+        head.addWidget(ui_kit.set_pill(QLabel(), "neutral", str(issue["location"])))
+    column.addLayout(head)
+    message = QLabel(str(issue.get("message", issue)))
+    message.setWordWrap(True)
+    column.addWidget(message)
+    if issue.get("suggested_fix"):
+        fix = QLabel(f"Fix: {issue['suggested_fix']}")
+        fix.setObjectName("findingFix")
+        fix.setWordWrap(True)
+        column.addWidget(fix)
+    if issue.get("code"):
+        card.setToolTip(str(issue["code"]))
+    holder = QWidget()  # the card and the gap under it
+    holder.setLayout(ui_kit.hbox(card))
+    holder.layout().setContentsMargins(0, 0, 0, _CARD_GAP)
+    return holder
+
+
+class _IssueList(QListWidget):
+    """The cards: each row as tall as its card at the list's width; the selected ones marked."""
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("findingList")
+        self.setSelectionMode(QListWidget.ExtendedSelection)
+        self.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.itemSelectionChanged.connect(self._mark_selected)
+
+    def add_issue(self, issue: dict) -> None:
+        item = QListWidgetItem()
+        item.setData(Qt.UserRole, issue)
+        self.addItem(item)
+        self.setItemWidget(item, _issue_card(issue))
+        self._fit(item)
+
+    def _fit(self, item: QListWidgetItem) -> None:
+        width = self.viewport().width()
+        holder = self.itemWidget(item)
+        item.setSizeHint(QSize(width, holder.heightForWidth(width)))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        for row in range(self.count()):
+            self._fit(self.item(row))
+
+    def _mark_selected(self) -> None:
+        for row in range(self.count()):
+            item = self.item(row)
+            card = self.itemWidget(item).findChild(QFrame, "findingCard")
+            ui_kit.set_state(card, "selected", item.isSelected())
 
 
 class FindingsPanel(QWidget):
@@ -46,13 +120,8 @@ class FindingsPanel(QWidget):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
-
-        # Header
-        header = QHBoxLayout()
-        self.count_label = QLabel("<b>Issues</b>")
-        header.addWidget(self.count_label)
-        header.addStretch()
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
 
         self.copy_btn = QPushButton("Copy")
         self.copy_btn.setToolTip(
@@ -60,17 +129,17 @@ class FindingsPanel(QWidget):
             "Ctrl+C also works."
         )
         self.copy_btn.clicked.connect(self._on_copy)
-        header.addWidget(self.copy_btn)
-
         self.clear_btn = QPushButton("Clear")
         self.clear_btn.clicked.connect(self._on_clear)
-        header.addWidget(self.clear_btn)
+        layout.addLayout(ui_kit.hbox(ui_kit.bold("Issues"), None, self.copy_btn, self.clear_btn))
 
-        layout.addLayout(header)
+        # The counts, as pills ("1 error", "1 warning", "1 info"; "No issues")
+        self.summary_row = ui_kit.hbox()
+        self.summary_row.setSpacing(6)
+        layout.addLayout(self.summary_row)
 
         # Issue list (multi-select for copy)
-        self.issue_list = QListWidget()
-        self.issue_list.setSelectionMode(QListWidget.ExtendedSelection)
+        self.issue_list = _IssueList()
         self.issue_list.itemClicked.connect(self._on_issue_clicked)
         self.issue_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.issue_list.customContextMenuRequested.connect(self._on_context_menu)
@@ -81,10 +150,7 @@ class FindingsPanel(QWidget):
         copy_shortcut.setContext(Qt.WidgetShortcut)
         copy_shortcut.activated.connect(self._on_copy)
 
-        # Summary
-        self.summary_label = QLabel("No issues")
-        self.summary_label.setStyleSheet(f"color: {finding_success()};")
-        layout.addWidget(self.summary_label)
+        layout.addWidget(ui_kit.note("Right-click: Copy selected · Copy all"))
 
     # ── Public API ──────────────────────────────────────────
 
@@ -108,65 +174,25 @@ class FindingsPanel(QWidget):
             issues = self._session_state.validation_issues or []
 
         for issue_dict in issues:
-            self._add_issue_item(issue_dict)
+            self.issue_list.add_issue(issue_dict)
 
-        self._update_summary(len(issues))
+        self._update_summary(issues)
         self.issues_changed.emit(len(issues))
 
-    def _add_issue_item(self, issue: dict):
-        """Add a single issue dict to the list widget."""
-        item = QListWidgetItem()
-        item.setData(Qt.UserRole, issue)
-
-        msg = issue.get("message", str(issue))
-        location = issue.get("location", "")
-        if location:
-            msg = f"{msg} ({location})"
-        fix = issue.get("suggested_fix", "")
-        if fix:
-            msg = f"{msg} \u2014 Fix: {fix}"
-
-        severity = issue.get("severity", "info")
-        if severity == "error":
-            item.setForeground(finding_error())
-            item.setText(f"\u2717 {msg}")
-        elif severity == "warning":
-            item.setForeground(finding_warning())
-            item.setText(f"\u26a0 {msg}")
-        else:
-            item.setForeground(finding_info())
-            item.setText(f"\u2139 {msg}")
-
-        self.issue_list.addItem(item)
-
-    def _update_summary(self, total: int):
-        """Update header and summary labels."""
-        self.count_label.setText(
-            f"<b>Issues ({total})</b>" if total else "<b>Issues</b>"
-        )
-
-        if total == 0:
-            self.summary_label.setText("No issues")
-            self.summary_label.setStyleSheet(f"color: {finding_success()};")
-            return
-
-        issues = (
-            self._session_state.validation_issues or []
-            if self._session_state is not None
-            else []
-        )
-        errors = sum(1 for i in issues if i.get("severity") == "error")
-        warnings = sum(1 for i in issues if i.get("severity") == "warning")
-
-        if errors > 0:
-            self.summary_label.setText(f"{errors} errors, {warnings} warnings")
-            self.summary_label.setStyleSheet(f"color: {finding_error().name()};")
-        elif warnings > 0:
-            self.summary_label.setText(f"{warnings} warnings")
-            self.summary_label.setStyleSheet(f"color: {finding_warning().name()};")
-        else:
-            self.summary_label.setText(f"{total} info items")
-            self.summary_label.setStyleSheet(f"color: {finding_info().name()};")
+    def _update_summary(self, issues: list):
+        """The counts' pills: errors, warnings, the rest as info ("No issues" when none)."""
+        ui_kit.clear_layout(self.summary_row)
+        severities = [i.get("severity", "info") if isinstance(i, dict) else "info" for i in issues]
+        errors, warnings = severities.count("error"), severities.count("warning")
+        pills = [("danger", _count(errors, "error")) if errors else None,
+                 ("warning", _count(warnings, "warning")) if warnings else None,
+                 ("info", _count(len(issues) - errors - warnings, "info"))
+                 if len(issues) > errors + warnings else None]
+        if not issues:
+            pills = [("success", "No issues")]
+        for tone, text in filter(None, pills):
+            self.summary_row.addWidget(ui_kit.set_pill(QLabel(), tone, text))
+        self.summary_row.addStretch(1)
 
     def _on_issue_clicked(self, item: QListWidgetItem):
         """Handle issue click."""
@@ -181,24 +207,11 @@ class FindingsPanel(QWidget):
         self._refresh_display()
 
     def _on_copy(self):
-        """Copy selected issues (or all if none selected) to clipboard as text.
-
-        Format is plain markdown — easy to paste into chat. Each issue
-        becomes one bullet with severity, code, message, location, and
-        suggested fix on a continuation line when present.
-        """
-        selected = self.issue_list.selectedItems()
-        if selected:
-            issues = [item.data(Qt.UserRole) for item in selected]
+        """Copy selected issues (or all if none selected) to clipboard as text."""
+        if self.issue_list.selectedItems():
+            self._copy_selected()
         else:
-            issues = []
-            for i in range(self.issue_list.count()):
-                issues.append(self.issue_list.item(i).data(Qt.UserRole))
-
-        if not issues:
-            return
-
-        QApplication.clipboard().setText(self._format_issues(issues))
+            self._copy_all()
 
     def _on_context_menu(self, pos):
         """Right-click context menu with copy actions."""
@@ -217,21 +230,16 @@ class FindingsPanel(QWidget):
         menu.exec(self.issue_list.viewport().mapToGlobal(pos))
 
     def _copy_selected(self):
-        items = self.issue_list.selectedItems()
-        if not items:
-            return
-        QApplication.clipboard().setText(
-            self._format_issues([item.data(Qt.UserRole) for item in items])
-        )
+        self._copy(self.issue_list.selectedItems())
 
     def _copy_all(self):
-        if self.issue_list.count() == 0:
-            return
-        issues = [
-            self.issue_list.item(i).data(Qt.UserRole)
-            for i in range(self.issue_list.count())
-        ]
-        QApplication.clipboard().setText(self._format_issues(issues))
+        self._copy([self.issue_list.item(i) for i in range(self.issue_list.count())])
+
+    def _copy(self, items: list) -> None:
+        """Put *items*' issues on the clipboard as plain markdown bullets (nothing: no-op)."""
+        if items:
+            QApplication.clipboard().setText(
+                self._format_issues([item.data(Qt.UserRole) for item in items]))
 
     @staticmethod
     def _format_issues(issues: list) -> str:

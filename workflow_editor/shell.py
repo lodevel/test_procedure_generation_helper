@@ -243,6 +243,7 @@ def refresh_footer(ws: StudioWorkspace) -> None:
         docs = len(pm.get_rules_files())
         ws.rules_link.setText(f"Rules: {_short(rules, root)} · {docs} doc{'' if docs == 1 else 's'}")
     ws.rules_link.setToolTip((f"{rules}\n" if rules else "") + "Click to choose the rules folder.")
+    ws.dock.refresh_rules_picker()  # the Assistant's picker counts the same rules
     bundle = bundle_registry.read_active_bundle(root) if root else None
     ws.bundle_label.setText(f"Bundle: {bundle.id} {bundle.version}" if bundle else "Bundle: none")
     ws.validator_label.setText(

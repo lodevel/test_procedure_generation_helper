@@ -108,12 +108,12 @@ class ChatMessage:
     completion_tokens: int = 0
     total_tokens: int = 0
     msg_id: str = ""  # Unique message ID (UUID)
+    tone: str = "neutral"  # a system line's pill tone: success / warning / danger / neutral
     
     def __post_init__(self):
         """Generate UUID if msg_id not provided."""
-        if not self.msg_id:
-            import uuid
-            self.msg_id = str(uuid.uuid4())
+        import uuid
+        self.msg_id = self.msg_id or str(uuid.uuid4())
 
 
 class TabContext:

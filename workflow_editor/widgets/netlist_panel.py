@@ -1,7 +1,7 @@
-"""Board netlist reference panel for the Text tab.
+"""Board netlist reference card for the Text tab (board S1).
 
-Split vertically: a tabbed **browser** on top (Components | Nets) and an inline
-**board-image viewer** below — a read-only reference while authoring. **Select**
+Split vertically: a tabbed **browser** on top (Components | Nets, underlined) and
+an inline **board-image viewer** below — a read-only reference while authoring. **Select**
 a component or pin to render its board image into the viewer (cached or generated
 on demand; nets are names-only, no image); click the image for a full view.
 
@@ -15,12 +15,15 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal, QThread, QTimer
 from PySide6.QtGui import QPixmap, QTransform
 from PySide6.QtWidgets import (
-    QGroupBox, QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTabWidget,
+    QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTabWidget,
     QTreeWidget, QTreeWidgetItem, QLabel, QCheckBox, QScrollArea, QSplitter,
     QDialog, QPushButton, QApplication,
 )
 
+from project_services import ui_kit
+
 from .. import theme
+from ..board_source import find_odb_tgz
 
 
 class _BoardImagePopup(QDialog):
@@ -194,11 +197,14 @@ class _RenderWorker(QThread):
                        self._refdes, self._pad or "")
 
 
-class NetlistPanel(QGroupBox):
-    """Components | Nets browser over an inline board-image viewer."""
+class NetlistPanel(ui_kit.Card):
+    """Components | Nets browser over an inline board-image viewer, in a white card titled
+    "Board netlist · <the project's archive>"."""
 
     def __init__(self, parent=None) -> None:
-        super().__init__("Board netlist", parent)
+        super().__init__("Board netlist")
+        if parent is not None:
+            self.setParent(parent)
         self._components: list = []
         self._nets: list = []
         self._hide_prefixes: list = ["Net"]
@@ -218,12 +224,14 @@ class NetlistPanel(QGroupBox):
     # -- UI -------------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        outer = QVBoxLayout(self)
+        self.body.setSpacing(8)
         split = QSplitter(Qt.Orientation.Vertical)
+        split.setHandleWidth(8)
 
         top = QWidget()
         tl = QVBoxLayout(top)
         tl.setContentsMargins(0, 0, 0, 0)
+        tl.setSpacing(6)
         self._search = QLineEdit()
         self._search.setPlaceholderText("Filter components / pins / nets…")
         self._search.setClearButtonEnabled(True)
@@ -231,6 +239,8 @@ class NetlistPanel(QGroupBox):
         tl.addWidget(self._search)
 
         self._tabs = QTabWidget()
+        self._tabs.setObjectName("netlistTabs")  # underlined, on the card's white (app QSS)
+        self._tabs.setProperty("underline", True)
         self._comp_tree = QTreeWidget()
         self._comp_tree.setHeaderLabels(["Component / pin", "Net"])
         self._comp_tree.setColumnWidth(0, 177)  # Component/pin wider; Net (stretch col) shrinks
@@ -243,6 +253,8 @@ class NetlistPanel(QGroupBox):
         self._net_tree.setUniformRowHeights(True)
         self._net_tree.itemSelectionChanged.connect(self._on_sel_changed)
         self._net_tree.itemDoubleClicked.connect(self._on_double_click)
+        for tree in (self._comp_tree, self._net_tree):
+            tree.setObjectName("netlistTree")
         self._tabs.addTab(self._comp_tree, "Components")
         self._tabs.addTab(self._net_tree, "Nets")
         self._tabs.currentChanged.connect(self._on_sel_changed)
@@ -255,28 +267,24 @@ class NetlistPanel(QGroupBox):
             "Configure the hidden prefixes in the project settings.")
         self._show_hidden.toggled.connect(self._refilter)
         row.addWidget(self._show_hidden)
-        row.addStretch(1)
+        self._status = ui_kit.note()
+        self._status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(self._status, 1)
         tl.addLayout(row)
-
-        self._status = QLabel()
-        self._status.setWordWrap(True)
-        self._status.setStyleSheet(f"color:{theme.muted_color()}; font-size:9pt;")
-        tl.addWidget(self._status)
-
-        hint = QLabel("Double-click a row to copy its name · select to view the "
-                      "board image (click it for a full view).")
-        hint.setStyleSheet(f"color:{theme.muted_color()}; font-size:9pt;")
-        hint.setWordWrap(True)
-        tl.addWidget(hint)
+        tl.addWidget(ui_kit.note("Double-click a row to copy its name · select it to see it "
+                                 "on the board."))
         split.addWidget(top)
 
-        bottom = QGroupBox("Board image")
+        bottom = QWidget()
         bl = QVBoxLayout(bottom)
-        self._viewer_caption = QLabel()
-        self._viewer_caption.setStyleSheet("font-weight:bold;")
-        self._viewer_caption.setWordWrap(True)
-        bl.addWidget(self._viewer_caption)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.setSpacing(6)
+        self._viewer_caption = ui_kit.monospace(ui_kit.note(wrap=False))
+        self._full_view = ui_kit.link("Full view…", lambda: self._on_viewer_click(None))
+        bl.addLayout(ui_kit.hbox(ui_kit.bold("Board image"), self._viewer_caption, None,
+                                 self._full_view))
         self._viewer_scroll = QScrollArea()
+        self._viewer_scroll.setObjectName("boardImage")  # a framed, rounded well (app QSS)
         self._viewer_scroll.setWidgetResizable(True)
         self._viewer_label = QLabel("")
         self._viewer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -290,7 +298,8 @@ class NetlistPanel(QGroupBox):
         split.setStretchFactor(0, 1)
         split.setStretchFactor(1, 1)
         split.setSizes([360, 320])
-        outer.addWidget(split)
+        self.body.addWidget(split, 1)
+        self._full_view.setEnabled(False)
 
     # -- data -----------------------------------------------------------------
 
@@ -298,6 +307,8 @@ class NetlistPanel(QGroupBox):
         """Load the project's netlist off-thread and populate. Safe to call on
         every project change."""
         self._project_root = project_root
+        tgz = find_odb_tgz(project_root) if project_root is not None else None
+        self.set_hint(tgz.name if tgz is not None else "")
         self._hide_prefixes = odb_inspect.load_hide_prefixes(project_root)
         self.set_status("Loading board…")
         worker = _LoadWorker(project_root)
@@ -340,9 +351,9 @@ class NetlistPanel(QGroupBox):
             cs = filter_components(self._components, self._search.text())
             ns = visible_nets(self._nets, self._search.text(),
                               self._hide_prefixes, self._show_hidden.isChecked())
-            self._status.setText(
-                f"{len(cs)}/{len(self._components)} components · "
-                f"{len(ns)} nets shown")
+            parts = (f"{len(cs)} parts" if len(cs) == len(self._components)
+                     else f"{len(cs)} of {len(self._components)} parts")
+            self._status.setText(f"{parts} · {len(ns)} nets")
 
     def _populate_components(self) -> None:
         self._comp_tree.clear()
@@ -472,6 +483,7 @@ class NetlistPanel(QGroupBox):
         self._viewer_label.setPixmap(QPixmap())
         self._viewer_label.setText(text or "")
         self._viewer_label.setCursor(Qt.CursorShape.ArrowCursor)
+        self._full_view.setEnabled(False)
 
     def show_image(self, zpix, wpix, caption: str) -> None:
         self._cur_zoom, self._cur_wide, self._cur_cap = zpix, wpix, caption
@@ -481,6 +493,7 @@ class NetlistPanel(QGroupBox):
             self._viewer_label.setText("")
             self._render_scaled(pm)
             self._viewer_label.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._full_view.setEnabled(True)
         else:
             self._viewer_label.setText("Image unavailable.")
             self._viewer_label.setCursor(Qt.CursorShape.ArrowCursor)
@@ -493,9 +506,13 @@ class NetlistPanel(QGroupBox):
                              self._cur_cap, self).exec()
 
     def _render_scaled(self, pm: QPixmap) -> None:
-        width = max(120, self._viewer_scroll.viewport().width() - 8)
-        self._viewer_label.setPixmap(pm.scaledToWidth(
-            min(width, pm.width()), Qt.TransformationMode.SmoothTransformation))
+        """*pm* fitted into the image well (never enlarged)."""
+        well = self._viewer_scroll.viewport().size()
+        width = min(max(120, well.width() - 8), pm.width())
+        height = min(max(80, well.height() - 8), pm.height())
+        self._viewer_label.setPixmap(pm.scaled(
+            width, height, Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation))
 
     def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
         super().resizeEvent(event)

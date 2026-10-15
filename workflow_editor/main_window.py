@@ -1420,7 +1420,7 @@ class StudioWorkspace(QWidget):
         sm = self._server_manager
         if sm is None:
             self.dock.chat_panel.add_system_message(
-                "No restartable backend server is configured.")
+                "No restartable backend server is configured.", tone="warning")
             return
         # Cancel any in-flight (possibly hung) request first (best-effort).
         try:
@@ -1456,10 +1456,10 @@ class StudioWorkspace(QWidget):
         def _done(ok):
             if ok:
                 self.dock.chat_panel.add_system_message(
-                    "🗜️ Session compacted — context will shrink on the next reply.")
+                    "🗜️ Session compacted — context will shrink on the next reply.", tone="success")
             else:
                 self.dock.chat_panel.add_system_message(
-                    "Compaction is unavailable for this backend (or the request failed).")
+                    "Compaction is unavailable for this backend (or the request failed).", tone="warning")
             # Re-render the readout from the latest known total (best-effort;
             # the real reduction lands with the next turn's reported total).
             try:

@@ -6,12 +6,13 @@ import json
 from unittest.mock import MagicMock
 
 import pytest
-from PySide6.QtWidgets import QApplication, QLabel, QListWidget, QPlainTextEdit
+from PySide6.QtWidgets import QApplication, QPlainTextEdit
 
 from workflow_editor.core import StepMarkerParser
 from workflow_editor.core.artifact_manager import ArtifactManager
 from workflow_editor.core.procedure_steps import numbered_steps
 from workflow_editor.tabs.json_code_tab import JsonCodeTab
+from workflow_editor.widgets.step_list import StepListCard
 
 STEPS = [
     {"n": 1, "text": "set psu"},
@@ -37,10 +38,12 @@ def test_the_json_code_list_shows_the_steps_inside_loops(qapp):
     fake = MagicMock()
     fake.json_editor = QPlainTextEdit(json.dumps({"steps": STEPS}))
     fake.code_editor = QPlainTextEdit("# Step 2\nx = 1\n")
-    fake.step_list, fake.step_status = QListWidget(), QLabel()
+    fake.steps_card = StepListCard("Steps")
     fake._parser = StepMarkerParser()
     fake.artifact_manager = ArtifactManager()
     JsonCodeTab._update_step_markers(fake)
-    rows = [fake.step_list.item(i).text() for i in range(fake.step_list.count())]
-    assert [r.split(":")[0] for r in rows] == [f"{'✓' if n == 2 else '✗'} Step {n}" for n in range(1, 8)]
-    assert fake.step_status.text() == "7 steps in JSON (1 with code)"
+    rows = fake.steps_card.rows()
+    assert [(mark, n) for mark, n, _text in rows] == [("✓" if n == 2 else "✗", n) for n in range(1, 8)]
+    assert rows[1][2] == "measure"
+    assert fake.steps_card.note.text() == "7 steps in JSON · 1 in code"
+    assert fake.steps_card.pill.text() == "1 of 7"

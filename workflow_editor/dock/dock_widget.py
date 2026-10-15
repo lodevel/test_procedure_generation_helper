@@ -1,161 +1,116 @@
 """
-Dock Widget - the Assistant column (the right column of Procedo Studio).
-
-Implements the dock panel structure from Section 10.
+The Assistant column (the right column of Procedo Studio), as on the approved board S5: its
+header ("Assistant" and the rules picker "Rules · n of N ▾"), the underlined tabs Chat /
+Session / Findings N / Raw, and the chat's composer under every tab.
 """
 
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QTabWidget
-)
+from PySide6.QtWidgets import QMessageBox, QPushButton, QTabWidget, QVBoxLayout, QWidget
 from typing import TYPE_CHECKING
+
+from project_services import ui_kit
+
+from ..widgets.rule_selector import RuleSelectorDialog, current_selection
+from .chat_panel import ChatPanel
+from .findings_panel import FindingsPanel
+from .raw_response_viewer import RawResponseViewer
+from .session_viewer import SessionViewer
 
 if TYPE_CHECKING:
     from ..main_window import StudioWorkspace
-    from ..core import ValidationResult
 
 
 class DockWidget(QWidget):
     """
     The Assistant column: a fixed column of the workspace (no float, no close).
-    
-    Contains tabbed sections:
-    - Chat: LLM conversation
-    - Session: Assumptions/decisions/questions
-    - Findings: Validation issues
-    - Raw: Debug response viewer
+
+    Tabs: Chat (the LLM conversation), Session (assumptions / decisions / questions),
+    Findings (validation issues, their count in the tab), Raw (the last responses).
     """
-    
+
     def __init__(self, main_window: "StudioWorkspace", parent=None):
         super().__init__(parent)
         self.main_window = main_window
-        
         self.setMinimumWidth(300)
-        
-        self._findings_count = 0  # Track issue count for badge
-        
-        self._setup_ui()
-    
-    def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Toolbar with rule selector button
-        from PySide6.QtWidgets import QHBoxLayout, QPushButton
-        toolbar_layout = QHBoxLayout()
-        toolbar_layout.setContentsMargins(5, 5, 5, 5)
-        
-        self.rule_selector_btn = QPushButton("Select Rules...")
-        self.rule_selector_btn.setToolTip("Configure which rules are included in LLM context for the current tab")
-        self.rule_selector_btn.clicked.connect(self._on_select_rules)
-        toolbar_layout.addWidget(self.rule_selector_btn)
-        toolbar_layout.addStretch()
-        
-        layout.addLayout(toolbar_layout)
-        
-        # Tab widget for panels
-        self.tab_widget = QTabWidget()
-        
-        # Import panels here to avoid circular imports
-        from .chat_panel import ChatPanel
-        from .session_viewer import SessionViewer
-        from .findings_panel import FindingsPanel
-        from .raw_response_viewer import RawResponseViewer
-        
+
+        self.rules_picker = QPushButton("Rules ▾")
+        self.rules_picker.setObjectName("rulesPicker")
+        self.rules_picker.setToolTip(
+            "Select Rules… — which rule documents go into the LLM context of the current view")
+        self.rules_picker.clicked.connect(self._on_select_rules)
+        head = QWidget()
+        head.setLayout(ui_kit.hbox(ui_kit.bold("Assistant"), None, self.rules_picker))
+        head.layout().setContentsMargins(14, 10, 14, 8)
+
         self.chat_panel = ChatPanel(self.main_window, self)
         self.session_viewer = SessionViewer(self.main_window, self)
         self.findings_panel = FindingsPanel(self.main_window, self)
         self.raw_viewer = RawResponseViewer(self.main_window, self)
-        
-        # Connect findings panel count-change signal to badge update
-        self.findings_panel.issues_changed.connect(self._on_findings_count_changed)
-        
+        self.findings_panel.issues_changed.connect(self._show_findings_count)
+
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setObjectName("assistantTabs")
+        self.tab_widget.setProperty("underline", True)  # the app QSS's underlined tabs
         self.tab_widget.addTab(self.chat_panel, "Chat")
         self.tab_widget.addTab(self.session_viewer, "Session")
         self.tab_widget.addTab(self.findings_panel, "Findings")
         self.tab_widget.addTab(self.raw_viewer, "Raw")
-        
-        layout.addWidget(self.tab_widget)
-    
-    def show_chat(self):
-        """Show the chat panel."""
-        self.tab_widget.setCurrentWidget(self.chat_panel)
-        self.show()
-    
-    def show_session(self):
-        """Show the session viewer."""
-        self.tab_widget.setCurrentWidget(self.session_viewer)
-        self.show()
-    
-    def show_findings(self):
-        """Show the findings panel."""
-        self.tab_widget.setCurrentWidget(self.findings_panel)
-        self.show()
-    
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(head)
+        layout.addWidget(self.tab_widget, 1)
+        layout.addWidget(self.chat_panel.composer)
+
+        # The picker counts the CURRENT view's rules: follow the view switch.
+        self.main_window.view_stack.currentChanged.connect(self.refresh_rules_picker)
+        self.refresh_rules_picker()
+
+    def _current_tab_context(self):
+        """The current view's TabContext (None: a view without an LLM context)."""
+        return getattr(self.main_window.view_stack.currentWidget(), "tab_context", None)
+
+    def refresh_rules_picker(self, *_) -> None:
+        """"Rules · n of N ▾": how many of the project's rule documents the current view sends."""
+        tab_context = self._current_tab_context()
+        if tab_context is None:
+            self.rules_picker.setText("Rules ▾")
+            return
+        available = [rule.name for rule in self.main_window.project_manager.get_rules_files()]
+        chosen = set(current_selection(self.main_window.task_config_manager, tab_context.tab_id,
+                                       available))
+        count = sum(1 for name in available if name in chosen)
+        self.rules_picker.setText(f"Rules · {count} of {len(available)} ▾")
+
     def _on_select_rules(self):
-        """Show rule selector dialog for current tab."""
-        from ..widgets.rule_selector import RuleSelectorDialog
-        from PySide6.QtWidgets import QMessageBox
-        
-        # Get current tab from main window
-        current_widget = self.main_window.view_stack.currentWidget()
-        
-        # Determine tab_id and tab_context
-        tab_context = None
-        tab_id = None
-        
-        if hasattr(current_widget, 'tab_context'):
-            tab_context = current_widget.tab_context
-            tab_id = tab_context.tab_id
-        else:
-            # Fallback for tabs without tab_context (e.g., workspace tab)
+        """Show the rule selector for the current view."""
+        tab_context = self._current_tab_context()
+        if tab_context is None:  # e.g. Traceability: no LLM context
             QMessageBox.information(
                 self,
                 "Not Available",
                 "Rule selection is only available for tabs with LLM context (Text-JSON, JSON-Code)."
             )
             return
-        
-        # Show dialog
+        tab_id = tab_context.tab_id
         dialog = RuleSelectorDialog(
             tab_id,
             self.main_window.project_manager,
             self.main_window.task_config_manager,
             self,
         )
-        if dialog.exec():
+        accepted = dialog.exec()
+        if accepted:
             selected_rules = dialog.get_selected_rules()
-            # Update tab context with new rules
             tab_context.set_selected_rules(selected_rules)
-            
-            # Show confirmation
+        self.refresh_rules_picker()  # the selector saves each tick, even when cancelled
+        if accepted:
             QMessageBox.information(
                 self,
                 "Rules Updated",
                 f"Updated rules for {tab_id} tab: {len(selected_rules)} rules selected."
             )
-    
-    def show_raw(self):
-        """Show the raw response viewer."""
-        self.tab_widget.setCurrentWidget(self.raw_viewer)
-        self.show()
-    
-    def show_validation_result(self, result: "ValidationResult"):
-        """Show a validation result in findings panel."""
-        ss = getattr(self.main_window, 'session_state', None)
-        if ss is not None:
-            ss.validation_issues = [
-                {
-                    "message": i.message,
-                    "severity": i.severity.value if hasattr(i.severity, 'value') else str(i.severity),
-                    "location": getattr(i, 'location', ""),
-                    "code": getattr(i, 'code', ""),
-                }
-                for i in result.issues
-            ]
-        self.findings_panel.display()
-        if result.issues:
-            self.tab_widget.setCurrentWidget(self.findings_panel)
-    
+
     def show_validation_result_from_list(self, issues: list):
         """Show validation issues from a list of dicts."""
         ss = getattr(self.main_window, 'session_state', None)
@@ -164,41 +119,12 @@ class DockWidget(QWidget):
         self.findings_panel.display()
         if issues:
             self.tab_widget.setCurrentWidget(self.findings_panel)
-    
-    def _update_findings_tab_text(self):
-        """Update findings tab text with badge count."""
-        findings_index = self.tab_widget.indexOf(self.findings_panel)
-        if findings_index >= 0:
-            if self._findings_count > 0:
-                self.tab_widget.setTabText(findings_index, f"Findings ({self._findings_count})")
-            else:
-                self.tab_widget.setTabText(findings_index, "Findings")
-    
-    def _on_findings_count_changed(self, count: int):
-        """Handle when findings count changes."""
-        self._findings_count = count
-        self._update_findings_tab_text()
-    
-    def add_chat_message(self, role: str, content: str):
-        """Add a message to the chat panel."""
-        self.chat_panel.add_message(role, content)
-    
-    def show_llm_response(self, raw_text: str, parsed_data: dict):
-        """Show LLM response in appropriate panels."""
-        # Show raw in debug viewer
-        self.raw_viewer.show_response(raw_text)
-        
-        # Show any issues in findings
-        if "validation_issues" in parsed_data:
-            ss = getattr(self.main_window, 'session_state', None)
-            if ss is not None:
-                ss.validation_issues = list(parsed_data["validation_issues"])
-            self.findings_panel.display()
-        
-        # Show session updates
-        if "session_delta" in parsed_data:
-            self.session_viewer.refresh()
-    
+
+    def _show_findings_count(self, count: int):
+        """The Findings tab carries the issue count ("Findings 3")."""
+        index = self.tab_widget.indexOf(self.findings_panel)
+        self.tab_widget.setTabText(index, f"Findings {count}" if count else "Findings")
+
     def refresh_session(self):
         """Refresh the session viewer."""
         self.session_viewer.refresh()

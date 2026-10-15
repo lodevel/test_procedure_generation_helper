@@ -1,126 +1,99 @@
 """
-Traceability Tab - Step to code mapping view.
+Traceability Tab - Step to code mapping view (board S4).
 
-Implements Section 9.4 of the spec.
+Implements Section 9.4 of the spec: the mapping's state in a banner, the
+procedure's steps (✓ when test.py has their block) beside test.py with each
+step's marker in the gutter, the mapping issues under the code. No action
+bar: the code card's own Save writes test.py.
 """
 
-from PySide6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QSplitter, QGroupBox, 
-    QPushButton, QLabel, QListWidget, QListWidgetItem,
-    QPlainTextEdit, QTextEdit
-)
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QTextCursor, QColor, QBrush, QTextFormat
-import textwrap
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSplitter, QVBoxLayout
+
+from project_services import ui_kit
 
 from .base_tab import BaseTab
+from .code_tab import PythonSyntaxHighlighter
 from ..core import ArtifactType, StepMarkerParser
 from ..core.procedure_steps import numbered_steps
-from ..theme import (
-    error_color,
-    status_modified,
-    status_saved,
-    success_color,
-    traceability_highlight,
-)
+from ..widgets.editor_card import EditorCard
 from ..widgets.find_replace_bar import FindReplaceBar, install_find_shortcuts
+from ..widgets.step_list import StepListCard, StepRow, step_rows
+
+#: The steps card's width on board S4.
+_STEPS_WIDTH = 340
 
 
 class TraceabilityTab(BaseTab):
     """
     Traceability tab for viewing step to code mapping.
-    
+
     Features:
     - Step list from JSON (or code fallback)
-    - Code block viewer for selected step
+    - Code viewer, a step's block highlighted when the step is clicked
     - Mapping rebuild
     - Mismatch detection
     """
 
     tab_id = "traceability"
-    
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        
-        # Header with status
-        header = QHBoxLayout()
-        self.status_label = QLabel("Click a step to jump to its code")
-        header.addWidget(self.status_label)
-        header.addStretch()
-        
-        layout.addLayout(header)
-        
-        # Splitter: step list | code viewer
-        splitter = QSplitter(Qt.Horizontal)
-        
-        # Step list
-        steps_group = QGroupBox("Procedure Steps")
-        steps_layout = QVBoxLayout(steps_group)
-        
-        self.step_list = QListWidget()
-        self.step_list.itemClicked.connect(self._on_step_selected)
-        steps_layout.addWidget(self.step_list)
-        
-        self.step_count_label = QLabel("")
-        steps_layout.addWidget(self.step_count_label)
-        
-        splitter.addWidget(steps_group)
-        
-        # Code viewer (editable)
-        code_group = QGroupBox("Full Code (with step markers)")
-        code_layout = QVBoxLayout(code_group)
-        
-        self.code_header = QLabel("Click a step to jump to it in the code")
-        code_layout.addWidget(self.code_header)
-        
-        self.code_editor = QPlainTextEdit()
-        self.code_editor.setFont(QFont("Consolas", 10))
-        self.code_editor.setLineWrapMode(QPlainTextEdit.NoWrap)  # Enable horizontal scrolling
-        self.code_editor.textChanged.connect(self._on_code_changed)
-        code_layout.addWidget(self.code_editor)
-        
-        # Code action buttons
-        code_btn_layout = QHBoxLayout()
-        self.save_code_btn = QPushButton("💾 Save Code")
-        self.save_code_btn.setEnabled(False)
-        self.save_code_btn.clicked.connect(self._on_save_code)
-        code_btn_layout.addWidget(self.save_code_btn)
-        code_btn_layout.addStretch()
-        code_layout.addLayout(code_btn_layout)
-        
-        self.line_info = QLabel("")
-        code_layout.addWidget(self.line_info)
-        
-        splitter.addWidget(code_group)
-        splitter.setSizes([300, 500])
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        self._parser = StepMarkerParser()
+        self._step_blocks = []
+        self._json_steps = []
 
-        layout.addWidget(splitter, stretch=1)
+        self.status_label = QLabel()
+        self.status_label.setObjectName("viewBanner")
+        self._show_banner("neutral", "Click a step to jump to its code")
+        layout.addWidget(self.status_label)
+
+        self.steps_card = StepListCard("Procedure steps")
+        self.steps_card.step_clicked.connect(self._on_step_selected)
+
+        self.code_card = self.add_card(EditorCard(
+            self, ArtifactType.TEST_CODE, "test.py", wrap=False,
+            placeholder="No code file loaded"))
+        self.code_editor = self.code_card.editor
+        self.code_highlighter = PythonSyntaxHighlighter(self.code_editor.document())
+        self.line_info = ui_kit.note(wrap=False)
+        self.code_card.add_to_header(self.line_info)
+        self.code_card.changed.connect(self._show_markers)
+        self.code_card.saved.connect(self._on_code_saved)
+        self.mismatch_label = ui_kit.note(wrap=True)
+        rule = QFrame()
+        rule.setObjectName("rowRule")
+        issues = QHBoxLayout()
+        issues.setContentsMargins(12, 8, 12, 8)
+        issues.setSpacing(8)
+        issues.addWidget(ui_kit.bold("Mapping issues"), 0, Qt.AlignmentFlag.AlignTop)
+        issues.addWidget(self.mismatch_label, 1)
+        self.code_card.body.addWidget(rule)
+        self.code_card.body.addLayout(issues)
 
         # Find/Replace bar — only the code editor is searchable here;
-        # the step list is a QListWidget and uses its own native filtering.
+        # the step list has its own rows.
         self.find_bar = FindReplaceBar(self)
         layout.addWidget(self.find_bar)
         install_find_shortcuts(self, [self.code_editor], self.find_bar)
 
-        # Mismatch summary
-        self.mismatch_group = QGroupBox("Mapping Issues")
-        mismatch_layout = QVBoxLayout(self.mismatch_group)
-        self.mismatch_label = QLabel("No issues detected")
-        mismatch_layout.addWidget(self.mismatch_label)
-        self.mismatch_group.setVisible(False)
-        
-        layout.addWidget(self.mismatch_group)
-        
-        # Initialize
-        self._parser = StepMarkerParser()
-        self._step_blocks = []
-        self._json_steps = []
-        self._code_modified = False
-    
-    def _load_mapping(self):
-        """Load step mapping from JSON and code."""
-        self.step_list.clear()
-        
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(10)
+        splitter.addWidget(self.steps_card)
+        splitter.addWidget(self.code_card)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([_STEPS_WIDTH, 500])
+        layout.addWidget(splitter, stretch=1)
+
+    def _show_banner(self, tone: str, text: str) -> None:
+        ui_kit.set_pill(self.status_label, tone, text)
+
+    def load_content(self):
+        """Load the step mapping from JSON and code."""
+        if not self.artifact_manager:
+            return
         # Get JSON steps
         json_data = self.artifact_manager.get_json_parsed()
         if json_data and "steps" in json_data:
@@ -130,225 +103,104 @@ class TraceabilityTab(BaseTab):
             self._json_steps = numbered_steps(json_data["steps"])
         else:
             self._json_steps = []
-        
-        # Get code step blocks
-        code = self.artifact_manager.get_content(ArtifactType.TEST_CODE)
-        if code:
-            self._step_blocks = self._parser.parse(code)
-            # Show full code (block signals to avoid triggering change flag)
-            self.code_editor.blockSignals(True)
-            self.code_editor.setPlainText(code)
-            self.code_editor.blockSignals(False)
-            self._code_modified = False
-            self.save_code_btn.setEnabled(False)
-        else:
-            self._step_blocks = []
-            self.code_editor.blockSignals(True)
-            self.code_editor.setPlainText("# No code file loaded")
-            self.code_editor.blockSignals(False)
-        
-        # Build unified step list
+        super().load_content()
+        self.line_info.setText("")
+        self.code_editor.clear_highlight()
+        self._rebuild_mapping()
+
+    def _rebuild_mapping(self) -> None:
+        """The step list, the gutter's step markers and the mismatches, from the code shown."""
+        self._show_markers()
         self._build_step_list()
-        
-        # Check for mismatches
         self._check_mismatches()
-    
+
+    def _show_markers(self) -> None:
+        """Each step's ``▸N`` in the code's gutter, on its ``# Step N`` line."""
+        self._step_blocks = self._parser.parse(self.code_editor.toPlainText())
+        self.code_editor.set_marks({b.start_line: f"▸{b.step_number}" for b in self._step_blocks})
+
     def _build_step_list(self):
         """Build the step list combining JSON and code info."""
-        # Operator-readable step text comes from procedure_text.md.
-        # v2.0.1 op-call JSON steps (psu.set_voltage, etc.) carry NO
-        # top-level "text" field — only structured fields — so reading
-        # step.get("text") on those returns "" and the column shows
-        # empty. The procedure_text.md has canonical "<n>. <prose>."
-        # for every step.
-        from ..pack_ops.pack_parsers import step_texts_from_canonical
-        proc_text = self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT)
-        canonical_lookup = step_texts_from_canonical(proc_text or "")
-
+        blocks_by_n = {b.step_number: b for b in self._step_blocks}
         # Use JSON steps as primary source
         if self._json_steps:
-            for i, step in enumerate(self._json_steps):
-                # Use the real step number n (matches the code's markers),
-                # not the array position — they diverge once macro blocks
-                # are present.
-                step_num = step.get("n", i + 1) if isinstance(step, dict) else i + 1
-
-                # Resolve display text: procedure_text.md wins; fall back
-                # to JSON step's "text" field (operator-prose steps);
-                # last resort the raw repr.
-                text = canonical_lookup.get(step_num) or ""
-                if not text and isinstance(step, dict):
-                    text = step.get("text", "") or ""
-                if not text:
-                    text = str(step) if not isinstance(step, dict) else f"(no text — op={step.get('op','?')})"
-                text = text[:60]
-
-                # Check if code has this step
-                has_code = any(b.step_number == step_num for b in self._step_blocks)
-                
-                item = QListWidgetItem()
-                if has_code:
-                    item.setText(f"Step {step_num} ✓ : {text}")
-                    item.setForeground(QColor(success_color()))
-                else:
-                    item.setText(f"Step {step_num} ✗ : {text}")
-                    item.setForeground(QColor(error_color()))
-                
-                item.setData(Qt.UserRole, step_num)
-                self.step_list.addItem(item)
-            
-            self.step_count_label.setText(f"{len(self._json_steps)} steps from JSON")
-        
+            # Operator-readable step text comes from procedure_text.md
+            # (v2.0.1 op-call JSON steps carry no top-level "text").
+            rows = step_rows(self._json_steps, blocks_by_n,
+                             self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT))
+            mapped = sum(1 for row in rows if row.block)
+            total = len(self._json_steps)
+            self.steps_card.show_steps(
+                rows, f"{total} steps from procedure.json · click one to jump to its code",
+                ("success" if mapped == total else "warning", f"{mapped} of {total} mapped"))
         # If no JSON, use code steps
         elif self._step_blocks:
-            for block in self._step_blocks:
-                item = QListWidgetItem(f"Step {block.step_number} (from code)")
-                item.setData(Qt.UserRole, block.step_number)
-                self.step_list.addItem(item)
-            
-            self.step_count_label.setText(f"{len(self._step_blocks)} steps from code (no JSON)")
-        
+            rows = [StepRow(b.step_number, "(from code)", b) for b in self._step_blocks]
+            self.steps_card.show_steps(rows, f"{len(rows)} steps from code (no JSON)")
         else:
-            self.step_count_label.setText("No steps found")
-    
+            self.steps_card.show_steps([], "No steps found")
+
     def _check_mismatches(self):
         """Check for mismatches between JSON and code."""
         if not self._json_steps:
-            self.mismatch_group.setVisible(False)
+            self.mismatch_label.setText("No steps in procedure.json")
+            self._show_banner("neutral", "Click a step to jump to its code")
             return
-        
+
         # Expected = the real step numbers (n), not 1..len — macro-block
         # bodies make n run past the top-level array length.
         expected_steps = sorted(
             s["n"] for s in self._json_steps
             if isinstance(s, dict) and isinstance(s.get("n"), int)
         )
-        code_content = self.artifact_manager.get_content(ArtifactType.TEST_CODE)
-        
+        code_content = self.code_editor.toPlainText()
+
         if not code_content:
             self.mismatch_label.setText("No code file to check")
-            self.mismatch_group.setVisible(True)
+            self._show_banner("warning", "⚠ Mapping has issues — no test.py")
             return
-        
+
         missing = self._parser.find_missing_steps(code_content, expected_steps)
         extra = self._parser.find_extra_steps(code_content, expected_steps)
-        
+
         issues = []
         if missing:
             issues.append(f"Missing in code: Steps {', '.join(map(str, missing))}")
         if extra:
             issues.append(f"Extra in code: Steps {', '.join(map(str, extra))}")
-        
+
         if issues:
             self.mismatch_label.setText("\n".join(issues))
-            self.mismatch_group.setVisible(True)
-            self.status_label.setText("⚠ Mapping has issues")
-            self.status_label.setStyleSheet(f"color: {status_modified()};")
+            self._show_banner("warning", "⚠ Mapping has issues")
         else:
-            self.mismatch_group.setVisible(False)
-            self.status_label.setText("✓ Mapping OK - All steps have code blocks")
-            self.status_label.setStyleSheet(f"color: {status_saved()};")
-    
-    def _on_step_selected(self, item: QListWidgetItem):
+            self.mismatch_label.setText("None detected")
+            self._show_banner("success", "✓ Mapping OK — all steps have code blocks")
+
+    def _on_step_selected(self, step_num: int):
         """Handle step selection - jump to step in code with highlighting."""
-        step_num = item.data(Qt.UserRole)
-        
-        # Find the code block
-        block = None
-        for b in self._step_blocks:
-            if b.step_number == step_num:
-                block = b
-                break
-        
-        if block:
-            # Step description prefers procedure_text.md (covers op-call
-            # JSON steps that carry no top-level "text" field). Same
-            # resolution chain as _build_step_list.
-            from ..pack_ops.pack_parsers import step_texts_from_canonical
-            proc_text = self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT)
-            canonical_lookup = step_texts_from_canonical(proc_text or "")
-            step_text = canonical_lookup.get(step_num, "")
-            if not step_text and self._json_steps:
-                step_data = next(
-                    (s for s in self._json_steps
-                     if isinstance(s, dict) and s.get("n") == step_num),
-                    None,
-                )
-                if isinstance(step_data, dict):
-                    step_text = step_data.get("text", "") or ""
-            if step_text:
-                wrapped_text = '\n'.join(textwrap.wrap(step_text, width=80))
-                self.code_header.setText(f"STEP {step_num}: {wrapped_text}")
-                self.code_header.setToolTip(step_text)  # Full text in tooltip
-            else:
-                self.code_header.setText(f"Jumped to STEP {step_num}")
-            
-            # Jump to the step marker in the full code view
-            cursor = self.code_editor.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.Start)
-            for _ in range(block.start_line - 1):
-                cursor.movePosition(QTextCursor.MoveOperation.Down)
-            self.code_editor.setTextCursor(cursor)
-            self.code_editor.centerCursor()
-            
-            # Highlight the step marker line with light yellow background
-            self._highlight_step_lines(block.start_line, block.end_line)
-            
-            self.line_info.setText(f"Lines {block.start_line} - {block.end_line}")
-        else:
-            self.code_header.setText(f"STEP {step_num}: No code block found")
-            self.line_info.setText("")
-            # Clear highlighting
-            self.code_editor.setExtraSelections([])
-    
-    def _highlight_step_lines(self, start_line: int, end_line: int):
-        """Highlight lines in code editor with light yellow background."""
-        selections = []
-        highlight_color = traceability_highlight()  # Light yellow
-        
-        doc = self.code_editor.document()
-        
-        for line_num in range(start_line, end_line + 1):
-            block = doc.findBlockByLineNumber(line_num - 1)  # 0-indexed
-            if block.isValid():
-                selection = QTextEdit.ExtraSelection()
-                selection.format.setBackground(QBrush(highlight_color))
-                selection.format.setProperty(QTextFormat.FullWidthSelection, True)
-                selection.cursor = QTextCursor(block)
-                selection.cursor.clearSelection()
-                selections.append(selection)
-        
-        self.code_editor.setExtraSelections(selections)
-    
-    def _on_code_changed(self):
-        """Handle code editor text changes."""
-        self._code_modified = True
-        self.save_code_btn.setEnabled(True)
-    
-    def _on_save_code(self):
-        """Save the edited code back to the artifact (disk + memory)."""
-        code = self.code_editor.toPlainText()
-        self.artifact_manager.set_content(ArtifactType.TEST_CODE, code)
-        self.artifact_manager.save_artifact(ArtifactType.TEST_CODE)
-        self.artifact_manager.test_code.mark_clean()
-        self._code_modified = False
-        self.save_code_btn.setEnabled(False)
-        
-        # Re-parse step blocks after save
-        self._step_blocks = self._parser.parse(code)
-        
-        # Refresh the step list
-        self.step_list.clear()
-        self._build_step_list()
-        self._check_mismatches()
-        
-        self.line_info.setText("Code saved!")
-        self.artifact_saved.emit()
-    
+        block = next((b for b in self._step_blocks if b.step_number == step_num), None)
+        if block is None:
+            self.line_info.setText(f"Step {step_num} · no code block")
+            self.line_info.setToolTip("")
+            self.code_editor.clear_highlight()
+            return
+        self.code_editor.jump_to_line(block.start_line)
+        self.code_editor.highlight_lines(block.start_line, block.end_line)
+        self.line_info.setText(f"Step {step_num} · lines {block.start_line}–{block.end_line}")
+        # The step's text (procedure_text.md first) in the tooltip.
+        row = next((r for r in step_rows(self._json_steps, {},
+                                         self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT))
+                    if r.n == step_num), None)
+        self.line_info.setToolTip(row.text if row else "")
+
+    def _on_code_saved(self):
+        """Saved: re-read the step blocks and refresh the list and the mismatches."""
+        self._rebuild_mapping()
+
     def on_activated(self):
         """Called when tab becomes active."""
-        self._load_mapping()
-    
+        self.load_content()
+
     def refresh(self):
         """Refresh the mapping."""
-        self._load_mapping()
+        self.load_content()

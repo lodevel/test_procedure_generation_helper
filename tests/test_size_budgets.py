@@ -80,15 +80,13 @@ FILE_BUDGET: dict[str, int] = {
 CLASS_METHOD_BUDGET: dict[tuple[str, str], int] = {
     ("dock/skill_chat_widget.py", "SkillChatWidget"): 42,
     ("main_window.py", "StudioWorkspace"): 86,  # the former MainWindow, less the status bar and dock handlers (slice 2)
-    ("tabs/json_code_tab.py", "JsonCodeTab"): 42,
-    ("tabs/text_json_tab.py", "TextJsonTab"): 43,
 }
 
 FUNC_LEN_BUDGET: dict[tuple[str, str], int] = {
     ("dialogs/settings_dialog.py", "_create_llm_tab"): 187,
     ("dock/skill_chat_widget.py", "_setup_ui"): 156,
     ("main_window.py", "_setup_menu"): 167,
-    ("tabs/llm_tab_mixin.py", "_run_deterministic_parse_and_generate"): 164,
+    ("tabs/llm_tab_mixin.py", "_run_deterministic_parse_and_generate"): 155,  # -9: the editor cards save (slice 4)
 }
 
 

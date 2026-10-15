@@ -2,17 +2,21 @@
 Base Tab Widget - Common functionality for all editor tabs.
 """
 
+import json
 import logging
+from collections.abc import Iterable
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-    QLabel, QFrame, QSplitter, QMessageBox, QGroupBox,
-    QSizePolicy
+    QWidget, QPushButton,
+    QLayout, QMessageBox, QToolButton
 )
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal
 from typing import TYPE_CHECKING, Optional, Callable
 
+from project_services import ui_kit
+
 from ..llm.backend_base import LLMTask
-from ..theme import groupbox_bg, groupbox_border, groupbox_text, muted_color
+from ..widgets.action_bar import ActionBar, set_task_label, task_button
+from ..widgets.editor_card import EditorCard
 
 if TYPE_CHECKING:
     from ..main_window import MainWindow
@@ -39,6 +43,8 @@ class BaseTab(QWidget):
     def __init__(self, main_window: "MainWindow", parent=None):
         super().__init__(parent)
         self.main_window = main_window
+        #: The view's editor cards (``add_card``): loaded, synced and saved together.
+        self.cards: list[EditorCard] = []
         self._setup_ui()
     
     def _setup_ui(self):
@@ -74,41 +80,6 @@ class BaseTab(QWidget):
             log.warning("Neither task_config_manager nor button_label_manager found")
         return manager
     
-    @property
-    def button_label_manager(self):
-        """
-        Get the button label manager (backward compatibility alias).
-        
-        This property maintains backward compatibility with existing code
-        that references button_label_manager. During migration:
-        - If main_window has button_label_manager, return it directly
-        - Otherwise return task_config_manager (which provides same interface)
-        """
-        # Check for button_label_manager first (during migration period)
-        manager = getattr(self.main_window, 'button_label_manager', None)
-        if manager is not None:
-            return manager
-        # Fall back to task_config_manager (after Task 5 completes)
-        return getattr(self.main_window, 'task_config_manager', None)
-    
-    def create_button_row(self, *buttons) -> QHBoxLayout:
-        """Create a horizontal layout with buttons."""
-        layout = QHBoxLayout()
-        layout.setContentsMargins(0, 5, 0, 5)
-        
-        for button in buttons:
-            if isinstance(button, str):
-                # Create button from label
-                btn = QPushButton(button)
-                layout.addWidget(btn)
-            elif isinstance(button, QPushButton):
-                layout.addWidget(button)
-            elif button is None:
-                # Add stretch
-                layout.addStretch()
-        
-        return layout
-    
     def create_button(
         self, 
         text: str, 
@@ -127,13 +98,6 @@ class BaseTab(QWidget):
             button.clicked.connect(callback)
         
         return button
-    
-    def create_separator(self) -> QFrame:
-        """Create a horizontal separator line."""
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setFrameShadow(QFrame.Sunken)
-        return line
     
     def show_error(self, title: str, message: str):
         """Show an error dialog."""
@@ -168,21 +132,58 @@ class BaseTab(QWidget):
         """Refresh the tab content. Override as needed."""
         pass
     
+    def add_card(self, card: EditorCard) -> EditorCard:
+        """Register an editor card: its edits mark the artifact modified for the LLM context
+        and repaint the header (``content_changed``)."""
+        self.cards.append(card)
+        card.changed.connect(lambda: self._on_card_changed(card))
+        return card
+
+    def _on_card_changed(self, card: EditorCard) -> None:
+        tab_context = getattr(self, "tab_context", None)
+        if tab_context is not None:
+            tab_context.mark_artifact_modified(card.artifact_name)
+        self.content_changed.emit()
+
+    def card_for(self, artifact_name: str) -> Optional[EditorCard]:
+        """The card editing *artifact_name* ("procedure_text", …) in this view, if any."""
+        return next((c for c in self.cards if c.artifact_name == artifact_name), None)
+
     def sync_editors_to_artifacts(self):
         """Sync editor content to ArtifactManager without saving to disk.
 
         Called before dirty checks, tab switches, and saves to ensure
         ArtifactManager has the latest editor content.
-
-        Override in subclasses that have editors.
         """
-        pass
+        if not self.artifact_manager:
+            return
+        for card in self.cards:
+            card.sync()
+
+    def load_content(self):
+        """Show the artifacts' current content in the view's editors."""
+        if not self.artifact_manager:
+            return
+        for card in self.cards:
+            card.load()
+
+    def _on_format_json(self):
+        """Format JSON with proper indentation (the view's procedure.json editor)."""
+        card = self.card_for("procedure_json")
+        try:
+            parsed = json.loads(card.editor.toPlainText())
+            card.set_text(json.dumps(parsed, indent=2))
+            self.status_message.emit("JSON formatted successfully")
+        except json.JSONDecodeError as e:
+            self.show_error("Format Failed", f"Invalid JSON: {e}")
+        except Exception as e:
+            self.show_error("Format Failed", str(e))
 
     # ------------------------------------------------------------------
     # Validator buttons (Phase 2/3 — registry-driven)
     # ------------------------------------------------------------------
 
-    def _build_validator_buttons(self, parent_layout: QHBoxLayout) -> int:
+    def _build_validator_buttons(self, parent_layout: QLayout) -> int:
         # Remember the layout so ``rebuild_validator_buttons`` can refresh
         # it when the active project (and therefore the validator config)
         # changes.
@@ -209,7 +210,7 @@ class BaseTab(QWidget):
                 widget.deleteLater()
         self._populate_validator_buttons(layout)
 
-    def _populate_validator_buttons(self, parent_layout: QHBoxLayout) -> int:
+    def _populate_validator_buttons(self, parent_layout: QLayout) -> int:
         """Populate *parent_layout* with one button per registered validator
         listed in ``workflows.<tab>.validators``.
 
@@ -280,7 +281,7 @@ class BaseTab(QWidget):
             label = spec.get("label") or self._derive_validator_label(vid)
             tooltip = spec.get("tooltip") or f"Run validator: {vid}"
             btn = self.create_button(
-                label,
+                f"✓ {label}",
                 # default-arg capture so the loop variable isn't late-bound.
                 callback=lambda _checked=False, _vid=vid: self._run_validator(_vid),
                 tooltip=tooltip,
@@ -297,13 +298,13 @@ class BaseTab(QWidget):
         return short.replace("_", " ").title()
 
     def _get_artifact_for_validation(self, name: str) -> Optional[str]:
-        """Return the *current* (live editor) content for a validator.
-
-        Default implementation reads from the artifact manager (which may
-        be slightly behind the live editor if the user hasn't synced).
-        Tabs with editors should override to read the editor directly
-        OR call ``sync_editors_to_artifacts()`` before validation.
+        """Return the *current* (live editor) content for a validator: the
+        view's editor for that artifact when it has one, else the artifact
+        manager's copy.
         """
+        card = self.card_for(name)
+        if card is not None:
+            return card.editor.toPlainText() or None
         am = getattr(self.main_window, "artifact_manager", None)
         if am is None:
             return None
@@ -396,134 +397,138 @@ class BaseTab(QWidget):
     
     def save_all_artifacts(self):
         """Save all artifacts managed by this tab (sync + save + reset dirty).
-        
+
         This is the correct entry point for saving from outside the tab
-        (e.g. Ctrl+S, Save All). It syncs editor content first, saves to
-        disk, resets dirty flags, and updates status labels.
-        
-        Override in subclasses. Default implementation does nothing.
+        (e.g. Ctrl+S, Save All): each editor card writes its artifact.
         """
-        pass
-    
-    def has_unsaved_changes(self) -> bool:
-        """Check if this tab has unsaved changes in its editors.
-        
-        Returns True if any editor has been modified since last save.
-        Override in subclasses. Default returns False.
+        for card in self.cards:
+            card.save()
+
+    # ------------------------------------------------------------------
+    # Shared by the LLM views: the chat's task line, a procedure.json proposal
+    # ------------------------------------------------------------------
+
+    #: The chat's line for a built-in task the configuration does not name.
+    _TASK_DESCRIPTIONS = {
+        LLMTask.DERIVE_JSON_FROM_TEXT: "Generate structured JSON from procedure text",
+        LLMTask.RENDER_TEXT_FROM_JSON: "Generate human-readable text from JSON",
+        LLMTask.REVIEW_TEXT_PROCEDURE: "Review procedure text for quality",
+        LLMTask.REVIEW_JSON: "Review JSON structure and content",
+        LLMTask.REVIEW_TEXT_VS_JSON: "Check coherence between text and JSON",
+        LLMTask.GENERATE_CODE_FROM_JSON: "Generate executable test code from JSON",
+        LLMTask.DERIVE_JSON_FROM_CODE: "Extract JSON structure from existing code",
+        LLMTask.REVIEW_CODE: "Review test code quality and structure",
+        LLMTask.REVIEW_CODE_VS_JSON: "Check coherence between JSON and code",
+        LLMTask.AD_HOC_CHAT: "General assistance",
+    }
+
+    def _get_task_description(
+        self, task: LLMTask, user_message: str = None, custom_task_id: str = None
+    ) -> str:
+        """The chat's line for a task: a custom task's configured name, the
+        operator's own message for ad-hoc chat, else the configured task's name."""
+        manager = self.task_config_manager
+        if custom_task_id and manager:
+            task_config = manager.get_task_config(self.tab_id, custom_task_id)
+            if task_config:
+                return f"Run: {task_config.name}"
+
+        if task == LLMTask.AD_HOC_CHAT and user_message:
+            return user_message
+
+        # Built-in tasks are ALSO configurable (they live in the same tasks list),
+        # so source the chat message from the configured task's name — editing the
+        # button in the Template Manager then updates this message too, not just
+        # custom tasks. Falls through to the static map only when unconfigured.
+        if manager:
+            tc = manager.get_task_config(self.tab_id, task.value)
+            if tc and tc.name:
+                return tc.name
+        return self._TASK_DESCRIPTIONS.get(task, f"Run {task.name}")
+
+    def _handle_json_proposal(self, proposal):
+        """Offer a procedure.json proposal (``self.json_card``) as a diff; apply
+        it when accepted.
+
+        Accepts "create" alongside "replace" — semantically identical (full
+        content for the artifact). "patch" is intentionally NOT included —
+        partial-edit semantics need a different handler. Proposed JSON is
+        re-dumped with indent=2 and ensure_ascii=False (µ, ±, Ω stay literal);
+        content that does not parse is shown as it came.
         """
-        return False
-    
+        from ..dialogs import DiffViewer
+        if proposal.mode not in ("replace", "create"):
+            return
+        if isinstance(proposal.content, dict):
+            proposed = dict(proposal.content)
+        else:
+            try:
+                proposed = json.loads(str(proposal.content))
+            except json.JSONDecodeError:
+                proposed = None
+        content_str = (json.dumps(proposed, indent=2, ensure_ascii=False)
+                       if proposed is not None else str(proposal.content))
+
+        accepted, final_content = DiffViewer.show_diff(
+            self.json_card.editor.toPlainText(),
+            content_str,
+            "Review Changes: procedure.json",
+            self
+        )
+        if accepted:
+            self.json_card.set_text(final_content)
+            self.main_window.dock.chat_panel.add_system_message("✓ Applied changes to procedure.json", tone="success")
+        else:
+            self.main_window.dock.chat_panel.add_system_message("✗ Rejected changes to procedure.json", tone="danger")
+
     # Button Label Management
-    
-    def create_action_group(self, title: str, style: str = "file") -> QGroupBox:
-        """
-        Create a styled action group box for visually separating button types.
-        
-        Args:
-            title: The group box title
-            style: Visual style - "file" (light blue) or "llm" (light purple)
-            
-        Returns:
-            QGroupBox with appropriate styling applied
-            
-        Example:
-            >>> file_group = self.create_action_group("File Actions", "file")
-            >>> llm_group = self.create_action_group("LLM Actions", "llm")
-        """
-        group = QGroupBox(title)
-        
-        # Define style colors
-        bg_color = groupbox_bg(style)
-        border_col = groupbox_border(style)
-        
-        # Apply stylesheet
-        group.setStyleSheet(f"""
-            QGroupBox {{
-                background-color: {bg_color};
-                border: 1px solid {border_col};
-                border-radius: 4px;
-                margin-top: 8px;
-                padding: 12px;
-                font-weight: bold;
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 0 5px;
-                color: {groupbox_text()};
-            }}
-        """)
-        
-        return group
-    
+
     def create_task_button(
         self,
         task: LLMTask,
         callback: Callable,
-        force_mode: bool = False,
         enabled: bool = True,
         tooltip: str = "",
         tab_name: Optional[str] = None,
-        task_id_override: Optional[str] = None
-    ) -> QPushButton:
+        task_id_override: Optional[str] = None,
+        force_callback: Optional[Callable] = None,
+        force_tooltip: str = "",
+    ) -> QToolButton:
         """
-        Create a button for an LLM task with customizable label from TaskConfigManager.
-        
-        This method creates a button that:
-        - Uses custom labels from TaskConfigManager (or defaults)
-        - Stores task metadata as properties for later refresh
-        - Supports both strict and force modes
-        - Can be refreshed when settings change
-        
+        Create an assistant button for an LLM task, labelled from TaskConfigManager.
+
+        The button stores its task metadata as properties so
+        ``refresh_button_labels`` can relabel it when settings change. With
+        *force_callback* it is a split button: its ▾ menu offers the task and
+        its force variant (validation bypassed).
+
         Args:
             task: The LLMTask this button triggers
             callback: Function to call when button is clicked
-            force_mode: If True, button triggers force mode (bypasses validation)
             enabled: Initial enabled state
             tooltip: Optional tooltip text (auto-generated if empty)
             tab_name: Optional tab name for label lookup (uses class name if None)
-            
-        Returns:
-            QPushButton configured with the task label and metadata
-            
-        Example:
-            >>> btn = self.create_task_button(
-            ...     task=LLMTask.REVIEW_JSON,
-            ...     callback=self._on_review_clicked,
-            ...     tooltip="Review the JSON for errors"
-            ... )
+            task_id_override: Task id for the label lookup instead of task.value
+            force_callback: The force variant's callback (a split button)
+            force_tooltip: The force variant's tooltip
         """
         # Determine tab name for label lookup
         if tab_name is None:
             tab_name = getattr(self, 'tab_id', self.__class__.__name__.replace("Tab", "").lower())
-        
+
         # Get label from TaskConfigManager
         label = self._get_task_label(task, tab_name, task_id_override=task_id_override)
-        
-        # Create button with label
-        button = QPushButton(label)
+        button = task_button(label, callback, force_callback=force_callback,
+                             force_tooltip=force_tooltip)
         button.setEnabled(enabled)
-        button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-        
+
         # Store metadata as properties for refresh_button_labels()
         button.setProperty("llm_task", task)
-        button.setProperty("force_mode", force_mode)
         button.setProperty("tab_name", tab_name)
         button.setProperty("task_id_override", task_id_override)
-        
-        # Auto-generate tooltip if not provided
-        if not tooltip:
-            mode_suffix = " (Force Mode)" if force_mode else ""
-            tooltip = f"{label}{mode_suffix}\nTask: {task.value}"
-        
-        button.setToolTip(tooltip)
-        
-        # Connect callback
-        if callback:
-            button.clicked.connect(callback)
-        
+        button.setToolTip(tooltip or f"{label}\nTask: {task.value}")
         return button
-    
+
     def refresh_button_labels(self):
         """
         Refresh all LLM button labels after settings change.
@@ -540,9 +545,9 @@ class BaseTab(QWidget):
             >>> self.refresh_button_labels()
         """
         # Find all buttons with llm_task property
-        buttons = self.findChildren(QPushButton)
+        buttons = self.findChildren(QToolButton)
         refreshed_count = 0
-        
+
         for button in buttons:
             task = button.property("llm_task")
             if task is not None:
@@ -551,10 +556,10 @@ class BaseTab(QWidget):
                 if tab_name is None:
                     tab_name = self.__class__.__name__.replace("Tab", "").lower()
                 task_id_override = button.property("task_id_override")
-                
+
                 # Get updated label from TaskConfigManager
                 new_label = self._get_task_label(task, tab_name, task_id_override=task_id_override)
-                button.setText(new_label)
+                set_task_label(button, new_label)
                 refreshed_count += 1
         
         if refreshed_count > 0:
@@ -578,73 +583,44 @@ class BaseTab(QWidget):
         """
         return {}
     
-    def _create_llm_action_group(self) -> QGroupBox:
-        """Create the LLM Actions group box with dynamically built buttons.
-        
-        Call this from _create_actions() in subclasses to get the LLM button group.
-        The group is stored as self._llm_group with layout self._llm_group_layout.
-        
-        Returns:
-            QGroupBox containing dynamically built LLM buttons
-        """
-        self._llm_group = self.create_action_group("LLM Actions", "llm")
-        self._llm_group_layout = QVBoxLayout(self._llm_group)
+    def _create_action_bar(self, file_buttons: Iterable[QWidget] = (),
+                           pack_buttons: Iterable[QWidget] = ()) -> ActionBar:
+        """The view's action bar (``self.action_bar``): the assistant row built
+        from TaskConfigManager, the FILE row with *file_buttons*, a divider,
+        *pack_buttons* (⚡) and the validator buttons."""
+        self.action_bar = ActionBar(file_buttons, pack_buttons)
+        self._build_validator_buttons(self.action_bar.file_layout)
         self._build_llm_buttons()
-        return self._llm_group
-    
+        return self.action_bar
+
     def _build_llm_buttons(self):
-        """Build LLM action buttons dynamically from TaskConfigManager.
-        
+        """Build the assistant row's LLM task buttons from TaskConfigManager.
+
         Reads enabled tasks for this tab and creates buttons accordingly.
         Known tasks (in _get_task_callback_map) get specific callbacks;
-        unknown/custom tasks get a generic handler.
-        
+        unknown/custom tasks get a generic handler; a task with a force
+        variant (_get_force_callback_map) gets it in its button's ▾ menu.
+
         AD_HOC_CHAT tasks are filtered out (handled by the chat panel).
         """
-        layout = self._llm_group_layout
-        
-        # Clear existing LLM buttons
-        while layout.count():
-            child = layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-            elif child.layout():
-                self._clear_layout(child.layout())
-        
-        # Get enabled tasks from config
         manager = self.task_config_manager
-        if manager is None:
-            return
-        
         tab_id = getattr(self, 'tab_id', None)
-        if tab_id is None:
+        if manager is None or tab_id is None:
+            self.action_bar.set_assistant_buttons([])
             return
-        
+
         enabled_tasks = manager.get_enabled_tasks_for_tab(tab_id)
         callback_map = self._get_task_callback_map()
         force_map = self._get_force_callback_map()
-        
+
         # Filter out AD_HOC_CHAT (handled by chat panel, not a button)
         button_tasks = [t for t in enabled_tasks if t.id != LLMTask.AD_HOC_CHAT.value]
-        
         if not button_tasks:
-            placeholder = QLabel("No LLM tasks configured")
-            placeholder.setStyleSheet(f"color: {muted_color()}; font-style: italic;")
-            layout.addWidget(placeholder)
+            self.action_bar.set_assistant_buttons([ui_kit.note("No LLM tasks configured", wrap=False)])
             return
-        
-        # Build rows of buttons (up to 4 widgets per row)
-        row_layout = None
-        col_count = 0
+
+        buttons = []
         for task in button_tasks:
-            # Start new row if current row is full or doesn't exist
-            if col_count % 4 == 0:
-                if row_layout:
-                    row_layout.addStretch()
-                row_layout = QHBoxLayout()
-                layout.addLayout(row_layout)
-                col_count = 0
-            
             # Determine callback
             if task.id in callback_map:
                 callback, tooltip = callback_map[task.id]
@@ -660,61 +636,31 @@ class BaseTab(QWidget):
             if not invocable:
                 tooltip = "Not provided by this bundle"
 
+            force_callback, force_tooltip = force_map.get(task.id, (None, ""))
             # Create button with task_id_override for correct label lookup
-            btn = self.create_task_button(
+            buttons.append(self.create_task_button(
                 self._resolve_llm_task(task.id),
                 callback,
                 enabled=invocable,
                 tooltip=tooltip,
-                task_id_override=task.id
-            )
-            row_layout.addWidget(btn)
-            col_count += 1
+                task_id_override=task.id,
+                force_callback=force_callback,
+                force_tooltip=force_tooltip,
+            ))
+        self.action_bar.set_assistant_buttons(buttons)
 
-            # Force-mode button (if available for this task)
-            if task.id in force_map:
-                # Start new row if needed
-                if col_count % 4 == 0:
-                    row_layout.addStretch()
-                    row_layout = QHBoxLayout()
-                    layout.addLayout(row_layout)
-                    col_count = 0
-
-                force_callback, force_tooltip = force_map[task.id]
-                force_btn = self.create_task_button(
-                    self._resolve_llm_task(task.id),
-                    force_callback,
-                    force_mode=True,
-                    enabled=invocable,
-                    tooltip=force_tooltip if invocable else "Not provided by this bundle",
-                    task_id_override=task.id
-                )
-                row_layout.addWidget(force_btn)
-                col_count += 1
-        
-        # Add stretch to last row
-        if row_layout:
-            row_layout.addStretch()
-    
     def rebuild_llm_buttons(self):
         """Rebuild LLM buttons after settings change.
-        
+
         Called by MainWindow.refresh_all_button_labels() when the user
-        saves changes in the Settings dialog.
+        saves changes in the Settings dialog. A view without an action bar
+        (Traceability) has none.
         """
+        if not hasattr(self, "action_bar"):
+            return
         self._build_llm_buttons()
         log.debug(f"Rebuilt LLM buttons for {self.__class__.__name__}")
-    
-    @staticmethod
-    def _clear_layout(layout):
-        """Recursively clear all items from a layout."""
-        while layout.count():
-            child = layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-            elif child.layout():
-                BaseTab._clear_layout(child.layout())
-    
+
     @staticmethod
     def _resolve_llm_task(task_id: str) -> LLMTask:
         """Resolve a task_id string to an LLMTask enum, with fallback."""

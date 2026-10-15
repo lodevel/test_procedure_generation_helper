@@ -15,8 +15,8 @@ Fix under test:
 - ``compute_hashes`` / ``check_external_changes`` pass content through
   ``_enforce_folder_id`` first, so hashes always reflect what
   ``save_artifact`` will actually write (id-invariant wrt the folder).
-- Tab save handlers push the save-time-corrected content back into the
-  visible editor via ``_refresh_editor_after_save`` (signal-blocked,
+- An editor card's Save pushes the save-time-corrected content back into
+  the visible editor via ``refresh_editor_after_save`` (signal-blocked,
   cursor-preserving), so disk == buffer == recorded hash.
 """
 
@@ -142,7 +142,7 @@ def qapp():
 
 def test_refresh_editor_after_save_updates_buffer_without_signals(qapp):
     from PySide6.QtWidgets import QPlainTextEdit
-    from workflow_editor.tabs.text_only_tab import _refresh_editor_after_save
+    from workflow_editor.widgets.editor_card import refresh_editor_after_save
 
     editor = QPlainTextEdit()
     editor.setPlainText(WRONG_TEXT)
@@ -154,7 +154,7 @@ def test_refresh_editor_after_save_updates_buffer_without_signals(qapp):
     editor.textChanged.connect(lambda: fired.append(True))
 
     corrected = "# Foo\n\n## Steps\n1. do x\n"
-    _refresh_editor_after_save(editor, corrected)
+    refresh_editor_after_save(editor, corrected)
 
     assert editor.toPlainText() == corrected
     assert fired == [], "textChanged must not fire — it would re-dirty the artifact"
@@ -163,7 +163,7 @@ def test_refresh_editor_after_save_updates_buffer_without_signals(qapp):
 
 def test_refresh_editor_after_save_clamps_cursor(qapp):
     from PySide6.QtWidgets import QPlainTextEdit
-    from workflow_editor.tabs.text_only_tab import _refresh_editor_after_save
+    from workflow_editor.widgets.editor_card import refresh_editor_after_save
 
     editor = QPlainTextEdit()
     editor.setPlainText("# WRONG_ID_MUCH_LONGER_THAN_REPLACEMENT")
@@ -171,42 +171,41 @@ def test_refresh_editor_after_save_clamps_cursor(qapp):
     cursor.movePosition(cursor.MoveOperation.End)
     editor.setTextCursor(cursor)
 
-    _refresh_editor_after_save(editor, "# Foo")
+    refresh_editor_after_save(editor, "# Foo")
     assert editor.toPlainText() == "# Foo"
     assert editor.textCursor().position() == len("# Foo")
 
 
 def test_refresh_editor_after_save_noop_when_verbatim(qapp):
     from PySide6.QtWidgets import QPlainTextEdit
-    from workflow_editor.tabs.text_only_tab import _refresh_editor_after_save
+    from workflow_editor.widgets.editor_card import refresh_editor_after_save
 
     editor = QPlainTextEdit()
     editor.setPlainText("# Foo\nbody\n")
     fired = []
     editor.textChanged.connect(lambda: fired.append(True))
-    _refresh_editor_after_save(editor, "# Foo\nbody\n")
+    refresh_editor_after_save(editor, "# Foo\nbody\n")
     assert fired == []
 
 
-def test_save_handler_reflects_corrected_id_into_editor(qapp, tmp_path):
-    """TextOnlyTab._on_save_text: after save the QTextEdit shows the folder id."""
-    from PySide6.QtWidgets import QPlainTextEdit
-    from workflow_editor.tabs.text_only_tab import TextOnlyTab
+def test_card_save_reflects_corrected_id_into_editor(qapp, tmp_path):
+    """An editor card's Save: after save the editor shows the folder id."""
+    from workflow_editor.widgets.editor_card import EditorCard
 
-    fake = MagicMock()
-    editor = QPlainTextEdit()
+    tab = MagicMock()
+    tab.artifact_manager = _manager(tmp_path)
+    card = EditorCard(tab, ArtifactType.PROCEDURE_TEXT, "procedure_text.md")
+    editor = card.editor
     editor.setPlainText(WRONG_TEXT)
-    fake.text_editor = editor
-    fake.artifact_manager = _manager(tmp_path)
 
-    TextOnlyTab._on_save_text(fake)
+    assert card.save()
 
     assert editor.toPlainText().splitlines()[0] == "# Foo", (
         "screen must show the enforced id after save, not the stale buffer"
     )
-    on_disk = fake.artifact_manager.procedure_text.file_path.read_text(encoding="utf-8")
-    assert on_disk == editor.toPlainText() == fake.artifact_manager.procedure_text.content
-    assert not fake.artifact_manager.procedure_text.is_dirty
+    on_disk = tab.artifact_manager.procedure_text.file_path.read_text(encoding="utf-8")
+    assert on_disk == editor.toPlainText() == tab.artifact_manager.procedure_text.content
+    assert not tab.artifact_manager.procedure_text.is_dirty
 
 
 # ---- unloaded path (workspace Tests list context menu) ----

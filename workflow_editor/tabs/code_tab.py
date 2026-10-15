@@ -4,11 +4,12 @@ Python syntax highlighter for test.py editors.
 
 import re
 
-from PySide6.QtGui import QFont, QSyntaxHighlighter, QTextCharFormat
+from PySide6.QtGui import QFont, QPalette, QSyntaxHighlighter, QTextCharFormat
+from PySide6.QtWidgets import QApplication
 
 from ..theme import (
     syntax_keyword, syntax_string, syntax_comment,
-    syntax_step_marker, syntax_step_bg, syntax_function,
+    syntax_function,
 )
 
 
@@ -42,11 +43,10 @@ class PythonSyntaxHighlighter(QSyntaxHighlighter):
         self.comment_format.setForeground(syntax_comment())
         self.comment_format.setFontItalic(True)
 
-        # Step markers
+        # Step markers: the accent, bold (as the boards draw them)
         self.step_format = QTextCharFormat()
-        self.step_format.setForeground(syntax_step_marker())
+        self.step_format.setForeground(QApplication.palette().color(QPalette.ColorRole.Highlight))
         self.step_format.setFontWeight(QFont.Bold)
-        self.step_format.setBackground(syntax_step_bg())
 
         # Functions
         self.function_format = QTextCharFormat()

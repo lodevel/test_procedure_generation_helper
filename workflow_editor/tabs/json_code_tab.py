@@ -1,8 +1,9 @@
 """
-JSON-Code Tab - Paired editors for JSON↔Code transformation.
+JSON-Code Tab - Paired editors for JSON↔Code transformation (board S3).
 
-Left: JSON editor (procedure.json) + preview
-Right: Code editor (test.py) + step markers
+Left: JSON editor (procedure.json)
+Middle: the steps (✓ when test.py has their block)
+Right: Code editor (test.py)
 
 Actions support bidirectional transformation.
 """
@@ -10,13 +11,9 @@ Actions support bidirectional transformation.
 import logging
 import json
 from typing import Any
-from PySide6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QSplitter, QGroupBox,
-    QPushButton, QLabel, QPlainTextEdit,
-    QListWidget, QListWidgetItem, QWidget
-)
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFont, QTextCursor
+from PySide6.QtWidgets import QVBoxLayout, QSplitter
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QTextCursor
 
 from .base_tab import BaseTab
 from .llm_tab_mixin import LLMTabMixin
@@ -26,25 +23,28 @@ from ..core import ArtifactType, StepMarkerParser
 from ..core.procedure_steps import numbered_steps
 from ..llm import TabContext, LLMTask
 from ..dialogs import DiffViewer
-from ..theme import error_color, status_modified, status_saved
+from ..widgets.editor_card import EditorCard
 from ..widgets.find_replace_bar import FindReplaceBar, install_find_shortcuts
+from ..widgets.step_list import StepListCard, step_rows
 
 log = logging.getLogger(__name__)
+
+#: The steps card's width on board S3.
+_STEPS_WIDTH = 210
 
 class JsonCodeTab(LLMTabMixin, BaseTab):
     """
     JSON-Code tab showing both artifacts side-by-side.
     
-    LEFT: JSON editor (procedure.json) + preview
-    RIGHT: Code editor (test.py) + step markers
+    LEFT: JSON editor (procedure.json)
+    MIDDLE: the steps, ✓ when test.py has their block (click: jump in both)
+    RIGHT: Code editor (test.py)
     
     Actions:
     - JSON → Code: Primary direction (generate executable test from procedure)
     - Code → JSON: Reverse direction (reverse-engineer JSON from existing code)
     - Coherence checks between artifacts
     """
-    
-    content_changed = Signal()
     
     # Tab identifier for button label management
     tab_id = "json_code"
@@ -64,20 +64,28 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        
-        # Main splitter: JSON | Code
-        splitter = QSplitter(Qt.Horizontal)
-        
-        # LEFT: JSON editor + preview
-        json_widget = self._create_json_panel()
-        splitter.addWidget(json_widget)
-        
-        # RIGHT: Code editor + step markers
-        code_widget = self._create_code_panel()
-        splitter.addWidget(code_widget)
-        
-        splitter.setSizes([400, 600])
-        layout.addWidget(splitter, stretch=1)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        self._parser = StepMarkerParser()
+        # The step list is sourced from procedure_json["steps"] (canonical
+        # upstream of code). This dict maps each JSON step's `n` to its
+        # code-side StepBlock (if any) so click jumps can position the code
+        # editor. Repopulated by _update_step_markers on every re-render.
+        self._code_blocks_by_n: dict[int, Any] = {}
+
+        self.json_card = self.add_card(EditorCard(
+            self, ArtifactType.PROCEDURE_JSON, "procedure.json", wrap=False))
+        self.json_editor = self.json_card.editor
+        self.json_highlighter = JsonSyntaxHighlighter(self.json_editor.document())
+
+        self.steps_card = StepListCard("Steps")
+        self.steps_card.step_clicked.connect(self._on_step_clicked)
+
+        self.code_card = self.add_card(EditorCard(
+            self, ArtifactType.TEST_CODE, "test.py", wrap=False))
+        self.code_editor = self.code_card.editor
+        self.code_highlighter = PythonSyntaxHighlighter(self.code_editor.document())
+        self.code_card.changed.connect(self._update_step_markers)
 
         # Find/Replace bar — Ctrl+F / Ctrl+H target the focused editor
         # (or the leftmost: json_editor) when invoked.
@@ -87,80 +95,31 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
             self, [self.json_editor, self.code_editor], self.find_bar,
         )
 
-        # Actions row
-        actions_layout = self._create_actions()
-        layout.addLayout(actions_layout)
+        # Main splitter: JSON | Steps | Code
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setHandleWidth(10)
+        for card in (self.json_card, self.steps_card, self.code_card):
+            splitter.addWidget(card)
+        self.steps_card.setMinimumWidth(_STEPS_WIDTH)
+        for index, stretch in enumerate((5, 0, 6)):  # the board's flex 1 | 210px | 1.2
+            splitter.setStretchFactor(index, stretch)
+        splitter.setSizes([400, _STEPS_WIDTH, 480])
+        layout.addWidget(splitter, stretch=1)
 
-        # Initialize
-        self._json_dirty = False
-        self._code_dirty = False
-        self._parser = StepMarkerParser()
-        # Phase 5.x: step list is sourced from procedure_json["steps"]
-        # (canonical upstream of code). This dict maps each JSON step's
-        # `n` to its code-side StepBlock (if any) so click jumps can
-        # position the code editor. Repopulated by _update_step_markers
-        # on every re-render.
-        self._code_blocks_by_n: dict[int, Any] = {}
-    
-    def _create_json_panel(self):
-        """Create JSON editor (left side)."""
-        json_group = QGroupBox("procedure.json")
-        json_layout = QVBoxLayout(json_group)
-        
-        self.json_editor = QPlainTextEdit()
-        self.json_editor.setFont(QFont("Consolas", 10))
-        self.json_editor.setLineWrapMode(QPlainTextEdit.NoWrap)
-        self.json_editor.textChanged.connect(self._on_json_changed)
-        
-        self.json_highlighter = JsonSyntaxHighlighter(self.json_editor.document())
-        
-        json_layout.addWidget(self.json_editor)
-        
-        self.json_status = QLabel("")
-        json_layout.addWidget(self.json_status)
-        
-        return json_group
-    
-    def _create_code_panel(self):
-        """Create code editor + step markers (right side)."""
-        container = QWidget()
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Step markers sidebar
-        sidebar_group = QGroupBox("Steps")
-        sidebar_layout = QVBoxLayout(sidebar_group)
-        
-        self.step_list = QListWidget()
-        self.step_list.itemClicked.connect(self._on_step_clicked)
-        sidebar_layout.addWidget(self.step_list)
-        
-        self.step_status = QLabel("No steps")
-        sidebar_layout.addWidget(self.step_status)
-        
-        sidebar_group.setMaximumWidth(150)
-        layout.addWidget(sidebar_group)
-        
-        # Code editor
-        code_group = QGroupBox("test.py")
-        code_layout = QVBoxLayout(code_group)
-        
-        self.code_editor = QPlainTextEdit()
-        self.code_editor.setFont(QFont("Consolas", 10))
-        self.code_editor.setLineWrapMode(QPlainTextEdit.NoWrap)
-        self.code_editor.textChanged.connect(self._on_code_changed)
-        
-        self.code_highlighter = PythonSyntaxHighlighter(self.code_editor.document())
-        
-        code_layout.addWidget(self.code_editor)
-        
-        self.code_status = QLabel("")
-        code_layout.addWidget(self.code_status)
-        
-        layout.addWidget(code_group)
-        
-        return container
-    
+        self.save_both_btn = self.create_button("Save Both", self.save_all_artifacts,
+            tooltip="Save both JSON and code artifacts")
+        self.format_json_btn = self.create_button("Format JSON", self._on_format_json,
+            tooltip="Auto-format JSON with proper indentation")
+        # Quick Code — hidden until the project provides a code generator
+        self.quick_code_btn = self.create_button(
+            "⚡ Quick Code", self._on_quick_code,
+            tooltip="Generate test code from JSON without LLM (rule-based, instant)"
+        )
+        self.quick_code_btn.setVisible(False)
+        layout.addWidget(self._create_action_bar(
+            [self.save_both_btn, self.format_json_btn], [self.quick_code_btn]))
+        self.json_card.changed.connect(self._on_json_edited)  # gates Quick Code above
+
     # Task callback maps for dynamic LLM button building (see BaseTab._build_llm_buttons)
     
     def _get_task_callback_map(self) -> dict:
@@ -180,166 +139,12 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
             LLMTask.DERIVE_JSON_FROM_CODE.value: (self._on_force_derive_json, "Force derive JSON (bypass validation checks)"),
         }
     
-    def _create_actions(self):
-        """Create action buttons organized into visual groups."""
-        layout = QHBoxLayout()
-        
-        # File Operations Group (light blue)
-        file_group = self.create_action_group("File Operations", "file")
-        file_layout = QVBoxLayout(file_group)
-        
-        # Save buttons
-        save_row = QHBoxLayout()
-        self.save_json_btn = self.create_button("Save JSON", self._on_save_json,
-            tooltip="Save procedure JSON to disk")
-        self.save_code_btn = self.create_button("Save Code", self._on_save_code,
-            tooltip="Save test code to disk")
-        self.save_both_btn = self.create_button("Save Both", self._on_save_both,
-            tooltip="Save both JSON and code artifacts")
-        save_row.addWidget(self.save_json_btn)
-        save_row.addWidget(self.save_code_btn)
-        save_row.addWidget(self.save_both_btn)
-        save_row.addStretch()
-        file_layout.addLayout(save_row)
-        
-        # Format + validator buttons. Format is hard-coded (tab-local
-        # behavior, no registry involvement); validator buttons come
-        # from the registry via TaskConfigManager (Phase 2/3).
-        format_row = QHBoxLayout()
-        self.format_json_btn = self.create_button("Format JSON", self._on_format_json,
-            tooltip="Auto-format JSON with proper indentation")
-        format_row.addWidget(self.format_json_btn)
-        self._build_validator_buttons(format_row)
-        format_row.addStretch()
-        file_layout.addLayout(format_row)
-
-        # Quick Code row — hidden until project provides a code_parser variant
-        code_row = QHBoxLayout()
-        self.quick_code_btn = self.create_button(
-            "⚡ Quick Code", self._on_quick_code,
-            tooltip="Generate test code from JSON without LLM (rule-based, instant)"
-        )
-        self.quick_code_btn.setVisible(False)
-        code_row.addWidget(self.quick_code_btn)
-        code_row.addStretch()
-        file_layout.addLayout(code_row)
-        
-        layout.addWidget(file_group)
-        
-        # LLM Actions Group — built dynamically from BaseTab
-        layout.addWidget(self._create_llm_action_group())
-        
-        return layout
-    
-    # Event handlers
-    def _on_json_changed(self):
-        """Handle JSON editor changes."""
-        # Mirror live editor into artifact_manager — see text_only_tab
-        # for the rationale.
-        self.artifact_manager.set_content(
-            ArtifactType.PROCEDURE_JSON, self.json_editor.toPlainText()
-        )
-        self._json_dirty = True
-        self._update_json_status()
-        self.tab_context.mark_artifact_modified("procedure_json")
-        self.content_changed.emit()
-        # Re-gate Quick Code: the equipment set (hence codegen capability
-        # needed) can change as the operator edits the JSON.
-        if getattr(self, "quick_code_btn", None) is not None and self.quick_code_btn.isVisible():
+    def _on_json_edited(self):
+        """Re-gate Quick Code: the equipment set (hence codegen capability
+        needed) can change as the operator edits the JSON."""
+        if not self.quick_code_btn.isHidden():
             project_root = getattr(self.project_manager, "project_root", None)
             self._apply_codegen_gating(project_root)
-
-    def _on_code_changed(self):
-        """Handle code editor changes."""
-        self.artifact_manager.set_content(
-            ArtifactType.TEST_CODE, self.code_editor.toPlainText()
-        )
-        self._code_dirty = True
-        self._update_code_status()
-        self._update_step_markers()
-        self.tab_context.mark_artifact_modified("test_code")
-        self.content_changed.emit()
-    
-    def _on_save_json(self):
-        """Save JSON artifact."""
-        try:
-            content = self.json_editor.toPlainText()
-            self.artifact_manager.set_content(ArtifactType.PROCEDURE_JSON, content)
-            self.artifact_manager.save_artifact(ArtifactType.PROCEDURE_JSON)
-            self.artifact_manager.procedure_json.mark_clean()
-            # Save may have corrected the top-level "id" (id == folder
-            # enforcement) — reflect it back into the visible buffer.
-            from .text_only_tab import _refresh_editor_after_save
-            _refresh_editor_after_save(
-                self.json_editor,
-                self.artifact_manager.get_content(ArtifactType.PROCEDURE_JSON),
-            )
-            self._json_dirty = False
-            self._update_json_status()
-            self.status_message.emit("JSON saved successfully")
-            self.artifact_saved.emit()
-        except Exception as e:
-            self.show_error("Save Failed", str(e))
-    
-    def _on_save_code(self):
-        """Save code artifact."""
-        try:
-            content = self.code_editor.toPlainText()
-            self.artifact_manager.set_content(ArtifactType.TEST_CODE, content)
-            self.artifact_manager.save_artifact(ArtifactType.TEST_CODE)
-            self.artifact_manager.test_code.mark_clean()
-            self._code_dirty = False
-            self._update_code_status()
-            self.status_message.emit("Code saved successfully")
-            self.artifact_saved.emit()
-        except Exception as e:
-            self.show_error("Save Failed", str(e))
-    
-    def _on_save_both(self):
-        """Save both artifacts."""
-        self._on_save_json()
-        self._on_save_code()
-    
-    def sync_editors_to_artifacts(self):
-        """Sync editor content to ArtifactManager without saving to disk."""
-        if not self.artifact_manager:
-            return
-        self.artifact_manager.set_content(
-            ArtifactType.PROCEDURE_JSON, self.json_editor.toPlainText()
-        )
-        self.artifact_manager.set_content(
-            ArtifactType.TEST_CODE, self.code_editor.toPlainText()
-        )
-    
-    def save_all_artifacts(self):
-        """Save both JSON and code artifacts (sync + save + reset dirty)."""
-        self._on_save_both()
-    
-    def has_unsaved_changes(self) -> bool:
-        """Check if either editor has been modified since last save."""
-        return self._json_dirty or self._code_dirty
-    
-    def _on_format_json(self):
-        """Format JSON with proper indentation."""
-        try:
-            content = self.json_editor.toPlainText()
-            parsed = json.loads(content)
-            formatted = json.dumps(parsed, indent=2)
-            self.json_editor.setPlainText(formatted)
-            self.status_message.emit("JSON formatted successfully")
-        except json.JSONDecodeError as e:
-            self.show_error("Format Failed", f"Invalid JSON: {e}")
-        except Exception as e:
-            self.show_error("Format Failed", str(e))
-    
-    def _get_artifact_for_validation(self, name: str) -> str | None:
-        """Override the base implementation to read live editor content."""
-        if name == "procedure_json":
-            return self.json_editor.toPlainText() or None
-        if name == "test_code":
-            return self.code_editor.toPlainText() or None
-        return super()._get_artifact_for_validation(name)
-
 
     def _on_generate_code(self):
         """JSON → Code transformation (strict mode)."""
@@ -393,44 +198,6 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
             return
         self._run_task_async(LLMTask.REVIEW_CODE_VS_JSON)
     
-    def _get_task_description(self, task: LLMTask, user_message: str = None, custom_task_id: str = None) -> str:
-        """Generate user-facing task description.
-        
-        Args:
-            task: The LLM task being executed
-            user_message: Optional user-provided message (for AD_HOC_CHAT)
-            custom_task_id: Optional custom task ID for looking up task name
-            
-        Returns:
-            Human-readable description of the task
-        """
-        # For custom tasks, look up the task name from config
-        if custom_task_id:
-            manager = self.task_config_manager
-            if manager:
-                task_config = manager.get_task_config(self.tab_id, custom_task_id)
-                if task_config:
-                    return f"Run: {task_config.name}"
-        
-        # For ad-hoc chat, use the user's actual message
-        if task == LLMTask.AD_HOC_CHAT and user_message:
-            return user_message
-        
-        task_descriptions = {
-            LLMTask.GENERATE_CODE_FROM_JSON: "Generate executable test code from JSON",
-            LLMTask.DERIVE_JSON_FROM_CODE: "Extract JSON structure from existing code",
-            LLMTask.REVIEW_JSON: "Review JSON structure and content",
-            LLMTask.REVIEW_CODE: "Review test code quality and structure",
-            LLMTask.REVIEW_CODE_VS_JSON: "Check coherence between JSON and code",
-            LLMTask.AD_HOC_CHAT: "General assistance"
-        }
-        return task_descriptions.get(task, f"Run {task.name}")
-
-    def _sync_editors_for_llm(self):
-        """Sync editor widgets to artifact manager before LLM task."""
-        self.artifact_manager.set_content(ArtifactType.PROCEDURE_JSON, self.json_editor.toPlainText())
-        self.artifact_manager.set_content(ArtifactType.TEST_CODE, self.code_editor.toPlainText())
-
     def _apply_proposals(self, response, task=None):
         """Dispatch per-artifact proposals from LLM response.
 
@@ -462,35 +229,6 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
             parsed["test_code"] = response.test_code.content
         return parsed
 
-    def _handle_json_proposal(self, proposal):
-        """Handle procedure_json proposal."""
-        # Accept "create" alongside "replace" — see text_json_tab for
-        # rationale. "patch" stays excluded.
-        if proposal.mode in ("replace", "create"):
-            # Serialize dict to JSON string if needed
-            if isinstance(proposal.content, dict):
-                content_str = json.dumps(proposal.content, indent=2)
-            else:
-                content_str = str(proposal.content)
-            
-            # Show diff dialog for user to accept/reject
-            current_content = self.json_editor.toPlainText()
-            accepted, final_content = DiffViewer.show_diff(
-                current_content,
-                content_str,
-                "Review Changes: procedure.json",
-                self
-            )
-            
-            if accepted:
-                self.json_editor.setPlainText(final_content)
-                self.artifact_manager.procedure_json.content = final_content
-                self._json_dirty = True
-                self._update_json_status()
-                self.main_window.dock.chat_panel.add_system_message("✓ Applied changes to procedure.json")
-            else:
-                self.main_window.dock.chat_panel.add_system_message("✗ Rejected changes to procedure.json")
-    
     def _handle_code_proposal(self, proposal):
         """Handle test_code proposal."""
         # Accept "create" alongside "replace" — see text_json_tab for
@@ -540,14 +278,10 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
             )
 
             if accepted:
-                self.code_editor.setPlainText(final_content)
-                self.artifact_manager.test_code.content = final_content
-                self._code_dirty = True
-                self._update_code_status()
-                self._update_step_markers()
-                self.main_window.dock.chat_panel.add_system_message("✓ Applied changes to test.py")
+                self.code_card.set_text(final_content)
+                self.main_window.dock.chat_panel.add_system_message("✓ Applied changes to test.py", tone="success")
             else:
-                self.main_window.dock.chat_panel.add_system_message("✗ Rejected changes to test.py")
+                self.main_window.dock.chat_panel.add_system_message("✗ Rejected changes to test.py", tone="danger")
 
     def refresh_code_parser_button(self):
         """Gate the Quick Code button in two tiers: visible iff the wheel
@@ -566,8 +300,7 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         codegen-capable pack. Best-effort: any failure leaves it enabled."""
         from ..pack_ops import pack_parsers
         try:
-            import json as _json
-            doc = _json.loads(self.json_editor.toPlainText() or "{}")
+            doc = json.loads(self.json_editor.toPlainText() or "{}")
             etypes = [e.get("type") for e in (doc.get("equipment") or [])
                       if isinstance(e, dict) and e.get("type")]
             ok, missing = pack_parsers.can_for_types("codegen", etypes, project_root)
@@ -650,51 +383,40 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
             )
             if not accepted:
                 self.main_window.dock.chat_panel.add_system_message(
-                    "✗ Quick Code — changes rejected."
+                    "✗ Quick Code — changes rejected.", tone="danger"
                 )
                 return
             code_str = final_content
 
-        self.code_editor.setPlainText(code_str)
-        self.artifact_manager.set_content(ArtifactType.TEST_CODE, code_str)
-        self._code_dirty = True
-        self._update_code_status()
-        self._update_step_markers()
+        self.code_card.set_text(code_str)
 
         if warnings:
             warn_lines = "\n".join(f"  • {w}" for w in warnings)
             self.main_window.dock.chat_panel.add_system_message(
-                f"⚡ Quick Code complete — {len(warnings)} warning(s):\n{warn_lines}"
+                f"⚡ Quick Code complete — {len(warnings)} warning(s):\n{warn_lines}", tone="warning"
             )
         else:
             self.main_window.dock.chat_panel.add_system_message(
-                "⚡ Quick Code complete — no warnings."
+                "⚡ Quick Code complete — no warnings.", tone="success"
             )
         self.status_message.emit("⚡ Quick Code complete")
     
-    def _on_step_clicked(self, item: QListWidgetItem):
+    def _on_step_clicked(self, step_num: int):
         """Click a step → jump in BOTH editors (JSON always; code when
-        a matching block exists).
+        a matching block exists, its lines highlighted).
 
-        The item's UserRole carries the step's ``n`` (int). Code blocks
-        are looked up via the per-render cache populated by
+        Code blocks are looked up via the per-render cache populated by
         :meth:`_update_step_markers`. Per the v2.0.1 invariant (JSON
         upstream of code), the step is always in JSON; the only
         possible mismatch is "JSON has step, code doesn't yet" — the
         code jump is skipped for those rows.
         """
-        step_num = item.data(Qt.UserRole)
-        if not isinstance(step_num, int):
-            return
-        # Code editor — only if codegen has produced a block for this n.
         block = self._code_blocks_by_n.get(step_num)
         if block:
-            cursor = self.code_editor.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.Start)
-            for _ in range(block.start_line - 1):
-                cursor.movePosition(QTextCursor.MoveOperation.Down)
-            self.code_editor.setTextCursor(cursor)
-            self.code_editor.centerCursor()
+            self.code_editor.jump_to_line(block.start_line)
+            self.code_editor.highlight_lines(block.start_line, block.end_line)
+        else:
+            self.code_editor.clear_highlight()
         # JSON editor — always. The step exists in JSON by construction.
         self._focus_json_step(step_num)
 
@@ -731,15 +453,9 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
     def _update_step_markers(self):
         """Rebuild the step list from procedure.json's ``steps[]`` (the
         canonical upstream of code). Code markers are consulted only to
-        annotate which steps codegen has produced.
-
-        Status semantics:
-        - ✓ Step N: <text>  — JSON has it AND code has a matching
-          ``# STEP_BEGIN N`` block.
-        - ✗ Step N: <text>  — JSON has it; code doesn't (regenerate
-          test.py to fill in).
+        annotate which steps codegen has produced: ✓ when test.py has a
+        ``# Step N`` block for the step, ✗ when not (regenerate test.py).
         """
-        self.step_list.clear()
         self._code_blocks_by_n = {}
 
         # JSON is the source of truth for the step list.
@@ -752,10 +468,10 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
                 json_steps = numbered_steps(json_data.get("steps", []) or [])
         except (json.JSONDecodeError, AttributeError):
             # best-effort: editor JSON may be mid-edit/invalid or non-dict;
-            # empty json_steps falls through to the "No steps in JSON" status.
+            # empty json_steps falls through to the "No steps in JSON" note.
             pass
         if not json_steps:
-            self.step_status.setText("No steps in JSON")
+            self.steps_card.show_steps([], "No steps in JSON")
             return
 
         # Secondary: code-marker map for click→code-jump.
@@ -764,88 +480,20 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
             for block in self._parser.parse(code):
                 self._code_blocks_by_n[block.step_number] = block
 
-        # Display-text lookup from procedure_text.md.
-        from ..pack_ops.pack_parsers import step_texts_from_canonical
-        proc_text = self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT)
-        canonical_lookup = step_texts_from_canonical(proc_text or "")
-
-        with_code = 0
-        for step in json_steps:
-            if not isinstance(step, dict):
-                continue
-            n = step.get("n")
-            if not isinstance(n, int):
-                continue
-
-            step_text = canonical_lookup.get(n) or step.get("text", "") or ""
-            block = self._code_blocks_by_n.get(n)
-            if block:
-                with_code += 1
-
-            if step_text:
-                trimmed = f"{step_text[:40]}{'...' if len(step_text) > 40 else ''}"
-                body = f"Step {n}: {trimmed}"
-            else:
-                body = f"Step {n}"
-            prefix = "✓" if block else "✗"
-
-            item = QListWidgetItem(f"{prefix} {body}")
-            item.setData(Qt.UserRole, n)
-            if not block:
-                item.setForeground(QColor(error_color()))
-            tooltip_parts: list[str] = []
-            if step_text:
-                tooltip_parts.append(step_text)
-            if block:
-                tooltip_parts.append(f"Code lines {block.start_line}-{block.end_line}")
-            else:
-                tooltip_parts.append("(no code block — regenerate test.py)")
-            item.setToolTip("\n\n".join(tooltip_parts))
-            self.step_list.addItem(item)
-
+        rows = step_rows(json_steps, self._code_blocks_by_n,
+                         self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT))
+        with_code = sum(1 for row in rows if row.block)
         total = len(json_steps)
-        self.step_status.setText(f"{total} steps in JSON ({with_code} with code)")
-    
-    def _update_json_status(self):
-        """Update JSON status label."""
-        if self._json_dirty:
-            self.json_status.setText("● Modified")
-            self.json_status.setStyleSheet(f"color: {status_modified()};")
-        else:
-            self.json_status.setText("✓ Saved")
-            self.json_status.setStyleSheet(f"color: {status_saved()};")
-    
-    def _update_code_status(self):
-        """Update code status label."""
-        if self._code_dirty:
-            self.code_status.setText("● Modified")
-            self.code_status.setStyleSheet(f"color: {status_modified()};")
-        else:
-            self.code_status.setText("✓ Saved")
-            self.code_status.setStyleSheet(f"color: {status_saved()};")
-    
+        pill = (("success", f"{total} = {with_code}") if with_code == total
+                else ("warning", f"{with_code} of {total}"))
+        self.steps_card.show_steps(rows, f"{total} steps in JSON · {with_code} in code", pill)
+
     def load_content(self):
         """Load both artifacts into editors."""
-        if not self.artifact_manager:
-            return
-        
-        # Load JSON
-        json_content = self.artifact_manager.get_content(ArtifactType.PROCEDURE_JSON)
-        self.json_editor.blockSignals(True)
-        self.json_editor.setPlainText(json_content)
-        self.json_editor.blockSignals(False)
-        self._json_dirty = self.artifact_manager.is_dirty(ArtifactType.PROCEDURE_JSON)
-        self._update_json_status()
-        
-        # Load code
-        code_content = self.artifact_manager.get_content(ArtifactType.TEST_CODE)
-        self.code_editor.blockSignals(True)
-        self.code_editor.setPlainText(code_content)
-        self.code_editor.blockSignals(False)
-        self._code_dirty = self.artifact_manager.is_dirty(ArtifactType.TEST_CODE)
-        self._update_code_status()
-        self._update_step_markers()
-    
+        super().load_content()
+        if self.artifact_manager:
+            self._update_step_markers()
+
     def on_activated(self):
         """Called when tab becomes active."""
         self.load_content()

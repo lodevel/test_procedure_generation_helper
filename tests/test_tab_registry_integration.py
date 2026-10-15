@@ -182,8 +182,8 @@ def test_buttons_built_from_project_validators(tmp_path, qapp):
         for i in range(layout.count())
         if isinstance(layout.itemAt(i).widget(), QPushButton)
     ]
-    assert "Validate Stub" in labels
-    assert "Check Python Syntax" in labels
+    assert "✓ Validate Stub" in labels
+    assert "✓ Check Python Syntax" in labels
 
 
 def test_disabled_spec_skipped(tmp_path, qapp):

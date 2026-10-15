@@ -25,6 +25,19 @@ if TYPE_CHECKING:
 from ..theme import disabled_text
 
 
+def current_selection(
+    task_config_manager: "TaskConfigManager", tab_id: str, available_filenames: list[str]
+) -> list[str]:
+    """Resolve the tab's current ``selected_rules`` to a concrete list of
+    filenames, expanding the ``"all"`` sentinel against the project's
+    available rule files (the first task's: selection is uniform across a tab's tasks)."""
+    tasks = task_config_manager.get_all_tasks_for_tab(tab_id)
+    raw = tasks[0].selected_rules if tasks else None
+    if isinstance(raw, list):
+        return list(raw)
+    return list(available_filenames)
+
+
 class RuleSelectorWidget(QGroupBox):
     """
     Widget for selecting rules to include in tab context.
@@ -145,16 +158,7 @@ class RuleSelectorWidget(QGroupBox):
         self._update_count()
 
     def _read_current_selection(self, available_filenames: list[str]) -> list[str]:
-        """Resolve the tab's current ``selected_rules`` to a concrete list of
-        filenames, expanding the ``"all"`` sentinel against the project's
-        available rule files."""
-        tasks = self.task_config_manager.get_all_tasks_for_tab(self.tab_id)
-        raw = tasks[0].selected_rules if tasks else None
-        if raw is None or raw == "all":
-            return list(available_filenames)
-        if isinstance(raw, list):
-            return list(raw)
-        return list(available_filenames)
+        return current_selection(self.task_config_manager, self.tab_id, available_filenames)
     
     def _on_selection_changed(self):
         """Handle checkbox state change."""

@@ -1,4 +1,4 @@
-"""The chat's messages, as on the approved board S5 (Bench's look: ``project_services.ui_kit`` and
+"""The chat's messages, as on the approved board S5 (Bench's look: ``procedo.core.ui_kit`` and
 Bench's stylesheet):
 
   - :class:`MessageWidget` — one message: a bubble (the user's right and tinted, the
@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from project_services import ui_kit
+from procedo.core import ui_kit
 
 from ..core.proposal import APPLIED, DISCARDED, PENDING, REJECTED, Proposal
 from ..dialogs.diff_viewer import DiffViewer

@@ -1,7 +1,7 @@
 """Resolve the directories skills and wizards are discovered from — the four
 location tiers (builtin / bundled / local / project).
 
-Thin wiring over the repo-root path helpers in ``project_services`` (the single
+Thin wiring over the repo-root path helpers in ``procedo.core`` (the single
 source for those dirs — not re-derived here). The discovery LOGIC lives in
 :mod:`.registry` and takes roots explicitly, so it stays testable without any of
 these app/project paths.
@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from project_services import config_manager
+from procedo.core import config_manager
 
 from .skill import SkillSource
 

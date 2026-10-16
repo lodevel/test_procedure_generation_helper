@@ -15,13 +15,13 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, Slot, QFileSystemWatcher, QTimer
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 
-from project_services import library_dialog
-from project_services.config_manager_dialog import ProjectConfigDialog, TemplateManagerDialog
-from project_services.install_helper_dialog import InstallPackageDialog
-from project_services.project_model import ProjectModel
-from project_services.report_export import create_default_sidecar, save_sidecar, sidecar_path_for
-from project_services.scenario_dialog import ScenarioManagerDialog
-from project_services.word_export_dialog import WordExportDialog
+from procedo.core import library_dialog
+from procedo.core.config_manager_dialog import ProjectConfigDialog, TemplateManagerDialog
+from procedo.core.install_helper_dialog import InstallPackageDialog
+from procedo.core.project_model import ProjectModel
+from procedo.core.report_export import create_default_sidecar, save_sidecar, sidecar_path_for
+from procedo.core.scenario_dialog import ScenarioManagerDialog
+from procedo.core.word_export_dialog import WordExportDialog
 
 from .core import (
     ArtifactManager, SessionState, ProjectManager, ArtifactType,
@@ -656,7 +656,7 @@ class StudioWorkspace(QWidget):
         return None
 
     def _on_install_package(self):
-        """Packages -> Install Package: the shared project_services dialog."""
+        """Packages -> Install Package: the shared procedo.core dialog."""
         InstallPackageDialog(self).exec()
 
     def _export_default_path(self, suffix: str) -> Path:

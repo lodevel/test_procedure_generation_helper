@@ -1,13 +1,13 @@
 """End-to-end: a pack that ships authoring_skills/ gets bundled, then the skill
 is discovered in a project via the BUNDLED tier.
 
-Crosses the two repos: project_services.bundle_generator (build-side copy) +
+Crosses the two repos: procedo.core.bundle_generator (build-side copy) +
 workflow_editor.authoring (consumer-side discovery). Pure tmp_path — no real
 build, no Qt.
 """
 import json
 
-from project_services.bundle_generator import (
+from procedo.core.bundle_generator import (
     _dirs_with,
     bundle_skills_for_registry,
     copy_pack_skills,

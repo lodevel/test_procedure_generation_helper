@@ -1,7 +1,7 @@
-"""Editor full-report export reuses the shared project_services engine.
+"""Editor full-report export reuses the shared procedo.core engine.
 
 Renders a real .docx from a selected test folder via workflow_editor.core.full_report
--> project_services.report_export, with NO bundle (extraction returns empty, the doc
+-> procedo.core.report_export, with NO bundle (extraction returns empty, the doc
 still renders the metadata). Proves the cross-tree shared-export plumbing.
 """
 import os
@@ -12,14 +12,14 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 _REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(_REPO / "src"))                                  # project_services
+sys.path.insert(0, str(_REPO / "src"))                                  # procedo.core
 sys.path.insert(0, str(_REPO / "external" / "test_procedure_generation_helper"))  # workflow_editor
 
 
 def test_export_full_report_renders_docx(tmp_path):
     from docx import Document
     from workflow_editor.core import full_report
-    from project_services import report_export
+    from procedo.core import report_export
 
     # A template with Jinja placeholders the shared context fills.
     tpl = tmp_path / "tpl.docx"
@@ -64,7 +64,7 @@ def test_board_images_are_generated_only_when_the_sidecar_includes_them(
         tmp_path, monkeypatch, include):
     from docx import Document
     from workflow_editor.core import full_report
-    from project_services import report_export
+    from procedo.core import report_export
 
     tpl = tmp_path / "tpl.docx"
     Document().save(str(tpl))

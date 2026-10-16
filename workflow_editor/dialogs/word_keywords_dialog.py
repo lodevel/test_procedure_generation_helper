@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QDialog, QPushButton
 
-from project_services import ui_kit
+from procedo.core import ui_kit
 from test_procedure_gui import help as help_pkg
 
 

@@ -23,7 +23,7 @@ from ..widgets.editor_card import EditorCard
 from ..widgets.find_replace_bar import FindReplaceBar, install_find_shortcuts
 from ..widgets.text_highlighter import ProcedureTextHighlighter
 
-from project_services import ui_kit
+from procedo.core import ui_kit
 
 log = logging.getLogger(__name__)
 

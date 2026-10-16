@@ -18,8 +18,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QListWidget, QListWidgetItem, QPushButton
 
-from project_services import ui_kit
-from project_services.page_nav import group_heading_item
+from procedo.core import ui_kit
+from procedo.core.page_nav import group_heading_item
 
 from ..core import cheatsheet
 

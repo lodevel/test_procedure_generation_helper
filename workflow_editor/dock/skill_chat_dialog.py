@@ -30,7 +30,7 @@ from typing import Callable
 
 from PySide6.QtWidgets import QDialog, QPushButton
 
-from project_services import ui_kit
+from procedo.core import ui_kit
 
 from .skill_chat_widget import SkillChatWidget
 

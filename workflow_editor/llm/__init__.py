@@ -12,7 +12,7 @@ def _ensure_opencode_client_on_path() -> None:
     (migration doc §2c/§3). This is a no-op when it is already resolvable —
     ``pip install -e external/opencode_client`` or already on ``sys.path`` — and
     otherwise walks up to the submodule root and prepends it, mirroring how
-    ``__main__`` bootstraps ``project_services``.
+    ``__main__`` bootstraps ``procedo.core``.
     """
     import importlib.util
     import sys

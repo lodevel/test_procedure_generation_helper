@@ -48,7 +48,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QPlainTextEdit, QTextEdit, QPushButton, QCheckBox, QComboBox,
 )
 
-from project_services import ui_kit
+from procedo.core import ui_kit
 from test_procedure_gui import fluent_qss, theme
 
 from ..authoring import SkillChatSession, assemble

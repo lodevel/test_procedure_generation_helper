@@ -282,6 +282,6 @@ package):
 
 - `../../docs/contract_a_gui_wheel_api.md` — Contract A: the GUI ↔ wheel `pack_parsers` façade
 - `../../docs/contract_b_bundle_engine_api.md` — Contract B: the bundle ↔ engine API
-- `../../docs/contract_c_editor_host_services.md` — Contract C: what this editor consumes from the host (`project_services`, Bench)
+- `../../docs/contract_c_editor_host_services.md` — Contract C: what this editor consumes from the host (`procedo.core`, Bench)
 - `../../docs/adr/0003-editor-installed-package.md` — why the editor is an installed (editable) package
 - `../../TODO.md` — current status / task tracker

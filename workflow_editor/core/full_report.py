@@ -1,6 +1,6 @@
 """Full report (.docx) export for the workflow editor.
 
-Reuses the SAME engine as the main app — ``project_services.report_export`` — so
+Reuses the SAME engine as the main app — ``procedo.core.report_export`` — so
 the editor produces an identical report. Pure logic (no Qt): the UI hands it the
 selected test folders + output path; it loads each folder's ``procedure.json``
 (the opaque doc the shared core expects), resolves the template, and renders.
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from project_services import bundle_registry, pack_extractors, report_export
+from procedo.core import bundle_registry, pack_extractors, report_export
 
 from . import odb_inspect
 

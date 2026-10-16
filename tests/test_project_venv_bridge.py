@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from project_services import project_local_state, venv_pool
+from procedo.core import project_local_state, venv_pool
 from workflow_editor import _project_local_state
 from workflow_editor.core import odb_inspect
 from workflow_editor.pack_ops import pack_parsers

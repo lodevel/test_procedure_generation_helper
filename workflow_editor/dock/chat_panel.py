@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QEvent
 from typing import TYPE_CHECKING, Optional
 
-from project_services import ui_kit
+from procedo.core import ui_kit
 
 from .chat_messages import (
     CLOSED, MessageDetailDialog, MessageWidget, ProposalCard, ProposalMessage, StreamingBubble,

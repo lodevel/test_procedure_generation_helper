@@ -38,7 +38,7 @@ include = ["workflow_editor*"]
 
 # Ship the baked-in workflow defaults so an INSTALLED editor (the host installs
 # this package editable into its venv) resolves them via importlib.resources —
-# no filesystem walk-up needed (see project_services.workflow_defaults).
+# no filesystem walk-up needed (see procedo.core.workflow_defaults).
 [tool.setuptools.package-data]
 "workflow_editor.core" = ["default_workflows.json"]
 # Procedo Studio's mark (the header) and window icon.

@@ -24,8 +24,8 @@ from typing import TYPE_CHECKING, Optional
 
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
-from project_services import app_settings, config_manager
-from project_services.new_project_dialog import NewProjectDialog
+from procedo.core import app_settings, config_manager
+from procedo.core.new_project_dialog import NewProjectDialog
 
 from .. import _project_local_state
 

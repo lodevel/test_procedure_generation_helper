@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from project_services import ui_kit
+from procedo.core import ui_kit
 from workflow_editor.core.odb_inspect import load_hide_prefixes
 from workflow_editor.dialogs import settings_dialog
 from workflow_editor.dialogs.settings_dialog import SettingsDialog, load_settings, save_settings

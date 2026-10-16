@@ -8,7 +8,7 @@ import argparse
 import re
 from pathlib import Path
 
-from project_services import app_identity, app_identity_migration
+from procedo.core import app_identity, app_identity_migration
 
 from workflow_editor import __main__ as studio_main
 from workflow_editor import main_window
@@ -32,7 +32,7 @@ def test_no_site_but_the_settings_dialog_names_the_settings_folder():
 
 
 def test_the_tests_never_reach_the_real_folders_settings_or_environment(tmp_path):
-    """The sandbox (conftest -> project_services.testing) is in force for every editor test."""
+    """The sandbox (conftest -> procedo.core.testing) is in force for every editor test."""
     import os
 
     for folder in (

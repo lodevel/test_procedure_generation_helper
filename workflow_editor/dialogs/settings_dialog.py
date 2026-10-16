@@ -14,8 +14,8 @@ from PySide6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QCheckBox, QPushButton, QLabel, QMessageBox,
 )
 from PySide6.QtCore import Qt, Signal, Slot
-from project_services import app_identity, ui_kit
-from project_services.page_nav import PagedArea, field_row, heading, page_form
+from procedo.core import app_identity, ui_kit
+from procedo.core.page_nav import PagedArea, field_row, heading, page_form
 
 from ..core.task_config import TaskConfigManager
 from ..llm.server_manager import fetch_opencode_models

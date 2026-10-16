@@ -1,4 +1,4 @@
-"""Tests for ``project_services.config_manager.preserve_section_into_shadow``.
+"""Tests for ``procedo.core.config_manager.preserve_section_into_shadow``.
 
 This is the helper that backs ``ProjectConfigDialog._commit_shadow``'s
 single-writer protection for the ``workflows`` section (Codex Q7,
@@ -17,13 +17,13 @@ from pathlib import Path
 
 # Add the shared src/ to sys.path so we can import the foundation package
 # without depending on the project being pip-installed. (config_manager now
-# lives in the shared `project_services` package below both apps.)
+# lives in the shared `procedo.core` package below both apps.)
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _SRC = _REPO_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from project_services.config_manager import preserve_section_into_shadow  # noqa: E402
+from procedo.core.config_manager import preserve_section_into_shadow  # noqa: E402
 
 
 def _write(path: Path, data: dict) -> None:

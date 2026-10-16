@@ -9,8 +9,8 @@ from collections.abc import Callable, Iterable
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import QFrame, QMenu, QToolButton, QVBoxLayout, QWidget
 
-from project_services import ui_kit
-from project_services.flow_layout import FlowLayout
+from procedo.core import ui_kit
+from procedo.core.flow_layout import FlowLayout
 
 
 def task_button(label: str, callback: Callable, *, force_callback: Callable | None = None,

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
 
-from project_services import ui_kit
+from procedo.core import ui_kit
 
 #: An issue's severity -> its pill tone.
 _TONES = {"error": "danger", "warning": "warning"}

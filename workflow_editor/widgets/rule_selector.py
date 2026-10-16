@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QDialog, QPushButton
 
-from project_services import ui_kit
+from procedo.core import ui_kit
 
 if TYPE_CHECKING:
     from ..core import ProjectManager

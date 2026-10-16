@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from project_services import ui_kit
+from procedo.core import ui_kit
 
 from ..core import ArtifactType
 

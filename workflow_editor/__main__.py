@@ -24,28 +24,31 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 
 # Dev-convenience shim (deprecated): only for STANDALONE runs launched from
-# inside a host checkout — walks up to the host's src/ so `project_services`
+# inside a host checkout — walks up to the host's src/ so `procedo.core`
 # resolves. Embedded runs get it from the host venv's editable installs. The host is
 # required: Studio wears Bench's theme (test_procedure_gui.theme).
 _BOOTSTRAPPED_SRC: str | None = None
 
 
-def _bootstrap_project_services() -> None:
+def _bootstrap_procedo_core() -> None:
     global _BOOTSTRAPPED_SRC
     import importlib.util
-    if importlib.util.find_spec("project_services") is not None:
-        return
+    try:
+        if importlib.util.find_spec("procedo.core") is not None:
+            return
+    except ModuleNotFoundError:  # no `procedo` at all (find_spec imports the parent)
+        pass
     here = Path(__file__).resolve()
     for parent in here.parents:
-        if (parent / "src" / "project_services" / "__init__.py").is_file():
+        if (parent / "src" / "procedo" / "core" / "__init__.py").is_file():
             _BOOTSTRAPPED_SRC = str(parent / "src")
             logging.getLogger(__name__).debug(
-                "project_services dev-shim: sys.path += %s", _BOOTSTRAPPED_SRC)
+                "procedo.core dev-shim: sys.path += %s", _BOOTSTRAPPED_SRC)
             sys.path.insert(0, _BOOTSTRAPPED_SRC)
             return
 
 
-_bootstrap_project_services()
+_bootstrap_procedo_core()
 
 
 from .main_window import MainWindow
@@ -113,7 +116,7 @@ def main() -> int:
     
     log = logging.getLogger("workflow_editor.__main__")
     if _BOOTSTRAPPED_SRC:
-        log.debug("project_services resolved via dev-shim walk-up: %s",
+        log.debug("procedo.core resolved via dev-shim walk-up: %s",
                   _BOOTSTRAPPED_SRC)
     log.info("=" * 50)
     log.info("Procedo Studio starting")
@@ -121,7 +124,7 @@ def main() -> int:
 
     # One-shot, before anything reads a setting: the old names' data to Procedo. Bench runs
     # the same at its start; whichever starts first migrates, the markers make the other a no-op.
-    from project_services import app_identity, app_identity_migration
+    from procedo.core import app_identity, app_identity_migration
 
     app_identity_migration.migrate()
     

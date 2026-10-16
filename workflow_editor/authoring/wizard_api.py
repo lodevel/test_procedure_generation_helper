@@ -1,4 +1,4 @@
-"""Studio's side of the authoring API (``project_services.authoring_api``): the one object a
+"""Studio's side of the authoring API (``procedo.core.authoring_api``): the one object a
 launchable wizard's entry receives instead of Studio's internals, so a wizard copy shipped in a
 project bundle survives Studio's renames and refactors.
 
@@ -11,7 +11,7 @@ import logging
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from project_services.authoring_api import ProjectChanged
+from procedo.core.authoring_api import ProjectChanged
 from test_procedure_gui import theme as bench_theme
 
 from ..core import odb_inspect
@@ -36,7 +36,7 @@ def wizard_host(flow: WizardFlow, main_window) -> Any:
 
 
 class StudioAuthoringApi:
-    """Studio's :class:`project_services.authoring_api.AuthoringApi`, bound to the project
+    """Studio's :class:`procedo.core.authoring_api.AuthoringApi`, bound to the project
     open in the main window when it is made. Every member is part of a versioned contract
     with wizards shipped in project bundles: change one only together with ``API_VERSION``."""
 

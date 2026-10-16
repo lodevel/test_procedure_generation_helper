@@ -3,7 +3,7 @@ Text / JSON / Code and Sync pills, the OpenCode pill and its menu, Export, Skill
 the segmented switch between the four views, the Workspace and Assistant columns, and the status
 line (project, rules, bundle, validator).
 
-Built from ``project_services.ui_kit``, so Studio's frame is Bench's. ``StudioWorkspace`` owns
+Built from ``procedo.core.ui_kit``, so Studio's frame is Bench's. ``StudioWorkspace`` owns
 the state and the actions; this module builds the widgets onto it and paints its state on them.
 """
 
@@ -28,8 +28,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from project_services import bundle_registry, ui_kit
-from project_services.segmented import segment, segmented
+from procedo.core import bundle_registry, ui_kit
+from procedo.core.segmented import segment, segmented
 
 from .authoring.skill_menu import launch_skill_chat
 from .core import ArtifactType

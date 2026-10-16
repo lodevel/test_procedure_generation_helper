@@ -51,12 +51,12 @@ def pytest_configure(config):
 @pytest.fixture(autouse=True)
 def _per_user_sandbox(monkeypatch, tmp_path):  # a name no test module reuses
     """The per-user folders, QSettings and environment are this test's — the host's one
-    sandbox (``project_services.testing``); none without the host, where this repo's CI
+    sandbox (``procedo.core.testing``); none without the host, where this repo's CI
     runs its host-free gate (``tests/test_size_budgets.py``)."""
     try:
-        from project_services.testing import sandbox
+        from procedo.core.testing import sandbox
     except ModuleNotFoundError as exc:
-        if exc.name != "project_services":  # a broken sandbox must stop the run, not skip it
+        if exc.name not in ("procedo", "procedo.core"):  # a broken sandbox must stop the run, not skip it
             raise
         yield
         return

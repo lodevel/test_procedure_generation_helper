@@ -10,7 +10,7 @@ bar: the code card's own Save writes test.py.
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSplitter, QVBoxLayout
 
-from project_services import ui_kit
+from procedo.core import ui_kit
 
 from .base_tab import BaseTab
 from .code_tab import PythonSyntaxHighlighter

@@ -1,6 +1,6 @@
 """Tests for the authoring-skill core (model / loader / discovery).
 
-Pure-Python: uses tmp_path only — no Qt, no project_services, no bundle.
+Pure-Python: uses tmp_path only — no Qt, no procedo.core, no bundle.
 """
 import pytest
 

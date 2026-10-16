@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QMessageBox
 
-from project_services.ui_kit import set_pill
+from procedo.core.ui_kit import set_pill
 
 from ..core import ArtifactManager, ArtifactType, SessionState
 from ..core.proposal import discard_pending

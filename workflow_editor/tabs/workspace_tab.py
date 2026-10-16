@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QMenu, QMessageBox, QPushButton, QVBoxLayout,
 )
 
-from project_services import ui_kit
+from procedo.core import ui_kit
 from test_procedure_gui import ui_indicators
 from test_procedure_gui.badge_delegate import BADGES_ROLE, BadgeDelegate
 

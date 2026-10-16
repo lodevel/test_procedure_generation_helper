@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 )
 from typing import TYPE_CHECKING, Optional
 
-from project_services import ui_kit
+from procedo.core import ui_kit
 
 if TYPE_CHECKING:
     from ..main_window import MainWindow

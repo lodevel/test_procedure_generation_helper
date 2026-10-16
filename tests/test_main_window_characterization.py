@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 )
 
 import workflow_editor.main_window as mw_mod  # noqa: E402
-from project_services import app_settings  # noqa: E402
+from procedo.core import app_settings  # noqa: E402
 from workflow_editor.llm.backend_factory import BACKEND_TYPE_NONE  # noqa: E402
 
 
@@ -325,7 +325,7 @@ def test_host_slots_guard_missing_project(make_window, mbox):
     # Pins the guard inside host-backed slots, triggered from their menu
     # entries (the triggered(checked) payload reaches a (self)-only slot): no
     # project open -> the slot's own "open a project first" info box, and the
-    # heavy project_services dialog is never reached.
+    # heavy procedo.core dialog is never reached.
     w = make_window()
     entries = _menus(w)  # keeps action refs alive for the whole test
     project_menu = {t: m for t, _, m in entries}["&Project"]

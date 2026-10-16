@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Signal
 from typing import TYPE_CHECKING, Optional, Callable
 
-from project_services import ui_kit
+from procedo.core import ui_kit
 
 from ..core.proposal import FileChange, Proposal, current_test
 from ..llm.backend_base import LLMTask

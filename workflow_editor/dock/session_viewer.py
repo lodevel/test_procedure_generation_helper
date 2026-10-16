@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from typing import TYPE_CHECKING, Optional
 
-from project_services import ui_kit
+from procedo.core import ui_kit
 from test_procedure_gui import theme
 
 if TYPE_CHECKING:

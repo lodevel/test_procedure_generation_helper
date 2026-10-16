@@ -10,7 +10,7 @@ composed from its path:
 Neither is there since projects moved to a share, and neither is the bundle
 install record it watches (``<project>/config/.bundle_installed.json``), which
 describes what is in that venv. All three live under the per-user
-app-data root, and only the host's ``project_services.project_local_state`` knows
+app-data root, and only the host's ``procedo.core.project_local_state`` knows
 where — so this module asks it, and never composes a path of its own.
 
 The venv is SHARED: one per bundle, used by every project on it, and bounded by a
@@ -33,7 +33,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from project_services import project_local_state
+from procedo.core import project_local_state
 
 
 class ProjectVenv(NamedTuple):

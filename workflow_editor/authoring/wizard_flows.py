@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Optional
 
-from project_services.authoring_api import API_VERSION
+from procedo.core.authoring_api import API_VERSION
 
 from . import load_wizards
 from .skill import Skill, SkillSource

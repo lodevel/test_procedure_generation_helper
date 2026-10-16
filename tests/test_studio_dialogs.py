@@ -15,7 +15,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QComboBox, QFrame, QLabel, QPushButton
 
-from project_services import ui_kit
+from procedo.core import ui_kit
 from workflow_editor.authoring import ContextItem, ContextSource
 from workflow_editor.core import project_manager
 from workflow_editor import shell

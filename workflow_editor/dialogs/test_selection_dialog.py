@@ -1,17 +1,18 @@
-"""Reusable test-folder selection checklist for the editor's exports.
+"""Reusable test-folder selection checklist for the editor's exports (board S12, Export procedures).
 
 Both the full Word report and the multi-test Markdown export run over the SAME
 selection (mirroring the main app's checked-procedure list). Rows lacking the
 required artifact (``procedure.json`` for Word, ``procedure_text.md`` for Markdown)
-are shown greyed/disabled with their artifact state.
+are shown greyed/disabled; each row names the test's artifacts on its right.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QPushButton, QVBoxLayout,
-)
+from PySide6.QtWidgets import QDialog, QPushButton
+
+from project_services import ui_kit
+
+#: What the selection exports, by the artifact it requires (the window's subtitle).
+_EXPORTS = {"json": "Procedure to Word", "text": "Procedure to Markdown"}
 
 
 class TestSelectionDialog(QDialog):
@@ -20,56 +21,38 @@ class TestSelectionDialog(QDialog):
 
     def __init__(self, folders, require: str = "json", parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Select tests to export")
-        self.resize(440, 480)
-        self._require = require
+        self.setWindowTitle("Export procedures")
+        self.resize(430, 520)
+        self._folders = {f.name: f for f in folders}
 
-        lay = QVBoxLayout(self)
-        lay.addWidget(QLabel("Tick the tests to include in the export:"))
-        self._list = QListWidget()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        export_btn = ui_kit.primary(QPushButton("Export"))
+        export_btn.clicked.connect(self.accept)
+        footer = ui_kit.FooterBand([cancel_btn, export_btn])
+        self._count = footer.note
+        body = ui_kit.framed(
+            self, ui_kit.HeaderBand("Export procedures", _EXPORTS.get(require, ""), stacked=True),
+            footer, margins=(16, 12, 16, 12), spacing=8)
+
+        all_btn = QPushButton("All")
+        all_btn.clicked.connect(lambda: self.tests.set_all(True))
+        none_btn = QPushButton("None")
+        none_btn.clicked.connect(lambda: self.tests.set_all(False))
+        body.addLayout(ui_kit.hbox(ui_kit.note("Tick the tests to include.", wrap=False), None,
+                                   all_btn, none_btn))
+        self.tests = ui_kit.CheckList()
         for f in folders:
             available = bool(getattr(f, f"has_{require}", False))
-            label = f"{f.name}    [{f.artifact_state}]"
-            if not available:
-                label += f"  —  no {require}"
-            item = QListWidgetItem(label)
-            item.setData(Qt.ItemDataRole.UserRole, f)
-            if available:
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                item.setCheckState(Qt.CheckState.Checked)
-            else:
-                item.setFlags(Qt.ItemFlag.NoItemFlags)
-            self._list.addItem(item)
-        lay.addWidget(self._list, 1)
+            detail = f.artifact_state if available else f"{f.artifact_state} — no {require}"
+            self.tests.add(f.name, f.name, detail, checked=available, enabled=available)
+        self.tests.toggled.connect(self._update_count)
+        body.addWidget(self.tests, 1)
+        self._update_count()
 
-        row = QHBoxLayout()
-        all_btn = QPushButton("All")
-        none_btn = QPushButton("None")
-        all_btn.clicked.connect(lambda: self._set_all(Qt.CheckState.Checked))
-        none_btn.clicked.connect(lambda: self._set_all(Qt.CheckState.Unchecked))
-        row.addWidget(all_btn)
-        row.addWidget(none_btn)
-        row.addStretch()
-        lay.addLayout(row)
-
-        bb = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        bb.accepted.connect(self.accept)
-        bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
-
-    def _set_all(self, state: "Qt.CheckState") -> None:
-        for i in range(self._list.count()):
-            item = self._list.item(i)
-            if item.flags() & Qt.ItemFlag.ItemIsUserCheckable:
-                item.setCheckState(state)
+    def _update_count(self) -> None:
+        self._count.setText(f"{len(self.tests.checked())} of {len(self.tests.keys())}")
 
     def selected_folders(self) -> list:
         """The checked ``TestFolderInfo`` rows."""
-        out = []
-        for i in range(self._list.count()):
-            item = self._list.item(i)
-            if (item.flags() & Qt.ItemFlag.ItemIsUserCheckable
-                    and item.checkState() == Qt.CheckState.Checked):
-                out.append(item.data(Qt.ItemDataRole.UserRole))
-        return out
+        return [self._folders[name] for name in self.tests.checked()]

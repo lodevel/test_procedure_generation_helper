@@ -8,11 +8,14 @@ lives in the reusable :class:`~workflow_editor.dock.skill_chat_widget.SkillChatW
 so the Skills-menu chat and a hosting wizard share the SAME chat — not two
 hand-rolled copies.
 
-The dialog adds only what is window-specific:
+The dialog adds only what is window-specific (board S9):
 
-* window chrome (title / size / modeless),
-* the *Insert into procedure* button, wired to the host's ``insert_callback``
-  and gated by the widget's ``reply_finished`` / ``conversation_reset`` signals,
+* window chrome (title / size / modeless): the widget's header (the skill picker and
+  its when-to-use line, :meth:`SkillChatWidget.take_header`) across the top, the footer
+  band under the chat,
+* the primary *Insert into procedure* button, wired to the host's ``insert_callback``
+  and gated by the widget's ``reply_finished`` / ``conversation_reset`` signals; the
+  footer's note says whether a draft is ready or was inserted,
 * close-time teardown — a QWidget's ``closeEvent`` does NOT fire when embedded,
   so the dialog forwards its own close to ``widget.shutdown()``.
 
@@ -25,7 +28,9 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton
+from PySide6.QtWidgets import QDialog, QPushButton
+
+from project_services import ui_kit
 
 from .skill_chat_widget import SkillChatWidget
 
@@ -69,7 +74,7 @@ class SkillChatDialog(QDialog):
 
         self.setWindowTitle("Skill chat")
         self.setModal(False)
-        self.resize(900, 680)
+        self.resize(1300, 830)
 
         # The whole chat body — native skill combo + Run button visible, context
         # picker built from the supplied sources.
@@ -84,31 +89,35 @@ class SkillChatDialog(QDialog):
             parent=self,
         )
 
-        layout = QVBoxLayout(self)
-        layout.addWidget(self._chat, stretch=1)
-
         # Insert button — host chrome. Reads the widget's latest reply; enabled
         # only when there IS a reply to insert.
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        self._insert_btn = QPushButton("Insert into procedure")
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        self._insert_btn = ui_kit.primary(QPushButton("Insert into procedure"))
         self._insert_btn.setToolTip(
             "Append the latest draft to the procedure text editor.")
         self._insert_btn.setEnabled(False)
         self._insert_btn.clicked.connect(self._on_insert)
-        btn_row.addWidget(self._insert_btn)
-        layout.addLayout(btn_row)
+        self._footer = ui_kit.FooterBand([close_btn, self._insert_btn])
+        body = ui_kit.framed(self, self._chat.take_header(), self._footer,
+                             margins=(18, 14, 18, 14))
+        body.addWidget(self._chat, 1)
 
         # Gate Insert on the widget's reply lifecycle: enable when an
         # authoritative reply lands (non-empty), disable when the chat resets.
         self._chat.reply_finished.connect(self._on_reply_finished)
-        self._chat.conversation_reset.connect(
-            lambda: self._insert_btn.setEnabled(False))
+        self._chat.conversation_reset.connect(self._on_reset)
 
     # -- insert ---------------------------------------------------------------
 
     def _on_reply_finished(self, text: str) -> None:
-        self._insert_btn.setEnabled(bool(text.strip()))
+        ready = bool(text.strip())
+        self._insert_btn.setEnabled(ready)
+        self._footer.note.setText("Draft ready" if ready else "")
+
+    def _on_reset(self) -> None:
+        self._insert_btn.setEnabled(False)
+        self._footer.note.setText("")
 
     def _on_insert(self) -> None:
         """Raw-append the latest assistant draft to the procedure editor."""
@@ -121,7 +130,7 @@ class SkillChatDialog(QDialog):
             log.exception("skill-chat insert_callback failed")
             self._chat.append_note("System", "Insert failed — see logs.")
             return
-        self._chat.set_status("Inserted latest draft into the procedure.")
+        self._footer.note.setText("Inserted latest draft into the procedure.")
 
     # -- cleanup --------------------------------------------------------------
 

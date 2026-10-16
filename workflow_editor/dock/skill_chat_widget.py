@@ -45,9 +45,11 @@ from typing import Optional
 
 from PySide6.QtCore import Qt, QEvent, Signal
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QGroupBox,
-    QPlainTextEdit, QTextEdit, QPushButton, QCheckBox, QComboBox, QLabel,
+    QWidget, QVBoxLayout, QPlainTextEdit, QTextEdit, QPushButton, QCheckBox, QComboBox,
 )
+
+from project_services import ui_kit
+from test_procedure_gui import fluent_qss
 
 from .. import theme
 from ..authoring import SkillChatSession, assemble
@@ -60,27 +62,16 @@ from ..widgets.work_timer import WorkTimer
 log = logging.getLogger(__name__)
 
 
-# Speaker → (theme role, display name, avatar glyph). The speaker strings are
-# the ones already passed to ``_append_line`` / built in ``_render_transcript``
-# ("You" / "Assistant" / "System"); the theme role keys ("user" / "assistant" /
-# "system") drive the palette-aware tints via ``theme.message_bg`` /
-# ``message_border`` so the colours track the light/dark Fluent skin and never
-# hardcode a colour that breaks dark mode.
-_ROLE_META: dict[str, tuple[str, str, str]] = {
-    "You": ("user", "You", "🧑"),
-    "Assistant": ("assistant", "Assistant", "🤖"),
-    "System": ("system", "System", "⚙️"),
-}
+#: The Assistant column's composer input height (board S9).
+_INPUT_HEIGHT = 52
+#: The "Context to push" card's width on the board (its widest).
+_PICKER_WIDTH = 400
 
 
-def _role_accent(role: str) -> str:
-    """Accent (left-border + label) colour for a theme role — reuses the chat
-    palette's role borders so it stays readable in both light and dark."""
-    return {
-        "user": theme.chat_user_border(),
-        "assistant": theme.chat_assistant_border(),
-        "system": theme.chat_system_border(),
-    }.get(role, theme.border_color())
+def _colours() -> dict[str, str]:
+    """Bench's palette (light or dark, as the app wears it): the transcript is HTML, so it
+    takes the stylesheet's colours by name."""
+    return fluent_qss.DARK_TOKENS if theme.is_dark() else fluent_qss.LIGHT_TOKENS
 
 
 class SkillChatWidget(QWidget):
@@ -132,8 +123,11 @@ class SkillChatWidget(QWidget):
             documents_dir: Folder backing the picker's Documents tab (or None).
             backend_tab_id: Dedicated-backend / OpenCode-session id. Each embed
                 MUST use a distinct id (``"skill_chat"`` / ``"my_wizard"``).
-            show_skill_selector: Show the skill combo + when-to-use header. False
-                when the host switches the skill programmatically.
+            show_skill_selector: Build the window header (``header``: "Skill chat",
+                the skill's when-to-use line, the skill combo) as the widget's first
+                row; a host that frames its window itself moves it to its own top
+                with :meth:`take_header`. False when the host switches the skill
+                programmatically (no header at all).
             show_run_button: Show the *Run skill* button. False when the host
                 drives the kickoff from its own stage buttons.
             dispatch_gate: Optional ``gate(fire, *, interactive)`` callable. When
@@ -170,9 +164,11 @@ class SkillChatWidget(QWidget):
         # Raw context string pushed by the host when there is NO picker.
         self._pushed_context: str = ""
 
-        # Widgets that may not be built (gated by the show_* flags).
+        # Widgets that may not be built (gated by the show_* flags). ``header`` is the
+        # window header a host shows above the widget: the skill picker and the skill's
+        # when-to-use line (board S9).
         self._skill_combo: Optional[QComboBox] = None
-        self._header: Optional[QLabel] = None
+        self.header: Optional[ui_kit.HeaderBand] = None
         self._run_btn: Optional[QPushButton] = None
 
         # Per-chat toggle DEFAULTS come from Settings (opencode.web_default /
@@ -203,59 +199,48 @@ class SkillChatWidget(QWidget):
     # -- UI construction ------------------------------------------------------
 
     def _setup_ui(self) -> None:
+        """Board S9: the Conversation card beside the "Context to push" card (when there is a
+        picker), the composer card under them (the three toggles, the input, Run skill / Send,
+        the status and context readouts, Stop / Clear / Restart)."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
 
         # Skill selector — choose which skill to run here (scales to many skills;
-        # a flat menu of every skill doesn't). Hidden when the host pins a skill.
+        # a flat menu of every skill doesn't). Not built when the host pins a skill.
         if self._show_skill_selector:
-            sel_row = QHBoxLayout()
-            sel_row.addWidget(QLabel("Skill:"))
             self._skill_combo = QComboBox()
             for s in self._skills:
                 label = s.title or s.skill_id
                 if s.version:
-                    label = f"{label}  (v{s.version})"
+                    label = f"{label} · v{s.version}"
                 self._skill_combo.addItem(label, s.skill_id)
+            self._skill_combo.setMinimumWidth(_PICKER_WIDTH)
             self._skill_combo.currentIndexChanged.connect(self._on_skill_changed)
-            sel_row.addWidget(self._skill_combo, 1)
-            layout.addLayout(sel_row)
-
-            self._header = QLabel(
-                (self._skill.when_to_use or "") if self._skill else "")
-            self._header.setWordWrap(True)
-            self._header.setStyleSheet(f"color:{theme.muted_color()};")
-            layout.addWidget(self._header)
+            self.header = ui_kit.HeaderBand(
+                "Skill chat", (self._skill.when_to_use or "") if self._skill else "",
+                [ui_kit.note("Skill", wrap=False), self._skill_combo], stacked=True)
+            layout.addWidget(self.header)  # until a host takes it (take_header)
 
         # Transcript (left) | context picker (right, only when a picker exists).
-        split = QSplitter(Qt.Orientation.Horizontal)
-
-        transcript_group = QGroupBox("Conversation")
-        tg_layout = QVBoxLayout(transcript_group)
-        # Rich-text transcript: each turn is rendered as a role-tinted block
-        # (accent border + tinted background + bold coloured role label) so the
-        # eye separates You / Assistant / System at a glance. QTextEdit (not
-        # QPlainTextEdit) because we paint per-role HTML.
+        # Rich-text transcript: the user's turns right on a tinted bubble, the
+        # assistant's left on a white one, system lines as centred pills.
         self._transcript = QTextEdit()
+        self._transcript.setObjectName("skillTranscript")
         self._transcript.setReadOnly(True)
         self._transcript.setPlaceholderText(
             "The skill conversation appears here. Ask for a draft, refine it "
             "over a few turns, then Insert it into the procedure."
         )
-        tg_layout.addWidget(self._transcript)
-        split.addWidget(transcript_group)
-
-        if self._picker is not None:
-            context_group = QGroupBox("Context to push")
-            cg_layout = QVBoxLayout(context_group)
-            cg_layout.addWidget(self._picker)
-            split.addWidget(context_group)
-            split.setStretchFactor(0, 1)
-            split.setStretchFactor(1, 0)
-            split.setSizes([560, 340])
-        else:
-            split.setStretchFactor(0, 1)
-        layout.addWidget(split, stretch=1)
+        conversation = ui_kit.Card("Conversation")
+        conversation.body.addWidget(self._transcript)
+        cards = ui_kit.hbox()
+        cards.setSpacing(12)
+        cards.addWidget(conversation, 1)
+        if self._picker is not None:  # half the width in a narrow host, the board's 400 px at most
+            self._picker.setMaximumWidth(_PICKER_WIDTH)
+            cards.addWidget(self._picker, 1)
+        layout.addLayout(cards, 1)
 
         # Web toggle — exposes OpenCode's webfetch + websearch tools for this
         # chat only (per-request override). OFF by default: with web on, even a
@@ -293,71 +278,75 @@ class SkillChatWidget(QWidget):
         )
         self._save_docs_checkbox.setChecked(self._save_docs_default)
 
-        toggle_row = QHBoxLayout()
-        toggle_row.addWidget(self._web_checkbox)
-        toggle_row.addWidget(self._project_tools_checkbox)
-        toggle_row.addWidget(self._save_docs_checkbox)
-        toggle_row.addStretch()
-        layout.addLayout(toggle_row)
+        toggles = ui_kit.hbox(self._web_checkbox, self._project_tools_checkbox,
+                              self._save_docs_checkbox, None)
+        toggles.setSpacing(16)
 
         # Input box (Enter sends, Shift+Enter newline — mirrors ChatPanel).
         self._input = QPlainTextEdit()
+        self._input.setObjectName("composerInput")  # the Assistant column's input look
         self._input.setPlaceholderText(
             "Optional: prime the skill before Run (e.g. 'build the test for U86'), "
             "then refine over the next turns…")
-        self._input.setFixedHeight(72)
+        self._input.setFixedHeight(_INPUT_HEIGHT)
         self._input.installEventFilter(self)
-        layout.addWidget(self._input)
 
-        # Action row.
-        btn_row = QHBoxLayout()
-
+        # Action row: Run skill / Send, the readouts, then the icon buttons.
+        buttons = ui_kit.hbox()
+        buttons.setSpacing(6)
         if self._show_run_button:
-            self._run_btn = QPushButton("Run skill")
+            self._run_btn = QPushButton("▶ Run skill")
+            ui_kit.set_primary(self._run_btn)
             self._run_btn.setToolTip(
                 "Start the skill using the checked context. Type a message first to "
                 "PRIME it (e.g. which rail/IC to build) — or leave it empty to run "
                 "the skill from the top.")
             self._run_btn.clicked.connect(self._on_run)
-            btn_row.addWidget(self._run_btn)
+            buttons.addWidget(self._run_btn)
 
         self._send_btn = QPushButton("Send")
         self._send_btn.setToolTip("Send a message to refine the draft.")
         self._send_btn.clicked.connect(self._on_send)
-        btn_row.addWidget(self._send_btn)
+        buttons.addWidget(self._send_btn)
+        buttons.addSpacing(8)
 
-        self._stop_btn = self._icon_button(
-            "⏹️", "Stop the current request", self._on_stop)
-        self._stop_btn.setEnabled(False)
-        btn_row.addWidget(self._stop_btn)
-
-        self._trash_btn = self._icon_button(
-            "🗑️", "Clear the conversation and start over", self.clear)
-        btn_row.addWidget(self._trash_btn)
-
-        # Stays enabled even while busy — the point is to recover a HUNG send.
-        self._restart_btn = self._icon_button(
-            "🔄", "Restart the backend server (recover a hung / unresponsive "
-            "backend without relaunching the editor)", self._on_restart_backend)
-        btn_row.addWidget(self._restart_btn)
-
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
-
-        self._status = QLabel("")
-        self._status.setStyleSheet(f"color:{theme.muted_color()}; font-size:9pt;")
-        layout.addWidget(self._status)
+        # The status line: as much of the text as the row can spare, all of it in the tooltip
+        # (a host writes long ones: "Loaded 12 cached IC(s) — 'Restart' to refresh.").
+        self._status = ui_kit.ElidingLabel()
+        self._status.setObjectName("fieldNote")  # muted, like a note
         self._work_timer = WorkTimer(
-            on_tick=lambda s: self._status.setText(f"Thinking… {s}"), parent=self)
-
+            on_tick=lambda s: self._status.set_full_text(f"Thinking… {s}"), parent=self)
         # Context-usage readout. We show the LATEST turn's total tokens as the
         # current context size: OpenCode holds the persistent session, so the last
         # turn's reported usage IS the live context (system + history + tool
         # results) — and this stays correct across any compaction, unlike a running
         # sum (which would over-count).
-        self._context_label = QLabel("")
-        self._context_label.setStyleSheet(f"color:{theme.muted_color()}; font-size:9pt;")
-        layout.addWidget(self._context_label)
+        self._context_label = ui_kit.note(wrap=False)
+        self._context_label.setObjectName("contextText")
+        buttons.addWidget(self._context_label)
+        buttons.addSpacing(8)
+        buttons.addWidget(self._status, 1)
+        buttons.addStretch(0)  # keeps the icon buttons right while the status is hidden
+
+        self._stop_btn = ui_kit.icon_button("stop", "Stop the current request")
+        self._stop_btn.clicked.connect(self._on_stop)
+        self._stop_btn.setEnabled(False)
+        self._trash_btn = ui_kit.icon_button("trash", "Clear the conversation and start over")
+        self._trash_btn.clicked.connect(self.clear)
+        # Stays enabled even while busy — the point is to recover a HUNG send.
+        self._restart_btn = ui_kit.icon_button(
+            "refresh", "Restart the backend server (recover a hung / unresponsive "
+            "backend without relaunching the editor)")
+        self._restart_btn.clicked.connect(self._on_restart_backend)
+        for button in (self._stop_btn, self._trash_btn, self._restart_btn):
+            buttons.addWidget(button)
+
+        composer = ui_kit.Card()
+        composer.body.setSpacing(8)
+        composer.body.addLayout(toggles)
+        composer.body.addWidget(self._input)
+        composer.body.addLayout(buttons)
+        layout.addWidget(composer)
 
     def eventFilter(self, obj, event):  # noqa: N802 — Qt override
         """Enter in the input field sends; Shift+Enter inserts a newline."""
@@ -369,18 +358,14 @@ class SkillChatWidget(QWidget):
                 return True
         return super().eventFilter(obj, event)
 
-    def _icon_button(self, text: str, tooltip: str, on_click) -> QPushButton:
-        """A compact icon button whose glyph isn't clipped — a local stylesheet
-        overrides the app's wider button padding (the old setMaximumWidth(35) cut
-        the emoji off)."""
-        btn = QPushButton(text)
-        btn.setToolTip(tooltip)
-        btn.setObjectName("iconButton")
-        btn.setStyleSheet("QPushButton { padding: 4px 8px; min-width: 0; }")
-        btn.clicked.connect(on_click)
-        return btn
-
     # -- public API -----------------------------------------------------------
+
+    def take_header(self) -> Optional[ui_kit.HeaderBand]:
+        """Hand ``header`` to a host that frames its window itself (it goes across the top,
+        outside the host's margins); without a host it stays the widget's first row."""
+        if self.header is not None:
+            self.layout().removeWidget(self.header)
+        return self.header
 
     @property
     def latest_reply(self) -> str:
@@ -463,7 +448,7 @@ class SkillChatWidget(QWidget):
         self._stream_buffer = ""
         self._blocks = []
         self._transcript.clear()
-        self._status.setText("")
+        self._status.set_full_text("")
         self._context_label.setText("")  # session destroyed → drop its stale token readout
         self._set_busy(False)  # fresh session → Run re-enabled, controls live
         self.conversation_reset.emit()
@@ -496,7 +481,7 @@ class SkillChatWidget(QWidget):
 
     def set_status(self, text: str) -> None:
         """Write the widget's status line (host-facing convenience)."""
-        self._status.setText(text)
+        self._status.set_full_text(text)
 
     def append_note(self, speaker: str, text: str) -> None:
         """Push a transient line into the transcript (host-facing convenience).
@@ -606,7 +591,7 @@ class SkillChatWidget(QWidget):
             # any slot it took) must not leave the widget locked with no worker.
             log.exception("skill-chat dispatch failed")
             self._set_busy(False)
-            self._status.setText("Failed to start — see logs.")
+            self._status.set_full_text("Failed to start — see logs.")
 
     def _really_dispatch(self, prompt: str) -> None:
         """Build the worker and start streaming — the actual fire, run immediately
@@ -680,7 +665,7 @@ class SkillChatWidget(QWidget):
     def _on_finished(self, response) -> None:
         self._teardown_worker()
         self._set_busy(False)
-        self._status.setText(f"Replied in {self._work_timer.stop()}")
+        self._status.set_full_text(f"Replied in {self._work_timer.stop()}")
 
         if not getattr(response, "success", False):
             # A genuine failure: the backend returns success=True for a prose
@@ -739,16 +724,15 @@ class SkillChatWidget(QWidget):
                 self._context_limit = window
         limit = self._context_limit or 16384
         text, colour = format_context_usage(used, limit)
-        # An empty colour from the helper means "use the widget's muted default".
-        colour = colour or theme.muted_color()
         self._context_label.setText(text)
-        self._context_label.setStyleSheet(f"color:{colour}; font-size:9pt;")
+        # A colour from the helper means "nearly full": the app QSS draws it in the danger tone.
+        ui_kit.set_state(self._context_label, "full", bool(colour))
 
     def _on_error(self, message: str) -> None:
         self._teardown_worker()
         self._set_busy(False)
         self._work_timer.stop()
-        self._status.setText("")
+        self._status.set_full_text("")
         # The send failed/cancelled — drop the unanswered user turn.
         self._session.drop_last_user_turn()
         # Keep any partial streamed reply visible above the error notice.
@@ -760,7 +744,7 @@ class SkillChatWidget(QWidget):
     def _on_stop(self) -> None:
         if self._worker is not None:
             self._worker.cancel()
-            self._status.setText("Stopping…")
+            self._status.set_full_text("Stopping…")
 
     def _on_skill_changed(self, index: int) -> None:
         """Combo path: switch the active skill. (The combo is disabled while a
@@ -781,8 +765,8 @@ class SkillChatWidget(QWidget):
         self._blocks = []
         self._transcript.clear()
         self._context_label.setText("")  # new session → drop the previous skill's token readout
-        if self._header is not None:
-            self._header.setText((self._skill.when_to_use or "") if self._skill else "")
+        if self.header is not None:
+            self.header.subtitle.setText((self._skill.when_to_use or "") if self._skill else "")
         self._set_busy(False)  # fresh session → Run re-enabled
         self.conversation_reset.emit()
 
@@ -796,7 +780,7 @@ class SkillChatWidget(QWidget):
         ``stop()`` would retire it and leave every tab without a server."""
         sm = getattr(self._backend_factory, "server_manager", None)
         if sm is None:
-            self._status.setText("This backend has no restartable server.")
+            self._status.set_full_text("This backend has no restartable server.")
             return
         # Cancel any in-flight (possibly hung) request and drop the cached
         # backend so the next send reconnects to the fresh server.
@@ -806,7 +790,7 @@ class SkillChatWidget(QWidget):
         self._set_busy(False)
         self._work_timer.stop()
         self._backend = None
-        self._status.setText("Restarting backend…")
+        self._status.set_full_text("Restarting backend…")
 
         def _restart() -> None:
             try:
@@ -815,31 +799,28 @@ class SkillChatWidget(QWidget):
                 log.exception("backend restart failed")
 
         threading.Thread(target=_restart, daemon=True).start()
-        self._status.setText("Backend restarting — send again in a moment.")
+        self._status.set_full_text("Backend restarting — send again in a moment.")
 
     # -- rich-text transcript rendering --------------------------------------
 
     @staticmethod
     def _block_html(speaker: str, text: str) -> str:
-        """Render one message as a role-tinted HTML block: an accent left-border,
-        a role-tinted background, a bold coloured role label with an avatar glyph,
-        then the HTML-escaped body. All colours come from the theme so the block
-        stays readable in both the light and dark Fluent skins."""
-        role, name, glyph = _ROLE_META.get(speaker, ("system", speaker, "•"))
-        accent = _role_accent(role)
-        bg = theme.message_bg(role)
-        border = theme.message_border(role)
+        """One message as HTML in Bench's colours (board S9): "You" right on a tinted bubble,
+        "Assistant" left on a white one across the conversation, "System" a centred pill."""
+        c = _colours()
         body = html.escape(text).replace("\n", "<br>")
-        return (
-            f'<table width="100%" cellspacing="0" cellpadding="0" '
-            f'style="margin:4px 0;"><tr><td '
-            f'style="background:{bg}; border:1px solid {border}; '
-            f'border-left:4px solid {accent}; padding:6px 10px;">'
-            f'<div style="color:{accent}; font-weight:bold; '
-            f'margin-bottom:3px;">{glyph}&nbsp;{html.escape(name)}</div>'
-            f'<div style="color:{theme.chat_content_color()};">{body}</div>'
-            f'</td></tr></table>'
-        )
+        if speaker == "System":
+            return (f'<p align="center" style="margin:6px 0;"><span style="background-color:'
+                    f'{c["selected_bg"]}; color:{c["accent_deep"]}; font-size:12px; '
+                    f'font-weight:600;">&nbsp;&nbsp;{body}&nbsp;&nbsp;</span></p>')
+        user = speaker == "You"
+        fill, line = ((c["selected_bg"], c["selected_border"]) if user
+                      else (c["panel"], c["border"]))
+        shape = 'align="right"' if user else 'width="100%"'
+        return (f'<table {shape} border="1" cellspacing="0" cellpadding="8" '
+                f'style="margin:5px 0; border-collapse:collapse; border-style:solid; '
+                f'border-color:{line}; background-color:{fill};"><tr><td '
+                f'style="color:{c["text"]};">{body}</td></tr></table>')
 
     def _repaint(self, live: Optional[tuple[str, str]] = None) -> None:
         """Repaint the whole transcript from ``self._blocks`` plus an optional

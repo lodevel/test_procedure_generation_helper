@@ -13,7 +13,7 @@ Callers write issues to session_state.validation_issues, then call display().
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QListWidget, QListWidgetItem,
-    QPushButton, QLabel, QApplication, QMenu, QFrame
+    QPushButton, QApplication, QMenu, QFrame
 )
 from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -21,44 +21,20 @@ from typing import TYPE_CHECKING, Optional
 
 from project_services import ui_kit
 
+from ..widgets import issue_cards
+
 if TYPE_CHECKING:
     from ..main_window import MainWindow
     from ..core.session_state import SessionState
 
-#: An issue's severity -> its pill tone.
-_TONES = {"error": "danger", "warning": "warning"}
 #: The gap under each issue card.
 _CARD_GAP = 8
 
 
-def _count(n: int, word: str) -> str:
-    return f"{n} {word}{'' if n == 1 or word == 'info' else 's'}"
-
-
-def _issue_card(issue: dict) -> QWidget:
-    """One issue as a card (#findingCard): severity and location pills, the message, the fix."""
-    card = QFrame()
-    card.setObjectName("findingCard")
-    column = QVBoxLayout(card)
-    column.setContentsMargins(10, 8, 10, 8)
-    column.setSpacing(4)
-    severity = str(issue.get("severity", "info"))
-    head = ui_kit.hbox(ui_kit.set_pill(QLabel(), _TONES.get(severity, "info"), severity.upper()), None)
-    if issue.get("location"):
-        head.addWidget(ui_kit.set_pill(QLabel(), "neutral", str(issue["location"])))
-    column.addLayout(head)
-    message = QLabel(str(issue.get("message", issue)))
-    message.setWordWrap(True)
-    column.addWidget(message)
-    if issue.get("suggested_fix"):
-        fix = QLabel(f"Fix: {issue['suggested_fix']}")
-        fix.setObjectName("findingFix")
-        fix.setWordWrap(True)
-        column.addWidget(fix)
-    if issue.get("code"):
-        card.setToolTip(str(issue["code"]))
-    holder = QWidget()  # the card and the gap under it
-    holder.setLayout(ui_kit.hbox(card))
+def _issue_row(issue: dict) -> QWidget:
+    """The issue's card and the gap under it."""
+    holder = QWidget()
+    holder.setLayout(ui_kit.hbox(issue_cards.issue_card(issue)))
     holder.layout().setContentsMargins(0, 0, 0, _CARD_GAP)
     return holder
 
@@ -78,7 +54,7 @@ class _IssueList(QListWidget):
         item = QListWidgetItem()
         item.setData(Qt.UserRole, issue)
         self.addItem(item)
-        self.setItemWidget(item, _issue_card(issue))
+        self.setItemWidget(item, _issue_row(issue))
         self._fit(item)
 
     def _fit(self, item: QListWidgetItem) -> None:
@@ -181,18 +157,7 @@ class FindingsPanel(QWidget):
 
     def _update_summary(self, issues: list):
         """The counts' pills: errors, warnings, the rest as info ("No issues" when none)."""
-        ui_kit.clear_layout(self.summary_row)
-        severities = [i.get("severity", "info") if isinstance(i, dict) else "info" for i in issues]
-        errors, warnings = severities.count("error"), severities.count("warning")
-        pills = [("danger", _count(errors, "error")) if errors else None,
-                 ("warning", _count(warnings, "warning")) if warnings else None,
-                 ("info", _count(len(issues) - errors - warnings, "info"))
-                 if len(issues) > errors + warnings else None]
-        if not issues:
-            pills = [("success", "No issues")]
-        for tone, text in filter(None, pills):
-            self.summary_row.addWidget(ui_kit.set_pill(QLabel(), tone, text))
-        self.summary_row.addStretch(1)
+        issue_cards.fill_counts(self.summary_row, issues)
 
     def _on_issue_clicked(self, item: QListWidgetItem):
         """Handle issue click."""
@@ -239,30 +204,4 @@ class FindingsPanel(QWidget):
         """Put *items*' issues on the clipboard as plain markdown bullets (nothing: no-op)."""
         if items:
             QApplication.clipboard().setText(
-                self._format_issues([item.data(Qt.UserRole) for item in items]))
-
-    @staticmethod
-    def _format_issues(issues: list) -> str:
-        """Render a list of issue dicts as plain-text markdown bullets."""
-        lines = []
-        for issue in issues:
-            if not isinstance(issue, dict):
-                lines.append(f"- {issue}")
-                continue
-            severity = issue.get("severity", "info")
-            code = issue.get("code", "")
-            message = issue.get("message", "")
-            location = issue.get("location", "")
-            fix = issue.get("suggested_fix", "")
-
-            head = f"- [{severity}]"
-            if code:
-                head += f" {code}:"
-            if message:
-                head += f" {message}"
-            if location:
-                head += f" ({location})"
-            lines.append(head)
-            if fix:
-                lines.append(f"  Fix: {fix}")
-        return "\n".join(lines)
+                issue_cards.issues_text([item.data(Qt.UserRole) for item in items]))

@@ -51,8 +51,8 @@ def test_the_rules_picker_counts_the_views_rules_and_opens_their_selection(opene
     opened_for = []
 
     class _Selector:
-        def __init__(self, tab_id, project_manager, task_config_manager, parent):
-            opened_for.append(tab_id)
+        def __init__(self, tab_id, project_manager, task_config_manager, parent, view):
+            opened_for.append((tab_id, view))
 
         def exec(self):
             return 1
@@ -63,7 +63,7 @@ def test_the_rules_picker_counts_the_views_rules_and_opens_their_selection(opene
     monkeypatch.setattr(dock_mod, "RuleSelectorDialog", _Selector)
     w.dock.rules_picker.click()
 
-    assert opened_for == [view.tab_context.tab_id]
+    assert opened_for == [(view.tab_context.tab_id, "Text")]  # the view's name, as the switch says it
     assert w.dock.rules_picker.text() == "Rules · 1 of 3 ▾"
     assert [t for t, _ in mbox.information] == ["Rules Updated"]
 

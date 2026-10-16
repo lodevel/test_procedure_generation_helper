@@ -27,64 +27,46 @@ from ..board_source import find_odb_tgz
 
 
 class _BoardImagePopup(QDialog):
-    """Full board image: wide (context) + zoomed (detail) side by side; click
-    either image to close. Mirrors the main GUI's interactive-execution popup."""
+    """Full board image (board S12): wide (context) + zoomed (detail) side by side, each on
+    a card, under a header naming the part (*caption*) and the board (*subtitle*); Rotate
+    left / right; click either image, or Close, to close. Mirrors the main GUI's
+    interactive-execution popup."""
 
     _MAX = 560
 
-    def __init__(self, zoomed, wide, caption="", parent=None):
+    def __init__(self, zoomed, wide, caption="", subtitle="", parent=None):
         super().__init__(parent)
         self.setWindowTitle(caption or "Board image")
         self._zoomed, self._wide, self._angle = zoomed, wide, 0
 
-        layout = QVBoxLayout(self)
-        row = QHBoxLayout()
-        row.setSpacing(20)
-
-        self._wide_lbl = None
-        if wide is not None and not wide.isNull():
-            col = QVBoxLayout()
-            h = QLabel("Wide view")
-            h.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            h.setStyleSheet(f"font-weight:bold; color:{theme.muted_color()};")
-            col.addWidget(h)
-            self._wide_lbl = QLabel()
-            self._wide_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._wide_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
-            self._wide_lbl.mousePressEvent = lambda e: self.close()
-            col.addWidget(self._wide_lbl)
-            row.addLayout(col)
-
-        col = QVBoxLayout()
-        h = QLabel("Zoomed view")
-        h.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        h.setStyleSheet(f"font-weight:bold; color:{theme.muted_color()};")
-        col.addWidget(h)
-        self._zoom_lbl = QLabel()
-        self._zoom_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._zoom_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._zoom_lbl.mousePressEvent = lambda e: self.close()
-        col.addWidget(self._zoom_lbl)
-        row.addLayout(col)
-        layout.addLayout(row)
-
-        if caption:
-            c = QLabel(caption)
-            c.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            c.setStyleSheet("font-weight:bold; padding:8px; font-size:13px;")
-            layout.addWidget(c)
-
-        rot = QHBoxLayout()
-        lb = QPushButton("↶ Rotate left")
-        lb.clicked.connect(lambda: self._rotate(-90))
-        rb = QPushButton("Rotate right ↷")
-        rb.clicked.connect(lambda: self._rotate(90))
-        rot.addWidget(lb)
-        rot.addWidget(rb)
-        layout.addLayout(rot)
+        rotate_left = QPushButton("↶ Rotate left")
+        rotate_left.clicked.connect(lambda: self._rotate(-90))
+        rotate_right = QPushButton("Rotate right ↷")
+        rotate_right.clicked.connect(lambda: self._rotate(90))
+        close_btn = ui_kit.primary(QPushButton("Close"))
+        close_btn.clicked.connect(self.accept)
+        body = ui_kit.framed(
+            self, ui_kit.HeaderBand(caption or "Board image", subtitle, stacked=True),
+            ui_kit.FooterBand([close_btn], left=[rotate_left, rotate_right]))
+        row = ui_kit.hbox()
+        row.setSpacing(14)
+        self._wide_lbl = (self._image_card(row, "Wide view")
+                          if wide is not None and not wide.isNull() else None)
+        self._zoom_lbl = self._image_card(row, "Zoomed view")
+        body.addLayout(row)
 
         self._update()
-        self.adjustSize()
+
+    def _image_card(self, row, title: str) -> QLabel:
+        """A card titled *title* in *row*; returns the label its image is drawn on."""
+        card = ui_kit.Card(title)
+        label = QLabel()
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setCursor(Qt.CursorShape.PointingHandCursor)
+        label.mousePressEvent = lambda e: self.close()
+        card.body.addWidget(label)
+        row.addWidget(card)
+        return label
 
     def _rotate(self, delta: int) -> None:
         self._angle = (self._angle + delta) % 360
@@ -502,8 +484,8 @@ class NetlistPanel(ui_kit.Card):
         """Click the inline image → full wide+zoomed view (like the interactive
         execution explorer)."""
         if self._cur_zoom is not None or self._cur_wide is not None:
-            _BoardImagePopup(self._cur_zoom, self._cur_wide,
-                             self._cur_cap, self).exec()
+            _BoardImagePopup(self._cur_zoom, self._cur_wide, self._cur_cap,
+                             self.hint.text().removeprefix("· "), self).exec()
 
     def _render_scaled(self, pm: QPixmap) -> None:
         """*pm* fitted into the image well (never enlarged)."""

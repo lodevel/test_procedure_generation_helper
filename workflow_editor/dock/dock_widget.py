@@ -92,12 +92,14 @@ class DockWidget(QWidget):
                 "Rule selection is only available for tabs with LLM context (Text-JSON, JSON-Code)."
             )
             return
+        from ..shell import VIEWS  # the views' names (shell builds the window: imported late)
         tab_id = tab_context.tab_id
         dialog = RuleSelectorDialog(
             tab_id,
             self.main_window.project_manager,
             self.main_window.task_config_manager,
             self,
+            view=VIEWS[self.main_window.view_stack.currentIndex()][0],
         )
         accepted = dialog.exec()
         if accepted:

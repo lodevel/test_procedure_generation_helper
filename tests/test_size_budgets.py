@@ -74,7 +74,7 @@ FILE_BUDGET: dict[str, int] = {
     "pack_ops/pack_parsers.py": 1763,  # +42: export_rows op (project-venv document exports, 0d448bc)
     "llm/tab_context.py": 1057,
     "llm/validator_dispatch.py": 1163,
-    "main_window.py": 1684,  # -168: the menu bar left for menus.py (Studio redesign slice 6)
+    "main_window.py": 1640,  # -44: Word export keywords and About left for dialogs/ (Studio redesign slice 7a)
 }
 
 CLASS_METHOD_BUDGET: dict[tuple[str, str], int] = {
@@ -84,7 +84,6 @@ CLASS_METHOD_BUDGET: dict[tuple[str, str], int] = {
 
 FUNC_LEN_BUDGET: dict[tuple[str, str], int] = {
     ("dialogs/settings_dialog.py", "_create_llm_tab"): 187,
-    ("dock/skill_chat_widget.py", "_setup_ui"): 156,
 }
 
 

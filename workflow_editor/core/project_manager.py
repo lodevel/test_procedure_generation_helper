@@ -45,7 +45,7 @@ class TestFolderInfo:
             parts.append("JSON")
         if self.has_code:
             parts.append("Code")
-        return "+".join(parts) if parts else "Empty"
+        return " · ".join(parts) if parts else "Empty"
 
 
 @dataclass

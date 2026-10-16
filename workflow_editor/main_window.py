@@ -10,8 +10,7 @@ import json
 import logging
 import threading
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QMenuBar, QMessageBox,
-    QFileDialog, QDialog, QTextBrowser
+    QMainWindow, QWidget, QMenuBar, QMessageBox, QFileDialog, QDialog,
 )
 from PySide6.QtCore import Qt, Signal, Slot, QFileSystemWatcher, QTimer
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut
@@ -909,7 +908,8 @@ class StudioWorkspace(QWidget):
 
         # Live-refresh the syntax reference if it's open (project/bundle changed).
         from .dialogs.syntax_reference import SyntaxReferenceDialog
-        SyntaxReferenceDialog.refresh_if_open(self.project_manager.rules_root)
+        SyntaxReferenceDialog.refresh_if_open(
+            self.project_manager.rules_root, shell.bundle_name(self.project_manager.project_root))
 
         # Reload the Text tab's board-netlist for the current project — the panel
         # loads on tab-show, which can precede project setup (e.g. Text is now the
@@ -1518,62 +1518,18 @@ class StudioWorkspace(QWidget):
     def _on_syntax_reference(self):
         """Open the DSL Syntax Reference (cheat-sheet + full bundle rule docs)."""
         from .dialogs.syntax_reference import SyntaxReferenceDialog
-        rules_root = (self.project_manager.rules_root
-                      if self.project_manager is not None else None)
-        SyntaxReferenceDialog.show_reference(rules_root, self)
+        pm = self.project_manager
+        SyntaxReferenceDialog.show_reference(pm.rules_root, self, shell.bundle_name(pm.project_root))
 
     def _on_export_keywords(self):
-        """Show the Word-export template variable reference.
-
-        Single-sourced from the main app's canonical
-        ``test_procedure_gui/help/word_export_keywords.md`` (the editor
-        exports the SAME report, so the variables are identical). Resolved
-        via the installed package first, then the monorepo-relative path;
-        bare-editor installs without the main app get a pointer instead of
-        a stale duplicated copy.
-        """
-        md = None
-        try:
-            from test_procedure_gui import help as _help_pkg  # type: ignore
-            _p = Path(_help_pkg.__file__).parent / "word_export_keywords.md"
-            md = _p.read_text(encoding="utf-8") if _p.exists() else None
-        except Exception:
-            md = None
-        if md is None:
-            _p = (Path(__file__).resolve().parents[3]
-                  / "src" / "test_procedure_gui" / "help"
-                  / "word_export_keywords.md")
-            try:
-                md = _p.read_text(encoding="utf-8") if _p.exists() else None
-            except Exception:
-                md = None
-        if md is None:
-            QMessageBox.information(
-                self, "Word Export Keywords",
-                "The template-variable reference ships with the main "
-                "application: open it there via Help \u2192 Documentation (F1) "
-                "\u2192 Word Export Keywords.")
-            return
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Word Export Keywords")
-        dlg.resize(760, 600)
-        lay = QVBoxLayout(dlg)
-        browser = QTextBrowser(dlg)
-        browser.setOpenExternalLinks(True)
-        browser.document().setMarkdown(md)
-        lay.addWidget(browser)
-        dlg.exec()
+        """Show the Word-export template variable reference (dialogs/word_keywords_dialog)."""
+        from .dialogs.word_keywords_dialog import show_word_keywords
+        show_word_keywords(self)
 
     def _on_about(self):
-        """Show about dialog."""
-        QMessageBox.about(
-            self,
-            "About Procedo Studio",
-            "Procedo Studio\n\n"
-            "A tool for creating and managing structured test procedures "
-            "with LLM assistance.\n\n"
-            "Version 0.1.0"
-        )
+        """Show the About box."""
+        from .dialogs.about_dialog import AboutDialog
+        AboutDialog(self).exec()
     
     def _on_chat_message(self, message: str):
         """Handle chat message from user."""

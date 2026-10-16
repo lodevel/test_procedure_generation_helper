@@ -130,9 +130,16 @@ def _card(content: QWidget, width: int) -> QFrame:
     return card
 
 
+def mark_label(size: int, ratio: float) -> QLabel:
+    """Procedo Studio's mark, *size* pixels square on a screen of pixel *ratio* (the header's,
+    the About box's)."""
+    label = QLabel()
+    label.setPixmap(QIcon(str(MARK_SVG)).pixmap(QSize(size, size), ratio))
+    return label
+
+
 def _header(ws: StudioWorkspace) -> ui_kit.HeaderBand:
-    mark = QLabel()
-    mark.setPixmap(QIcon(str(MARK_SVG)).pixmap(QSize(30, 30), ws.devicePixelRatioF()))
+    mark = mark_label(30, ws.devicePixelRatioF())
     ws.artifact_pills = {label: QLabel() for label, _kind, _file in _ARTIFACTS}
     ws.sync_pill = ui_kit.ClickableLabel()
     ws.sync_pill.setObjectName("actionPill")
@@ -244,11 +251,16 @@ def refresh_footer(ws: StudioWorkspace) -> None:
         ws.rules_link.setText(f"Rules: {_short(rules, root)} · {docs} doc{'' if docs == 1 else 's'}")
     ws.rules_link.setToolTip((f"{rules}\n" if rules else "") + "Click to choose the rules folder.")
     ws.dock.refresh_rules_picker()  # the Assistant's picker counts the same rules
-    bundle = bundle_registry.read_active_bundle(root) if root else None
-    ws.bundle_label.setText(f"Bundle: {bundle.id} {bundle.version}" if bundle else "Bundle: none")
+    ws.bundle_label.setText(f"Bundle: {bundle_name(root) or 'none'}")
     ws.validator_label.setText(
         f"Validator: {'on' if validator_loop_settings.is_enabled(root) else 'off'}"
         f" · {validator_loop_settings.max_attempts(root)} attempts")
+
+
+def bundle_name(project_root) -> str:
+    """The project's active bundle as Studio names it (``baseline 2.8.1``), "" when none."""
+    bundle = bundle_registry.read_active_bundle(Path(project_root)) if project_root else None
+    return f"{bundle.id} {bundle.version}" if bundle else ""
 
 
 def _short(folder: Path, root: Path | None) -> str:

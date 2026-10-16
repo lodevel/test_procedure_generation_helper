@@ -2,7 +2,7 @@
 
 Studio wears Bench's theme: its palette and its one app stylesheet, applied by
 ``test_procedure_gui.theme.apply_app_theme``. The helpers below only add the colours of
-Studio's own widgets (the skill chat, diff, syntax...) and read Bench's theme
+Studio's own widgets (diff, syntax, JSON...) and read Bench's theme
 state; the colours both apps share are Bench's, imported here.
 """
 
@@ -11,50 +11,19 @@ from __future__ import annotations
 from PySide6.QtGui import QColor
 
 from test_procedure_gui.theme import (  # Bench's theme state and shared colours
-    ERROR_COLOR as ERROR_COLOR,
-    WARNING_COLOR as WARNING_COLOR,
-    border_color as border_color,
     error_color,
     is_dark,
-    muted_color,
+    muted_color as muted_color,
     success_color,
 )
 
 
-# ── Chat panel colours ──────────────────────────────────────────────
-
-def chat_user_border() -> str:
-    """Border for user messages in chat."""
-    return "#2e7d32" if is_dark() else "#c8e6c9"
-
+# ── The bundled DCDC wizard's colour (its Finish page; copies ship in every project's
+#    bundle, so the name stays until wizards get their own host API) ──
 
 def chat_assistant_border() -> str:
     """Border for assistant messages in chat."""
     return "#1565c0" if is_dark() else "#bbdefb"
-
-
-def chat_system_border() -> str:
-    """Border for system/tool messages in chat."""
-    return "#e65100" if is_dark() else "#ffe0b2"
-
-
-def chat_content_color() -> str:
-    """Color for chat message content."""
-    return "#ddd" if is_dark() else "#333"
-
-
-def message_bg(role: str) -> str:
-    """Background for chat message bubbles by role."""
-    if is_dark():
-        return {"user": "#1a3050", "assistant": "#2a2a2a", "system": "#3a2a10"}.get(role, "#2a2a2a")
-    return {"user": "#e3f2fd", "assistant": "#f5f5f5", "system": "#fff3e0"}.get(role, "#f5f5f5")
-
-
-def message_border(role: str) -> str:
-    """Border for chat message bubbles by role."""
-    if is_dark():
-        return {"user": "#2a5080", "assistant": "#444", "system": "#5a4a20"}.get(role, "#444")
-    return {"user": "#bbdefb", "assistant": "#e0e0e0", "system": "#ffe0b2"}.get(role, "#e0e0e0")
 
 
 # ── Diff viewer colours ─────────────────────────────────────────────
@@ -135,13 +104,6 @@ def danger_button_style() -> str:
     if is_dark():
         return "background-color: #b71c1c; color: #fff;"
     return "background-color: #f44336; color: white;"
-
-
-# ── Rule selector ───────────────────────────────────────────────────
-
-def disabled_text() -> str:
-    """CSS colour for disabled/placeholder text."""
-    return muted_color()
 
 
 # ── Project bar status ──────────────────────────────────────────────

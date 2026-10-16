@@ -24,31 +24,12 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
-from PySide6.QtWidgets import (
-    QDialog,
-    QDialogButtonBox,
-    QHBoxLayout,
-    QLabel,
-    QScrollArea,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QApplication, QDialog, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
-from .. import theme
-from ..llm.validator_dispatch import ValidationOutcome, ValidationIssueView
-from ..theme import ERROR_COLOR, WARNING_COLOR
+from project_services import ui_kit
 
-
-_ICON_BY_SEVERITY = {
-    "error": "⛔",
-    "warning": "⚠️",
-}
-
-_COLOR_BY_SEVERITY = {
-    "error": ERROR_COLOR,
-    "warning": WARNING_COLOR,
-}
+from ..llm.validator_dispatch import ValidationOutcome
+from ..widgets import issue_cards
 
 
 class ValidatorErrorDialog(QDialog):
@@ -64,8 +45,8 @@ class ValidatorErrorDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setMinimumWidth(620)
-        self.setMinimumHeight(380)
+        self.setMinimumSize(520, 380)
+        self.resize(620, 560)
         self._build_ui(outcome, intro)
 
     # --------------------------------------------------------------------- #
@@ -118,110 +99,32 @@ class ValidatorErrorDialog(QDialog):
     # --------------------------------------------------------------------- #
 
     def _build_ui(self, outcome: ValidationOutcome, intro: str) -> None:
-        layout = QVBoxLayout(self)
+        """The counts as pills, one card per issue (its code in its severity's tone, its
+        location, the message, the fix hint) — board S10; Copy all, Close."""
+        issues = [issue.to_dock_dict() for issue in outcome.issues]
+        copy_btn = QPushButton("Copy all")
+        copy_btn.clicked.connect(
+            lambda: QApplication.clipboard().setText(issue_cards.issues_text(issues)))
+        close_btn = ui_kit.primary(QPushButton("Close"))
+        close_btn.clicked.connect(self.accept)
+        body = ui_kit.framed(self, ui_kit.HeaderBand(self.windowTitle(), intro, stacked=True),
+                             ui_kit.FooterBand([copy_btn, close_btn]))
 
-        if intro:
-            intro_label = QLabel(intro)
-            intro_label.setWordWrap(True)
-            layout.addWidget(intro_label)
+        self.counts = ui_kit.hbox()
+        self.counts.setSpacing(6)
+        issue_cards.fill_counts(self.counts, issues)
+        body.addLayout(self.counts)
 
-        summary = QLabel(self._summary_text(outcome))
-        summary.setStyleSheet("font-weight: bold;")
-        layout.addWidget(summary)
-
-        # Issue list goes into a scroll area so 20+ issues don't blow out
-        # the dialog height. Each row is a self-contained panel — adding
-        # a new severity class is one entry in the colour map at module
-        # scope.
+        # The cards scroll, so 20+ issues don't blow out the dialog height.
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        list_host = QWidget()
-        list_layout = QVBoxLayout(list_host)
-        list_layout.setContentsMargins(0, 0, 0, 0)
-        for issue in outcome.issues:
-            list_layout.addWidget(self._issue_panel(issue))
-        list_layout.addStretch()
-        scroll.setWidget(list_host)
-        layout.addWidget(scroll, stretch=1)
-
-        # Single Close button — the dialog is informational.
-        button_row = QDialogButtonBox(QDialogButtonBox.Close)
-        button_row.rejected.connect(self.reject)
-        button_row.accepted.connect(self.accept)
-        layout.addWidget(button_row)
-
-    @staticmethod
-    def _summary_text(outcome: ValidationOutcome) -> str:
-        n_err = sum(1 for i in outcome.issues if i.severity == "error")
-        n_warn = sum(1 for i in outcome.issues if i.severity == "warning")
-        if n_err and n_warn:
-            return f"{n_err} error(s), {n_warn} warning(s)"
-        if n_err:
-            return f"{n_err} error(s)"
-        if n_warn:
-            return f"{n_warn} warning(s)"
-        return "Validator findings"
-
-    @staticmethod
-    def _issue_panel(issue: ValidationIssueView) -> QWidget:
-        """Render a single issue as a card-like row.
-
-        Layout:
-            [icon] [code]                        location
-                   message...
-                   fix hint: ...
-        """
-        host = QWidget()
-        host_layout = QVBoxLayout(host)
-        host_layout.setContentsMargins(8, 6, 8, 6)
-        host_layout.setSpacing(2)
-
-        # Header line: severity icon + code + location
-        header = QHBoxLayout()
-        header.setSpacing(8)
-
-        icon = QLabel(_ICON_BY_SEVERITY.get(issue.severity, "•"))
-        header.addWidget(icon)
-
-        code_label = QLabel(issue.code or "(no code)")
-        code_font = QFont()
-        code_font.setBold(True)
-        code_font.setFamily("monospace")
-        code_label.setFont(code_font)
-        colour = _COLOR_BY_SEVERITY.get(issue.severity, "#888")
-        code_label.setStyleSheet(f"color: {colour};")
-        header.addWidget(code_label)
-
-        header.addStretch()
-
-        if issue.location:
-            loc_label = QLabel(issue.location)
-            loc_label.setStyleSheet(f"color: {theme.muted_color()};")
-            loc_font = QFont()
-            loc_font.setFamily("monospace")
-            loc_label.setFont(loc_font)
-            header.addWidget(loc_label)
-
-        host_layout.addLayout(header)
-
-        # Message body
-        msg = QLabel(issue.message)
-        msg.setWordWrap(True)
-        host_layout.addWidget(msg)
-
-        # Fix hint, if any
-        if issue.fix_hint:
-            fix = QLabel(f"<i>fix hint:</i> {issue.fix_hint}")
-            fix.setWordWrap(True)
-            fix.setStyleSheet(f"color: {theme.success_color()};")
-            host_layout.addWidget(fix)
-
-        host.setStyleSheet(
-            "QWidget {"
-            f"  border-left: 3px solid {colour};"
-            "  background: rgba(128, 128, 128, 0.05);"
-            "  border-radius: 3px;"
-            "}"
-        )
-        return host
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        cards = QWidget()
+        column = QVBoxLayout(cards)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(10)
+        for issue in issues:
+            column.addWidget(issue_cards.issue_card(issue, tag=issue["code"], fix_label="Fix hint"))
+        column.addStretch()
+        scroll.setWidget(cards)
+        body.addWidget(scroll, 1)

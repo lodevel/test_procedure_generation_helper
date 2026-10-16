@@ -6,7 +6,7 @@ selected test folders + output path; it loads each folder's ``procedure.json``
 (the opaque doc the shared core expects), resolves the template, and renders.
 
 Editor MVP: no ODB image pre-generation (that lives main-app side in
-``test_procedure_gui.export_media``); media refs render as their placeholder text.
+``procedo.bench.export_media``); media refs render as their placeholder text.
 The editor edits live text but the core reads ``procedure.json`` — so this exports
 the LAST GENERATED json for each test, not unsaved edits.
 """

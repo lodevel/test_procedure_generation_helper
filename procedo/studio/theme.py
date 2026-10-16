@@ -1,7 +1,7 @@
-"""Studio's own colours: what Bench's theme (``test_procedure_gui.theme``) does not have.
+"""Studio's own colours: what Bench's theme (``procedo.bench.theme``) does not have.
 
 Studio wears Bench's theme: its palette and its one app stylesheet, applied by
-``test_procedure_gui.theme.apply_app_theme``. The helpers below only add the colours of
+``procedo.bench.theme.apply_app_theme``. The helpers below only add the colours of
 Studio's own widgets (syntax, JSON, procedure text) and read Bench's light / dark state; a
 colour both apps share is Bench's, and its callers take it from Bench's theme.
 """
@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from PySide6.QtGui import QColor
 
-from test_procedure_gui import fluent_qss
-from test_procedure_gui.theme import (  # Bench's theme state
+from procedo.bench import fluent_qss
+from procedo.bench.theme import (  # Bench's theme state
     is_dark,
     muted_color as muted_color,
 )

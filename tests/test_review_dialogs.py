@@ -13,8 +13,8 @@ from PySide6.QtGui import QColor, QPalette, QTextCharFormat
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFrame, QLabel, QPlainTextEdit, QPushButton
 
-from test_procedure_gui import fluent_qss
-from test_procedure_gui import theme as bench_theme
+from procedo.bench import fluent_qss
+from procedo.bench import theme as bench_theme
 from procedo.studio import theme
 from procedo.studio.core.proposal import FileChange, Proposal, changed_lines, diff_lines
 from procedo.studio.dialogs.diff_viewer import DiffViewer, _diff_marks

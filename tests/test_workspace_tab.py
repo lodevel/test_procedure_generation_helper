@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QFont  # noqa: E402
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QLabel, QMenu  # noqa: E402
 
-from test_procedure_gui.badge_delegate import BADGES_ROLE  # noqa: E402
+from procedo.bench.badge_delegate import BADGES_ROLE  # noqa: E402
 from procedo.studio import launch_env  # noqa: E402
 from procedo.studio.core.project_manager import TestFolderInfo as FolderInfo  # noqa: E402
 from procedo.studio.tabs import workspace_tab  # noqa: E402

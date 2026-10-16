@@ -26,7 +26,7 @@ from PySide6.QtCore import Qt
 # Dev-convenience shim (deprecated): only for STANDALONE runs launched from
 # inside a host checkout — walks up to the host's src/ so `procedo.core`
 # resolves. Embedded runs get it from the host venv's editable installs. The host is
-# required: Studio wears Bench's theme (test_procedure_gui.theme).
+# required: Studio wears Bench's theme (procedo.bench.theme).
 _BOOTSTRAPPED_SRC: str | None = None
 
 
@@ -52,7 +52,7 @@ _bootstrap_procedo_core()
 
 
 from .main_window import MainWindow
-from test_procedure_gui.theme import apply_app_theme
+from procedo.bench.theme import apply_app_theme
 
 
 def parse_args() -> argparse.Namespace:

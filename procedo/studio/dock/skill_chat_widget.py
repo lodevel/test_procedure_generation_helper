@@ -49,7 +49,7 @@ from PySide6.QtWidgets import (
 )
 
 from procedo.core import ui_kit
-from test_procedure_gui import fluent_qss, theme
+from procedo.bench import fluent_qss, theme
 
 from ..authoring import SkillChatSession, assemble
 from ..widgets.skill_context_picker import SkillContextPicker

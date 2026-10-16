@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from procedo.core import ui_kit
-from test_procedure_gui import theme
+from procedo.bench import theme
 
 from ..board_source import find_odb_tgz
 

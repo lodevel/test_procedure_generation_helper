@@ -1,7 +1,7 @@
 """Procedo Studio's menu bar, in the Menus board's order: File, Edit, View, Project, Skills,
 Wizards, Packages, Help.
 
-Names, mnemonics and the Project menu follow Bench's (``test_procedure_gui/main_menus.py``) where
+Names, mnemonics and the Project menu follow Bench's (``procedo/bench/main_menus.py``) where
 the board agrees; the two menu bars stay separate builders because their Packages and Help menus
 hold different entries.
 """

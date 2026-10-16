@@ -9,8 +9,8 @@ import pytest
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
-from test_procedure_gui import fluent_qss
-from test_procedure_gui import theme as bench_theme
+from procedo.bench import fluent_qss
+from procedo.bench import theme as bench_theme
 from procedo.studio import theme
 
 

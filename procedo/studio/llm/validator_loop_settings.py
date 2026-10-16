@@ -13,7 +13,7 @@ the read/write helpers. Both:
   - ``chat_panel.ChatPanel`` — calls :func:`load_settings` from
     ``switch_context`` and :func:`save_setting` from the toggle's
     ``toggled`` signal.
-  - Project apply/seed flow (via ``test_procedure_gui.config_manager``)
+  - Project apply/seed flow (via ``procedo.bench.config_manager``)
     treats the section as part of "everything else" and preserves it
     across config-apply cycles per the post-apply-preserves contract.
 

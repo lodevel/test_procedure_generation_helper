@@ -1,6 +1,6 @@
 """The environment variables Procedo Bench sets when it launches Procedo Studio: Studio's side of
 the launch contract, named here alone (Bench names them in
-``test_procedure_gui.workflow_editor_launch``)."""
+``procedo.bench.workflow_editor_launch``)."""
 
 #: The active bundle's ``defaults.json``; unset when Bench had no bundle at launch.
 BUNDLE_DEFAULTS_PATH = "PROCEDO_BUNDLE_DEFAULTS_PATH"

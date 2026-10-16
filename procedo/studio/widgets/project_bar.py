@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Signal
 
-from test_procedure_gui.theme import error_color, success_color
+from procedo.bench.theme import error_color, success_color
 
 from ..theme import status_warning
 

@@ -3,8 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# The distribution keeps its old name until Bench's rename (slice 9) uninstalls the old ones.
-name = "workflow_editor"
+name = "procedo-studio"
 version = "0.1.0"
 description = "Qt workflow editor for authoring structured test procedures"
 license = {text = "MPL-2.0"}

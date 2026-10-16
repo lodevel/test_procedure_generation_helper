@@ -12,7 +12,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QTreeWidget, QTreeWidgetItem, QVBoxLayout
 
 from procedo.core import ui_kit
-from test_procedure_gui import theme
+from procedo.bench import theme
 
 
 @dataclass(frozen=True)

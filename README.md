@@ -8,7 +8,7 @@ the canonical `procedure.json` and generated `test.py`, keeping the natural-lang
 text, JSON, and code in sync.
 
 It lives in `external/test_procedure_generation_helper/` as a sibling package of the
-Procedo Bench (`src/test_procedure_gui/`). The host's `script.bat` installs it **editable**
+Procedo Bench (`src/procedo/bench/`). The host's `script.bat` installs it **editable**
 into the host venv (`pip install -e`), so `procedo.studio` imports like any
 dependency — no `sys.path` / `PYTHONPATH` glue. The legacy path bootstraps remain
 only as logged deprecation shims. See the host repo's
@@ -116,7 +116,7 @@ live in each *project's* venv and are invoked there by the subprocess runners
 python -m procedo.studio [options]
 ```
 
-Studio needs the host app installed (it wears Bench's theme, `test_procedure_gui.theme`); there
+Studio needs the host app installed (it wears Bench's theme, `procedo.bench.theme`); there
 is no degraded mode without it. The consumed surface is Contract C (`../../docs/contract_c_editor_host_services.md`).
 
 Command-line options (see `procedo/studio/__main__.py`):
@@ -151,7 +151,7 @@ re-read — the saved setting is what selects the backend on startup.
 
 Procedo Bench launches this editor for you — via the **Test** menu
 ("Open Procedo Studio…", "Edit…") or the test-list context
-menu ("Edit in Procedo Studio"). `src/test_procedure_gui/main_window.py::_launch_workflow_editor`
+menu ("Edit in Procedo Studio"). `src/procedo/bench/main_window.py::_launch_workflow_editor`
 formats a configured command template (its `{python}` placeholder defaults to the
 GUI's `sys.executable`), launches it via `subprocess.Popen`, and appends
 `--project-root`, `--rules-root` (the active bundle's `rules/`), and `--test-name`.

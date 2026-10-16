@@ -1,6 +1,6 @@
 """Help → Word Export Keywords (board S12): the Word-export template variable reference.
 
-Single-sourced from the main app's canonical ``test_procedure_gui/help/word_export_keywords.md``
+Single-sourced from the main app's canonical ``procedo/bench/help/word_export_keywords.md``
 (the editor exports the SAME report, so the variables are identical).
 """
 
@@ -11,7 +11,7 @@ from pathlib import Path
 from PySide6.QtWidgets import QDialog, QPushButton
 
 from procedo.core import ui_kit
-from test_procedure_gui import help as help_pkg
+from procedo.bench import help as help_pkg
 
 
 def keywords_markdown() -> str:

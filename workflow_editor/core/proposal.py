@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import difflib
 import logging
+import re
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Optional
@@ -55,18 +56,49 @@ def diff_lines(original: str, proposed: str) -> list[str]:
                                      fromfile="Original", tofile="Proposed", lineterm=""))
 
 
-def _added(line: str) -> bool:
-    return line.startswith("+") and not line.startswith("+++")
+#: A hunk's header: where it starts in each text and how many lines it spans there (1 if omitted).
+_HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+#: What a :func:`diff_rows` row is: a header (a file's name, a hunk's ``@@``), a line removed,
+#: added, or kept.
+HEADER, REMOVED, ADDED, KEPT = "header", "-", "+", " "
 
 
-def _removed(line: str) -> bool:
-    return line.startswith("-") and not line.startswith("---")
+def diff_rows(lines: Iterable[str]) -> list[tuple[str, int, str]]:
+    """Each line of a :func:`diff_lines` diff (or several, one after the other) read as (kind,
+    number, text): a removed line's number in the original, an added or kept one's in the
+    proposed text (1-based), its text without the mark; a header is (HEADER, 0, the line). The
+    hunk headers' counts say which lines are a hunk's, so no line passes for a header ("----"
+    is a removed "---")."""
+    rows = []
+    old = new = old_left = new_left = 0
+    for line in lines:
+        if not (old_left or new_left):  # between hunks: the file names, the next hunk's @@
+            if hunk := _HUNK.match(line):
+                old, old_left = int(hunk[1]), int(hunk[2] or 1)
+                new, new_left = int(hunk[3]), int(hunk[4] or 1)
+            rows.append((HEADER, 0, line))
+            continue
+        kind = line[:1] if line[:1] in (REMOVED, ADDED) else KEPT
+        rows.append((kind, old if kind == REMOVED else new, line[1:]))
+        if kind != ADDED:
+            old, old_left = old + 1, old_left - 1
+        if kind != REMOVED:
+            new, new_left = new + 1, new_left - 1
+    return rows
+
+
+def changed_lines(lines: Iterable[str]) -> tuple[list[int], list[int]]:
+    """The numbers (1-based) of the lines a :func:`diff_lines` diff removes from the original,
+    and of those it adds to the proposed text."""
+    rows = diff_rows(lines)
+    return ([number for kind, number, _ in rows if kind == REMOVED],
+            [number for kind, number, _ in rows if kind == ADDED])
 
 
 def count_changes(lines: Iterable[str]) -> tuple[int, int]:
     """(added, removed) lines of a :func:`diff_lines` diff."""
-    lines = list(lines)
-    return sum(map(_added, lines)), sum(map(_removed, lines))
+    removed, added = changed_lines(lines)
+    return len(added), len(removed)
 
 
 class FileText:
@@ -123,8 +155,9 @@ class Proposal:
         lines = [line for change in self.changes for line in change.lines]
         self.file_names = [change.file_name for change in self.changes]
         self._counts = count_changes(lines)
-        self._preview = ([line[1:] for line in lines if _added(line)] or
-                         [f"− {line[1:]}" for line in lines if _removed(line)])[:PREVIEW_LINES]
+        rows = diff_rows(lines)
+        self._preview = ([text for kind, _, text in rows if kind == ADDED] or
+                         [f"− {text}" for kind, _, text in rows if kind == REMOVED])[:PREVIEW_LINES]
 
     def counts(self) -> tuple[int, int]:
         """(added, removed) lines over all its files."""

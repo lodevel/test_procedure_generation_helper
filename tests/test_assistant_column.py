@@ -113,8 +113,8 @@ def test_a_replys_thought_folds_behind_show_thinking(qapp):
 def test_details_opens_the_message_details(panel, monkeypatch):
     shown = []
     monkeypatch.setattr("workflow_editor.dock.chat_panel.MessageDetailDialog",
-                        lambda prompt, response, parent: SimpleNamespace(
-                            exec=lambda: shown.append((prompt, response))))
+                        lambda message, parent: SimpleNamespace(
+                            exec=lambda: shown.append((message.full_prompt, message.full_response))))
     panel._current_tab_context = SimpleNamespace(messages=[], cumulative_tokens=0)
     panel.add_message("assistant", "Done.", full_prompt="P", full_response="R", total_tokens=5)
     (bubble,) = panel._messages()

@@ -25,8 +25,9 @@ from dataclasses import dataclass
 from typing import Optional
 
 from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QFont, QMouseEvent, QTextDocument
+from PySide6.QtGui import QMouseEvent, QTextDocument
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QFrame,
     QLabel,
@@ -251,10 +252,10 @@ def review_proposal(proposal: Proposal, parent=None) -> None:
     """View diff…: each file of *proposal* against its CURRENT text in the diff window, in turn.
     Accept on the last one applies it (the user saw what it replaces, stale or not), Reject on
     any rejects it, closing a window decides nothing."""
-    for change in proposal.changes:
-        decision = DiffViewer.review(change.read(), change.proposed,
-                                     f"Review Changes: {change.file_name}", parent,
-                                     proposal.banner or None)
+    files = len(proposal.changes)
+    for number, change in enumerate(proposal.changes, 1):
+        decision = DiffViewer.review(change.read(), change.proposed, change.file_name, parent,
+                                     proposal.banner, (number, files))
         if decision != "accept":
             if decision == "reject":
                 proposal.reject()
@@ -372,29 +373,50 @@ def format_json_in_content(content: str) -> str:
     return content.replace('\\n', '\n').replace('\n', '<br>')
 
 
-class MessageDetailDialog(QDialog):
-    """Dialog showing full prompt and response for a message."""
+#: The details window's subtitle, by the message's role.
+_SENDERS = {"assistant": "Assistant reply", "user": "Your message", "system": "System message"}
 
-    def __init__(self, prompt: Optional[str], response: Optional[str], parent=None):
+
+class MessageDetailDialog(QDialog):
+    """The full prompt and response of *message* (a ``ChatMessage``), as on the Small board's
+    Message details: who sent it and its tokens in the header, one monospace card with the
+    PROMPT and RESPONSE sections (JSON pretty-printed), Copy and the primary Close."""
+
+    def __init__(self, message: ChatMessage, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Message Details")
         self.resize(800, 600)
+        subtitle = _SENDERS.get(message.role, message.role.capitalize())
+        if message.total_tokens:
+            subtitle += f" · {message.total_tokens:,} tokens"
+        self.text = ui_kit.monospace(QPlainTextEdit())
+        self.text.setObjectName("cardEditor")
+        self.text.setReadOnly(True)
+        self.text.setPlainText(self._details(message.full_prompt, message.full_response))
+        copy = QPushButton("Copy")
+        copy.setToolTip("Copy the prompt and response to the clipboard")
+        copy.clicked.connect(lambda: QApplication.clipboard().setText(self.text.toPlainText()))
+        close = ui_kit.primary(QPushButton("Close"))
+        close.clicked.connect(self.accept)
+        body = ui_kit.framed(self, ui_kit.HeaderBand("Message details", subtitle, stacked=True),
+                             ui_kit.FooterBand([copy, close]), margins=(16, 12, 16, 12))
+        card = ui_kit.card_frame()
+        inside = QVBoxLayout(card)
+        inside.setContentsMargins(10, 4, 10, 4)
+        inside.addWidget(self.text)
+        body.addWidget(card, 1)
+        self.text.setFocus()  # not Copy: the text scrolls by keyboard
 
-        layout = QVBoxLayout(self)
-
-        # Single text display
-        text_editor = QPlainTextEdit()
-        text_editor.setFont(QFont("Consolas", 10))
-        text_editor.setReadOnly(True)
-
-        # Build combined content with section headers
+    @staticmethod
+    def _details(prompt: Optional[str], response: Optional[str]) -> str:
+        """The PROMPT and RESPONSE sections, each under its ruled heading."""
         content_parts = []
 
         if prompt:
             content_parts.append("=" * 80)
             content_parts.append("PROMPT")
             content_parts.append("=" * 80)
-            content_parts.append(self._format_json_if_possible(prompt))
+            content_parts.append(MessageDetailDialog._format_json_if_possible(prompt))
             content_parts.append("")  # Empty line
         else:
             content_parts.append("(No prompt recorded)")
@@ -404,17 +426,10 @@ class MessageDetailDialog(QDialog):
             content_parts.append("=" * 80)
             content_parts.append("RESPONSE")
             content_parts.append("=" * 80)
-            content_parts.append(self._format_json_if_possible(response))
+            content_parts.append(MessageDetailDialog._format_json_if_possible(response))
         else:
             content_parts.append("(No response recorded)")
-
-        text_editor.setPlainText("\n".join(content_parts))
-        layout.addWidget(text_editor)
-
-        # Close button
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(self.accept)
-        layout.addWidget(close_btn)
+        return "\n".join(content_parts)
 
     @staticmethod
     def _format_json_if_possible(text: str) -> str:

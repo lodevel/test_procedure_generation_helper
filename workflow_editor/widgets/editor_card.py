@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QRect, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPalette, QTextCursor, QTextFormat
+from PySide6.QtGui import QColor, QPainter, QPalette, QTextCharFormat, QTextCursor, QTextFormat
 from PySide6.QtWidgets import (
     QApplication, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QTextEdit, QVBoxLayout,
     QWidget,
@@ -52,6 +52,40 @@ def refresh_editor_after_save(editor: QPlainTextEdit, saved_content: str) -> Non
     cursor.movePosition(QTextCursor.MoveOperation.End)
     cursor.setPosition(min(pos, cursor.position()))
     editor.setTextCursor(cursor)
+
+
+def tint_lines(editor: QPlainTextEdit, marks: dict[int, QTextCharFormat]) -> None:
+    """Draw *editor*'s lines (1-based number → format: a tint, a text colour) in their format,
+    across the whole width of every row they wrap to; any other line as it is.
+
+    A full-width selection is drawn to the edge only on the rows it runs past, so each line's
+    takes its line break too. The last line has none: a cursor at its end, which draws the row
+    it stands on to the edge, does its last row (the formats are opaque, so the overlap on that
+    row is invisible)."""
+    selections = []
+    document = editor.document()
+    for number, mark in marks.items():
+        block = document.findBlockByNumber(number - 1)
+        if not block.isValid():
+            continue
+        fmt = QTextCharFormat(mark)
+        fmt.setProperty(QTextFormat.Property.FullWidthSelection, True)
+        whole = QTextCursor(block)
+        whole.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+        cursors = [whole]
+        if block.next().isValid():
+            whole.movePosition(QTextCursor.MoveOperation.NextCharacter,
+                               QTextCursor.MoveMode.KeepAnchor)
+        else:
+            end = QTextCursor(block)
+            end.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+            cursors.append(end)
+        for cursor in cursors:
+            selection = QTextEdit.ExtraSelection()
+            selection.cursor = cursor
+            selection.format = fmt
+            selections.append(selection)
+    editor.setExtraSelections(selections)
 
 
 class _Gutter(QWidget):
@@ -95,16 +129,9 @@ class CodeEditor(QPlainTextEdit):
     def highlight_lines(self, first: int, last: int) -> None:
         """Tint lines *first*..*last* (1-based), the accent bar beside them in the gutter."""
         self._highlighted = range(first, last + 1)
-        selections = []
-        for line in self._highlighted:
-            block = self.document().findBlockByNumber(line - 1)
-            if block.isValid():
-                selection = QTextEdit.ExtraSelection()
-                selection.format.setBackground(self._tint())
-                selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
-                selection.cursor = QTextCursor(block)
-                selections.append(selection)
-        self.setExtraSelections(selections)
+        tint = QTextCharFormat()
+        tint.setBackground(self._tint())
+        tint_lines(self, dict.fromkeys(self._highlighted, tint))
         self._gutter.update()
 
     def clear_highlight(self) -> None:
@@ -146,9 +173,11 @@ class CodeEditor(QPlainTextEdit):
         return QApplication.palette().color(QPalette.ColorRole.Highlight)
 
     def _tint(self) -> QColor:
-        tint = self._accent()
-        tint.setAlpha(22)
-        return tint
+        """A pale accent, opaque (the accent at 22/255 over the editor's base)."""
+        base, accent = self.palette().color(QPalette.ColorRole.Base), self._accent()
+        share = 22 / 255
+        return QColor.fromRgbF(*(b + (a - b) * share for a, b in
+                                 zip(accent.getRgbF()[:3], base.getRgbF()[:3])))
 
     def paint_gutter(self, gutter: QWidget, area: QRect) -> None:
         painter = QPainter(gutter)

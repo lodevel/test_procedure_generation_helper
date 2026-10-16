@@ -463,8 +463,7 @@ class ChatPanel(QWidget):
             return
         msg = next((m for m in self._current_tab_context.messages if getattr(m, 'msg_id', None) == msg_id), None)
         if msg:
-            dialog = MessageDetailDialog(getattr(msg, 'full_prompt', None), getattr(msg, 'full_response', None), self)
-            dialog.exec()
+            MessageDetailDialog(msg, self).exec()
 
     def add_system_message(self, content: str, full_prompt: Optional[str] = None, tone: str = "neutral"):
         """Add a system line, a pill in *tone* (success / warning / danger / neutral)."""

@@ -16,7 +16,7 @@ from typing import Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QTextCursor
-from PySide6.QtWidgets import QDialog, QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QPushButton
+from PySide6.QtWidgets import QDialog, QHBoxLayout, QListWidget, QListWidgetItem, QPushButton
 
 from project_services import ui_kit
 from project_services.page_nav import group_heading_item
@@ -75,7 +75,7 @@ class SyntaxReferenceDialog(QDialog):
     # -- UI -------------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        self._search = QLineEdit()
+        self._search = ui_kit.EntryField()  # Enter finds once (not the Next button too)
         self._search.setPlaceholderText("Find in page…  (Enter)")
         self._search.setMinimumWidth(300)
         self._search.returnPressed.connect(self._on_find)

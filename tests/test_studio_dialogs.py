@@ -10,7 +10,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QComboBox, QFrame, QLabel, QPushButton
 
 from project_services import ui_kit
@@ -80,6 +82,21 @@ def test_the_syntax_reference_names_the_bundle_lists_its_pages_and_finds_in_the_
     finally:
         dlg.close()
 
+
+def test_enter_in_the_syntax_references_search_finds_once(qapp, rules_root):
+    """Enter is the search field's own: one press finds the next match once (the Next button,
+    the dialog's default, does not find again)."""
+    SyntaxReferenceDialog._instance = None
+    dlg = SyntaxReferenceDialog.show_reference(rules_root, None, "baseline 2.8.1")
+    try:
+        dlg._pages.setCurrentRow(3)  # "DMM rules" then "The DMM reads volts."
+        QApplication.processEvents()
+        dlg._search.setFocus()
+        dlg._search.setText("DMM")
+        QTest.keyClick(dlg._search, Qt.Key.Key_Return)
+        assert dlg._browser.textCursor().selectionStart() == dlg._browser.toPlainText().find("DMM")
+    finally:
+        dlg.close()
 
 # ---- S9 Skill chat ---------------------------------------------------------------------------
 

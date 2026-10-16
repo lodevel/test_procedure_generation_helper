@@ -13,7 +13,7 @@ from pathlib import Path
 from PySide6.QtCore import QItemSelectionModel, Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFrame, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QAbstractItemView, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMenu, QMessageBox, QPushButton, QVBoxLayout,
 )
 
@@ -109,9 +109,6 @@ class WorkspaceTab(BaseTab):
         self.test_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.test_list.customContextMenuRequested.connect(self._on_context_menu)
 
-        rule = QFrame()
-        rule.setObjectName("rowRule")  # the hairline above the button
-        rule.setFrameShape(QFrame.Shape.HLine)
         self.new_test_btn = QPushButton("+ New test…")
         self.new_test_btn.clicked.connect(self._on_create_new_test)
         self.new_test_btn.setEnabled(False)  # until a project is open
@@ -122,7 +119,7 @@ class WorkspaceTab(BaseTab):
         layout.addLayout(head)
         layout.addLayout(_padded(self.search_bar, 12, 0, 12, 8))
         layout.addLayout(_padded(self.test_list, 8, 0, 8, 8), 1)
-        layout.addWidget(rule)
+        layout.addWidget(ui_kit.row_rule())  # the hairline above the button
         layout.addLayout(_padded(self.new_test_btn, 12, 10, 12, 10))
 
     def _load_test_list(self):

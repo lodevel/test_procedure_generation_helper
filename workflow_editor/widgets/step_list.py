@@ -12,8 +12,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QTreeWidget, QTreeWidgetItem, QVBoxLayout
 
 from project_services import ui_kit
-
-from .. import theme
+from test_procedure_gui import theme
 
 
 @dataclass(frozen=True)
@@ -64,14 +63,12 @@ class StepListCard(QFrame):
         self.tree.header().setStretchLastSection(True)
         self.tree.itemClicked.connect(lambda item, _col: self.step_clicked.emit(item.data(0, Qt.ItemDataRole.UserRole)))
         self.note = ui_kit.note()
-        rule = QFrame()
-        rule.setObjectName("rowRule")
         column = QVBoxLayout(self)
         column.setContentsMargins(1, 0, 1, 1)  # inside the card's border
         column.setSpacing(0)
         column.addLayout(head)
         column.addWidget(self.tree, 1)
-        column.addWidget(rule)
+        column.addWidget(ui_kit.row_rule())
         footer = QHBoxLayout()
         footer.setContentsMargins(12, 7, 12, 7)
         footer.addWidget(self.note)

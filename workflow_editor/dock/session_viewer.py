@@ -15,8 +15,7 @@ from PySide6.QtGui import QColor
 from typing import TYPE_CHECKING, Optional
 
 from project_services import ui_kit
-
-from .. import theme
+from test_procedure_gui import theme
 
 if TYPE_CHECKING:
     from ..main_window import MainWindow

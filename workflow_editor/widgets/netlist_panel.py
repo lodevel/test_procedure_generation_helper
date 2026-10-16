@@ -21,8 +21,8 @@ from PySide6.QtWidgets import (
 )
 
 from project_services import ui_kit
+from test_procedure_gui import theme
 
-from .. import theme
 from ..board_source import find_odb_tgz
 
 

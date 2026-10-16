@@ -7,11 +7,14 @@ pretty-printed, Copy and Close."""
 
 import json
 
+import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QTextCharFormat
+from PySide6.QtGui import QColor, QPalette, QTextCharFormat
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFrame, QLabel, QPlainTextEdit, QPushButton
 
+from test_procedure_gui import fluent_qss
+from test_procedure_gui import theme as bench_theme
 from workflow_editor import theme
 from workflow_editor.core.proposal import FileChange, Proposal, changed_lines, diff_lines
 from workflow_editor.dialogs.diff_viewer import DiffViewer, _diff_marks
@@ -92,12 +95,39 @@ def test_a_changed_line_that_looks_like_a_header_is_a_change(qapp):
     diff = diff_lines("a\n---\n", "a\n++x\n")
     assert diff[4:] == ["----", "+++x"]
     marks = _diff_marks(diff)
-    assert marks[5].background().color() == theme.diff_removed_bg()
-    assert marks[6].background().color() == theme.diff_added_bg()
-    assert all(marks[n].foreground().color() == theme.diff_header_color() for n in (1, 2, 3))
+    assert marks[5].background().color() == theme.tone("pill_danger_bg")
+    assert marks[6].background().color() == theme.tone("pill_success_bg")
+    assert all(marks[n].foreground().color() == theme.tone("accent_deep") for n in (1, 2, 3))
     proposal = Proposal([FileChange("procedure_text.md", lambda: "a\n---\n", "a\n")],
                         lambda: None, lambda: None)
     assert proposal.counts() == (0, 1) and proposal.preview() == ["− ---"]
+
+
+@pytest.mark.parametrize("theme_id, dark", [("original", False), ("dark", True)])
+def test_the_diff_wears_benchs_pill_colours_light_and_dark(qapp, theme_id, dark):
+    """One source of colour: added lines in the success pill's colours, removed in the danger
+    pill's, the panes' tints their backgrounds, the +a −r note their foregrounds."""
+    palette, stylesheet = QPalette(qapp.palette()), qapp.styleSheet()
+    bench_theme.apply_app_theme(theme_id, qapp)
+    try:
+        pill = fluent_qss.tokens(dark)
+        marks = _diff_marks(diff_lines("a\nb\n", "a\nB\n"))
+        assert (marks[5].background().color().name(), marks[5].foreground().color().name()) == (
+            pill["pill_danger_bg"], pill["pill_danger_fg"])
+        assert (marks[6].background().color().name(), marks[6].foreground().color().name()) == (
+            pill["pill_success_bg"], pill["pill_success_fg"])
+        dialog = DiffViewer("a\nb\n", "a\nB\n", "procedure_text.md")
+        def tints(view):
+            return {s.format.background().color().name() for s in view.extraSelections()}
+        assert tints(dialog.original_view) == {pill["pill_danger_bg"]}
+        assert tints(dialog.proposed_view) == {pill["pill_success_bg"]}
+        note = dialog._changes_note()
+        assert pill["pill_success_fg"] in note and pill["pill_danger_fg"] in note
+        dialog.close()
+    finally:
+        bench_theme.apply_app_theme("original", qapp)
+        qapp.setPalette(palette)
+        qapp.setStyleSheet(stylesheet)
 
 
 def test_the_last_line_is_tinted_across_every_row_without_a_final_newline(qapp):

@@ -5,15 +5,17 @@ from __future__ import annotations
 
 import re
 
-from PySide6.QtGui import QFont, QSyntaxHighlighter, QTextCharFormat
+from PySide6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat
+
+from test_procedure_gui.theme import muted_color
 
 from .. import theme
 
 #: (pattern, colour, bold): group 1 of each pattern is coloured.
 _RULES = (
     (re.compile(r"^(#.*)$"), theme.text_heading, True),
-    (re.compile(r"^\s*(\d+\.)\s"), theme.text_step_number, False),
-    (re.compile(r"^\s*\d+\.\s+(Operator:)"), theme.text_operator, True),
+    (re.compile(r"^\s*(\d+\.)\s"), lambda: QColor(muted_color()), False),
+    (re.compile(r"^\s*\d+\.\s+(Operator:)"), lambda: theme.tone("pill_warning_fg"), True),
     (re.compile(r"^([a-z_]+):"), theme.text_meta_key, False),
     (re.compile(r"^([A-Z][A-Z0-9_]*)\s+:"), theme.text_device, True),
 )

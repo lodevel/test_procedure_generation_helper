@@ -1,13 +1,20 @@
-"""Studio wears Bench's theme; Studio's own colours follow Bench's light / dark state."""
+"""Studio wears Bench's theme; Studio's own colours follow Bench's light / dark state, and none of
+them repeats a colour Bench already has."""
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
-from PySide6.QtGui import QPalette
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
+from test_procedure_gui import fluent_qss
 from test_procedure_gui import theme as bench_theme
 from workflow_editor import theme
+
+#: The bundled DCDC wizard's names: they stay as they are until it has its own host API.
+_WIZARD_NAMES = {"chat_assistant_border", "muted_color"}
 
 
 @pytest.fixture
@@ -24,6 +31,48 @@ def app():
 def test_studio_colours_follow_benchs_theme(app, theme_id, dark):
     bench_theme.apply_app_theme(theme_id, app)
 
-    assert theme.is_dark() is dark
+    assert bench_theme.is_dark() is dark
     assert theme.status_warning() == ("#ffa726" if dark else "orange")
     assert theme.muted_color() == app.palette().color(QPalette.ColorRole.PlaceholderText).name()
+
+
+def _colour(value) -> str:
+    """A colour as one comparable string: #rrggbb when Qt reads it, else as given."""
+    colour = value if isinstance(value, QColor) else QColor(str(value))
+    return colour.name() if colour.isValid() else str(value)
+
+
+def _colour_helpers(module) -> dict:
+    """The module's own public helpers that take no argument (its colours, among others)."""
+    return {name: f for name, f in vars(module).items()
+            if inspect.isfunction(f) and f.__module__ == module.__name__
+            and not name.startswith("_")
+            and all(p.default is not p.empty for p in inspect.signature(f).parameters.values())}
+
+
+def _studio_helpers() -> dict:
+    return {name: f for name, f in _colour_helpers(theme).items() if name not in _WIZARD_NAMES}
+
+
+def _bench_colours() -> dict:
+    """Bench's colours by name: its theme's helpers, its stylesheet's tokens."""
+    colours = {f"theme.{name}": f() for name, f in _colour_helpers(bench_theme).items()}
+    colours.update({f"token {key}": value
+                    for key, value in fluent_qss.tokens(bench_theme.is_dark()).items()})
+    return {name: _colour(value) for name, value in colours.items()
+            if isinstance(value, (str, QColor))}
+
+
+def test_no_studio_colour_repeats_one_of_benchs_in_both_themes(app):
+    """A colour both apps share is Bench's, called where it is used; Studio's theme keeps only
+    its own (a helper equal to one of Bench's in light AND dark is a copy)."""
+    seen = {}
+    for theme_id in ("original", "dark"):
+        bench_theme.apply_app_theme(theme_id, app)
+        bench = _bench_colours()
+        seen[theme_id] = {name: {b for b, v in bench.items() if v == _colour(f())}
+                          for name, f in _studio_helpers().items()}
+    assert _studio_helpers()  # not vacuous
+    copies = {name: both for name in seen["original"]
+              if (both := seen["original"][name] & seen["dark"][name])}
+    assert copies == {}

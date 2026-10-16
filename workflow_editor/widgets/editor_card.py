@@ -241,13 +241,11 @@ class EditorCard(QFrame):
         self.editor = CodeEditor(wrap=wrap)
         self.editor.setPlaceholderText(placeholder)
         self.editor.textChanged.connect(self._on_edited)
-        rule = QFrame()
-        rule.setObjectName("rowRule")
         self.body = QVBoxLayout(self)
         self.body.setContentsMargins(1, 0, 1, 1)  # inside the card's border
         self.body.setSpacing(0)
         self.body.addLayout(self._head)
-        self.body.addWidget(rule)
+        self.body.addWidget(ui_kit.row_rule())
         self.body.addWidget(self.editor, 1)
         self._show_state(False)
 

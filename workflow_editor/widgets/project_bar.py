@@ -9,7 +9,9 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Signal
 
-from ..theme import status_connected, status_warning, status_error
+from test_procedure_gui.theme import error_color, success_color
+
+from ..theme import status_warning
 
 
 class ProjectBar(QWidget):
@@ -95,10 +97,10 @@ class ProjectBar(QWidget):
             self.rules_label.setStyleSheet(f"color: {status_warning()};")
         elif loaded:
             self.rules_label.setText(f"✅ {path.name}")
-            self.rules_label.setStyleSheet(f"color: {status_connected()};")
+            self.rules_label.setStyleSheet(f"color: {success_color()};")
         else:
             self.rules_label.setText(f"❌ Invalid: {path.name}")
-            self.rules_label.setStyleSheet(f"color: {status_error()};")
+            self.rules_label.setStyleSheet(f"color: {error_color()};")
     
     def _on_project_changed(self, index: int):
         """Handle project selection change."""

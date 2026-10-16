@@ -46,9 +46,9 @@ def _line_format(background: QColor | None = None, foreground: QColor | None = N
 def _diff_marks(diff: list[str]) -> dict[int, QTextCharFormat]:
     """The unified diff's colours, by what each row is (:func:`diff_rows`): added lines green,
     removed red, the headers (file names, ``@@``) in the accent."""
-    marks = {HEADER: _line_format(foreground=theme.diff_header_color()),
-             ADDED: _line_format(theme.diff_added_bg(), theme.diff_added_fg()),
-             REMOVED: _line_format(theme.diff_removed_bg(), theme.diff_removed_fg())}
+    marks = {HEADER: _line_format(foreground=theme.tone("accent_deep")),
+             ADDED: _line_format(theme.tone("pill_success_bg"), theme.tone("pill_success_fg")),
+             REMOVED: _line_format(theme.tone("pill_danger_bg"), theme.tone("pill_danger_fg"))}
     return {number: marks[kind] for number, (kind, _, _) in enumerate(diff_rows(diff), 1)
             if kind in marks}
 
@@ -99,8 +99,8 @@ class DiffViewer(QDialog):
         panes = QSplitter(Qt.Orientation.Horizontal)
         panes.setHandleWidth(12)
         panes.setChildrenCollapsible(False)
-        tint_removed = _line_format(theme.diff_removed_bg())
-        tint_added = _line_format(theme.diff_added_bg())
+        tint_removed = _line_format(theme.tone("pill_danger_bg"))
+        tint_added = _line_format(theme.tone("pill_success_bg"))
         self.original_view = self._pane(panes, "Original", self._original, self._removed, tint_removed)
         self.proposed_view = self._pane(panes, "Proposed", self._proposed, self._added, tint_added)
 
@@ -163,8 +163,9 @@ class DiffViewer(QDialog):
 
     def _changes_note(self) -> str:
         added, removed = count_changes(self._diff)
-        return (f"Changes: <b style='color:{theme.diff_added_fg().name()}'>+{added}</b> lines, "
-                f"<b style='color:{theme.diff_removed_fg().name()}'>−{removed}</b> lines")
+        plus, minus = (theme.tone(f"pill_{tone}_fg").name() for tone in ("success", "danger"))
+        return (f"Changes: <b style='color:{plus}'>+{added}</b> lines, "
+                f"<b style='color:{minus}'>−{removed}</b> lines")
 
     def showEvent(self, event) -> None:  # noqa: N802 (Qt)
         """Open on the first change (each pane on its own side's, else the other's)."""

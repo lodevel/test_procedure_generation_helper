@@ -2,20 +2,25 @@
 
 Studio wears Bench's theme: its palette and its one app stylesheet, applied by
 ``test_procedure_gui.theme.apply_app_theme``. The helpers below only add the colours of
-Studio's own widgets (diff, syntax, JSON...) and read Bench's theme
-state; the colours both apps share are Bench's, imported here.
+Studio's own widgets (syntax, JSON, procedure text) and read Bench's light / dark state; a
+colour both apps share is Bench's, and its callers take it from Bench's theme.
 """
 
 from __future__ import annotations
 
 from PySide6.QtGui import QColor
 
-from test_procedure_gui.theme import (  # Bench's theme state and shared colours
-    error_color,
+from test_procedure_gui import fluent_qss
+from test_procedure_gui.theme import (  # Bench's theme state; muted_color for the wizard
     is_dark,
     muted_color as muted_color,
-    success_color,
 )
+
+
+def tone(token: str) -> QColor:
+    """One of Bench's stylesheet colours by token (a pill's, the accent), light or dark as the
+    app is: for what Studio paints outside the stylesheet (a diff line, a text format)."""
+    return QColor(fluent_qss.tokens(is_dark())[token])
 
 
 # ── The bundled DCDC wizard's colour (its Finish page; copies ship in every project's
@@ -24,33 +29,6 @@ from test_procedure_gui.theme import (  # Bench's theme state and shared colours
 def chat_assistant_border() -> str:
     """Border for assistant messages in chat."""
     return "#1565c0" if is_dark() else "#bbdefb"
-
-
-# ── Diff viewer colours ─────────────────────────────────────────────
-
-def diff_added_bg() -> QColor:
-    """Background for added lines in diff viewer."""
-    return QColor("#1e3a1e") if is_dark() else QColor("#d4edda")
-
-
-def diff_added_fg() -> QColor:
-    """Foreground for added lines in diff viewer."""
-    return QColor("#66bb6a") if is_dark() else QColor("#155724")
-
-
-def diff_removed_bg() -> QColor:
-    """Background for removed lines in diff viewer."""
-    return QColor("#3a1e1e") if is_dark() else QColor("#f8d7da")
-
-
-def diff_removed_fg() -> QColor:
-    """Foreground for removed lines in diff viewer."""
-    return QColor("#ef5350") if is_dark() else QColor("#721c24")
-
-
-def diff_header_color() -> QColor:
-    """Colour for diff section headers."""
-    return QColor("#64b5f6") if is_dark() else QColor("#0066cc")
 
 
 # ── Code syntax highlighting colours ────────────────────────────────
@@ -97,30 +75,11 @@ def json_keyword() -> QColor:
     return QColor("#c586c0") if is_dark() else QColor("#cc00cc")
 
 
-# ── Danger button ───────────────────────────────────────────────────
-
-def danger_button_style() -> str:
-    """Stylesheet fragment for danger/destructive action buttons."""
-    if is_dark():
-        return "background-color: #b71c1c; color: #fff;"
-    return "background-color: #f44336; color: white;"
-
-
 # ── Project bar status ──────────────────────────────────────────────
-
-def status_connected() -> str:
-    """CSS colour for 'connected' status."""
-    return success_color()
-
 
 def status_warning() -> str:
     """CSS colour for 'warning' status."""
     return "#ffa726" if is_dark() else "orange"
-
-
-def status_error() -> str:
-    """CSS colour for 'error' status."""
-    return error_color()
 
 
 # ── procedure_text.md syntax (the boards' text editor) ─────────────
@@ -128,16 +87,6 @@ def status_error() -> str:
 def text_heading() -> QColor:
     """Colour for ``#`` heading lines."""
     return QColor("#8ab4f8") if is_dark() else QColor("#1d4fa3")
-
-
-def text_step_number() -> QColor:
-    """Colour for a step's leading ``N.``."""
-    return QColor(muted_color())
-
-
-def text_operator() -> QColor:
-    """Colour for a step's ``Operator:``."""
-    return QColor("#f1c27d") if is_dark() else QColor("#7a3f00")
 
 
 def text_meta_key() -> QColor:

@@ -49,9 +49,8 @@ from PySide6.QtWidgets import (
 )
 
 from project_services import ui_kit
-from test_procedure_gui import fluent_qss
+from test_procedure_gui import fluent_qss, theme
 
-from .. import theme
 from ..authoring import SkillChatSession, assemble
 from ..widgets.skill_context_picker import SkillContextPicker
 from ..llm.backend_base import LLMRequest, LLMTask
@@ -71,7 +70,7 @@ _PICKER_WIDTH = 400
 def _colours() -> dict[str, str]:
     """Bench's palette (light or dark, as the app wears it): the transcript is HTML, so it
     takes the stylesheet's colours by name."""
-    return fluent_qss.DARK_TOKENS if theme.is_dark() else fluent_qss.LIGHT_TOKENS
+    return fluent_qss.tokens(theme.is_dark())
 
 
 class SkillChatWidget(QWidget):

@@ -8,7 +8,7 @@ bar: the code card's own Save writes test.py.
 """
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSplitter, QVBoxLayout
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSplitter, QVBoxLayout
 
 from project_services import ui_kit
 
@@ -63,14 +63,12 @@ class TraceabilityTab(BaseTab):
         self.code_card.changed.connect(self._show_markers)
         self.code_card.saved.connect(self._on_code_saved)
         self.mismatch_label = ui_kit.note(wrap=True)
-        rule = QFrame()
-        rule.setObjectName("rowRule")
         issues = QHBoxLayout()
         issues.setContentsMargins(12, 8, 12, 8)
         issues.setSpacing(8)
         issues.addWidget(ui_kit.bold("Mapping issues"), 0, Qt.AlignmentFlag.AlignTop)
         issues.addWidget(self.mismatch_label, 1)
-        self.code_card.body.addWidget(rule)
+        self.code_card.body.addWidget(ui_kit.row_rule())
         self.code_card.body.addLayout(issues)
 
         # Find/Replace bar — only the code editor is searchable here;

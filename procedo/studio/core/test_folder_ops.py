@@ -7,9 +7,9 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
-import stat
 from pathlib import Path
+
+from procedo.core.paths import is_link, rmtree
 
 from . import test_sync
 from .fileio import atomic_write_text, retry_while_busy
@@ -26,7 +26,7 @@ class TestFolderError(Exception):
 def _prove_child(tests_dir: Path, test_dir: Path) -> None:
     """``test_dir`` is a real folder directly inside the tests folder — not a
     link or junction (acting on one would reach its target), not elsewhere."""
-    if os.path.islink(test_dir) or os.path.isjunction(test_dir):
+    if is_link(test_dir):
         raise TestFolderError(f"'{test_dir.name}' is a link, not a test folder.")
     if test_dir.resolve().parent != tests_dir.resolve():
         raise TestFolderError(f"'{test_dir.name}' is not a test folder of this project.")
@@ -44,13 +44,6 @@ def _aside_name(tests_dir: Path, name: str) -> Path:
     return aside
 
 
-def _clear_read_only(func, path, _exc) -> None:
-    """rmtree retry for a read-only file or folder (Windows refuses to delete
-    one): the user confirmed deleting everything inside."""
-    os.chmod(path, stat.S_IWRITE)
-    func(path)
-
-
 def delete_test(tests_dir: Path, test_dir: Path) -> None:
     """Delete a test folder. It is first renamed aside, so a file locked by
     another program stops the delete before anything is removed."""
@@ -64,7 +57,7 @@ def delete_test(tests_dir: Path, test_dir: Path) -> None:
             f"it is open in another program (Explorer, a terminal, an editor); close it and try "
             f"again.\n\n{e}") from e
     try:
-        shutil.rmtree(aside, onexc=_clear_read_only)
+        rmtree(aside)  # clears a read-only file first: the user confirmed deleting everything
     except OSError as e:
         raise TestFolderError(
             f"'{test_dir.name}' was only partly deleted; what is left is in '{aside.name}':\n{e}"

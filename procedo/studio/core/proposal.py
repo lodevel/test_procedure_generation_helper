@@ -222,7 +222,7 @@ class Proposal:
         """Record the decision and let go of what only a waiting proposal needs."""
         self.state, self.error = state, ""
         self.changes, self.inputs, self.test = [], [], None
-        self._apply = self._rejected = None
+        self._apply = self._rejected = None  # type: ignore[assignment]  # only called while PENDING
 
 
 def discard_pending(messages: Iterable) -> int:

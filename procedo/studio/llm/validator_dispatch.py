@@ -229,10 +229,10 @@ def _inventory_from_code(
                 if isinstance(e, dict) and e.get("id") == eq_id and e.get("subtype"):
                     slot["subtype"] = e["subtype"]
                     break
-        for suffix, field in suffix_to_field.items():
+        for suffix, slot_field in suffix_to_field.items():
             const_name = eq_id + suffix
             if const_name in pinned:
-                slot[field] = pinned[const_name]
+                slot[slot_field] = pinned[const_name]
         instruments[eq_id] = slot
 
     return {"format_version": "2.0.0", "instruments": instruments}

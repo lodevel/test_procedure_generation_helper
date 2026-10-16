@@ -68,17 +68,18 @@ def test_the_syntax_reference_names_the_bundle_lists_its_pages_and_finds_in_the_
         assert header.title.text() == "DSL Syntax Reference"
         assert header.subtitle.text() == "bundle baseline 2.8.1 · F1"
         assert [b.text() for b in footer.findChildren(QPushButton)] == ["Close"]
-        pages = [dlg._pages.item(i).text() for i in range(dlg._pages.count())]
+        page_list, view = dlg._pages.page_list, dlg._pages.view
+        pages = [page_list.item(i).text() for i in range(page_list.count())]
         assert pages == ["Cheat sheet", "FULL RULES", "Canonical Text Procedure", "DMM rules"]
-        assert dlg._pages.currentRow() == 0  # the cheat sheet is the landing page
-        assert dlg._browser.font().pointSize() >= 11  # the page's reading size
+        assert page_list.currentRow() == 0  # the cheat sheet is the landing page
+        assert view.font().pointSize() >= 11  # the page's reading size
 
-        dlg._pages.setCurrentRow(3)
-        assert "The DMM reads volts." in dlg._browser.toPlainText()
+        page_list.setCurrentRow(3)
+        assert "The DMM reads volts." in view.toPlainText()
         dlg._search.setText("volts")
         next_btn = next(b for b in header.findChildren(QPushButton) if b.text() == "Next")
         next_btn.click()
-        assert dlg._browser.textCursor().selectedText() == "volts"
+        assert view.textCursor().selectedText() == "volts"
     finally:
         dlg.close()
 
@@ -89,12 +90,13 @@ def test_enter_in_the_syntax_references_search_finds_once(qapp, rules_root):
     SyntaxReferenceDialog._instance = None
     dlg = SyntaxReferenceDialog.show_reference(rules_root, None, "baseline 2.8.1")
     try:
-        dlg._pages.setCurrentRow(3)  # "DMM rules" then "The DMM reads volts."
+        dlg._pages.page_list.setCurrentRow(3)  # "DMM rules" then "The DMM reads volts."
         QApplication.processEvents()
         dlg._search.setFocus()
         dlg._search.setText("DMM")
         QTest.keyClick(dlg._search, Qt.Key.Key_Return)
-        assert dlg._browser.textCursor().selectionStart() == dlg._browser.toPlainText().find("DMM")
+        view = dlg._pages.view
+        assert view.textCursor().selectionStart() == view.toPlainText().find("DMM")
     finally:
         dlg.close()
 

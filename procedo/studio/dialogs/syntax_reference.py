@@ -16,14 +16,13 @@ from typing import Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QTextCursor
-from PySide6.QtWidgets import QDialog, QHBoxLayout, QListWidget, QListWidgetItem, QPushButton
+from PySide6.QtWidgets import QDialog, QPushButton
 
 from procedo.core import ui_kit
-from procedo.core.page_nav import group_heading_item
+from procedo.core.page_nav import MarkdownPages
 
 from ..core import cheatsheet
 
-_ROLE_CONTENT = Qt.ItemDataRole.UserRole
 #: The page list's width (the board's).
 _LIST_WIDTH = 270
 #: The reading size of the Markdown page, in points (at the least).
@@ -88,75 +87,50 @@ class SyntaxReferenceDialog(QDialog):
         body = ui_kit.framed(self, self._header, ui_kit.FooterBand([close_btn]),
                              margins=(0, 0, 0, 0), spacing=0)
 
-        self._pages = QListWidget()
-        self._pages.setObjectName("pageList")  # the app QSS's page list (Settings, …)
-        self._pages.setFixedWidth(_LIST_WIDTH)
-        self._pages.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._pages.setTextElideMode(Qt.TextElideMode.ElideRight)  # the full title is the tooltip
-        self._pages.currentItemChanged.connect(self._on_nav)
-        self._browser = ui_kit.MarkdownView()
-        self._browser.setOpenExternalLinks(False)
-        font = self._browser.font()
-        font.setPointSize(max(_PAGE_POINTS, font.pointSize()))
-        self._browser.setFont(font)
-        row = QHBoxLayout()
-        row.setSpacing(0)
-        row.addWidget(self._pages)
-        page = QHBoxLayout()
-        page.setContentsMargins(18, 16, 18, 16)
-        page.addWidget(self._browser)
-        row.addLayout(page, 1)
-        body.addLayout(row, 1)
+        self._pages = MarkdownPages(_LIST_WIDTH, _PAGE_POINTS)
+        pages = self._pages.page_list
+        pages.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        pages.setTextElideMode(Qt.TextElideMode.ElideRight)  # the full title is the tooltip
+        self._pages.view.setOpenExternalLinks(False)
+        body.addWidget(self._pages, 1)
 
     # -- content --------------------------------------------------------------
 
     def set_rules_root(self, rules_root, bundle: str = "") -> None:
-        self._pages.clear()
+        self._pages.page_list.clear()
         self._header.subtitle.setText(f"bundle {bundle} · F1" if bundle else "F1")
         sheet = cheatsheet.build_cheatsheet(rules_root)
         docs = cheatsheet.list_docs(rules_root)
 
         if not sheet and not docs:
-            self._browser.setMarkdown(
+            self._pages.view.setMarkdown(
                 "# No bundle rules found\n\nOpen a project with an installed "
                 "bundle to see its procedure-DSL syntax reference.\n\n"
                 "_The reference is rendered from the active bundle's rule docs._")
             return
 
         if sheet:
-            self._add_page("Cheat sheet", sheet)
+            self._pages.add_page("Cheat sheet", sheet)
         if docs:
-            self._pages.addItem(group_heading_item("Full rules"))
+            self._pages.add_group("Full rules")
             for doc in docs:
                 tip = doc["filename"]
                 if doc.get("source"):
                     tip += f"  ({doc['source']})"
-                self._add_page(doc["title"], doc["text"], tip)
+                self._pages.add_page(doc["title"], doc["text"], tip)
 
-        self._pages.setCurrentRow(0 if sheet else 1)   # the cheat sheet is the landing page
-
-    def _add_page(self, title: str, content: str, tip: str = "") -> None:
-        item = QListWidgetItem(title)
-        item.setData(_ROLE_CONTENT, content)
-        item.setToolTip(tip)
-        self._pages.addItem(item)
-
-    def _on_nav(self, current, _previous) -> None:
-        if current is None:
-            return
-        content = current.data(_ROLE_CONTENT)
-        if content:
-            self._browser.setMarkdown(str(content))
+        self._pages.select_first()   # the cheat sheet is the landing page
 
     def _on_find(self) -> None:
         text = self._search.text().strip()
         if not text:
             return
-        if not self._browser.find(text):                 # wrap to top and retry
-            cur = self._browser.textCursor()
+        view = self._pages.view
+        if not view.find(text):                 # wrap to top and retry
+            cur = view.textCursor()
             cur.movePosition(QTextCursor.MoveOperation.Start)
-            self._browser.setTextCursor(cur)
-            self._browser.find(text)
+            view.setTextCursor(cur)
+            view.find(text)
 
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt override
         type(self)._instance = None

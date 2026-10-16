@@ -24,28 +24,34 @@ from test_procedure_gui.badge_delegate import BADGES_ROLE, BadgeDelegate
 from .base_tab import BaseTab
 from .. import launch_env
 from ..core import test_folder_ops, test_sync
+from ..core.artifact_manager import ArtifactManager
 
 #: The header's legend of the row letters.
 LEGEND = "T text · J JSON · C code"
-#: A row's artifacts: letter, name, the TestFolderInfo flag that says it is there.
-_ARTIFACTS = (("T", "Text", "has_text"), ("J", "JSON", "has_json"), ("C", "Code", "has_code"))
+#: A row's artifacts: letter, name, the TestFolderInfo flag that says it is there, its file.
+_ARTIFACTS = (("T", "Text", "has_text", ArtifactManager.PROCEDURE_TEXT_NAME),
+              ("J", "JSON", "has_json", ArtifactManager.PROCEDURE_JSON_NAME),
+              ("C", "Code", "has_code", ArtifactManager.TEST_CODE_NAME))
 #: An artifact's state and its square's tone: there, there but not acknowledged as in sync with
-#: the others (Mark Procedure In Sync clears it), not there.
+#: the others (Mark Procedure In Sync clears it), not there. Which artifact is out of sync comes
+#: from core.test_sync.stale_artifacts: the file(s) changed since the acknowledged baseline, or
+#: every one when the session only says "out of sync" without a file to show for it.
 _TONES = {"present": "success", "out of sync": "warning", "missing": "missing"}
 _ROW_HEIGHT = 31
 _SQUARE = 17
 
 
-def artifact_states(info, out_of_sync: bool) -> list[tuple[str, str, str]]:
-    """``(letter, name, state)`` of the test's text, JSON and code (states: :data:`_TONES`)."""
-    return [(letter, name, ("out of sync" if out_of_sync else "present")
+def artifact_states(info, stale: tuple[str, ...]) -> list[tuple[str, str, str]]:
+    """``(letter, name, state)`` of the test's text, JSON and code (states: :data:`_TONES`);
+    ``stale``: the file names test_sync.stale_artifacts gives."""
+    return [(letter, name, ("out of sync" if file in stale else "present")
              if getattr(info, flag) else "missing")
-            for letter, name, flag in _ARTIFACTS]
+            for letter, name, flag, file in _ARTIFACTS]
 
 
-def _show_state(item: QListWidgetItem, info, out_of_sync: bool, badges: bool) -> None:
+def _show_state(item: QListWidgetItem, info, stale: tuple[str, ...], badges: bool) -> None:
     """The row of one test: its name and its artifacts' states (squares, or marks in the text)."""
-    states = artifact_states(info, out_of_sync)
+    states = artifact_states(info, stale)
     item.setToolTip(" · ".join(f"{name}: {state}" for _letter, name, state in states))
     if badges:
         item.setText(info.name)
@@ -53,7 +59,7 @@ def _show_state(item: QListWidgetItem, info, out_of_sync: bool, badges: bool) ->
         return
     present = [letter for letter, _name, state in states if state != "missing"]
     marks = f"[{'/'.join(present)}]" if present else "[empty]"
-    item.setText(f"{'⚠️ ' if out_of_sync else ''}{info.name}  {marks}")
+    item.setText(f"{'⚠️ ' if stale else ''}{info.name}  {marks}")
 
 
 def _padded(widget, left: int, top: int, right: int, bottom: int) -> QVBoxLayout:
@@ -129,7 +135,7 @@ class WorkspaceTab(BaseTab):
         for info in folders:
             item = QListWidgetItem()
             item.setData(Qt.UserRole, info.path)
-            _show_state(item, info, self._out_of_sync(info.path), badges)
+            _show_state(item, info, self._stale_artifacts(info.path), badges)
             self.test_list.addItem(item)
         self.count_label.setText(f"· {len(folders)}")
         self._update_opened_test_highlight()
@@ -199,7 +205,7 @@ class WorkspaceTab(BaseTab):
         # handled at click time: loaded goes through main_window's
         # acknowledgment flow (in-memory + disk atomically), unloaded
         # writes the hash baseline directly to .llm_session.json.
-        out_of_sync = self._out_of_sync(path)
+        out_of_sync = bool(self._stale_artifacts(path))
         is_loaded = (path == self._current_opened_test)
         mark_sync_action = menu.addAction("Mark Procedure In Sync")
         mark_sync_action.setEnabled(out_of_sync)
@@ -259,8 +265,8 @@ class WorkspaceTab(BaseTab):
             return
         self.refresh()
 
-    def _out_of_sync(self, path: Path) -> bool:
-        return test_sync.is_out_of_sync(path, self.project_manager.get_equipment_patterns())
+    def _stale_artifacts(self, path: Path) -> tuple[str, ...]:
+        return test_sync.stale_artifacts(path, self.project_manager.get_equipment_patterns())
     
     def _rename_test(self, path: Path):
         """Rename a test folder; the id, its sync state and the project's

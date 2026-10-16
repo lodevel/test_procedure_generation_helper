@@ -618,7 +618,7 @@ def test_parse_and_generate_marks_in_sync(make_window, monkeypatch, tmp_path, ta
     assert w.sync_pill.text() == "⇄ JSON ↔ Code in sync"
     assert w.session_state.artifact_hashes == w.artifact_manager.compute_hashes()
     assert json.loads((t1 / ".llm_session.json").read_text(encoding="utf-8"))["artifacts_in_sync"] is True
-    assert not w.workspace_widget._out_of_sync(t1)
+    assert not w.workspace_widget._stale_artifacts(t1)
 
 
 def test_parse_and_generate_with_nothing_changed_opens_no_review(make_window, monkeypatch, tmp_path):

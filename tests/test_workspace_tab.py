@@ -37,9 +37,9 @@ def _folders(root: Path) -> list[FolderInfo]:
 
 @pytest.fixture
 def tab(qapp, tmp_path, monkeypatch):
-    stale = {tmp_path / "Alpha"}
-    monkeypatch.setattr(workspace_tab.test_sync, "is_out_of_sync",
-                        lambda path, _patterns: path in stale)
+    stale = {tmp_path / "Alpha": ("procedure.json",)}
+    monkeypatch.setattr(workspace_tab.test_sync, "stale_artifacts",
+                        lambda path, _patterns: stale.get(path, ()))
     pm = SimpleNamespace(project_root=None, enumerate_test_folders=lambda: _folders(tmp_path),
                          get_equipment_patterns=lambda: [])
     widget = WorkspaceTab(SimpleNamespace(project_manager=pm))
@@ -62,18 +62,22 @@ def _load(tab, monkeypatch, indicators: str) -> dict:
 def test_artifact_states_map_presence_and_sync():
     full = FolderInfo(Path("x"), "x", has_text=True, has_json=True, has_code=True)
     text_only = FolderInfo(Path("y"), "y", has_text=True)
-    assert artifact_states(full, False) == [
+    every = ("procedure.json", "test.py", "procedure_text.md")  # the session flag alone
+    assert artifact_states(full, ()) == [
         ("T", "Text", "present"), ("J", "JSON", "present"), ("C", "Code", "present")]
-    assert artifact_states(full, True) == [
+    assert artifact_states(full, ("test.py",)) == [  # only the stale artifact
+        ("T", "Text", "present"), ("J", "JSON", "present"), ("C", "Code", "out of sync")]
+    assert artifact_states(full, every) == [
         ("T", "Text", "out of sync"), ("J", "JSON", "out of sync"), ("C", "Code", "out of sync")]
-    assert artifact_states(text_only, True) == [
+    assert artifact_states(text_only, every) == [
         ("T", "Text", "out of sync"), ("J", "JSON", "missing"), ("C", "Code", "missing")]
 
 
 def test_badge_rows_show_t_j_c_squares(tab, monkeypatch):
     rows = _load(tab, monkeypatch, "badges")
     assert [rows[n].text() for n in ("Alpha", "Beta", "Gamma")] == ["Alpha", "Beta", "Gamma"]
-    assert rows["Alpha"].data(BADGES_ROLE) == [("T", "warning"), ("J", "warning"), ("C", "warning")]
+    assert rows["Alpha"].data(BADGES_ROLE) == [("T", "success"), ("J", "warning"), ("C", "success")]
+    assert rows["Alpha"].toolTip() == "Text: present · JSON: out of sync · Code: present"
     assert rows["Beta"].data(BADGES_ROLE) == [("T", "success"), ("J", "missing"), ("C", "missing")]
     assert rows["Gamma"].data(BADGES_ROLE) == [("T", "missing"), ("J", "missing"), ("C", "missing")]
     assert rows["Beta"].toolTip() == "Text: present · JSON: missing · Code: missing"

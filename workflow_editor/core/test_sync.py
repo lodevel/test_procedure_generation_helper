@@ -1,8 +1,8 @@
 """Sync state of a test folder that is not open in the editor.
 
-The Tests list shows ⚠ when a test's text, JSON or code changed since the user
-last acknowledged them as coherent, and "Mark In Sync" re-baselines an unopened
-test. Both use the open test's own pieces — the session file's sync baseline
+The Tests list shows which of a test's text, JSON and code changed since the
+user last acknowledged them as coherent, and "Mark In Sync" re-baselines an
+unopened test. Both use the open test's own pieces — the session file's sync baseline
 (``session_state``) and the sync hash (:func:`enforced_sync_hash`) over the
 tracked files (:attr:`ArtifactManager._SYNC_TRACKED_NAMES`) — so the list and
 an opened test always agree.
@@ -25,17 +25,18 @@ def _disk_hash(test_dir: Path, name: str, patterns: list[re.Pattern[str]]) -> st
     return enforced_sync_hash(test_dir, name, path.read_text(encoding="utf-8"), patterns)
 
 
-def is_out_of_sync(test_dir: Path, patterns: list[re.Pattern[str]]) -> bool:
-    """True when the session says out of sync, or a tracked file on disk no longer
-    matches its acknowledged hash (an edit made while the editor was closed).
-    No session or no baseline yet (first open, legacy session) reads as in sync;
-    an unreadable file is skipped."""
+def stale_artifacts(test_dir: Path, patterns: list[re.Pattern[str]]) -> tuple[str, ...]:
+    """The tracked files (:attr:`ArtifactManager._SYNC_TRACKED_NAMES`) not acknowledged as in
+    sync with the others: those on disk that no longer match their acknowledged hash (the
+    baseline only moves on acknowledgment, so this names an edit made in or out of the editor).
+    When the session says out of sync but no file names itself (the edit was reverted, the
+    baseline is partial, a file is unreadable), the flag alone cannot say which: every tracked
+    name. No session or no baseline yet (first open, legacy session) reads as in sync: ()."""
     baseline = read_sync_baseline(test_dir)
     if baseline is None:
-        return False
+        return ()
     in_sync, stored_hashes = baseline
-    if not in_sync:
-        return True
+    stale = []
     for name in ArtifactManager._SYNC_TRACKED_NAMES:
         stored = stored_hashes.get(name)
         if not stored:
@@ -45,8 +46,15 @@ def is_out_of_sync(test_dir: Path, patterns: list[re.Pattern[str]]) -> bool:
         except (OSError, ValueError):
             continue
         if current is not None and current != stored:
-            return True
-    return False
+            stale.append(name)
+    if not stale and not in_sync:
+        return ArtifactManager._SYNC_TRACKED_NAMES
+    return tuple(stale)
+
+
+def is_out_of_sync(test_dir: Path, patterns: list[re.Pattern[str]]) -> bool:
+    """True when any tracked file is stale (:func:`stale_artifacts`)."""
+    return bool(stale_artifacts(test_dir, patterns))
 
 
 def mark_in_sync(test_dir: Path, patterns: list[re.Pattern[str]]) -> None:

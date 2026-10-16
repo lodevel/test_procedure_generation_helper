@@ -4,7 +4,7 @@ row per test (its name, then the state of its text, JSON and code), the open tes
 sync, renames or deletes it.
 
 The rows are Bench's test rows (``#testList``, its ``BadgeDelegate``); Bench's Indicators setting
-(``TPG_APP_INDICATORS``) shows the states as squares (Badges) or as marks in the text (Pictos).
+(``PROCEDO_APP_INDICATORS``) shows the states as squares (Badges) or as marks in the text (Pictos).
 """
 
 import os
@@ -22,6 +22,7 @@ from test_procedure_gui import ui_indicators
 from test_procedure_gui.badge_delegate import BADGES_ROLE, BadgeDelegate
 
 from .base_tab import BaseTab
+from .. import launch_env
 from ..core import test_folder_ops, test_sync
 
 #: The header's legend of the row letters.
@@ -124,7 +125,7 @@ class WorkspaceTab(BaseTab):
         top = scroll.value()
         self.test_list.clear()
         folders = self.project_manager.enumerate_test_folders()
-        badges = ui_indicators.uses_badges(os.environ.get("TPG_APP_INDICATORS"))
+        badges = ui_indicators.uses_badges(os.environ.get(launch_env.APP_INDICATORS))
         for info in folders:
             item = QListWidgetItem()
             item.setData(Qt.UserRole, info.path)

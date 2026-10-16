@@ -4,7 +4,7 @@ Covers the three seams:
 
 * ``TaskConfigManager`` resolves bundle defaults project-root-first
   (``<project>/bundle/defaults.json`` beats a stale
-  ``TPG_BUNDLE_DEFAULTS_PATH``), and ``reload()`` picks up a CHANGED
+  ``PROCEDO_BUNDLE_DEFAULTS_PATH``), and ``reload()`` picks up a CHANGED
   defaults.json — tasks appear/disappear and prompt templates swap.
 * ``pack_parsers._load_bundle_equipment_profiles`` resolves
   project-root-first with the env var as legacy fallback.
@@ -29,6 +29,7 @@ from PySide6.QtCore import QFileSystemWatcher, QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from workflow_editor.core.task_config import TaskConfigManager  # noqa: E402
+from workflow_editor.launch_env import BUNDLE_DEFAULTS_PATH  # noqa: E402
 from workflow_editor.pack_ops import pack_parsers as pp  # noqa: E402
 from workflow_editor.main_window import StudioWorkspace  # noqa: E402
 
@@ -117,7 +118,7 @@ def test_project_bundle_beats_stale_env_var(tmp_path, monkeypatch):
     decoy.write_text(json.dumps(
         {"workflows": {"text_json": {"tasks": [_task("decoy_task", "DECOY")]}}}
     ), encoding="utf-8")
-    monkeypatch.setenv("TPG_BUNDLE_DEFAULTS_PATH", str(decoy))
+    monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(decoy))
 
     root = _make_project(tmp_path, [_task("task_a", "PROMPT V1")])
     mgr = TaskConfigManager(fallback_path=tmp_path / "none.json",
@@ -132,7 +133,7 @@ def test_reload_rebuilds_gating_from_changed_defaults(tmp_path, monkeypatch):
     """Import-while-open: rewrite defaults.json, call reload() — a task
     disappears, a new one appears, an existing prompt template swaps,
     and the reload callback (the button-rebuild chain) fires."""
-    monkeypatch.delenv("TPG_BUNDLE_DEFAULTS_PATH", raising=False)
+    monkeypatch.delenv(BUNDLE_DEFAULTS_PATH, raising=False)
     root = _make_project(
         tmp_path, [_task("task_a", "PROMPT V1"), _task("task_old", "OLD")])
     mgr = TaskConfigManager(fallback_path=tmp_path / "none.json",
@@ -163,7 +164,7 @@ def test_env_fallback_when_project_has_no_bundle(tmp_path, monkeypatch):
     env_defaults.write_text(json.dumps(
         {"workflows": {"text_json": {"tasks": [_task("env_task", "ENV")]}}}
     ), encoding="utf-8")
-    monkeypatch.setenv("TPG_BUNDLE_DEFAULTS_PATH", str(env_defaults))
+    monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(env_defaults))
 
     root = tmp_path / "nobundle"
     (root / "config").mkdir(parents=True)
@@ -183,7 +184,7 @@ def test_equipment_profiles_project_first(tmp_path, monkeypatch):
     decoy = tmp_path / "envd.json"
     decoy.write_text(json.dumps({"equipment_profiles": [env_profile]}),
                      encoding="utf-8")
-    monkeypatch.setenv("TPG_BUNDLE_DEFAULTS_PATH", str(decoy))
+    monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(decoy))
 
     root = _make_project(tmp_path, [], name="proj_eq")
     _write_defaults(root, [], profiles=[proj_profile])

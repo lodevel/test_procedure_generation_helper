@@ -47,6 +47,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Callable, Dict, List, Optional, Union
 
+from .. import launch_env
 from ..llm.backend_base import LLMTask
 from .fileio import atomic_write_text
 
@@ -418,7 +419,7 @@ class TaskConfigManager:
 
         Task #39: resolve the ACTIVE project's bundle first, so a
         bundle imported while the editor runs is picked up by a plain
-        ``reload()``. The ``TPG_BUNDLE_DEFAULTS_PATH`` env var is a
+        ``reload()``. The ``PROCEDO_BUNDLE_DEFAULTS_PATH`` env var is a
         launch-time snapshot (unset when no bundle existed at editor
         launch, or in standalone launches) — kept only as the legacy
         fallback for no-project mode.
@@ -435,7 +436,7 @@ class TaskConfigManager:
             if candidate.is_file():
                 defaults_path = candidate
         if defaults_path is None:
-            path_str = os.environ.get("TPG_BUNDLE_DEFAULTS_PATH")
+            path_str = os.environ.get(launch_env.BUNDLE_DEFAULTS_PATH)
             if not path_str:
                 return {}
             defaults_path = Path(path_str)

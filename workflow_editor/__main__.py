@@ -140,7 +140,8 @@ def main() -> int:
     
     # Enable high DPI scaling
     app.setAttribute(Qt.AA_UseHighDpiPixmaps)
-    applied_theme = apply_app_theme(os.environ.get("TPG_APP_THEME"), app)
+    from . import launch_env
+    applied_theme = apply_app_theme(os.environ.get(launch_env.APP_THEME), app)
     log.debug("Applied application theme: %s", applied_theme)
 
     # Create and show main window

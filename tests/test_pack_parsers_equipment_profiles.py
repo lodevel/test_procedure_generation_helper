@@ -2,7 +2,7 @@
 ``workflow_editor.pack_ops.pack_parsers`` (Phase B, D4 hard cut).
 
 Covers ``_load_bundle_equipment_profiles`` (reads the bundle's
-defaults.json via ``TPG_BUNDLE_DEFAULTS_PATH``) and the
+defaults.json via ``PROCEDO_BUNDLE_DEFAULTS_PATH``) and the
 ``sync_equipment_from_steps`` fallback that filters the records to
 ``equipment_type == "controller"`` and shims them to the wheel shape
 (``pattern`` <- ``id_pattern``).
@@ -21,6 +21,7 @@ from tests._qt_stub import ensure_workflow_editor_importable
 ensure_workflow_editor_importable()
 
 from workflow_editor.pack_ops import pack_parsers as pp  # noqa: E402
+from workflow_editor.launch_env import BUNDLE_DEFAULTS_PATH  # noqa: E402
 
 
 CONTROLLER_PROFILE = {
@@ -55,7 +56,7 @@ PSU_PROFILE = {
 def _write_defaults(tmp_path, payload, monkeypatch):
     defaults_path = tmp_path / "defaults.json"
     defaults_path.write_text(json.dumps(payload), encoding="utf-8")
-    monkeypatch.setenv("TPG_BUNDLE_DEFAULTS_PATH", str(defaults_path))
+    monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(defaults_path))
     return defaults_path
 
 
@@ -88,20 +89,20 @@ def test_non_dict_entries_are_dropped(monkeypatch, tmp_path):
 
 def test_env_unset_returns_empty(monkeypatch):
     """No bundle context (env unset) is not an error — degrade to []."""
-    monkeypatch.delenv("TPG_BUNDLE_DEFAULTS_PATH", raising=False)
+    monkeypatch.delenv(BUNDLE_DEFAULTS_PATH, raising=False)
     assert pp._load_bundle_equipment_profiles() == []
 
 
 def test_missing_file_returns_empty(monkeypatch, tmp_path):
     """A stale env var pointing at a deleted file degrades to []."""
-    monkeypatch.setenv("TPG_BUNDLE_DEFAULTS_PATH", str(tmp_path / "gone.json"))
+    monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(tmp_path / "gone.json"))
     assert pp._load_bundle_equipment_profiles() == []
 
 
 def test_malformed_json_returns_empty(monkeypatch, tmp_path):
     bad = tmp_path / "defaults.json"
     bad.write_text("{not json", encoding="utf-8")
-    monkeypatch.setenv("TPG_BUNDLE_DEFAULTS_PATH", str(bad))
+    monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(bad))
     assert pp._load_bundle_equipment_profiles() == []
 
 
@@ -171,7 +172,7 @@ def test_sync_filters_controllers_and_shims_pattern(monkeypatch, tmp_path):
 
 
 def test_sync_env_unset_passes_empty_profiles(monkeypatch):
-    monkeypatch.delenv("TPG_BUNDLE_DEFAULTS_PATH", raising=False)
+    monkeypatch.delenv(BUNDLE_DEFAULTS_PATH, raising=False)
     captured = _capture_inproc_sync(monkeypatch)
 
     pp.sync_equipment_from_steps("## Steps\n", project_root=None)

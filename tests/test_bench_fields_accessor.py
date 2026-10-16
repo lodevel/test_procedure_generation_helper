@@ -22,24 +22,25 @@ from tests._qt_stub import ensure_workflow_editor_importable
 ensure_workflow_editor_importable()
 
 from workflow_editor.pack_ops import pack_parsers as pp  # noqa: E402
+from workflow_editor.launch_env import BUNDLE_DEFAULTS_PATH  # noqa: E402
 
 
 class TestBenchFieldsAccessor(unittest.TestCase):
     def setUp(self):
-        self._saved = os.environ.get("TPG_BUNDLE_DEFAULTS_PATH")
+        self._saved = os.environ.get(BUNDLE_DEFAULTS_PATH)
 
     def tearDown(self):
         if self._saved is None:
-            os.environ.pop("TPG_BUNDLE_DEFAULTS_PATH", None)
+            os.environ.pop(BUNDLE_DEFAULTS_PATH, None)
         else:
-            os.environ["TPG_BUNDLE_DEFAULTS_PATH"] = self._saved
+            os.environ[BUNDLE_DEFAULTS_PATH] = self._saved
 
     def _bundle(self, bench: dict) -> None:
         d = tempfile.mkdtemp()
         (Path(d) / "defaults.json").write_text(
             json.dumps({"pack_dispatch": {"bench_fields": bench}}), encoding="utf-8"
         )
-        os.environ["TPG_BUNDLE_DEFAULTS_PATH"] = str(Path(d) / "defaults.json")
+        os.environ[BUNDLE_DEFAULTS_PATH] = str(Path(d) / "defaults.json")
 
     def test_reads_bench_fields(self):
         self._bundle({"controller": [
@@ -64,7 +65,7 @@ class TestBenchFieldsAccessor(unittest.TestCase):
         )
 
     def test_empty_when_no_bundle(self):
-        os.environ.pop("TPG_BUNDLE_DEFAULTS_PATH", None)
+        os.environ.pop(BUNDLE_DEFAULTS_PATH, None)
         self.assertEqual(pp.bench_fields(), {})
         self.assertEqual(pp.bench_constant_names("psu", "PSU1"), [])
 
@@ -73,7 +74,7 @@ class TestBenchFieldsAccessor(unittest.TestCase):
         (Path(d) / "defaults.json").write_text(
             json.dumps({"pack_dispatch": {"capabilities": {}}}), encoding="utf-8"
         )
-        os.environ["TPG_BUNDLE_DEFAULTS_PATH"] = str(Path(d) / "defaults.json")
+        os.environ[BUNDLE_DEFAULTS_PATH] = str(Path(d) / "defaults.json")
         self.assertEqual(pp.bench_fields(), {})
 
 

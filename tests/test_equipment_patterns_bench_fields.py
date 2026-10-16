@@ -22,15 +22,16 @@ from tests._qt_stub import ensure_workflow_editor_importable
 ensure_workflow_editor_importable()
 
 from workflow_editor.core.project_manager import ProjectManager  # noqa: E402
+from workflow_editor.launch_env import BUNDLE_DEFAULTS_PATH  # noqa: E402
 
 
 class TestEquipmentPatternsFromBenchFields(unittest.TestCase):
     def setUp(self):
-        self._saved = os.environ.pop("TPG_BUNDLE_DEFAULTS_PATH", None)
+        self._saved = os.environ.pop(BUNDLE_DEFAULTS_PATH, None)
 
     def tearDown(self):
         if self._saved is not None:
-            os.environ["TPG_BUNDLE_DEFAULTS_PATH"] = self._saved
+            os.environ[BUNDLE_DEFAULTS_PATH] = self._saved
 
     def _pm_with_bench(self, bench: dict) -> ProjectManager:
         d = Path(tempfile.mkdtemp())

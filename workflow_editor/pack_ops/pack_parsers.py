@@ -52,7 +52,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, NoReturn, Optional
 
-from .. import _project_local_state
+from .. import _project_local_state, launch_env
 from ..llm import section_ownership
 
 log = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ _TIMEOUT_DEFAULT = 30
 _TIMEOUT_REMOTE_EXEC = 45
 
 # env-var overrides
-_ENV_TIMEOUT = "TPG_PACK_PARSER_TIMEOUT"
+_ENV_TIMEOUT = "PROCEDO_PACK_PARSER_TIMEOUT"
 
 
 class ParserUnavailable(RuntimeError):
@@ -224,7 +224,7 @@ def _ensure_inproc_registry_populated() -> None:
     Post pack-pluggable cutover the base engine resolves pack verbs/schema/
     equipment from a process-global registry; nothing parses psu/eload/scope/
     controller until it is populated. Source the bundle dir from
-    ``TPG_BUNDLE_DEFAULTS_PATH`` (a defaults.json file → its parent dir). No-op
+    ``PROCEDO_BUNDLE_DEFAULTS_PATH`` (a defaults.json file → its parent dir). No-op
     when unset (no-project editor mode), when the wheel predates the registry
     (old project), or on any load error — the parser then degrades to the
     monolithic-free 'unknown pack' findings rather than crashing the editor.
@@ -233,7 +233,7 @@ def _ensure_inproc_registry_populated() -> None:
     if _REGISTRY_POPULATED:
         return
     _REGISTRY_POPULATED = True  # set before work so a failure isn't retried per call
-    defaults_path = os.environ.get("TPG_BUNDLE_DEFAULTS_PATH")
+    defaults_path = os.environ.get(launch_env.BUNDLE_DEFAULTS_PATH)
     if not defaults_path:
         return
     try:
@@ -454,7 +454,7 @@ def sync_equipment_from_steps(
 
     When ``controller_profiles`` is None, falls back to reading the
     bundle's ``equipment_profiles`` from the project's bundle
-    defaults.json (project-root-first, ``TPG_BUNDLE_DEFAULTS_PATH`` env
+    defaults.json (project-root-first, ``PROCEDO_BUNDLE_DEFAULTS_PATH`` env
     var as legacy fallback — same resolution the workflows editor uses
     for its bundle defaults), filtered to
     ``equipment_type == "controller"`` and shimmed
@@ -708,7 +708,7 @@ def _load_bundle_equipment_profiles(
     Task #39: resolved project-root-first via ``_bundle_defaults_path``
     (``<project_root>/bundle/defaults.json`` when a project is open, so
     a bundle imported mid-session is seen immediately), falling back to
-    ``TPG_BUNDLE_DEFAULTS_PATH`` — the same convention as
+    ``PROCEDO_BUNDLE_DEFAULTS_PATH`` — the same convention as
     ``TaskConfigManager._load_pack_workflow_defaults``.
     Returns ``[]`` when no bundle resolves or the file is missing /
     malformed (no bundle context). A readable bundle defaults.json
@@ -748,11 +748,11 @@ _HEADING_LINE_RE = None  # lazily compiled
 
 def _bundle_defaults_path(project_root: Optional[Path]) -> Optional[Path]:
     """Resolve the bundle defaults.json: a project's ``<root>/bundle/defaults.json``
-    when a project is open, else ``TPG_BUNDLE_DEFAULTS_PATH`` (editor mode)."""
+    when a project is open, else ``PROCEDO_BUNDLE_DEFAULTS_PATH`` (editor mode)."""
     if project_root is not None:
         p = Path(project_root) / "bundle" / "defaults.json"
         return p if p.exists() else None
-    env = os.environ.get("TPG_BUNDLE_DEFAULTS_PATH")
+    env = os.environ.get(launch_env.BUNDLE_DEFAULTS_PATH)
     return Path(env) if env else None
 
 

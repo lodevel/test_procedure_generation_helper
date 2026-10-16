@@ -135,6 +135,7 @@ def main() -> int:
     
     # Create application
     log.debug("Creating QApplication...")
+    app_identity.claim_taskbar_identity(app_identity.STUDIO_APP_ID)
     app = QApplication(sys.argv)
     app.setApplicationName("Procedo Studio")
     app.setApplicationVersion("0.1.0")

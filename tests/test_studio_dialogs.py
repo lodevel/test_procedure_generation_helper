@@ -286,6 +286,17 @@ def test_word_keywords_shows_the_main_apps_reference_in_its_own_dialog(qapp):
     assert header.title.text() == "Word export keywords"
     assert [b.text() for b in primaries] == ["Close"]
     assert "Word Export Template Keywords" in dlg.page.toPlainText()
+    document = dlg.page.document()
+    blocks = [document.findBlockByNumber(i) for i in range(document.blockCount())]
+    headings = [(b.blockFormat().headingLevel(), b.text()) for b in blocks if b.blockFormat().headingLevel()]
+    assert headings[:3] == [(1, "Word Export Template Keywords"), (2, "Template Location"),
+                            (2, "Template Resolution")]
+    tables = ui_kit._tables(document.rootFrame())
+    assert [tables[0].cellAt(0, c).firstCursorPosition().block().text() for c in range(2)] == [
+        "Syntax", "Purpose"]
+    assert any(b.blockFormat().nonBreakableLines() and "{{ author.name }}" in b.text() for b in blocks)
+    assert document.find("docxtpl docs").charFormat().anchorHref() == (
+        "https://docxtpl.readthedocs.io/en/latest/#jinja2-like-syntax")
 
 
 def test_about_shows_the_studio_mark_its_name_and_version(qapp):

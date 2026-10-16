@@ -24,7 +24,10 @@ from typing import TYPE_CHECKING, Optional
 
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
-from .. import _host_services, _project_local_state
+from project_services import app_settings, config_manager
+from project_services.new_project_dialog import NewProjectDialog
+
+from .. import _project_local_state
 
 if TYPE_CHECKING:
     from ..main_window import StudioWorkspace
@@ -44,9 +47,6 @@ class ProjectController:
         # Shared, bundle-backed New Project — the SAME dialog the main app
         # uses: creates dirs + venv + bundle ref + starter test, so
         # editor-made projects are openable/runnable by the main app.
-        from project_services.new_project_dialog import NewProjectDialog
-        from project_services import config_manager
-
         dialog = NewProjectDialog(mw)
         if dialog.exec() != QDialog.Accepted:
             return
@@ -68,7 +68,7 @@ class ProjectController:
 
         # Point the editor's navigation model at the freshly-created project.
         mw.project_manager.set_project_root(project_path)
-        _host_services.note_recent_project(str(project_path))
+        app_settings.add_recent_project(str(project_path))
 
         # Now initialize the UI with the new project
         mw.workspace_widget._load_test_list()
@@ -120,9 +120,8 @@ class ProjectController:
         mw = self._mw
         # Repopulate from the SHARED recent list (same app_settings the main
         # app writes), so recents are unified across both apps.
-        aps = _host_services.load_optional("project_services.app_settings")
         mw._open_recent_menu.clear()
-        recent = aps.load_app_settings().get("recent_projects", []) if aps else []
+        recent = app_settings.load_app_settings().get("recent_projects", [])
         if not recent:
             placeholder = mw._open_recent_menu.addAction("No recent projects")
             placeholder.setEnabled(False)
@@ -143,7 +142,7 @@ class ProjectController:
                 f"The project folder no longer exists:\n{path_str}")
             return
         if mw.project_manager.set_project_root(path):
-            _host_services.note_recent_project(str(path))
+            app_settings.add_recent_project(str(path))
             mw._refresh_after_open()
 
     def on_open_project(self):
@@ -162,7 +161,7 @@ class ProjectController:
 
         # Try to set as project root
         if mw.project_manager.set_project_root(project_path):
-            _host_services.note_recent_project(str(project_path))
+            app_settings.add_recent_project(str(project_path))
             mw._refresh_after_open()
         else:
             # Maybe user selected a test folder directly?

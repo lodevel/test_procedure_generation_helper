@@ -25,14 +25,10 @@ from pathlib import Path
 
 import pytest
 
-# The bridge's host seam. A standalone checkout has no host and cannot resolve a
-# project venv at all — that degradation has its own pin below, faked explicitly.
-pytest.importorskip("project_services")
-
-from project_services import project_local_state, venv_pool  # noqa: E402
-from workflow_editor import _project_local_state  # noqa: E402
-from workflow_editor.core import odb_inspect  # noqa: E402
-from workflow_editor.pack_ops import pack_parsers  # noqa: E402
+from project_services import project_local_state, venv_pool
+from workflow_editor import _project_local_state
+from workflow_editor.core import odb_inspect
+from workflow_editor.pack_ops import pack_parsers
 
 _PROJECT_ID = "aaaaaaaa-1111-2222-3333-444444444444"
 
@@ -170,20 +166,6 @@ def test_no_venv_is_still_parser_unavailable(venvs_root, tmp_path):
     with pytest.raises(pack_parsers.ParserUnavailable) as raised:
         pack_parsers._resolve_project_python(project)
     assert "machine-local venv" in str(raised.value)
-
-
-def test_without_the_host_the_bridge_degrades_as_it_always_did(venvs_root, tmp_path, monkeypatch):
-    """A standalone checkout has nothing to ask, so it refuses — it does not guess."""
-    project = _project(tmp_path)
-    _install_interpreter(project)
-    monkeypatch.setattr(_project_local_state, "_local_state", lambda: None)
-
-    with pytest.raises(pack_parsers.ParserUnavailable) as raised:
-        pack_parsers._resolve_project_python(project)
-    assert "without the host app" in str(raised.value)
-    # …and the ODB panel's cache goes with it, rather than falling back into the
-    # project folder, which is machine state on a share.
-    assert _project_local_state.media_cache(project) is None
 
 
 # --- the bundle-install stamp the editor watches -----------------------------

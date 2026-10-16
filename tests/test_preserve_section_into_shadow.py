@@ -14,8 +14,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 
 # Add the shared src/ to sys.path so we can import the foundation package
 # without depending on the project being pip-installed. (config_manager now
@@ -24,10 +22,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _SRC = _REPO_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
-
-# The walk-up assumes the submodule layout; a STANDALONE editor checkout has no
-# host src/ above it, so config_manager is truthfully absent -> skip.
-pytest.importorskip("project_services")
 
 from project_services.config_manager import preserve_section_into_shadow  # noqa: E402
 

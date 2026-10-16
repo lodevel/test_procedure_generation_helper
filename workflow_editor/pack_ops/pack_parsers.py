@@ -5,8 +5,8 @@ editor's own interpreter, so the wheel imported is the one bundled with the
 active project (which may differ from the GUI's installed wheel).
 
 When ``project_root=None`` (editor startup, no project loaded) every entry
-point falls back to in-process import — the original behaviour — so
-standalone-editor mode stays usable.
+point falls back to in-process import — the original behaviour — so the
+editor stays usable with no project open.
 
 Mechanism
 ---------

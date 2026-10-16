@@ -2,7 +2,7 @@
 
 Safety net for the planned carve of the 2,726-line / 94-method MainWindow:
 each test pins one seam of CURRENT behavior — construction, menu/action
-wiring, host-gating, project open, test-open tab lifecycle, the save
+wiring, host-backed slots, project open, test-open tab lifecycle, the save
 choke-point (id=folder enforcement + sync-state transparency, task #41),
 the bundle-import live-refresh seams (task #39), settings-dialog wiring and
 the close flow — so an extraction that silently drops a wire fails loudly
@@ -16,7 +16,7 @@ Conventions (mirrors the host repo's test_main_window_run_report.py):
     never block the suite;
   * settings load stubbed to a DISABLED LLM backend -> no
     OpenCodeServerManager, no prewarm threads, no health poll, no network;
-  * _host_services.note_recent_project stubbed -> never touches the real
+  * app_settings.add_recent_project stubbed -> never touches the real
     shared app settings;
   * showEvent is never triggered (no .show()), so the CLI-args / prewarm /
     health-poll path stays inert — construction-time state is what's pinned.
@@ -24,7 +24,6 @@ Conventions (mirrors the host repo's test_main_window_run_report.py):
 
 import json
 import os
-import types
 
 import pytest
 
@@ -38,8 +37,8 @@ from PySide6.QtWidgets import (  # noqa: E402
     QApplication, QFileDialog, QMessageBox,
 )
 
-import workflow_editor._host_services as host_services  # noqa: E402
 import workflow_editor.main_window as mw_mod  # noqa: E402
+from project_services import app_settings  # noqa: E402
 from workflow_editor.llm.backend_factory import BACKEND_TYPE_NONE  # noqa: E402
 
 
@@ -90,7 +89,7 @@ def make_window(qapp, monkeypatch, mbox):
     untriggered)."""
     monkeypatch.setattr(mw_mod, "load_settings", lambda: {"llm_backend": "none"})
     recents: list[str] = []
-    monkeypatch.setattr(host_services, "note_recent_project", recents.append)
+    monkeypatch.setattr(app_settings, "add_recent_project", recents.append)
 
     windows = []
 
@@ -319,48 +318,20 @@ def test_every_menu_entry_triggers_its_handler(make_window, monkeypatch):
 
 
 # =========================================================================
-# 3. _host_services.requires_host gating
+# 3. host-backed slots
 # =========================================================================
 
-def test_requires_host_slots_all_gate_standalone(make_window, mbox,
-                                                 monkeypatch):
-    # Pins the FULL set of host-gated slots: with project_services absent
-    # every one of them degrades to exactly one "Host app required" info box
-    # and does nothing else (no import, no dialog, no state change). The
-    # decorator also swallows the triggered(checked) signal payload.
+def test_host_slots_guard_missing_project(make_window, mbox):
+    # Pins the guard inside host-backed slots, triggered from their menu
+    # entries (the triggered(checked) payload reaches a (self)-only slot): no
+    # project open -> the slot's own "open a project first" info box, and the
+    # heavy project_services dialog is never reached.
     w = make_window()
-    monkeypatch.setattr(host_services, "host_available", lambda: False)
+    entries = _menus(w)  # keeps action refs alive for the whole test
+    project_menu = {t: m for t, _, m in entries}["&Project"]
 
-    gated = [
-        w._on_new_project,
-        w._on_install_package,
-        w._on_export_word,
-        w._on_project_configuration,
-        w._on_template_manager,
-        w._on_bundle_library,
-        w._on_scenarios,
-    ]
-    for slot in gated:
-        slot(False)  # False = the QAction.triggered 'checked' payload
-
-    assert len(mbox.information) == len(gated)
-    assert all(title == "Host app required" for title, _ in mbox.information)
-    assert all(host_services.HOST_REQUIRED_MSG == text
-               for _, text in mbox.information)
-    assert w.project_manager.project_root is None
-    assert mbox.warning == [] and mbox.critical == []
-
-
-def test_host_slots_guard_missing_project_after_host_check(make_window, mbox):
-    # Pins the guard ORDER inside host-backed slots: host present but no
-    # project open -> the slot's own "open a project first" info box, and
-    # the heavy project_services dialog is never reached.
-    if not host_services.host_available():
-        pytest.skip("host project_services not importable in this venv")
-    w = make_window()
-
-    w._on_project_configuration()
-    w._on_scenarios()
+    _find_action(project_menu, "Project &Configuration…").trigger()
+    _find_action(project_menu, "&Scenarios…").trigger()
 
     titles = [t for t, _ in mbox.information]
     assert titles == ["Project Configuration", "Scenarios"]
@@ -431,17 +402,13 @@ def test_open_project_dialog_invalid_folder_warns(make_window, mbox,
 def test_open_recent_menu_and_missing_dir(make_window, mbox, monkeypatch,
                                           tmp_path):
     # Pins the Open Recent surface: the menu repopulates from the SHARED
-    # app_settings recents (via _host_services.load_optional); an empty
+    # app_settings recents; an empty
     # list yields one disabled placeholder; a recent whose folder vanished
     # warns "Project Not Found" and leaves the project unset.
     w = make_window()
     recents: list[str] = []
-    fake_aps = types.SimpleNamespace(
-        load_app_settings=lambda: {"recent_projects": list(recents)})
-    monkeypatch.setattr(
-        host_services, "load_optional",
-        lambda name: fake_aps if name == "project_services.app_settings"
-        else None)
+    monkeypatch.setattr(app_settings, "load_app_settings",
+                        lambda: {"recent_projects": list(recents)})
 
     w._rebuild_open_recent_menu()
     acts = w._open_recent_menu.actions()

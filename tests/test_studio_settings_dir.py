@@ -8,15 +8,11 @@ import argparse
 import re
 from pathlib import Path
 
-import pytest
+from project_services import app_identity, app_identity_migration
 
-pytest.importorskip("project_services")
-
-from project_services import app_identity, app_identity_migration  # noqa: E402
-
-from workflow_editor import __main__ as studio_main  # noqa: E402
-from workflow_editor import main_window  # noqa: E402
-from workflow_editor.dialogs import settings_dialog  # noqa: E402
+from workflow_editor import __main__ as studio_main
+from workflow_editor import main_window
+from workflow_editor.dialogs import settings_dialog
 
 _PKG = Path(__file__).resolve().parents[1] / "workflow_editor"
 _THE_ONE_SITE = "dialogs/settings_dialog.py"

@@ -28,7 +28,7 @@ from workflow_editor.llm.validator_dispatch import ValidationIssueView, Validati
 from workflow_editor.widgets.netlist_panel import _BoardImagePopup
 from workflow_editor.widgets.rule_selector import RuleSelectorDialog
 
-from .test_main_window_characterization import mbox as mbox, qapp as qapp
+from .test_main_window_characterization import qapp as qapp
 
 
 def _frame(dialog):
@@ -263,16 +263,12 @@ def test_the_export_selection_returns_the_ticked_tests_and_greys_those_without_t
     assert [f.name for f in dlg.selected_folders()] == ["AUX1_output"]
 
 
-def test_word_keywords_is_its_own_dialog_or_a_pointer_without_the_main_app(qapp, mbox, monkeypatch):
-    dlg = word_keywords_dialog.WordKeywordsDialog("# Template location\n\nUse `{{ variable }}`.")
+def test_word_keywords_shows_the_main_apps_reference_in_its_own_dialog(qapp):
+    dlg = word_keywords_dialog.WordKeywordsDialog(word_keywords_dialog.keywords_markdown())
     header, _, primaries = _frame(dlg)
     assert header.title.text() == "Word export keywords"
     assert [b.text() for b in primaries] == ["Close"]
-    assert "Template location" in dlg.page.toPlainText()
-
-    monkeypatch.setattr(word_keywords_dialog, "keywords_markdown", lambda: None)
-    word_keywords_dialog.show_word_keywords(None)
-    assert [t for t, _ in mbox.information] == ["Word Export Keywords"]
+    assert "Word Export Template Keywords" in dlg.page.toPlainText()
 
 
 def test_about_shows_the_studio_mark_its_name_and_version(qapp):

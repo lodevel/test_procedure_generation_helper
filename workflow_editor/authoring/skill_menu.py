@@ -101,11 +101,6 @@ def _open_authoring_guide(main_window) -> None:
 
 def _open_skills_folder(main_window) -> None:
     folder = locations.local_skills_dir()
-    if folder is None:
-        QMessageBox.information(
-            main_window, "Skills", "No local skills folder is available."
-        )
-        return
     folder.mkdir(parents=True, exist_ok=True)
     QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 

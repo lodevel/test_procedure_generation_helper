@@ -116,8 +116,8 @@ live in each *project's* venv and are invoked there by the subprocess runners
 python -m workflow_editor [options]
 ```
 
-Studio needs the host app installed: it wears Bench's theme (`test_procedure_gui.theme`).
-The consumed surface is Contract C (`../../docs/contract_c_editor_host_services.md`).
+Studio needs the host app installed (it wears Bench's theme, `test_procedure_gui.theme`); there
+is no degraded mode without it. The consumed surface is Contract C (`../../docs/contract_c_editor_host_services.md`).
 
 Command-line options (see `workflow_editor/__main__.py`):
 
@@ -282,6 +282,6 @@ package):
 
 - `../../docs/contract_a_gui_wheel_api.md` — Contract A: the GUI ↔ wheel `pack_parsers` façade
 - `../../docs/contract_b_bundle_engine_api.md` — Contract B: the bundle ↔ engine API
-- `../../docs/contract_c_editor_host_services.md` — Contract C: what this editor consumes from `project_services` + degraded mode
+- `../../docs/contract_c_editor_host_services.md` — Contract C: what this editor consumes from the host (`project_services`, Bench)
 - `../../docs/adr/0003-editor-installed-package.md` — why the editor is an installed (editable) package
 - `../../TODO.md` — current status / task tracker

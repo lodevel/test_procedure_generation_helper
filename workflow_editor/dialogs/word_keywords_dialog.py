@@ -1,39 +1,22 @@
 """Help → Word Export Keywords (board S12): the Word-export template variable reference.
 
 Single-sourced from the main app's canonical ``test_procedure_gui/help/word_export_keywords.md``
-(the editor exports the SAME report, so the variables are identical). Resolved via the
-installed package first, then the monorepo-relative path; bare-editor installs without the
-main app get a pointer instead of a stale duplicated copy.
+(the editor exports the SAME report, so the variables are identical).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
-from PySide6.QtWidgets import QDialog, QMessageBox, QPushButton
+from PySide6.QtWidgets import QDialog, QPushButton
 
 from project_services import ui_kit
+from test_procedure_gui import help as help_pkg
 
 
-def keywords_markdown() -> Optional[str]:
-    """The reference's Markdown, or None when the main app's copy is not found."""
-    md = None
-    try:
-        from test_procedure_gui import help as _help_pkg  # type: ignore
-        _p = Path(_help_pkg.__file__).parent / "word_export_keywords.md"
-        md = _p.read_text(encoding="utf-8") if _p.exists() else None
-    except Exception:
-        md = None
-    if md is None:
-        _p = (Path(__file__).resolve().parents[4]
-              / "src" / "test_procedure_gui" / "help"
-              / "word_export_keywords.md")
-        try:
-            md = _p.read_text(encoding="utf-8") if _p.exists() else None
-        except Exception:
-            md = None
-    return md
+def keywords_markdown() -> str:
+    """The reference's Markdown, from the main app's help folder."""
+    return (Path(help_pkg.__file__).parent / "word_export_keywords.md").read_text(encoding="utf-8")
 
 
 class WordKeywordsDialog(QDialog):
@@ -52,13 +35,5 @@ class WordKeywordsDialog(QDialog):
 
 
 def show_word_keywords(parent) -> None:
-    """Open the reference over *parent*, or say where it is when this install has none."""
-    md = keywords_markdown()
-    if md is None:
-        QMessageBox.information(
-            parent, "Word Export Keywords",
-            "The template-variable reference ships with the main "
-            "application: open it there via Help → Documentation (F1) "
-            "→ Word Export Keywords.")
-        return
-    WordKeywordsDialog(md, parent).exec()
+    """Open the reference over *parent*."""
+    WordKeywordsDialog(keywords_markdown(), parent).exec()

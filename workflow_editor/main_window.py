@@ -15,6 +15,14 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, Slot, QFileSystemWatcher, QTimer
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 
+from project_services import library_dialog
+from project_services.config_manager_dialog import ProjectConfigDialog, TemplateManagerDialog
+from project_services.install_helper_dialog import InstallPackageDialog
+from project_services.project_model import ProjectModel
+from project_services.report_export import create_default_sidecar, save_sidecar, sidecar_path_for
+from project_services.scenario_dialog import ScenarioManagerDialog
+from project_services.word_export_dialog import WordExportDialog
+
 from .core import (
     ArtifactManager, SessionState, ProjectManager, ArtifactType,
     CodeValidator
@@ -35,7 +43,7 @@ from .tabs import (
 )
 from .dock import DockWidget
 from .dialogs import SettingsDialog, load_settings
-from . import _host_services, menus, shell
+from . import menus, shell
 from .controllers import DocumentController, ProjectController, project_controller
 
 log = logging.getLogger(__name__)
@@ -647,10 +655,8 @@ class StudioWorkspace(QWidget):
                     return txt
         return None
 
-    @_host_services.requires_host
     def _on_install_package(self):
         """Packages -> Install Package: the shared project_services dialog."""
-        from project_services.install_helper_dialog import InstallPackageDialog
         InstallPackageDialog(self).exec()
 
     def _export_default_path(self, suffix: str) -> Path:
@@ -726,7 +732,6 @@ class StudioWorkspace(QWidget):
             return
         self.footer.show_message(f"Exported Markdown -> {path}", 5000)
 
-    @_host_services.requires_host
     def _on_export_word(self):
         """File -> Export -> Word: the FULL report (.docx) over the SELECTED tests
         (same engine as the main app), or a quick single-procedure dump when no
@@ -748,9 +753,6 @@ class StudioWorkspace(QWidget):
         if not selected:
             QMessageBox.information(self, "Export to Word", "No tests selected.")
             return
-        from project_services.report_export import (
-            create_default_sidecar, save_sidecar, sidecar_path_for)
-        from project_services.word_export_dialog import WordExportDialog
         from .core.full_report import (
             export_full_report, has_active_bundle, FullReportError)
 
@@ -1312,7 +1314,6 @@ class StudioWorkspace(QWidget):
 
         threading.Thread(target=_compact, daemon=True).start()
 
-    @_host_services.requires_host
     def _on_new_project(self):
         """Handle new project creation (body in controllers/project_controller.py)."""
         self._project_controller.on_new_project()
@@ -1426,7 +1427,6 @@ class StudioWorkspace(QWidget):
                 log.debug("post-settings validator UI refresh failed", exc_info=True)
             shell.refresh_footer(self)  # the validator's on/off and attempts
 
-    @_host_services.requires_host
     def _on_project_configuration(self):
         """Project -> Project Configuration: edit this project's config.json via the
         shared ProjectConfigDialog (the same dialog the main app uses).
@@ -1437,8 +1437,6 @@ class StudioWorkspace(QWidget):
                 self, "Project Configuration",
                 "Open or create a project first.")
             return
-        from project_services.config_manager_dialog import ProjectConfigDialog
-        from project_services.project_model import ProjectModel
         origin = ProjectModel.get_active_config_from_path(root)
         dlg = ProjectConfigDialog(self, project_path=root, project_config_origin=origin)
         dlg.exec()
@@ -1448,23 +1446,18 @@ class StudioWorkspace(QWidget):
         self._update_project_rules_indicators()
         self._handle_config_change()
 
-    @_host_services.requires_host
     def _on_template_manager(self):
         """Project -> Template Manager: manage saved customer-config templates via
         the shared TemplateManagerDialog.
         """
-        from project_services.config_manager_dialog import TemplateManagerDialog
-        from project_services.project_model import ProjectModel
         root = getattr(self.project_manager, "project_root", None)
         origin = ProjectModel.get_active_config_from_path(root) if root else None
         TemplateManagerDialog(self, project_path=root, project_config_origin=origin).exec()
 
-    @_host_services.requires_host
     def _on_bundle_library(self):
         """Packages -> Bundle Library: the host's Library window, on this PC. When a
         project is open, "Import into this project" targets it.
         """
-        from project_services import library_dialog
         root = getattr(self.project_manager, "project_root", None)
         library_dialog.open_library(self, side=library_dialog.LOCAL, project_path=root)
         # Library changes may alter which bundle resolves -> refresh gating.
@@ -1474,7 +1467,6 @@ class StudioWorkspace(QWidget):
         self._update_project_rules_indicators()
         self._handle_config_change()
 
-    @_host_services.requires_host
     def _on_scenarios(self):
         """Project -> Scenarios: author named test scenarios via the shared
         ScenarioManagerDialog. The author DEFINES scenarios here; the main app
@@ -1490,7 +1482,6 @@ class StudioWorkspace(QWidget):
             for i in self.project_manager.enumerate_test_folders()
             if i.has_json
         ]
-        from project_services.scenario_dialog import ScenarioManagerDialog
         ScenarioManagerDialog(self, project_root=root, candidates=candidates).exec()
 
     def _on_find(self):

@@ -14,11 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-try:  # host-app services — absent in a STANDALONE editor checkout
-    from project_services import pack_extractors, report_export
-except ImportError:  # degraded standalone mode: export raises FullReportError
-    pack_extractors = None  # type: ignore[assignment]
-    report_export = None  # type: ignore[assignment]
+from project_services import bundle_registry, pack_extractors, report_export
 
 from . import odb_inspect
 
@@ -31,11 +27,7 @@ def has_active_bundle(project_root) -> bool:
     """True when the project has an active bundle. Without one the pack extractors
     return empty, so the Word report would contain metadata only (no steps/expected)
     — the caller should warn before exporting."""
-    try:
-        from project_services import bundle_registry
-        return bundle_registry.read_active_bundle(Path(project_root)) is not None
-    except Exception:
-        return False
+    return bundle_registry.read_active_bundle(Path(project_root)) is not None
 
 
 def export_full_report(
@@ -58,10 +50,6 @@ def export_full_report(
     Returns the written path. Raises :class:`FullReportError` when nothing is
     exportable or no template is found.
     """
-    if pack_extractors is None or report_export is None:
-        raise FullReportError(
-            "Host services unavailable: full-report export needs the host "
-            "app's project_services package (standalone editor runs without it).")
     project_root = Path(project_root)
     procedures = []
     for folder in test_folders:
@@ -95,7 +83,6 @@ def _generate_images(project_root: Path, procedures: list, progress=None) -> Non
     via ``odb_inspect.render_target`` (cache-first; graceful no-op without ODB/CLI)
     so they embed in the report — the editor's equivalent of the main app's ODB
     pre-step. Reuses the shared ref collector so the ref shape can't drift."""
-    assert report_export is not None  # gated by export_full_report
     refs = report_export._collect_all_media_refs(procedures, project_root)
     total = len(refs)
     for i, ref in enumerate(refs, start=1):

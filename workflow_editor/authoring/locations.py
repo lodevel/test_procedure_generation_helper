@@ -14,13 +14,12 @@ empty one set of tiers.
 """
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import Optional
 
-from .skill import SkillSource
+from project_services import config_manager
 
-log = logging.getLogger(__name__)
+from .skill import SkillSource
 
 # packages/{builtin,local}/<subdir> — the consolidated app-level layout.
 _SKILLS_SUBDIR = "skills"
@@ -30,57 +29,29 @@ _PROJECT_SKILLS_SUBDIR = "authoring_skills"
 _PROJECT_WIZARDS_SUBDIR = "authoring_wizards"
 
 
-def _local_packages_dir() -> Optional[Path]:
-    """The gitignored drop-in root ``packages/local`` (None when project_services
-    can't be imported, e.g. the editor run fully standalone)."""
-    try:
-        from project_services.config_manager import get_local_packages_dir
-    except Exception:
-        log.debug("project_services.config_manager unavailable; no local packages dir")
-        return None
-    return get_local_packages_dir()
-
-
-def builtin_skills_dir() -> Optional[Path]:
+def builtin_skills_dir() -> Path:
     """``packages/builtin/skills`` — committed, ships with the app."""
-    try:
-        from project_services.config_manager import get_builtin_skills_dir
-    except Exception:
-        log.debug("project_services.config_manager unavailable; no builtin skills dir")
-        return None
-    return get_builtin_skills_dir()
+    return config_manager.get_builtin_skills_dir()
 
 
-def builtin_wizards_dir() -> Optional[Path]:
+def builtin_wizards_dir() -> Path:
     """``packages/builtin/wizards`` — committed, ships with the app."""
-    try:
-        from project_services.config_manager import get_builtin_wizards_dir
-    except Exception:
-        log.debug("project_services.config_manager unavailable; no builtin wizards dir")
-        return None
-    return get_builtin_wizards_dir()
+    return config_manager.get_builtin_wizards_dir()
 
 
-def builtin_tools_dir() -> Optional[Path]:
+def builtin_tools_dir() -> Path:
     """``packages/builtin/tools`` — shared author-tool servers (committed)."""
-    try:
-        from project_services.config_manager import get_builtin_tools_dir
-    except Exception:
-        log.debug("project_services.config_manager unavailable; no builtin tools dir")
-        return None
-    return get_builtin_tools_dir()
+    return config_manager.get_builtin_tools_dir()
 
 
-def local_skills_dir() -> Optional[Path]:
+def local_skills_dir() -> Path:
     """``packages/local/skills`` — gitignored drop-in (all projects on this install)."""
-    base = _local_packages_dir()
-    return base / _SKILLS_SUBDIR if base else None
+    return config_manager.get_local_packages_dir() / _SKILLS_SUBDIR
 
 
-def local_wizards_dir() -> Optional[Path]:
+def local_wizards_dir() -> Path:
     """``packages/local/wizards`` — gitignored drop-in."""
-    base = _local_packages_dir()
-    return base / _WIZARDS_SUBDIR if base else None
+    return config_manager.get_local_packages_dir() / _WIZARDS_SUBDIR
 
 
 def project_skills_dir(project_root: Optional[Path]) -> Optional[Path]:

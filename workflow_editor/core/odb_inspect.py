@@ -276,7 +276,7 @@ def render_target(project_root: Optional[Path], refdes: str,
         return (None, None)
     p = load_render_params(project_root)
     cache = _project_local_state.media_cache(project_root)
-    if cache is None:  # no host, or no project_id: nothing to render into
+    if cache is None:  # no project_id: nothing to render into
         return (None, None)
     target = f"{refdes}:{pad}" if pad else refdes
 

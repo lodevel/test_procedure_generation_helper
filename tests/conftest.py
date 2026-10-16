@@ -51,7 +51,8 @@ def pytest_configure(config):
 @pytest.fixture(autouse=True)
 def _per_user_sandbox(monkeypatch, tmp_path):  # a name no test module reuses
     """The per-user folders, QSettings and environment are this test's — the host's one
-    sandbox (``project_services.testing``); none in a standalone checkout with no host."""
+    sandbox (``project_services.testing``); none without the host, where this repo's CI
+    runs its host-free gate (``tests/test_size_budgets.py``)."""
     try:
         from project_services.testing import sandbox
     except ModuleNotFoundError as exc:

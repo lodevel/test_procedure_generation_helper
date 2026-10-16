@@ -16,7 +16,7 @@ itself. Drop a folder, open the **Skills** menu, and it is there.
    folder…** to open it, or see [Locations](#locations--precedence)):
 
    ```text
-   local_packages/authoring_skills/my_first_skill/SKILL.md
+   packages/local/skills/my_first_skill/SKILL.md
    ```
 
 2. Put a minimal `SKILL.md` in it:
@@ -82,7 +82,7 @@ pipeline and equipment editor handle binding later.
 ## Worked example — `rail_check`
 
 The shipped example lives at
-`local_packages/authoring_skills/rail_check/SKILL.md`:
+`packages/builtin/skills/rail_check/SKILL.md`:
 
 ```markdown
 ---
@@ -136,8 +136,8 @@ across three tiers:
 
 | Tier | Path | Scope |
 |---|---|---|
-| **Built-in library** | `<repo>/authoring_skills/<skill>/SKILL.md` | Curated skills **committed** with the software — shipped to everyone, available out of the box. (Wizards live in the parallel `<repo>/authoring_wizards/`.) |
-| **Local drop-in** | `<repo>/local_packages/authoring_skills/<skill>/SKILL.md` | Hand-authored; available in every project on this install. The `local_packages` folder is **gitignored** (not committed) — same place local pack sources go, under an identifying `authoring_skills/` subfolder. **Skills → Open skills folder…** opens this. |
+| **Built-in library** | `<repo>/packages/builtin/skills/<skill>/SKILL.md` | Curated skills **committed** with the software — shipped to everyone, available out of the box. (Wizards live in the parallel `<repo>/packages/builtin/wizards/`.) |
+| **Local drop-in** | `<repo>/packages/local/skills/<skill>/SKILL.md` | Hand-authored; available in every project on this install. The `packages/local` folder is **gitignored** (not committed) — same place local pack sources go, under its `skills/` subfolder. **Skills → Open skills folder…** opens this. |
 | **Project drop-in** | `<project>/authoring_skills/<skill>/` | One project only. |
 | **Bundled** | `<project>/bundle/authoring_skills/<skill>/` | Ships inside a built bundle, versioned. Populated by the bundle build — not by hand. |
 
@@ -148,7 +148,7 @@ When two skills share the same folder name, **project > local > bundled > built-
 A skill is plain files, so "bundling" is a folder copy — not a wheel. A pack
 ships an `authoring_skills/` subdir; when a bundle is built, each skill folder is
 copied into `<project>/bundle/authoring_skills/`. The mechanism is
-`project_services.bundle_generator.copy_pack_skills` /
+`procedo.core.bundle_generator.copy_pack_skills` /
 `bundle_skills_for_registry`, invoked by the Bundle Generator.
 
 Hand drop-in (the local and project tiers) needs no build at all — just place the

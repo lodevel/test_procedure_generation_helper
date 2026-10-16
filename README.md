@@ -70,13 +70,14 @@ test_procedure_generation_helper/
     │   ├── backend_factory.py     # Per-tab backend instances (BackendConfig)
     │   ├── opencode_backend.py    # OpenCode (WSL server) backend
     │   ├── external_api_backend.py# OpenAI-compatible HTTP backend
-    │   ├── pack_parsers.py        # Façade: parse/codegen/validate in project venv
-    │   ├── _pack_parsers_subprocess.py   # Parser runner (imports the wheel only)
     │   ├── _execute_op_subprocess.py     # Per-op execution daemon (imports drivers)
     │   ├── prompt_builder.py / reconstruction.py / response_parser.py
     │   ├── section_ownership.py / output_contracts.py / validator_dispatch.py
     │   ├── server_manager.py      # OpenCode server lifecycle
     │   └── worker.py              # Async LLM worker thread
+    ├── pack_ops/                  # The bridge into the project venv
+    │   ├── pack_parsers.py        # Façade: parse/codegen/validate in project venv
+    │   └── _pack_parsers_subprocess.py   # Parser runner (imports the wheel only)
     ├── tabs/                      # Tab widgets
     │   ├── text_only_tab.py       # "Text" tab
     │   ├── text_json_tab.py       # "Text-JSON" tab

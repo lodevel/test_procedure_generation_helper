@@ -118,6 +118,12 @@ def main() -> int:
     log.info("=" * 50)
     log.info("Procedo Studio starting")
     log.debug(f"CLI args: {args}")
+
+    # One-shot, before anything reads a setting: the old names' data to Procedo. Bench runs
+    # the same at its start; whichever starts first migrates, the markers make the other a no-op.
+    from project_services import app_identity, app_identity_migration
+
+    app_identity_migration.migrate()
     
     # Validate arguments
     if args.test_dir and args.test_name:
@@ -129,7 +135,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("Procedo Studio")
     app.setApplicationVersion("0.1.0")
-    app.setOrganizationName("TestProcedureHelper")
+    app.setOrganizationName(app_identity.SETTINGS_ORGANIZATION)
     log.debug("QApplication created")
     
     # Enable high DPI scaling

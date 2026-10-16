@@ -49,33 +49,17 @@ def pytest_configure(config):
 
 
 @pytest.fixture(autouse=True)
-def _isolate_project_local_state(monkeypatch, tmp_path):
-    """No editor test may build a venv or a media cache in the REAL per-user app-data
-    root. The bridge (``workflow_editor._project_local_state``) asks the HOST seam
-    where machine-local project state lives, and the host CREATES the folder as it
-    resolves it, so the first editor test that gives a project a ``project_id``
-    would otherwise land one in ``%LOCALAPPDATA%``. Mirrors the host suite's own
-    autouse sandbox; a no-op in a standalone checkout with no host on sys.path.
-    """
+def _per_user_sandbox(monkeypatch, tmp_path):  # a name no test module reuses
+    """The per-user folders, QSettings and environment are this test's — the host's one
+    sandbox (``project_services.testing``); none in a standalone checkout with no host."""
     try:
-        from project_services import project_local_state, venv_pool
-    except ImportError:
+        from project_services.testing import sandbox
+    except ModuleNotFoundError as exc:
+        if exc.name != "project_services":  # a broken sandbox must stop the run, not skip it
+            raise
         yield
         return
-    root = tmp_path / "_local_state"
-    monkeypatch.setattr(project_local_state, "local_root", lambda: root)
-    # The shared Python environments hang BESIDE that root, one per bundle rather
-    # than one per project, so they need sandboxing in their own right: an editor
-    # test resolving a project's venv must not read — or have the pool's limit
-    # delete — an environment a bench on this machine is running on.
-    monkeypatch.setattr(project_local_state, "venvs_root", lambda: tmp_path / "_venvs")
-    # Both seams memoize for the life of the PROCESS, so one test's answers would
-    # otherwise be served to the next under a stale root.
-    project_local_state.forget_resolved()
-    venv_pool.forget_key_cache()
-    yield
-    project_local_state.forget_resolved()
-    venv_pool.forget_key_cache()
+    yield from sandbox(monkeypatch, tmp_path)
 
 @pytest.fixture
 def sample_llm_request_minimal():

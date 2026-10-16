@@ -163,7 +163,8 @@ Project-specific parsing/validation then runs in the project's own venv via
 
 ## LLM backend configuration
 
-Settings are stored in `~/.workflow_editor/settings.json` and edited in the
+Settings are stored in `%APPDATA%\Procedo\studio\settings.json` (copied once from the old
+`~/.workflow_editor` folder, which is kept) and edited in the
 in-app **Settings** dialog (`workflow_editor/dialogs/settings_dialog.py`). The
 `llm_backend` key selects one of `opencode`, `external_api`, or `none`.
 

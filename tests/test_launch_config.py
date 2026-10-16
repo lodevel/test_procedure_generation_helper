@@ -12,7 +12,7 @@ Verifies the master = providers-only blueprint + derived opencode.json with the
   scripts via __file__, documents/rules/tgz under project_root).
 
 The config dir is redirected to a tmp dir via monkeypatching so the test never
-touches the user's real ~/.workflow_editor tree.
+touches the user's real settings folder.
 """
 import json
 import sys

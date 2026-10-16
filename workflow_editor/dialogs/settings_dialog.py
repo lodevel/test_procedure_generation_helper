@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QFont
+from project_services import app_identity
 
 from .. import theme
 from ..core.task_config import TaskConfig, TaskConfigManager, ChatConfig
@@ -30,11 +31,10 @@ log = logging.getLogger(__name__)
 
 
 def get_settings_path() -> Path:
-    """Get the settings file path."""
-    # Use user's home directory
-    home = Path.home()
-    settings_dir = home / ".workflow_editor"
-    settings_dir.mkdir(exist_ok=True)
+    """Get the settings file path: in Procedo Studio's settings folder, the only place Studio
+    names it (tests/test_studio_settings_dir.py)."""
+    settings_dir = app_identity.studio_settings_dir()
+    settings_dir.mkdir(parents=True, exist_ok=True)
     return settings_dir / "settings.json"
 
 

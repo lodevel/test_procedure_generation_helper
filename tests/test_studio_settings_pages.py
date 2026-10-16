@@ -20,10 +20,10 @@ from PySide6.QtWidgets import (
 )
 
 from procedo.core import ui_kit
-from workflow_editor.core.odb_inspect import load_hide_prefixes
-from workflow_editor.dialogs import settings_dialog
-from workflow_editor.dialogs.settings_dialog import SettingsDialog, load_settings, save_settings
-from workflow_editor.llm import validator_loop_settings
+from procedo.studio.core.odb_inspect import load_hide_prefixes
+from procedo.studio.dialogs import settings_dialog
+from procedo.studio.dialogs.settings_dialog import SettingsDialog, load_settings, save_settings
+from procedo.studio.llm import validator_loop_settings
 
 from .test_main_window_characterization import qapp as qapp
 

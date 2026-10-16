@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from workflow_editor.llm.context_usage import (
+from procedo.studio.llm.context_usage import (
     DEFAULT_COLOUR,
     THRESHOLD_COLOURS,
     format_context_usage,

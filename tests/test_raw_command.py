@@ -25,7 +25,7 @@ except Exception:  # noqa: BLE001 — WSL/dev box without the wheel
     _HAVE_REG = False
 
 _RUNNER = (Path(__file__).resolve().parent.parent
-           / "workflow_editor" / "llm" / "_execute_op_subprocess.py")
+           / "procedo" / "studio" / "llm" / "_execute_op_subprocess.py")
 _spec = importlib.util.spec_from_file_location("_exec_op_runner_raw", _RUNNER)
 er = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(er)

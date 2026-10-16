@@ -1,6 +1,6 @@
 """Editor full-report export reuses the shared procedo.core engine.
 
-Renders a real .docx from a selected test folder via workflow_editor.core.full_report
+Renders a real .docx from a selected test folder via procedo.studio.core.full_report
 -> procedo.core.report_export, with NO bundle (extraction returns empty, the doc
 still renders the metadata). Proves the cross-tree shared-export plumbing.
 """
@@ -13,12 +13,12 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 _REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO / "src"))                                  # procedo.core
-sys.path.insert(0, str(_REPO / "external" / "test_procedure_generation_helper"))  # workflow_editor
+sys.path.insert(0, str(_REPO / "external" / "test_procedure_generation_helper"))  # procedo.studio
 
 
 def test_export_full_report_renders_docx(tmp_path):
     from docx import Document
-    from workflow_editor.core import full_report
+    from procedo.studio.core import full_report
     from procedo.core import report_export
 
     # A template with Jinja placeholders the shared context fills.
@@ -48,7 +48,7 @@ def test_export_full_report_renders_docx(tmp_path):
 
 
 def test_export_full_report_no_tests_raises(tmp_path):
-    from workflow_editor.core import full_report
+    from procedo.studio.core import full_report
     empty = tmp_path / "empty"
     empty.mkdir()
     try:
@@ -63,7 +63,7 @@ def test_export_full_report_no_tests_raises(tmp_path):
 def test_board_images_are_generated_only_when_the_sidecar_includes_them(
         tmp_path, monkeypatch, include):
     from docx import Document
-    from workflow_editor.core import full_report
+    from procedo.studio.core import full_report
     from procedo.core import report_export
 
     tpl = tmp_path / "tpl.docx"

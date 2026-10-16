@@ -14,7 +14,7 @@ import pytest
 from tests.test_pdf_text import make_pdf
 
 # The server module file, found via the installed package (path-independent).
-import workflow_editor.authoring._pdf_tool_mcp as _mcp_mod
+import procedo.studio.authoring._pdf_tool_mcp as _mcp_mod
 
 SERVER_PATH = os.path.abspath(_mcp_mod.__file__)
 
@@ -181,7 +181,7 @@ def test_save_pdf_advertised(server):
 
 
 def test_safe_pdf_name_sandbox():
-    from workflow_editor.authoring import _pdf_tool_mcp as m
+    from procedo.studio.authoring import _pdf_tool_mcp as m
     assert m._safe_pdf_name("../../etc/passwd") == "passwd.pdf"
     assert m._safe_pdf_name("a/b\\c") == "c.pdf"            # basename only -> no traversal
     assert m._safe_pdf_name("LT8609AJDDM#TRPBF") == "LT8609AJDDM_TRPBF.pdf"
@@ -192,7 +192,7 @@ def test_safe_pdf_name_sandbox():
 
 def test_save_pdf_caches_and_guards(monkeypatch, tmp_path):
     from pathlib import Path
-    from workflow_editor.authoring import _pdf_tool_mcp as m
+    from procedo.studio.authoring import _pdf_tool_mcp as m
 
     def fake_fetch(url, *, save_to=None, **k):
         if save_to is not None:

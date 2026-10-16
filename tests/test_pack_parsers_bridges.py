@@ -1,5 +1,5 @@
 """Unit tests for the in-process ``get_section_ownership`` / ``reconstruct_text``
-bridges in ``workflow_editor.pack_ops.pack_parsers``.
+bridges in ``procedo.studio.pack_ops.pack_parsers``.
 
 Only the ``project_root=None`` (in-process import) path is exercised here; the
 subprocess path needs a project venv, which is out of scope for these tests.
@@ -20,8 +20,8 @@ from tests._qt_stub import ensure_workflow_editor_importable
 
 ensure_workflow_editor_importable()
 
-from workflow_editor.pack_ops import pack_parsers as pp  # noqa: E402
-from workflow_editor.pack_ops import _pack_parsers_subprocess as worker  # noqa: E402
+from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
+from procedo.studio.pack_ops import _pack_parsers_subprocess as worker  # noqa: E402
 
 from tests import _env
 

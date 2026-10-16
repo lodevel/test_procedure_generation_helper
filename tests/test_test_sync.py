@@ -3,7 +3,7 @@ test that is not open, on the same session file and hashes as an open test."""
 
 import json
 
-from workflow_editor.core import test_sync
+from procedo.studio.core import test_sync
 
 TEXT = "# Foo\n\n## Steps\n1. do x\n"
 JSON = json.dumps({"id": "Foo", "steps": []}, indent=2)

@@ -12,14 +12,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from workflow_editor.core.proposal import (
+from procedo.studio.core.proposal import (
     APPLIED, DISCARDED, PENDING, REJECTED, FileChange, FileText, Proposal, discard_pending,
 )
-from workflow_editor.dialogs.diff_viewer import DiffViewer
-from workflow_editor.dock.chat_messages import CLOSED, ProposalCard, ProposalMessage
-from workflow_editor.llm import LLMTask
-import workflow_editor.tabs.llm_tab_mixin as llm_tab_mixin
-import workflow_editor.tabs.text_actions as text_actions
+from procedo.studio.dialogs.diff_viewer import DiffViewer
+from procedo.studio.dock.chat_messages import CLOSED, ProposalCard, ProposalMessage
+from procedo.studio.llm import LLMTask
+import procedo.studio.tabs.llm_tab_mixin as llm_tab_mixin
+import procedo.studio.tabs.text_actions as text_actions
 
 from .test_main_window_characterization import (
     _make_project, _open_project, make_window as make_window, mbox as mbox, qapp as qapp,
@@ -315,7 +315,7 @@ def test_opening_another_test_discards_the_waiting_cards(opened):
 
 
 def test_a_quick_parse_result_waits_as_a_card_unless_the_json_is_empty(opened, monkeypatch):
-    from workflow_editor.pack_ops import pack_parsers
+    from procedo.studio.pack_ops import pack_parsers
     w = opened
     view = w.text_json_tab
     _show(w, view)
@@ -419,7 +419,7 @@ def test_a_late_reply_is_dropped_whole_before_anything_reads_it(opened, monkeypa
 def generated(opened, monkeypatch):
     """Parse + Generate run on t1 (whose procedure.json and test.py already hold content): its
     card waits in the Text view."""
-    from workflow_editor.pack_ops import pack_parsers
+    from procedo.studio.pack_ops import pack_parsers
     w = opened
     monkeypatch.setattr(pack_parsers, "parse_text",
                         lambda text, project_root=None: ({"id": "t1", "steps": [{"n": 1}]}, []))
@@ -475,7 +475,7 @@ def _json_editors(w):
 def _fails_after_the_json(w, read_only):
     """Accept the Parse + Generate card with test.py read-only: procedure.json is written,
     test.py is not — and every editor shows what is on disk."""
-    from workflow_editor.core import ArtifactType
+    from procedo.studio.core import ArtifactType
     card = w.card
     read_only(w.t1 / "test.py")
     card.accept_button.click()
@@ -538,7 +538,7 @@ def test_an_accept_whose_text_save_fails_writes_nothing(generated, read_only, mb
 def test_a_request_that_failed_early_leaves_no_test_behind(opened, monkeypatch):
     """A request on t1 that fails after its run started (its prompt cannot be built) must not
     make the next request — on t2 — inherit t1: t2's reply is t2's."""
-    from workflow_editor.core.proposal import current_test
+    from procedo.studio.core.proposal import current_test
     w = opened
     view = w.text_only_tab
     monkeypatch.setattr(llm_tab_mixin, "LLMWorker", _Asked)

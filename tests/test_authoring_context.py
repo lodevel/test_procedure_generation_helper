@@ -2,7 +2,7 @@
 
 Pure-Python: tmp_path + fakes only — no Qt, no managers, no ODB CLI.
 """
-from workflow_editor.authoring import (
+from procedo.studio.authoring import (
     ArtifactProvider,
     ArtifactsSource,
     ContextBundle,

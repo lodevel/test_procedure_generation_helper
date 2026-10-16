@@ -6,11 +6,11 @@ from unittest.mock import Mock
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from workflow_editor.core.artifact_manager import ArtifactManager
-from workflow_editor.core.project_manager import ProjectManager
-from workflow_editor.core.task_config import TaskConfigManager
-from workflow_editor.dock.chat_panel import ChatPanel
-from workflow_editor.llm import LLMTask, OpenCodeBackend, OpenCodeConfig, TabContext
+from procedo.studio.core.artifact_manager import ArtifactManager
+from procedo.studio.core.project_manager import ProjectManager
+from procedo.studio.core.task_config import TaskConfigManager
+from procedo.studio.dock.chat_panel import ChatPanel
+from procedo.studio.llm import LLMTask, OpenCodeBackend, OpenCodeConfig, TabContext
 
 
 @pytest.fixture
@@ -39,7 +39,7 @@ def request_body(context):
 
 
 def test_checkbox_gates_actual_request_without_loading_board(panel, tmp_path, monkeypatch):
-    from workflow_editor.core import odb_inspect
+    from procedo.studio.core import odb_inspect
 
     def forbidden(*args, **kwargs):
         pytest.fail("Enabling or building a request must not parse the board")
@@ -109,7 +109,7 @@ def test_revision_changes_without_eager_payload_and_reset_allows_refetch(panel, 
 
 
 def test_no_board_is_optional_and_configured_archive_is_shared(panel, tmp_path, monkeypatch):
-    from workflow_editor.dialogs import settings_dialog
+    from procedo.studio.dialogs import settings_dialog
 
     context = make_context(tmp_path)
     panel.switch_context(context)
@@ -135,14 +135,14 @@ def test_no_board_is_optional_and_configured_archive_is_shared(panel, tmp_path, 
     panel.switch_context(context)
     assert panel.board_data_checkbox.isEnabled()
     panel.board_data_checkbox.click()
-    from workflow_editor.authoring.netlist_text import board_revision
+    from procedo.studio.authoring.netlist_text import board_revision
     assert board_revision(configured) in request_body(context)[1]["system"]
 
 
 @pytest.mark.parametrize("configured_limit", [1024, 2 * 1024 * 1024])
 def test_launch_transport_preserves_complete_admitted_board(tmp_path, monkeypatch, configured_limit):
-    from workflow_editor.authoring.netlist_text import BOARD_CONTEXT_MAX_BYTES
-    from workflow_editor.dialogs import settings_dialog as settings
+    from procedo.studio.authoring.netlist_text import BOARD_CONTEXT_MAX_BYTES
+    from procedo.studio.dialogs import settings_dialog as settings
 
     master = tmp_path / "master.json"
     master.write_text(json.dumps({

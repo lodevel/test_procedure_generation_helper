@@ -1,4 +1,4 @@
-"""Unit tests for ``workflow_editor.llm.reconstruction.pipeline_ownership``.
+"""Unit tests for ``procedo.studio.llm.reconstruction.pipeline_ownership``.
 
 This is the single resolver both the prompt emit-list and reconstruction derive
 from: the bundle's declared ``section_ownership()`` map (via
@@ -25,15 +25,15 @@ from tests._qt_stub import ensure_workflow_editor_importable
 
 ensure_workflow_editor_importable()
 
-from workflow_editor.pack_ops import pack_parsers  # noqa: E402
-from workflow_editor.llm.reconstruction import pipeline_ownership  # noqa: E402
+from procedo.studio.pack_ops import pack_parsers  # noqa: E402
+from procedo.studio.llm.reconstruction import pipeline_ownership  # noqa: E402
 
 from tests import _env
 
 _skip_no_wheel = pytest.mark.skipif(
     not _env.rules_packager_available(), reason=_env.WHEEL_SKIP_REASON
 )
-from workflow_editor.llm.section_ownership import (  # noqa: E402
+from procedo.studio.llm.section_ownership import (  # noqa: E402
     CANONICAL_SECTIONS,
     DEFAULT_OWNERSHIP,
     SectionOwnership,

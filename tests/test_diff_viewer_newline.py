@@ -5,7 +5,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from workflow_editor.dialogs import DiffViewer  # noqa: E402
+from procedo.studio.dialogs import DiffViewer  # noqa: E402
 
 
 def test_only_the_changed_line_shows_against_a_stripped_original():
@@ -18,5 +18,5 @@ def test_only_the_changed_line_shows_against_a_stripped_original():
 
 
 def test_identical_lines_need_no_review():
-    from workflow_editor.core.proposal import FileChange
+    from procedo.studio.core.proposal import FileChange
     assert FileChange("test.py", lambda: "x\nmain()", "x\nmain()\n").lines == []

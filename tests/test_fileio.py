@@ -4,8 +4,8 @@ import os
 
 import pytest
 
-from workflow_editor.core import fileio
-from workflow_editor.core.fileio import atomic_write_text
+from procedo.studio.core import fileio
+from procedo.studio.core.fileio import atomic_write_text
 
 
 def test_replaces_an_existing_file_through_os_replace(tmp_path, monkeypatch):
@@ -85,7 +85,7 @@ def test_task_config_writes_readable_indented_json(tmp_path):
     """The workflows config keeps its format: indented, µ/Ω as characters."""
     import json
 
-    from workflow_editor.core.task_config import TaskConfig, TaskConfigManager
+    from procedo.studio.core.task_config import TaskConfig, TaskConfigManager
 
     config_path = tmp_path / "tab_contexts.json"
     manager = TaskConfigManager(config_path)

@@ -2,7 +2,7 @@
 the uncached delta — else a big cached context reads tiny — and prefer
 OpenCode's own ``info.tokens.total`` when it's larger.
 """
-from workflow_editor.llm.backend_base import NoneBackend
+from procedo.studio.llm.backend_base import NoneBackend
 
 
 def _extract(data):

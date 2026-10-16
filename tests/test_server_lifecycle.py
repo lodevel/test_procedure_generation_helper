@@ -16,9 +16,9 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from workflow_editor.llm.opencode_backend import OpenCodeConfig
-from workflow_editor.llm.server_health import find_free_port
-from workflow_editor.llm.server_manager import OpenCodeServerManager, PidIdentity
+from procedo.studio.llm.opencode_backend import OpenCodeConfig
+from procedo.studio.llm.server_health import find_free_port
+from procedo.studio.llm.server_manager import OpenCodeServerManager, PidIdentity
 
 
 def _proc_probe_stdout(*, alive=True, cmdline=None, environ=None):
@@ -144,8 +144,8 @@ def test_sweep_orphan_kills_our_opencode_pid(tmp_path):
     # Identity is OURS on the first check and STILL ours on the post-TERM
     # re-check → graceful TERM, then escalate to KILL -9.
     with patch.object(mgr, "_pid_is_our_opencode", return_value=PidIdentity.OURS), \
-         patch("workflow_editor.llm.server_manager.time.sleep"), \
-         patch("workflow_editor.llm.server_manager.subprocess.run", side_effect=fake_run):
+         patch("procedo.studio.llm.server_manager.time.sleep"), \
+         patch("procedo.studio.llm.server_manager.subprocess.run", side_effect=fake_run):
         mgr._sweep_orphan()
 
     flat = [" ".join(c) for c in calls]
@@ -163,7 +163,7 @@ def test_sweep_orphan_spares_non_opencode_pid(tmp_path):
     mgr._write_pid_file(1234, 5005)
 
     with patch.object(mgr, "_pid_is_our_opencode", return_value=PidIdentity.NOT_OURS), \
-         patch("workflow_editor.llm.server_manager.subprocess.run") as run:
+         patch("procedo.studio.llm.server_manager.subprocess.run") as run:
         mgr._sweep_orphan()
         run.assert_not_called()
     assert not (tmp_path / "opencode.pid").exists()
@@ -171,7 +171,7 @@ def test_sweep_orphan_spares_non_opencode_pid(tmp_path):
 
 def test_sweep_orphan_noop_without_pid_file(tmp_path):
     mgr = _mgr(tmp_path)
-    with patch("workflow_editor.llm.server_manager.subprocess.run") as run:
+    with patch("procedo.studio.llm.server_manager.subprocess.run") as run:
         mgr._sweep_orphan()  # no pid file at all
         run.assert_not_called()
 
@@ -188,7 +188,7 @@ def test_pid_is_our_opencode_ours_on_environ_config_match(tmp_path):
         cmdline=["opencode", "serve", "--port", "5005", "--hostname", "127.0.0.1"],
         environ=[f"OPENCODE_CONFIG={our_cfg}", "PATH=/usr/bin"],
     )
-    with patch("workflow_editor.llm.server_manager.subprocess.run", return_value=result):
+    with patch("procedo.studio.llm.server_manager.subprocess.run", return_value=result):
         assert mgr._pid_is_our_opencode(4242) is PidIdentity.OURS
 
 
@@ -202,7 +202,7 @@ def test_pid_is_our_opencode_ours_on_argv_config_match(tmp_path):
         cmdline=["/usr/bin/opencode", "serve", "--config", our_cfg, "--port", "5005"],
         environ=["PATH=/usr/bin"],
     )
-    with patch("workflow_editor.llm.server_manager.subprocess.run", return_value=result):
+    with patch("procedo.studio.llm.server_manager.subprocess.run", return_value=result):
         assert mgr._pid_is_our_opencode(4242) is PidIdentity.OURS
 
 
@@ -212,7 +212,7 @@ def test_pid_is_our_opencode_not_ours_when_pid_dead(tmp_path):
     result = MagicMock()
     result.returncode = 0
     result.stdout = _proc_probe_stdout(alive=False)
-    with patch("workflow_editor.llm.server_manager.subprocess.run", return_value=result):
+    with patch("procedo.studio.llm.server_manager.subprocess.run", return_value=result):
         assert mgr._pid_is_our_opencode(4242) is PidIdentity.NOT_OURS
 
 
@@ -224,7 +224,7 @@ def test_pid_is_our_opencode_not_ours_for_other_process(tmp_path):
         cmdline=["/usr/bin/python3", "some_other_server.py"],
         environ=["PATH=/usr/bin"],
     )
-    with patch("workflow_editor.llm.server_manager.subprocess.run", return_value=result):
+    with patch("procedo.studio.llm.server_manager.subprocess.run", return_value=result):
         assert mgr._pid_is_our_opencode(4242) is PidIdentity.NOT_OURS
 
 
@@ -239,7 +239,7 @@ def test_pid_is_our_opencode_not_ours_for_users_own_opencode(tmp_path):
         cmdline=["opencode", "serve", "--port", "9000", "--hostname", "127.0.0.1"],
         environ=["OPENCODE_CONFIG=/home/someone/.config/opencode/opencode.json"],
     )
-    with patch("workflow_editor.llm.server_manager.subprocess.run", return_value=result):
+    with patch("procedo.studio.llm.server_manager.subprocess.run", return_value=result):
         assert mgr._pid_is_our_opencode(4242) is PidIdentity.NOT_OURS
 
 
@@ -256,7 +256,7 @@ def test_pid_is_our_opencode_not_ours_for_backup_config_substring(tmp_path):
         cmdline=["opencode", "serve", "--port", "5005"],
         environ=[f"OPENCODE_CONFIG={our_cfg}.backup"],
     )
-    with patch("workflow_editor.llm.server_manager.subprocess.run", return_value=result):
+    with patch("procedo.studio.llm.server_manager.subprocess.run", return_value=result):
         assert mgr._pid_is_our_opencode(4242) is PidIdentity.NOT_OURS
 
 
@@ -265,7 +265,7 @@ def test_pid_is_our_opencode_unknown_on_read_timeout(tmp_path):
     # NOT_OURS (MAJOR-1). The TimeoutExpired path.
     mgr = _mgr(tmp_path)
     import subprocess as _sp
-    with patch("workflow_editor.llm.server_manager.subprocess.run",
+    with patch("procedo.studio.llm.server_manager.subprocess.run",
                side_effect=_sp.TimeoutExpired(cmd="wsl", timeout=3)):
         assert mgr._pid_is_our_opencode(4242) is PidIdentity.UNKNOWN
 
@@ -277,7 +277,7 @@ def test_pid_is_our_opencode_unknown_when_no_marker(tmp_path):
     result = MagicMock()
     result.returncode = 0
     result.stdout = "some unrelated noise without any marker"
-    with patch("workflow_editor.llm.server_manager.subprocess.run", return_value=result):
+    with patch("procedo.studio.llm.server_manager.subprocess.run", return_value=result):
         assert mgr._pid_is_our_opencode(4242) is PidIdentity.UNKNOWN
 
 
@@ -292,7 +292,7 @@ def test_pid_is_our_opencode_falls_back_to_serve_without_launch_dir():
         cmdline=["opencode", "serve", "--port", "5005", "--hostname", "127.0.0.1"],
         environ=["PATH=/usr/bin"],
     )
-    with patch("workflow_editor.llm.server_manager.subprocess.run", return_value=result):
+    with patch("procedo.studio.llm.server_manager.subprocess.run", return_value=result):
         assert mgr._pid_is_our_opencode(4242) is PidIdentity.OURS
 
 
@@ -303,7 +303,7 @@ def test_sweep_orphan_keeps_pid_file_on_unknown(tmp_path):
     mgr = _mgr(tmp_path)
     mgr._write_pid_file(4321, 5005)
     with patch.object(mgr, "_pid_is_our_opencode", return_value=PidIdentity.UNKNOWN), \
-         patch("workflow_editor.llm.server_manager.subprocess.run") as run:
+         patch("procedo.studio.llm.server_manager.subprocess.run") as run:
         mgr._sweep_orphan()
         run.assert_not_called()
     # Pid file SURVIVES the inconclusive sweep.
@@ -326,8 +326,8 @@ def test_sweep_orphan_skips_kill9_when_recheck_not_ours(tmp_path):
 
     with patch.object(mgr, "_pid_is_our_opencode",
                       side_effect=[PidIdentity.OURS, PidIdentity.NOT_OURS]), \
-         patch("workflow_editor.llm.server_manager.time.sleep"), \
-         patch("workflow_editor.llm.server_manager.subprocess.run", side_effect=fake_run):
+         patch("procedo.studio.llm.server_manager.time.sleep"), \
+         patch("procedo.studio.llm.server_manager.subprocess.run", side_effect=fake_run):
         mgr._sweep_orphan()
 
     # The graceful TERM ran; the -9 did NOT.
@@ -354,8 +354,8 @@ def test_sweep_orphan_keeps_pid_file_when_recheck_unknown(tmp_path):
 
     with patch.object(mgr, "_pid_is_our_opencode",
                       side_effect=[PidIdentity.OURS, PidIdentity.UNKNOWN]), \
-         patch("workflow_editor.llm.server_manager.time.sleep"), \
-         patch("workflow_editor.llm.server_manager.subprocess.run", side_effect=fake_run):
+         patch("procedo.studio.llm.server_manager.time.sleep"), \
+         patch("procedo.studio.llm.server_manager.subprocess.run", side_effect=fake_run):
         mgr._sweep_orphan()
 
     # TERM ran; -9 did NOT (inconclusive re-check).
@@ -374,7 +374,7 @@ def test_is_available_is_install_check_only(tmp_path):
     healthy = MagicMock()
     healthy.ok = True
     with patch.object(mgr, "_diagnose_installation", return_value=healthy) as diag, \
-         patch("workflow_editor.llm.server_manager.requests.get") as get:
+         patch("procedo.studio.llm.server_manager.requests.get") as get:
         assert mgr.is_available() is True
         diag.assert_called_once()
         # No HTTP server probe — install check only.
@@ -430,9 +430,9 @@ def test_is_alive_requires_process_and_health(tmp_path):
     mgr._server_process = _live_proc()
     ok = MagicMock(); ok.status_code = 200
     bad = MagicMock(); bad.status_code = 500
-    with patch("workflow_editor.llm.server_manager.requests.get", return_value=ok):
+    with patch("procedo.studio.llm.server_manager.requests.get", return_value=ok):
         assert mgr.is_alive is True
-    with patch("workflow_editor.llm.server_manager.requests.get", return_value=bad):
+    with patch("procedo.studio.llm.server_manager.requests.get", return_value=bad):
         assert mgr.is_alive is False
 
 
@@ -441,7 +441,7 @@ def test_is_alive_false_when_process_dead_without_http(tmp_path):
     mgr = _mgr(tmp_path)
     mgr._running = True
     mgr._server_process = _dead_proc()
-    with patch("workflow_editor.llm.server_manager.requests.get") as get:
+    with patch("procedo.studio.llm.server_manager.requests.get") as get:
         assert mgr.is_alive is False
         get.assert_not_called()
 
@@ -458,8 +458,8 @@ def test_start_relaunches_when_prior_process_dead(tmp_path):
     fresh = _live_proc()
     with patch.object(mgr, "_diagnose_installation", return_value=healthy), \
          patch.object(mgr, "_sweep_orphan"), \
-         patch("workflow_editor.llm.server_manager.find_free_port", return_value=5005), \
-         patch("workflow_editor.llm.server_manager.subprocess.Popen", return_value=fresh) as popen, \
+         patch("procedo.studio.llm.server_manager.find_free_port", return_value=5005), \
+         patch("procedo.studio.llm.server_manager.subprocess.Popen", return_value=fresh) as popen, \
          patch.object(mgr, "_start_stderr_drain"), \
          patch.object(mgr, "_write_pid_file"), \
          patch.object(mgr, "_wait_for_server", return_value=True):
@@ -475,7 +475,7 @@ def test_start_reuses_when_prior_process_alive(tmp_path):
     mgr = _mgr(tmp_path)
     mgr._running = True
     mgr._server_process = _live_proc()
-    with patch("workflow_editor.llm.server_manager.subprocess.Popen") as popen, \
+    with patch("procedo.studio.llm.server_manager.subprocess.Popen") as popen, \
          patch.object(mgr, "_diagnose_installation") as diag:
         assert mgr.start() is True
         popen.assert_not_called()   # reused the live process
@@ -489,7 +489,7 @@ def test_ensure_running_noop_when_alive(tmp_path):
     mgr._running = True
     mgr._server_process = _live_proc()
     ok = MagicMock(); ok.status_code = 200
-    with patch("workflow_editor.llm.server_manager.requests.get", return_value=ok), \
+    with patch("procedo.studio.llm.server_manager.requests.get", return_value=ok), \
          patch.object(mgr, "start") as start:
         assert mgr.ensure_running() is True
         start.assert_not_called()
@@ -511,7 +511,7 @@ def test_ensure_running_respects_retirement(tmp_path):
     # (returns False) — no relaunch on a single-use manager.
     mgr = _mgr(tmp_path)
     mgr.stop()  # retires
-    with patch("workflow_editor.llm.server_manager.subprocess.Popen") as popen:
+    with patch("procedo.studio.llm.server_manager.subprocess.Popen") as popen:
         assert mgr.ensure_running() is False
         popen.assert_not_called()
 
@@ -530,12 +530,12 @@ def test_ensure_running_relaunches_wedged_server(tmp_path):
     bad = MagicMock(); bad.status_code = 500   # /health dead -> not alive
     healthy = MagicMock(); healthy.ok = True
     fresh = _live_proc()
-    with patch("workflow_editor.llm.server_manager.requests.get", return_value=bad), \
+    with patch("procedo.studio.llm.server_manager.requests.get", return_value=bad), \
          patch.object(mgr, "_diagnose_installation", return_value=healthy), \
          patch.object(mgr, "_sweep_orphan"), \
          patch.object(mgr, "_stop_process") as stop_process, \
-         patch("workflow_editor.llm.server_manager.find_free_port", return_value=5005), \
-         patch("workflow_editor.llm.server_manager.subprocess.Popen", return_value=fresh) as popen, \
+         patch("procedo.studio.llm.server_manager.find_free_port", return_value=5005), \
+         patch("procedo.studio.llm.server_manager.subprocess.Popen", return_value=fresh) as popen, \
          patch.object(mgr, "_start_stderr_drain"), \
          patch.object(mgr, "_write_pid_file"), \
          patch.object(mgr, "_wait_for_server", return_value=True):
@@ -598,7 +598,7 @@ def test_retired_manager_start_returns_false_without_spawning(tmp_path):
     assert mgr._retired is True
 
     with patch.object(mgr, "_diagnose_installation") as diag, \
-         patch("workflow_editor.llm.server_manager.subprocess.Popen") as popen:
+         patch("procedo.studio.llm.server_manager.subprocess.Popen") as popen:
         assert mgr.start() is False
         # Retirement short-circuits BEFORE any install check or process spawn.
         diag.assert_not_called()
@@ -621,7 +621,7 @@ def test_wait_for_server_aborts_when_retired_mid_wait(tmp_path):
 
     # The health endpoint is never up (connection refused) so the loop relies on
     # the _retired check to bail.
-    with patch("workflow_editor.llm.server_manager.requests.get",
+    with patch("procedo.studio.llm.server_manager.requests.get",
                side_effect=__import__("requests").exceptions.ConnectionError()):
         t = threading.Thread(target=_retire_soon, daemon=True)
         started = time.time()
@@ -674,7 +674,7 @@ def _fake_window(sm):
     """A bare object carrying just what the recovery methods touch, so the
     StudioWorkspace methods can be driven unbound (no Qt)."""
     import types
-    from workflow_editor.main_window import StudioWorkspace
+    from procedo.studio.main_window import StudioWorkspace
     w = types.SimpleNamespace()
     w._server_manager = sm
     w._server_recovering = False
@@ -702,7 +702,7 @@ def _run_tick_sync(w):
     spawned thread body inline on ``.start()`` and (b) run every ``_post_to_ui``
     callback inline. The bound methods resolve off ``w`` (a SimpleNamespace), so
     we install an inline ``_post_to_ui`` on ``w`` itself."""
-    from workflow_editor.main_window import StudioWorkspace
+    from procedo.studio.main_window import StudioWorkspace
 
     def _inline_thread(target, daemon=False):
         t = MagicMock()
@@ -719,7 +719,7 @@ def _run_tick_sync(w):
     w._recover = lambda sm: StudioWorkspace._recover(w, sm)
     w._on_recover_done = lambda sm, ok: StudioWorkspace._on_recover_done(w, sm, ok)
 
-    with patch("workflow_editor.main_window.threading.Thread",
+    with patch("procedo.studio.main_window.threading.Thread",
                side_effect=_inline_thread):
         StudioWorkspace._on_server_health_tick(w)
 
@@ -730,7 +730,7 @@ def test_post_to_ui_uses_signal_not_singleshot():
     # called from a non-Qt daemon thread, creates the timer in the calling
     # thread and the callback can be lost (probe/recover would wedge forever).
     import types
-    from workflow_editor.main_window import StudioWorkspace
+    from procedo.studio.main_window import StudioWorkspace
 
     w = types.SimpleNamespace()
     w._ui_call = MagicMock()  # stand-in for the bound Signal
@@ -746,7 +746,7 @@ def test_post_to_ui_uses_signal_not_singleshot():
 def test_auto_recovery_gives_up_after_three_failures():
     # A server that stays down: each tick relaunches and increments the failure
     # count; after MAX (3) consecutive failures we STOP spawning recoveries.
-    from workflow_editor.main_window import StudioWorkspace
+    from procedo.studio.main_window import StudioWorkspace
     sm = _FakeSM(alive=False)
     w = _fake_window(sm)
 
@@ -765,7 +765,7 @@ def test_auto_recovery_gives_up_after_three_failures():
 def test_auto_recovery_resets_when_server_back_alive():
     # After the give-up cap, the moment the server reads alive again the tick
     # resets the counter so a FUTURE crash is auto-recovered.
-    from workflow_editor.main_window import StudioWorkspace
+    from procedo.studio.main_window import StudioWorkspace
     sm = _FakeSM(alive=False)
     w = _fake_window(sm)
     for _ in range(3):
@@ -787,7 +787,7 @@ def test_auto_recovery_resets_when_server_back_alive():
 def test_reset_server_recovery_rearms_after_giveup():
     # A manual action (Restart backend / Start server) calls _reset_server_recovery
     # which clears the give-up state so the next tick auto-recovers again.
-    from workflow_editor.main_window import StudioWorkspace
+    from procedo.studio.main_window import StudioWorkspace
     sm = _FakeSM(alive=False)
     w = _fake_window(sm)
     for _ in range(3):
@@ -823,7 +823,7 @@ def test_stop_manager_async_sets_retired_synchronously():
     # thread that races into the old manager's start() must already see
     # _retired==True the instant _stop_manager_async returns. We block stop()
     # on an event so it provably has NOT run yet, then assert _retired is True.
-    from workflow_editor.main_window import StudioWorkspace
+    from procedo.studio.main_window import StudioWorkspace
 
     stop_gate = threading.Event()
 
@@ -854,7 +854,7 @@ def test_stale_health_probe_does_not_clear_live_inflight_flag():
     # Residual #1: a probe spawned for an OLD manager must not clear the CURRENT
     # manager's in-flight flag — otherwise the next tick stacks a 2nd concurrent
     # probe. The flag clear must happen AFTER the stale-manager guard returns.
-    from workflow_editor.main_window import StudioWorkspace
+    from procedo.studio.main_window import StudioWorkspace
     current_sm = _FakeSM(alive=True)
     w = _fake_window(current_sm)
     w._health_probe_inflight = True  # the CURRENT manager's probe is in flight
@@ -872,7 +872,7 @@ def test_stale_health_probe_does_not_clear_live_inflight_flag():
 def test_current_health_probe_clears_inflight_flag():
     # The complement: the CURRENT manager's probe DOES clear its own in-flight
     # flag (so the next tick is unblocked).
-    from workflow_editor.main_window import StudioWorkspace
+    from procedo.studio.main_window import StudioWorkspace
     sm = _FakeSM(alive=True)
     w = _fake_window(sm)
     w._health_probe_inflight = True
@@ -922,7 +922,7 @@ def test_models_probe_spawn_failure_clears_inflight_flag():
     # Residual #3: a Thread.start() failure must clear _models_probe_in_flight
     # (and surface a note) — otherwise the flag wedges True and the note is stuck
     # at "Querying server…" forever, blocking every future Refresh.
-    from workflow_editor.dialogs.settings_dialog import SettingsDialog
+    from procedo.studio.dialogs.settings_dialog import SettingsDialog
     self = _fake_dialog()
     with patch("threading.Thread", side_effect=_raising_thread):
         SettingsDialog._populate_opencode_models(self)
@@ -934,7 +934,7 @@ def test_models_probe_spawn_failure_clears_inflight_flag():
 def test_start_probe_spawn_failure_re_enables_button():
     # Residual #4: ensure_running Thread.start() failure must re-enable the Start
     # button and replace the "Starting…" note — not wedge it disabled forever.
-    from workflow_editor.dialogs.settings_dialog import SettingsDialog
+    from procedo.studio.dialogs.settings_dialog import SettingsDialog
     self = _fake_dialog()
     self._server_manager = _FakeSM(alive=False)
     self.parent = MagicMock(return_value=None)
@@ -952,7 +952,7 @@ def test_stale_start_probe_result_is_dropped_by_generation():
     # Residual #2: a probe result from an EARLIER Start-server attempt (older
     # generation token) must be dropped — it must not stop a newer poll's timer,
     # re-enable the button, or list models for the wrong state.
-    from workflow_editor.dialogs.settings_dialog import SettingsDialog
+    from procedo.studio.dialogs.settings_dialog import SettingsDialog
     self = _fake_dialog()
     self._server_manager = _FakeSM(alive=False)
     self.parent = MagicMock(return_value=None)
@@ -990,7 +990,7 @@ def test_apply_models_no_ops_after_dialog_closed():
     # Residual #5: a model-fetch worker may post _apply_opencode_models() AFTER
     # the dialog closed; the C++ widgets are deleted. The _closed guard must drop
     # the late callback before it touches any widget.
-    from workflow_editor.dialogs.settings_dialog import SettingsDialog
+    from procedo.studio.dialogs.settings_dialog import SettingsDialog
     self = _fake_dialog()
     self._models_probe_in_flight = True
     self._closed = True  # done() ran
@@ -1017,7 +1017,7 @@ def test_relaunch_restarts_without_retiring_the_manager(tmp_path, monkeypatch):
 def test_relaunch_of_a_retired_manager_launches_nothing(tmp_path, monkeypatch):
     """A manager retired by a swap (the skill chat may still hold it) stays
     retired: relaunch() launches no server."""
-    from workflow_editor.llm import server_manager
+    from procedo.studio.llm import server_manager
 
     mgr = _mgr(tmp_path)
     mgr.stop()
@@ -1037,7 +1037,7 @@ def test_skill_chat_restart_relaunches_instead_of_stop_start():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
-    from workflow_editor.dock.skill_chat_widget import SkillChatWidget
+    from procedo.studio.dock.skill_chat_widget import SkillChatWidget
 
     QApplication.instance() or QApplication([])
     calls = []

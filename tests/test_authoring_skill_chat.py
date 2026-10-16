@@ -2,7 +2,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from workflow_editor.authoring import Skill, SkillChatSession, SkillSource
+from procedo.studio.authoring import Skill, SkillChatSession, SkillSource
 
 
 def _skill(prompt="You author a draft."):
@@ -135,7 +135,7 @@ def test_drop_last_user_turn():
 
 
 def test_parser_plain_text_is_success_and_untruncated():
-    from workflow_editor.llm.response_parser import ResponseParser
+    from procedo.studio.llm.response_parser import ResponseParser
     long = "x" * 1200
     r = ResponseParser().parse(long, None, plain_text=True)
     assert r.success is True

@@ -7,11 +7,11 @@ Run this to verify basic functionality works.
 import sys
 from pathlib import Path
 
-# Add parent directory to path so we can import workflow_editor
+# Add parent directory to path so we can import procedo.studio
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from workflow_editor.core.button_labels import ButtonLabelManager, DEFAULT_BUTTON_LABELS
-from workflow_editor.llm.backend_base import LLMTask
+from procedo.studio.core.button_labels import ButtonLabelManager, DEFAULT_BUTTON_LABELS
+from procedo.studio.llm.backend_base import LLMTask
 
 
 def test_button_label_manager():

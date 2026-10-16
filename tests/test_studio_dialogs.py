@@ -16,19 +16,19 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QComboBox, QFrame, QLabel, QPushButton
 
 from procedo.core import ui_kit
-from workflow_editor.authoring import ContextItem, ContextSource
-from workflow_editor.core import project_manager
-from workflow_editor import shell
-from workflow_editor.dialogs import word_keywords_dialog
-from workflow_editor.dialogs.about_dialog import VERSION, AboutDialog
-from workflow_editor.dialogs.syntax_reference import SyntaxReferenceDialog
-from workflow_editor.dialogs import test_selection_dialog
-from workflow_editor.dialogs.validator_error_dialog import ValidatorErrorDialog
-from workflow_editor.dock.skill_chat_dialog import SkillChatDialog
-from workflow_editor.dock.skill_chat_widget import SkillChatWidget
-from workflow_editor.llm.validator_dispatch import ValidationIssueView, ValidationOutcome
-from workflow_editor.widgets.netlist_panel import _BoardImagePopup
-from workflow_editor.widgets.rule_selector import RuleSelectorDialog
+from procedo.studio.authoring import ContextItem, ContextSource
+from procedo.studio.core import project_manager
+from procedo.studio import shell
+from procedo.studio.dialogs import word_keywords_dialog
+from procedo.studio.dialogs.about_dialog import VERSION, AboutDialog
+from procedo.studio.dialogs.syntax_reference import SyntaxReferenceDialog
+from procedo.studio.dialogs import test_selection_dialog
+from procedo.studio.dialogs.validator_error_dialog import ValidatorErrorDialog
+from procedo.studio.dock.skill_chat_dialog import SkillChatDialog
+from procedo.studio.dock.skill_chat_widget import SkillChatWidget
+from procedo.studio.llm.validator_dispatch import ValidationIssueView, ValidationOutcome
+from procedo.studio.widgets.netlist_panel import _BoardImagePopup
+from procedo.studio.widgets.rule_selector import RuleSelectorDialog
 
 from .test_main_window_characterization import qapp as qapp
 
@@ -118,7 +118,7 @@ def _skill(skill_id, title, when):
 
 @pytest.fixture
 def chat_dialog(qapp, monkeypatch):
-    monkeypatch.setattr("workflow_editor.dialogs.settings_dialog.load_settings", lambda: {})
+    monkeypatch.setattr("procedo.studio.dialogs.settings_dialog.load_settings", lambda: {})
     inserted = []
     skills = [_skill("dcdc", "DCDC test builder", "Find a power IC."),
               _skill("board", "Board bring-up", "Bring a board up.")]
@@ -189,7 +189,7 @@ def test_the_chat_draws_the_turns_as_bubbles_and_its_icon_buttons_are_wired(chat
 def test_a_bare_chat_shows_its_own_skill_picker_and_elides_a_long_status(qapp, monkeypatch):
     """No host takes the header: it is the widget's first row. A long status (the wizard's
     "Loaded N cached IC(s) — …") is cut to the row, whole in its tooltip."""
-    monkeypatch.setattr("workflow_editor.dialogs.settings_dialog.load_settings", lambda: {})
+    monkeypatch.setattr("procedo.studio.dialogs.settings_dialog.load_settings", lambda: {})
     widget = SkillChatWidget([_skill("dcdc", "DCDC", "Find a power IC.")], SimpleNamespace())
     assert widget.layout().itemAt(0).widget() is widget.header
     assert widget.header.findChild(QComboBox) is widget._skill_combo

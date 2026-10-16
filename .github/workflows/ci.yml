@@ -1,7 +1,7 @@
 # Workflow-editor (Procedo Studio) CI.
 #
 # Gates that need no host app and block: ruff (curated E9/F config in pyproject), mypy (Qt-free
-# workflow_editor/core only) and the AST size-budget ratchet.
+# procedo/studio/core only) and the AST size-budget ratchet.
 #
 # The full suite is NOT run here: Studio imports the host (Procedo Bench) for its theme, dialogs
 # and help, and the host is not available to this repo's CI. The host repo's CI runs this suite

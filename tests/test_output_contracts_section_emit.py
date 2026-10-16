@@ -1,5 +1,5 @@
 """Unit tests for the procedure_text section emit-list in
-``workflow_editor.llm.output_contracts``.
+``procedo.studio.llm.output_contracts``.
 
 Pure-logic; runs without PySide6:
     PYTHONPATH=. python3 -m pytest tests/test_output_contracts_section_emit.py --noconftest -q
@@ -16,12 +16,12 @@ ensure_workflow_editor_importable()
 # Imports under test
 # ---------------------------------------------------------------------------
 
-from workflow_editor.llm.output_contracts import (  # noqa: E402
+from procedo.studio.llm.output_contracts import (  # noqa: E402
     JSON_CODE_CONTRACT,
     get_contract_for_tab,
     render_section_emit_list,
 )
-from workflow_editor.llm.section_ownership import (  # noqa: E402
+from procedo.studio.llm.section_ownership import (  # noqa: E402
     CANONICAL_SECTIONS,
     CANONICAL_SECTION_ORDER,
     DEFAULT_OWNERSHIP,
@@ -167,7 +167,7 @@ class RenderSectionEmitListEmptyOrderFallbackTests(unittest.TestCase):
 
     def setUp(self) -> None:
         # Default frozenset construction with no section_order: equipment owned.
-        from workflow_editor.llm.section_ownership import SectionOwnership
+        from procedo.studio.llm.section_ownership import SectionOwnership
         self.rendered = render_section_emit_list(
             SectionOwnership(
                 llm_sections=frozenset({"equipment", "steps", "expected"}),

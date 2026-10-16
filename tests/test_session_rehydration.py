@@ -15,10 +15,10 @@ import json
 
 import pytest
 
-from workflow_editor.llm.opencode_backend import OpenCodeBackend
-from workflow_editor.llm.backend_base import LLMRequest, LLMResponse, LLMTask
-from workflow_editor.llm.tab_context import ChatMessage
-from workflow_editor.llm.transcript_replay import serialize_transcript
+from procedo.studio.llm.opencode_backend import OpenCodeBackend
+from procedo.studio.llm.backend_base import LLMRequest, LLMResponse, LLMTask
+from procedo.studio.llm.tab_context import ChatMessage
+from procedo.studio.llm.transcript_replay import serialize_transcript
 
 
 # --------------------------------------------------------------------------- #
@@ -190,7 +190,7 @@ def _make_backend(create_session_returns="new"):
 
 def _patch_post(monkeypatch, responses):
     """Patch requests.post as seen by the module that DEFINES OpenCodeBackend
-    (opencode_client.client since the 7985722 migration; workflow_editor's
+    (opencode_client.client since the 7985722 migration; procedo.studio's
     opencode_backend is a re-export shim with no ``requests`` of its own).
     Pops FakeResponses in order, records (url, json) per call, returns the
     calls list."""

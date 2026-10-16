@@ -8,8 +8,8 @@ from PySide6.QtTest import QTest
 from .test_main_window_characterization import (
     _make_project, make_window as make_window, mbox as mbox, qapp as qapp,
 )
-from workflow_editor.core import odb_inspect
-from workflow_editor.widgets.netlist_panel import NetlistPanel, _LIVE_WORKERS
+from procedo.studio.core import odb_inspect
+from procedo.studio.widgets.netlist_panel import NetlistPanel, _LIVE_WORKERS
 
 
 def _until(app, predicate):

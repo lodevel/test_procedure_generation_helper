@@ -1,4 +1,4 @@
-"""Characterization tests for the editor MainWindow (workflow_editor/main_window.py).
+"""Characterization tests for the editor MainWindow (procedo/studio/main_window.py).
 
 Safety net for the planned carve of the 2,726-line / 94-method MainWindow:
 each test pins one seam of CURRENT behavior — construction, menu/action
@@ -37,9 +37,9 @@ from PySide6.QtWidgets import (  # noqa: E402
     QApplication, QFileDialog, QMessageBox,
 )
 
-import workflow_editor.main_window as mw_mod  # noqa: E402
+import procedo.studio.main_window as mw_mod  # noqa: E402
 from procedo.core import app_settings  # noqa: E402
-from workflow_editor.llm.backend_factory import BACKEND_TYPE_NONE  # noqa: E402
+from procedo.studio.llm.backend_factory import BACKEND_TYPE_NONE  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -563,8 +563,8 @@ def test_parse_and_generate_marks_in_sync(make_window, monkeypatch, tmp_path, ta
     # procedure.json and test.py both come from the same text in one action:
     # an out-of-sync test is in sync afterwards (once its proposal card is
     # accepted), and stays so on reopen.
-    from workflow_editor.dock.chat_messages import ProposalMessage
-    from workflow_editor.pack_ops import pack_parsers
+    from procedo.studio.dock.chat_messages import ProposalMessage
+    from procedo.studio.pack_ops import pack_parsers
     root = _make_project(tmp_path / "proj")
     t1 = root / "tests" / "t1"
     w = make_window()
@@ -597,8 +597,8 @@ def test_parse_and_generate_with_nothing_changed_opens_no_review(make_window, mo
     # The diff compares lines (a final newline on one side only is no change),
     # so output identical to the files on disk is no change at all: no proposal
     # card waits, the files are simply written.
-    from workflow_editor.dock.chat_messages import ProposalMessage
-    from workflow_editor.pack_ops import pack_parsers
+    from procedo.studio.dock.chat_messages import ProposalMessage
+    from procedo.studio.pack_ops import pack_parsers
     root = _make_project(tmp_path / "proj")
     t1 = root / "tests" / "t1"
     w = make_window()
@@ -742,7 +742,7 @@ def test_bundle_signature_and_stamp_change_detectors(make_window, tmp_path):
 
     assert w._bundle_stamp_changed() is False
     # The stamp moved out of the project with the venv it describes (share slice 1).
-    from workflow_editor import _project_local_state
+    from procedo.studio import _project_local_state
 
     stamp = _project_local_state.install_record(root)
     stamp.parent.mkdir(parents=True, exist_ok=True)
@@ -772,7 +772,7 @@ def test_dir_events_start_debounce_and_funnel_refreshes(make_window,
     assert w._bundle_change_timer.isActive()
     w._bundle_change_timer.stop()
 
-    from workflow_editor import _project_local_state
+    from procedo.studio import _project_local_state
 
     stamp = _project_local_state.install_record(root)
     stamp.parent.mkdir(parents=True, exist_ok=True)

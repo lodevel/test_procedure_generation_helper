@@ -16,7 +16,7 @@ and at-apply) via the single resolver ``LLMTabMixin._task_section_override``:
 The ``_task_section_override`` resolver lives on the Qt-dependent
 ``LLMTabMixin`` (its module imports the worker, which imports PySide6), so this
 file imports the REAL package rather than the ``_qt_stub`` namespace shim — the
-stub replaces ``workflow_editor.llm`` with an empty module, which would shadow
+stub replaces ``procedo.studio.llm`` with an empty module, which would shadow
 the mixin's ``from ..llm import LLMTask``. The method itself is pure logic; we
 bind the unbound method to a fake carrying only the attributes it reads.
 
@@ -28,7 +28,7 @@ from __future__ import annotations
 import types
 import unittest
 
-from workflow_editor.core.task_config import TaskConfig
+from procedo.studio.core.task_config import TaskConfig
 
 
 # --------------------------------------------------------------------------- #
@@ -105,7 +105,7 @@ class TaskSectionOverrideResolverTests(unittest.TestCase):
     def setUp(self) -> None:
         # Import here so a Qt-import failure surfaces as an error on THIS
         # test only, not at module collection time.
-        from workflow_editor.tabs.llm_tab_mixin import LLMTabMixin
+        from procedo.studio.tabs.llm_tab_mixin import LLMTabMixin
         self._resolve = LLMTabMixin._task_section_override
 
     def _obj(self, manager) -> types.SimpleNamespace:
@@ -164,8 +164,8 @@ class ValidateResponseThreadsOverrideTests(unittest.TestCase):
     assert the ``task_override`` kwarg lands."""
 
     def setUp(self) -> None:
-        from workflow_editor.llm import validator_dispatch
-        from workflow_editor.llm.backend_base import LLMResponse, LLMProposal
+        from procedo.studio.llm import validator_dispatch
+        from procedo.studio.llm.backend_base import LLMResponse, LLMProposal
         self.vd = validator_dispatch
         self.response = LLMResponse(success=True)
         self.response.procedure_text = LLMProposal(

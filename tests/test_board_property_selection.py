@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from workflow_editor.authoring.netlist_text import (
+from procedo.studio.authoring.netlist_text import (
     format_board_context, format_component_ids, format_netlist,
     format_other_component_ids,
 )

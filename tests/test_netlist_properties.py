@@ -2,7 +2,7 @@
 netlist, so a wiring-only skill isn't charged the property tokens. Part numbers
 surface only for ICs (U*/IC* refdes); passives are skipped (the token bulk).
 """
-from workflow_editor.authoring import (
+from procedo.studio.authoring import (
     format_component_ids,
     format_other_component_ids,
     format_netlist,

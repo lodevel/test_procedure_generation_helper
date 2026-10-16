@@ -15,12 +15,12 @@ from PySide6.QtWidgets import QApplication, QFrame, QLabel, QPlainTextEdit, QPus
 
 from test_procedure_gui import fluent_qss
 from test_procedure_gui import theme as bench_theme
-from workflow_editor import theme
-from workflow_editor.core.proposal import FileChange, Proposal, changed_lines, diff_lines
-from workflow_editor.dialogs.diff_viewer import DiffViewer, _diff_marks
-from workflow_editor.widgets.editor_card import tint_lines
-from workflow_editor.dock.chat_messages import MessageDetailDialog, review_proposal
-from workflow_editor.llm.tab_context import ChatMessage
+from procedo.studio import theme
+from procedo.studio.core.proposal import FileChange, Proposal, changed_lines, diff_lines
+from procedo.studio.dialogs.diff_viewer import DiffViewer, _diff_marks
+from procedo.studio.widgets.editor_card import tint_lines
+from procedo.studio.dock.chat_messages import MessageDetailDialog, review_proposal
+from procedo.studio.llm.tab_context import ChatMessage
 
 from .test_main_window_characterization import qapp as qapp
 

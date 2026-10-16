@@ -1,5 +1,5 @@
 """LLM-feedback line-coordinate translation tests for
-``workflow_editor.llm.validator_dispatch``.
+``procedo.studio.llm.validator_dispatch``.
 
 The pipeline reconstructs a full procedure (operator-owned title/description/
 ``## Meta`` prepended) BEFORE validating, so validator findings carry line
@@ -33,14 +33,14 @@ from tests._qt_stub import ensure_workflow_editor_importable
 
 ensure_workflow_editor_importable()
 
-from workflow_editor.llm import validator_dispatch  # noqa: E402
-from workflow_editor.llm.validator_dispatch import (  # noqa: E402
+from procedo.studio.llm import validator_dispatch  # noqa: E402
+from procedo.studio.llm.validator_dispatch import (  # noqa: E402
     ValidationIssueView,
     ValidationOutcome,
     _fragment_line_shift,
     format_validator_feedback,
 )
-from workflow_editor.llm.backend_base import LLMResponse, LLMProposal  # noqa: E402
+from procedo.studio.llm.backend_base import LLMResponse, LLMProposal  # noqa: E402
 
 from tests import _env
 

@@ -1,7 +1,7 @@
-"""AST size-budget guard for the workflow editor (``workflow_editor/``).
+"""AST size-budget guard for the workflow editor (``procedo/studio/``).
 
 Sibling of the host ``tests/test_size_budgets.py`` — same ratchet, applied to
-the editor's own source package.  Every ``.py`` under ``workflow_editor/`` must
+the editor's own source package.  Every ``.py`` under ``procedo/studio/`` must
 stay within a hard structural budget:
 
 * file length     <= ``FILE_CAP``   lines
@@ -30,8 +30,8 @@ FILE_CAP = 1000
 METHOD_CAP = 40
 FUNC_CAP = 150
 
-# tests/ -> editor root -> workflow_editor package
-_PKG = Path(__file__).resolve().parent.parent / "workflow_editor"
+# tests/ -> editor root -> procedo.studio package
+_PKG = Path(__file__).resolve().parent.parent / "procedo" / "studio"
 _SKIP_DIRS = {"__pycache__", "build", "dist", ".venv"}
 
 # --- Grandfather ledger (measured on the current tree) -----------------------

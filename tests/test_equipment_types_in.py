@@ -1,4 +1,4 @@
-"""Unit tests for ``workflow_editor.pack_ops.pack_parsers.equipment_types_in``.
+"""Unit tests for ``procedo.studio.pack_ops.pack_parsers.equipment_types_in``.
 
 Heading recognition must mirror the wheel's lenient form semantics:
 ``##`` + OPTIONAL space + name (``## Equipment`` == ``##Equipment``),
@@ -19,7 +19,7 @@ from tests._qt_stub import ensure_workflow_editor_importable
 
 ensure_workflow_editor_importable()
 
-from workflow_editor.pack_ops import pack_parsers as pp  # noqa: E402
+from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
 
 EQUIP_LINES = """PSU1 : psu channels=[{1, max_voltage=24.0 V, max_current=2.0 A}]
 ELOAD1 : eload channels=[{1, max_current=5.0 A}]
@@ -144,5 +144,5 @@ def test_no_space_test_id_is_content_not_a_heading():
         "##test_id\n"
         "LOAD1 : eload\n"
     )
-    from workflow_editor.pack_ops.pack_parsers import equipment_types_in
+    from procedo.studio.pack_ops.pack_parsers import equipment_types_in
     assert equipment_types_in(text) == ["psu", "eload"]

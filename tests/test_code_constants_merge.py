@@ -1,4 +1,4 @@
-"""Unit tests for ``workflow_editor.llm.code_constants_merge``.
+"""Unit tests for ``procedo.studio.llm.code_constants_merge``.
 
 Covers the failure modes the architecture reviewer flagged:
   - Type-annotated assignments (``NAME: type = LITERAL``) on either side.
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import unittest
 
-from workflow_editor.llm.code_constants_merge import (
+from procedo.studio.llm.code_constants_merge import (
     equipment_ids_from_procedure,
     extract_pinned_constants,
     merge_pinned_constants,

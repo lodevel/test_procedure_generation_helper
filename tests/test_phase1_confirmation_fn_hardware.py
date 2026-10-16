@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from workflow_editor.core.task_config import TaskConfigManager
+from procedo.studio.core.task_config import TaskConfigManager
 
 
 # Repo-relative anchors.

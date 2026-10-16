@@ -4,7 +4,7 @@ Pure-Python: uses tmp_path only — no Qt, no procedo.core, no bundle.
 """
 import pytest
 
-from workflow_editor.authoring import (
+from procedo.studio.authoring import (
     Skill,
     SkillLoadError,
     SkillSource,
@@ -12,7 +12,7 @@ from workflow_editor.authoring import (
     load_skill,
     split_frontmatter,
 )
-from workflow_editor.authoring.skill_loader import find_skill_file
+from procedo.studio.authoring.skill_loader import find_skill_file
 
 # --------------------------------------------------------------------------- #
 # helpers                                                                      #

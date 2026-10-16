@@ -27,7 +27,7 @@ import json
 import pytest
 from unittest.mock import MagicMock
 
-from workflow_editor.core.artifact_manager import ArtifactManager, ArtifactType
+from procedo.studio.core.artifact_manager import ArtifactManager, ArtifactType
 
 
 WRONG_TEXT = "# WRONG_ID\n\n## Steps\n1. do x\n"
@@ -142,7 +142,7 @@ def qapp():
 
 def test_refresh_editor_after_save_updates_buffer_without_signals(qapp):
     from PySide6.QtWidgets import QPlainTextEdit
-    from workflow_editor.widgets.editor_card import refresh_editor_after_save
+    from procedo.studio.widgets.editor_card import refresh_editor_after_save
 
     editor = QPlainTextEdit()
     editor.setPlainText(WRONG_TEXT)
@@ -163,7 +163,7 @@ def test_refresh_editor_after_save_updates_buffer_without_signals(qapp):
 
 def test_refresh_editor_after_save_clamps_cursor(qapp):
     from PySide6.QtWidgets import QPlainTextEdit
-    from workflow_editor.widgets.editor_card import refresh_editor_after_save
+    from procedo.studio.widgets.editor_card import refresh_editor_after_save
 
     editor = QPlainTextEdit()
     editor.setPlainText("# WRONG_ID_MUCH_LONGER_THAN_REPLACEMENT")
@@ -178,7 +178,7 @@ def test_refresh_editor_after_save_clamps_cursor(qapp):
 
 def test_refresh_editor_after_save_noop_when_verbatim(qapp):
     from PySide6.QtWidgets import QPlainTextEdit
-    from workflow_editor.widgets.editor_card import refresh_editor_after_save
+    from procedo.studio.widgets.editor_card import refresh_editor_after_save
 
     editor = QPlainTextEdit()
     editor.setPlainText("# Foo\nbody\n")
@@ -190,7 +190,7 @@ def test_refresh_editor_after_save_noop_when_verbatim(qapp):
 
 def test_card_save_reflects_corrected_id_into_editor(qapp, tmp_path):
     """An editor card's Save: after save the editor shows the folder id."""
-    from workflow_editor.widgets.editor_card import EditorCard
+    from procedo.studio.widgets.editor_card import EditorCard
 
     tab = MagicMock()
     tab.artifact_manager = _manager(tmp_path)
@@ -232,7 +232,7 @@ def test_mark_unloaded_wrong_id_test_matches_enforced_baseline(tmp_path):
     """Marking an UNLOADED wrong-id test in sync must store the ENFORCED
     hashes — byte-identical to the loaded path — so opening the test
     later reports no mismatch."""
-    from workflow_editor.core import test_sync
+    from procedo.studio.core import test_sync
 
     test_dir = _write_wrong_id_test(tmp_path)
 
@@ -264,7 +264,7 @@ def test_workspace_out_of_sync_check_ignores_id_only_drift(tmp_path):
     """test_sync.is_out_of_sync must not flag a wrong-id disk file against an
     enforced baseline (stored by the loaded path) — id-only drift is
     rewritten at the next save, not an external edit."""
-    from workflow_editor.core import test_sync
+    from procedo.studio.core import test_sync
 
     test_dir = _write_wrong_id_test(tmp_path)
     am = ArtifactManager()

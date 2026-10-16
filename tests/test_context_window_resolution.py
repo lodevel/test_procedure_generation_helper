@@ -11,7 +11,7 @@ The sample doc below mirrors the shape a live OpenCode 1.17 server reports.
 
 import pytest
 
-from workflow_editor.llm.opencode_backend import resolve_context_window
+from procedo.studio.llm.opencode_backend import resolve_context_window
 
 
 # Trimmed but shape-faithful copy of a real GET /config/providers response.

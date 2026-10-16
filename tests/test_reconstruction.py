@@ -1,4 +1,4 @@
-"""Unit tests for ``workflow_editor.llm.reconstruction.reconstruct_for_pipeline``.
+"""Unit tests for ``procedo.studio.llm.reconstruction.reconstruct_for_pipeline``.
 
 This is the single seam where ownership resolution meets the ``pack_parsers``
 reconstruct bridge. Only the in-process (``project_root=None``) path is
@@ -17,8 +17,8 @@ from tests._qt_stub import ensure_workflow_editor_importable
 
 ensure_workflow_editor_importable()
 
-from workflow_editor.pack_ops import pack_parsers  # noqa: E402
-from workflow_editor.llm.reconstruction import (  # noqa: E402
+from procedo.studio.pack_ops import pack_parsers  # noqa: E402
+from procedo.studio.llm.reconstruction import (  # noqa: E402
     reconstruct_for_pipeline,
     reconstructed_or_error,
 )

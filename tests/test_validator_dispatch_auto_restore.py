@@ -1,7 +1,7 @@
 """Phase 7.1 (2026-04-30) — operator-only field auto-restore tests.
 
 Covers the deterministic auto-restore in
-``workflow_editor.llm.validator_dispatch._auto_restore_operator_only_fields``
+``procedo.studio.llm.validator_dispatch._auto_restore_operator_only_fields``
 that runs before the artifact handlers in ``validate_response``. The
 auto-restore detects when the LLM populated or modified `meta.requirement`
 against the baseline and restores the baseline value verbatim, emitting an
@@ -23,8 +23,8 @@ from __future__ import annotations
 import json
 import unittest
 
-from workflow_editor.llm.backend_base import LLMResponse, LLMProposal
-from workflow_editor.llm.validator_dispatch import (
+from procedo.studio.llm.backend_base import LLMResponse, LLMProposal
+from procedo.studio.llm.validator_dispatch import (
     _auto_restore_operator_only_fields,
     _extract_meta_requirement_from_text,
     format_validator_feedback,
@@ -178,7 +178,7 @@ class AutoRestoreHappyPathTests(unittest.TestCase):
         # Need a text proposal so the auto-restore has something to look at.
         # An ABSENT proposal hits a different branch (no proposal).
         # Build a response with an empty-requirement text proposal.
-        from workflow_editor.llm.backend_base import LLMProposal
+        from procedo.studio.llm.backend_base import LLMProposal
         response.procedure_text = LLMProposal(
             mode="replace", content=_v2_text(None),
         )

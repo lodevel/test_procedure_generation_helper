@@ -1,4 +1,4 @@
-# Procedo Studio (`workflow_editor`)
+# Procedo Studio (`procedo.studio`)
 
 A PySide6 Qt desktop application for authoring, editing, and reviewing structured
 test procedures with LLM assistance. It is the **AI-assisted authoring/editing GUI**
@@ -9,14 +9,14 @@ text, JSON, and code in sync.
 
 It lives in `external/test_procedure_generation_helper/` as a sibling package of the
 Procedo Bench (`src/test_procedure_gui/`). The host's `script.bat` installs it **editable**
-into the host venv (`pip install -e`), so `workflow_editor` imports like any
+into the host venv (`pip install -e`), so `procedo.studio` imports like any
 dependency — no `sys.path` / `PYTHONPATH` glue. The legacy path bootstraps remain
 only as logged deprecation shims. See the host repo's
 `docs/adr/0003-editor-installed-package.md`.
 
 **Non-editable installs** additionally require the vendored `external/opencode_client`
 submodule to be checked out (`git submodule update --init`):
-`workflow_editor.llm.backend_base` imports `opencode_client`, so a plain
+`procedo.studio.llm.backend_base` imports `opencode_client`, so a plain
 `pip install .` from a clone without the submodule yields a package that cannot
 import its LLM backends.
 
@@ -31,11 +31,11 @@ import its LLM backends.
 - **Diff-gated edits.** Every LLM-proposed change to an artifact is shown in a
   side-by-side diff (`dialogs/diff_viewer.py`) and applied only on explicit accept.
 - **Pack-driven parsing/validation.** Parsing, codegen, and validation are dispatched
-  to the *project's* venv via `workflow_editor/pack_ops/pack_parsers.py` (which spawns
+  to the *project's* venv via `procedo/studio/pack_ops/pack_parsers.py` (which spawns
   `_pack_parsers_subprocess.py` against the `rules_packager_base` wheel), so the
   rules/wheel used are the ones bundled with the active project — not the editor's
   own interpreter.
-- **Per-op execution daemon.** `workflow_editor/llm/_execute_op_subprocess.py` is a
+- **Per-op execution daemon.** `procedo/studio/llm/_execute_op_subprocess.py` is a
   persistent runner that executes individual procedure ops against live equipment
   (used by Procedo Bench's interactive/manual runner).
 
@@ -50,9 +50,9 @@ test_procedure_generation_helper/
 ├── config/
 │   └── tab_contexts.json          # Fallback per-task rules/prompts
 ├── tests/                         # pytest suite
-└── workflow_editor/
+└── procedo/studio/
     ├── __init__.py                # Package init, __version__ = "0.1.0"
-    ├── __main__.py                # CLI entry point (python -m workflow_editor)
+    ├── __main__.py                # CLI entry point (python -m procedo.studio)
     ├── main_window.py             # Main application window
     ├── theme.py                   # Studio-only colours (chat, diff, syntax); the app theme is Bench's
     ├── logging_config.py
@@ -91,7 +91,7 @@ test_procedure_generation_helper/
 
 (The `__init__.py` reports `__version__ = "0.1.0"`. Authoring-skill packages are
 discovered from four tiers — builtin / bundled / local / project, resolved in
-`workflow_editor/authoring/locations.py` — see `docs/authoring-a-skill.md` in this
+`procedo/studio/authoring/locations.py` — see `docs/authoring-a-skill.md` in this
 repo for writing one. The authoritative cross-package contracts live at the host
 repo root, see below.)
 
@@ -113,13 +113,13 @@ live in each *project's* venv and are invoked there by the subprocess runners
 ### Standalone
 
 ```bash
-python -m workflow_editor [options]
+python -m procedo.studio [options]
 ```
 
 Studio needs the host app installed (it wears Bench's theme, `test_procedure_gui.theme`); there
 is no degraded mode without it. The consumed surface is Contract C (`../../docs/contract_c_editor_host_services.md`).
 
-Command-line options (see `workflow_editor/__main__.py`):
+Command-line options (see `procedo/studio/__main__.py`):
 
 | Option | Meaning |
 |--------|---------|
@@ -136,10 +136,10 @@ Examples:
 
 ```bash
 # Open a project and a specific test
-python -m workflow_editor --project-root /path/to/Project --test-name voltage_test
+python -m procedo.studio --project-root /path/to/Project --test-name voltage_test
 
 # Open a test folder directly
-python -m workflow_editor --test-dir /path/to/Project/tests/voltage_test
+python -m procedo.studio --test-dir /path/to/Project/tests/voltage_test
 ```
 
 Note: the active backend is resolved from the persisted `llm_backend` setting (see
@@ -155,7 +155,7 @@ menu ("Edit in Procedo Studio"). `src/test_procedure_gui/main_window.py::_launch
 formats a configured command template (its `{python}` placeholder defaults to the
 GUI's `sys.executable`), launches it via `subprocess.Popen`, and appends
 `--project-root`, `--rules-root` (the active bundle's `rules/`), and `--test-name`.
-No `PYTHONPATH` injection: `workflow_editor` is installed editable in the GUI venv
+No `PYTHONPATH` injection: `procedo.studio` is installed editable in the GUI venv
 (ADR 0003). The editor path and command
 template are set on Procedo Bench's **Settings → Procedo Studio** page.
 Project-specific parsing/validation then runs in the project's own venv via
@@ -165,7 +165,7 @@ Project-specific parsing/validation then runs in the project's own venv via
 
 Settings are stored in `%APPDATA%\Procedo\studio\settings.json` (copied once from the old
 `~/.workflow_editor` folder, which is kept) and edited in the
-in-app **Settings** dialog (`workflow_editor/dialogs/settings_dialog.py`). The
+in-app **Settings** dialog (`procedo/studio/dialogs/settings_dialog.py`). The
 `llm_backend` key selects one of `opencode`, `external_api`, or `none`.
 
 ### Model-string format — important
@@ -227,7 +227,7 @@ LLM-driven tabs return a disabled-backend error.
 
 ## Per-op execution daemon
 
-`workflow_editor/llm/_execute_op_subprocess.py` is a persistent NDJSON-framed daemon
+`procedo/studio/llm/_execute_op_subprocess.py` is a persistent NDJSON-framed daemon
 (one JSON object per line, both directions) that executes individual procedure ops
 against live instruments. It is the only runner that imports the hardware drivers,
 and it is driven by Procedo Bench's interactive/manual runner
@@ -255,7 +255,7 @@ and it is driven by Procedo Bench's interactive/manual runner
 - Procedo Bench imports this package from its venv's editable install; the old
   `app.py::_bootstrap_editor_on_path` sys.path hack survives only as a logged
   deprecation shim.
-- Several main-GUI modules import from `workflow_editor` directly —
+- Several main-GUI modules import from `procedo.studio` directly —
   `pack_ops.pack_parsers` (e.g. `bench_fields`, `bench_constant_names`,
   `build_manual_run`/`build_manual_result`), `llm.section_ownership`, and
   `core.task_config`.

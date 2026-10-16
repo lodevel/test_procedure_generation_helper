@@ -18,11 +18,11 @@ from pathlib import Path
 
 import pytest
 
-from workflow_editor.core.task_config import (
+from procedo.studio.core.task_config import (
     TaskConfigManager,
     _merge_workflows,
 )
-from workflow_editor.launch_env import BUNDLE_DEFAULTS_PATH
+from procedo.studio.launch_env import BUNDLE_DEFAULTS_PATH
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +166,7 @@ def test_editor_default_workflows_ship_no_prompts():
     re-introduces a prompt here, bundle vs editor origin attribution
     will lie (the GUI shows a row as 'editor default' when in fact
     the user is reading text the bundle would have replaced)."""
-    from workflow_editor.core.task_config import _DEFAULT_WORKFLOWS_RAW
+    from procedo.studio.core.task_config import _DEFAULT_WORKFLOWS_RAW
 
     for tab_id, tab_cfg in _DEFAULT_WORKFLOWS_RAW.items():
         if not isinstance(tab_cfg, dict):

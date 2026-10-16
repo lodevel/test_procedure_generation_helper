@@ -1,4 +1,4 @@
-"""Unit tests for ``workflow_editor.llm.section_ownership``.
+"""Unit tests for ``procedo.studio.llm.section_ownership``.
 
 All tests are pure-logic; no Qt or file-system access is required except
 for :class:`LoadBundleOwnershipTests` which uses ``tmp_path`` via pytest
@@ -23,7 +23,7 @@ ensure_workflow_editor_importable()
 # Import subject under test
 # ---------------------------------------------------------------------------
 
-from workflow_editor.llm.section_ownership import (  # noqa: E402
+from procedo.studio.llm.section_ownership import (  # noqa: E402
     CANONICAL_SECTIONS,
     DEFAULT_OWNERSHIP,
     OWNER_LLM,

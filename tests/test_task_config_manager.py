@@ -16,8 +16,8 @@ import pytest
 import threading
 import time
 from pathlib import Path
-from workflow_editor.core.task_config import TaskConfigManager, TaskConfig, DEFAULT_TASK_CONFIGS
-from workflow_editor.llm.backend_base import LLMTask
+from procedo.studio.core.task_config import TaskConfigManager, TaskConfig, DEFAULT_TASK_CONFIGS
+from procedo.studio.llm.backend_base import LLMTask
 
 
 class TestTaskConfigManagerInitialization:

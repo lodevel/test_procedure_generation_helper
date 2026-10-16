@@ -11,10 +11,7 @@ from PySide6.QtWidgets import QApplication
 
 from test_procedure_gui import fluent_qss
 from test_procedure_gui import theme as bench_theme
-from workflow_editor import theme
-
-#: The bundled DCDC wizard's names: they stay as they are until it has its own host API.
-_WIZARD_NAMES = {"chat_assistant_border", "muted_color"}
+from procedo.studio import theme
 
 
 @pytest.fixture
@@ -50,10 +47,6 @@ def _colour_helpers(module) -> dict:
             and all(p.default is not p.empty for p in inspect.signature(f).parameters.values())}
 
 
-def _studio_helpers() -> dict:
-    return {name: f for name, f in _colour_helpers(theme).items() if name not in _WIZARD_NAMES}
-
-
 def _bench_colours() -> dict:
     """Bench's colours by name: its theme's helpers, its stylesheet's tokens."""
     colours = {f"theme.{name}": f() for name, f in _colour_helpers(bench_theme).items()}
@@ -71,8 +64,8 @@ def test_no_studio_colour_repeats_one_of_benchs_in_both_themes(app):
         bench_theme.apply_app_theme(theme_id, app)
         bench = _bench_colours()
         seen[theme_id] = {name: {b for b, v in bench.items() if v == _colour(f())}
-                          for name, f in _studio_helpers().items()}
-    assert _studio_helpers()  # not vacuous
+                          for name, f in _colour_helpers(theme).items()}
+    assert _colour_helpers(theme)  # not vacuous
     copies = {name: both for name in seen["original"]
               if (both := seen["original"][name] & seen["dark"][name])}
     assert copies == {}

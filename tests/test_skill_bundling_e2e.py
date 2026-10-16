@@ -2,7 +2,7 @@
 is discovered in a project via the BUNDLED tier.
 
 Crosses the two repos: procedo.core.bundle_generator (build-side copy) +
-workflow_editor.authoring (consumer-side discovery). Pure tmp_path — no real
+procedo.studio.authoring (consumer-side discovery). Pure tmp_path — no real
 build, no Qt.
 """
 import json
@@ -17,7 +17,7 @@ from procedo.core.bundle_generator import (
     enabled_pack_roots,
     wizard_flow,
 )
-from workflow_editor.authoring import SkillSource, load_skills
+from procedo.studio.authoring import SkillSource, load_skills
 
 _SKILL_MD = """\
 ---

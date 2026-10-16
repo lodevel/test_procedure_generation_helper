@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from workflow_editor.core.task_config import (
+from procedo.studio.core.task_config import (
     DEFAULT_TASK_CONFIGS,
     TaskConfigManager,
 )

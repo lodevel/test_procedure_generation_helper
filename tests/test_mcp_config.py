@@ -1,12 +1,12 @@
-"""Tests for workflow_editor.llm.mcp_config (pure path/dict helpers)."""
+"""Tests for procedo.studio.llm.mcp_config (pure path/dict helpers)."""
 import json
 from pathlib import Path
 
 import pytest
 
-from workflow_editor.llm import mcp_config
-from workflow_editor.authoring.skill import SkillSource
-from workflow_editor.authoring.tool_folders import discover_tool_folders
+from procedo.studio.llm import mcp_config
+from procedo.studio.authoring.skill import SkillSource
+from procedo.studio.authoring.tool_folders import discover_tool_folders
 
 
 def test_win_to_wsl_path_basic():

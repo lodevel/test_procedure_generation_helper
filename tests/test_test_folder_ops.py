@@ -9,8 +9,8 @@ import sys
 
 import pytest
 
-from workflow_editor.core import test_folder_ops, test_sync
-from workflow_editor.core.test_folder_ops import TestFolderError, delete_test, rename_test
+from procedo.studio.core import test_folder_ops, test_sync
+from procedo.studio.core.test_folder_ops import TestFolderError, delete_test, rename_test
 
 WIN = pytest.mark.skipif(sys.platform != "win32", reason="Windows behaviour")
 
@@ -96,7 +96,7 @@ def test_delete_works_in_a_tests_folder_that_is_itself_a_junction(tmp_path):
 
 @WIN
 def test_a_locked_file_stops_the_delete_before_anything_is_removed(tmp_path, monkeypatch):
-    from workflow_editor.core import fileio
+    from procedo.studio.core import fileio
 
     monkeypatch.setattr(fileio, "_BUSY_PAUSE_S", 0)
     root, tests = _project(tmp_path, "Foo")
@@ -238,7 +238,7 @@ def test_a_failed_folder_rename_touches_nothing(tmp_path):
 def _list(qapp_tests):
     from unittest.mock import MagicMock
 
-    from workflow_editor.core.project_manager import ProjectManager
+    from procedo.studio.core.project_manager import ProjectManager
 
     fake = MagicMock()
     pm = ProjectManager()
@@ -258,7 +258,7 @@ def qapp():
 def test_the_list_renames_through_the_core(tmp_path, qapp, monkeypatch):
     from PySide6.QtWidgets import QInputDialog
 
-    from workflow_editor.tabs.workspace_tab import WorkspaceTab
+    from procedo.studio.tabs.workspace_tab import WorkspaceTab
 
     root, tests = _project(tmp_path, "Foo")
     (root / "config").mkdir()
@@ -274,8 +274,8 @@ def test_the_list_renames_through_the_core(tmp_path, qapp, monkeypatch):
 def test_the_list_reports_a_refused_delete_and_keeps_the_test(tmp_path, qapp, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
 
-    from workflow_editor.core import fileio
-    from workflow_editor.tabs.workspace_tab import WorkspaceTab
+    from procedo.studio.core import fileio
+    from procedo.studio.tabs.workspace_tab import WorkspaceTab
 
     monkeypatch.setattr(fileio, "_BUSY_PAUSE_S", 0)
     root, tests = _project(tmp_path, "Foo")
@@ -293,7 +293,7 @@ def test_the_list_reports_a_refused_delete_and_keeps_the_test(tmp_path, qapp, mo
 def test_the_list_deletes_through_the_core_after_confirmation(tmp_path, qapp, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
 
-    from workflow_editor.tabs.workspace_tab import WorkspaceTab
+    from procedo.studio.tabs.workspace_tab import WorkspaceTab
 
     root, tests = _project(tmp_path, "Foo")
     (root / "config").mkdir()

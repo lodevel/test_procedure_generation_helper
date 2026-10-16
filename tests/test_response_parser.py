@@ -1,7 +1,7 @@
 ﻿"""Tests for ResponseParser."""
 import pytest
 import json
-from workflow_editor.llm import ResponseParser, LLMResponse, LLMTask
+from procedo.studio.llm import ResponseParser, LLMResponse, LLMTask
 
 class TestResponseParserJsonExtraction:
     def test_extract_bare_json(self):

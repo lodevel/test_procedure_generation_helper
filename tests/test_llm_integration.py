@@ -8,8 +8,8 @@ included).
 """
 import pytest
 import time
-from workflow_editor.llm import LLMRequest, LLMTask, LLMResponse, PromptBuilder
-from workflow_editor.core.task_config import TaskConfigManager
+from procedo.studio.llm import LLMRequest, LLMTask, LLMResponse, PromptBuilder
+from procedo.studio.core.task_config import TaskConfigManager
 
 GEN_CODE_PROMPT = (
     "Task: Generate Python test code that implements the procedure "

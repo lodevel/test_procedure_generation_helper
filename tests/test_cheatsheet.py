@@ -16,7 +16,7 @@ import tempfile
 from pathlib import Path
 
 _MOD = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                    "workflow_editor", "core", "cheatsheet.py")
+                    "procedo", "studio", "core", "cheatsheet.py")
 _spec = importlib.util.spec_from_file_location("cheatsheet", _MOD)
 cheatsheet = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cheatsheet)

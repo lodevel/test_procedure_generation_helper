@@ -2,7 +2,7 @@
 of the pdf-tools MCP server (no network; usable without the web toggle)."""
 import os
 
-from workflow_editor.authoring import _pdf_tool_mcp as m
+from procedo.studio.authoring import _pdf_tool_mcp as m
 
 
 def _text(result):

@@ -1,6 +1,6 @@
 """Shared Qt-stub helper for pure-logic tests that must run without PySide6.
 
-Usage in a test file (before importing any ``workflow_editor`` submodule)::
+Usage in a test file (before importing any ``procedo.studio`` submodule)::
 
     from tests._qt_stub import ensure_workflow_editor_importable
     ensure_workflow_editor_importable()
@@ -18,14 +18,14 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def ensure_workflow_editor_importable() -> None:
-    """Register minimal namespace stubs for ``workflow_editor`` and sub-packages.
+    """Register minimal namespace stubs for ``procedo.studio`` and sub-packages.
 
     Only adds an entry to ``sys.modules`` when the package is not already
     present, so real imports are never shadowed if PySide6 happens to be
     installed.
     """
-    _stub_if_absent("workflow_editor", _REPO_ROOT / "workflow_editor")
-    _stub_if_absent("workflow_editor.llm", _REPO_ROOT / "workflow_editor" / "llm")
+    _stub_if_absent("procedo.studio", _REPO_ROOT / "procedo" / "studio")
+    _stub_if_absent("procedo.studio.llm", _REPO_ROOT / "procedo" / "studio" / "llm")
 
 
 def _stub_if_absent(pkg: str, path: Path) -> None:

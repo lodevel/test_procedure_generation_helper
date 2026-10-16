@@ -28,10 +28,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QFileSystemWatcher, QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from workflow_editor.core.task_config import TaskConfigManager  # noqa: E402
-from workflow_editor.launch_env import BUNDLE_DEFAULTS_PATH  # noqa: E402
-from workflow_editor.pack_ops import pack_parsers as pp  # noqa: E402
-from workflow_editor.main_window import StudioWorkspace  # noqa: E402
+from procedo.studio.core.task_config import TaskConfigManager  # noqa: E402
+from procedo.studio.launch_env import BUNDLE_DEFAULTS_PATH  # noqa: E402
+from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
+from procedo.studio.main_window import StudioWorkspace  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -320,7 +320,7 @@ def test_install_stamp_is_belt_and_braces_trigger(qapp, tmp_path):
     venv it describes, so the bridge is asked where rather than composing it from
     the project: composed, it would name a file nothing writes any more and this
     trigger would be dead while every pin stayed green."""
-    from workflow_editor import _project_local_state
+    from procedo.studio import _project_local_state
 
     root, h = _armed_harness(tmp_path, qapp)
 

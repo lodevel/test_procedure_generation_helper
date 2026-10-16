@@ -10,11 +10,11 @@ from pathlib import Path
 
 from procedo.core import app_identity, app_identity_migration
 
-from workflow_editor import __main__ as studio_main
-from workflow_editor import main_window
-from workflow_editor.dialogs import settings_dialog
+from procedo.studio import __main__ as studio_main
+from procedo.studio import main_window
+from procedo.studio.dialogs import settings_dialog
 
-_PKG = Path(__file__).resolve().parents[1] / "workflow_editor"
+_PKG = Path(__file__).resolve().parents[1] / "procedo" / "studio"
 _THE_ONE_SITE = "dialogs/settings_dialog.py"
 
 
@@ -104,7 +104,7 @@ def test_studio_start_migrates_before_anything_reads_its_settings(monkeypatch):
             pass
 
     monkeypatch.setattr(studio_main, "parse_args", _args)
-    monkeypatch.setattr("workflow_editor.logging_config.setup_logging", lambda **kw: None)
+    monkeypatch.setattr("procedo.studio.logging_config.setup_logging", lambda **kw: None)
     monkeypatch.setattr(studio_main, "QApplication", _App)
     monkeypatch.setattr(studio_main, "MainWindow", _Window)
     monkeypatch.setattr(studio_main, "apply_app_theme", lambda name, app: name)

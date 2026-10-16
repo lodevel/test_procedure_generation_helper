@@ -16,9 +16,9 @@ from unittest.mock import MagicMock
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from workflow_editor.core import ArtifactType
-from workflow_editor.core.artifact_manager import ArtifactManager
-from workflow_editor.widgets.editor_card import EditorCard
+from procedo.studio.core import ArtifactType
+from procedo.studio.core.artifact_manager import ArtifactManager
+from procedo.studio.widgets.editor_card import EditorCard
 
 FILES = {
     ArtifactType.PROCEDURE_TEXT: "procedure_text.md",

@@ -1,5 +1,5 @@
 """Validate-path reconstruction tests for
-``workflow_editor.llm.validator_dispatch._validate_proposed_text``.
+``procedo.studio.llm.validator_dispatch._validate_proposed_text``.
 
 Regression for the dict-vs-attr bug at validator_dispatch.py:478. ``current``
 is a ``CurrentArtifacts`` dict (``{"text":..., "json":..., "code":...}``),
@@ -28,8 +28,8 @@ from tests._qt_stub import ensure_workflow_editor_importable
 
 ensure_workflow_editor_importable()
 
-from workflow_editor.llm import validator_dispatch  # noqa: E402
-from workflow_editor.llm.backend_base import LLMResponse, LLMProposal  # noqa: E402
+from procedo.studio.llm import validator_dispatch  # noqa: E402
+from procedo.studio.llm.backend_base import LLMResponse, LLMProposal  # noqa: E402
 
 import pytest  # noqa: E402
 

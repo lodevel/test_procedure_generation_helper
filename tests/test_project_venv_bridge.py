@@ -26,9 +26,9 @@ from pathlib import Path
 import pytest
 
 from procedo.core import project_local_state, venv_pool
-from workflow_editor import _project_local_state
-from workflow_editor.core import odb_inspect
-from workflow_editor.pack_ops import pack_parsers
+from procedo.studio import _project_local_state
+from procedo.studio.core import odb_inspect
+from procedo.studio.pack_ops import pack_parsers
 
 _PROJECT_ID = "aaaaaaaa-1111-2222-3333-444444444444"
 

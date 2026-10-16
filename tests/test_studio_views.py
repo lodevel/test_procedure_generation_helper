@@ -6,9 +6,9 @@ validator buttons stay hidden until available); Traceability has no action bar."
 import pytest
 from PySide6.QtWidgets import QGroupBox, QToolButton
 
-from workflow_editor.llm import LLMTask
-from workflow_editor.pack_ops import pack_parsers
-from workflow_editor.widgets.action_bar import ActionBar
+from procedo.studio.llm import LLMTask
+from procedo.studio.pack_ops import pack_parsers
+from procedo.studio.widgets.action_bar import ActionBar
 
 from .test_main_window_characterization import (
     _make_project, _open_project, make_window as make_window, mbox as mbox, qapp as qapp,
@@ -132,7 +132,7 @@ def _divider_visible(tab) -> bool:
 
 
 def test_validator_buttons_follow_the_projects_switch(opened, monkeypatch):
-    from workflow_editor.llm import validator_loop_settings
+    from procedo.studio.llm import validator_loop_settings
     w, _root = opened
     tab = w.text_only_tab
 

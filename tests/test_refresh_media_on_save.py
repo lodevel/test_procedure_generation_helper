@@ -10,9 +10,9 @@ from __future__ import annotations
 import json
 
 from rules_packager_base.rules.v2_0_2 import parse
-from workflow_editor.core import ArtifactType
-from workflow_editor.core.artifact_manager import ArtifactManager
-from workflow_editor.pack_ops import pack_parsers
+from procedo.studio.core import ArtifactType
+from procedo.studio.core.artifact_manager import ArtifactManager
+from procedo.studio.pack_ops import pack_parsers
 
 _HAND = {
     "format_version": "2.0.1",

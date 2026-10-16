@@ -5,7 +5,7 @@ import json
 import time
 from types import SimpleNamespace
 
-from workflow_editor.pack_ops import pack_parsers as pp
+from procedo.studio.pack_ops import pack_parsers as pp
 
 OPS = [
     {"node_path": "1", "op": {"device": "psu1", "op": "psu.output", "channel": 1, "on": True}},

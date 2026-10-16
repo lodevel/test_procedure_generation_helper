@@ -1,6 +1,6 @@
 ﻿"""Test fixtures."""
 import pytest
-from workflow_editor.llm import (
+from procedo.studio.llm import (
     LLMRequest, LLMTask, NoneBackend, OpenCodeBackend, OpenCodeConfig
 )
 

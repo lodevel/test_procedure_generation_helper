@@ -37,7 +37,7 @@ reg.register_lifecycle(labpack.LIFECYCLE)
 reg.register_lifecycle({"fncore": {"remote": False, "cleanup": None}})
 
 _RUNNER = (Path(__file__).resolve().parent.parent
-           / "workflow_editor" / "llm" / "_execute_op_subprocess.py")
+           / "procedo" / "studio" / "llm" / "_execute_op_subprocess.py")
 _spec = importlib.util.spec_from_file_location("_exec_op_runner", _RUNNER)
 er = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(er)
@@ -353,7 +353,7 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
     def _pp(self):
         from tests._qt_stub import ensure_workflow_editor_importable
         ensure_workflow_editor_importable()
-        from workflow_editor.pack_ops import pack_parsers as pp
+        from procedo.studio.pack_ops import pack_parsers as pp
         return pp
 
     def _session(self, batch_result):
@@ -450,7 +450,7 @@ class RemoteSessionLiveTransportTests(unittest.TestCase):
     def _live_session(self):
         from tests._qt_stub import ensure_workflow_editor_importable
         ensure_workflow_editor_importable()
-        from workflow_editor.pack_ops import pack_parsers as pp
+        from procedo.studio.pack_ops import pack_parsers as pp
         s = pp.RemoteSession(_proc_file(self), Path("/nonexistent"))
         runner = _RUNNER   # the llm/ daemon script (module-level, verified on import)
 

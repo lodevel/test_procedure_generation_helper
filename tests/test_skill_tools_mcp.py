@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-import workflow_editor.authoring._skill_tools_mcp as _mcp_mod
+import procedo.studio.authoring._skill_tools_mcp as _mcp_mod
 
 SERVER_PATH = os.path.abspath(_mcp_mod.__file__)
 

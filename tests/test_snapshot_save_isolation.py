@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from workflow_editor.core.task_config import (
+from procedo.studio.core.task_config import (
     ChatConfig,
     TaskConfig,
     TaskConfigManager,

@@ -49,7 +49,7 @@ def labscpi_psu_reconstruct_available() -> bool:
     successfully reconstruct a minimal labscpi ``psu`` fragment.
 
     This is the shared precondition of every reconstruct/validate-dispatch
-    test that feeds ``psu`` grammar through ``workflow_editor.llm``:
+    test that feeds ``psu`` grammar through ``procedo.studio.llm``:
     without a matched wheel + registered labscpi pack the engine reports
     EQP_TYPE_UNKNOWN/GRAM_UNKNOWN_METHOD and reconstruction cannot succeed.
     """
@@ -57,7 +57,7 @@ def labscpi_psu_reconstruct_available() -> bool:
         from tests._qt_stub import ensure_workflow_editor_importable
 
         ensure_workflow_editor_importable()
-        from workflow_editor.pack_ops import pack_parsers
+        from procedo.studio.pack_ops import pack_parsers
 
         report = pack_parsers.reconstruct_text(
             _PSU_FRAGMENT, _PSU_PRIOR, project_root=None

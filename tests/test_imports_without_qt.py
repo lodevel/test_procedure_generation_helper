@@ -11,9 +11,9 @@ from pathlib import Path
 
 # The Qt adapters that live next to the logic they drive.
 _QT_ADAPTERS = {
-    "workflow_editor.llm.worker",  # QThread around one LLM request
-    "workflow_editor.authoring.skill_menu",  # the Skills menu (QAction / dialogs)
-    "workflow_editor.authoring.wizard_api",  # makes a wizard's skill-chat widget
+    "procedo.studio.llm.worker",  # QThread around one LLM request
+    "procedo.studio.authoring.skill_menu",  # the Skills menu (QAction / dialogs)
+    "procedo.studio.authoring.wizard_api",  # makes a wizard's skill-chat widget
 }
 
 _PROBE = """
@@ -21,9 +21,9 @@ import importlib, pkgutil, sys
 sys.modules["PySide6"] = None
 failed = []
 for pkg in ("core", "llm", "authoring", "pack_ops"):
-    mod = importlib.import_module("workflow_editor." + pkg)
+    mod = importlib.import_module("procedo.studio." + pkg)
     for info in pkgutil.iter_modules(mod.__path__):
-        name = f"workflow_editor.{pkg}.{info.name}"
+        name = f"procedo.studio.{pkg}.{info.name}"
         try:
             importlib.import_module(name)
         except Exception as exc:

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from workflow_editor.core.validators_registry import (
+from procedo.studio.core.validators_registry import (
     ValidatorContext,
     ensure_builtins_registered,
     get,
@@ -24,7 +24,7 @@ from workflow_editor.core.validators_registry import (
     register,
     unregister_all,
 )
-from workflow_editor.llm.validator_dispatch import ValidationOutcome
+from procedo.studio.llm.validator_dispatch import ValidationOutcome
 
 
 # ---------------------------------------------------------------------------

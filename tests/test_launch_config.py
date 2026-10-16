@@ -1,5 +1,5 @@
 """Tests for the OpenCode launch-config derivation in
-``workflow_editor.dialogs.settings_dialog``.
+``procedo.studio.dialogs.settings_dialog``.
 
 Verifies the master = providers-only blueprint + derived opencode.json with the
 3 MCP blocks built FRESH at runtime:
@@ -20,8 +20,8 @@ from pathlib import Path
 
 import pytest
 
-from workflow_editor.dialogs import settings_dialog as sd
-from workflow_editor.llm.mcp_config import win_to_wsl_path
+from procedo.studio.dialogs import settings_dialog as sd
+from procedo.studio.llm.mcp_config import win_to_wsl_path
 
 
 @pytest.fixture
@@ -39,7 +39,7 @@ def _expected_python_win() -> str:
 
 def _script_for(name: str) -> str:
     # Mirrors settings_dialog._mcp_script_win: authoring/<name> next to the
-    # dialogs package's parent (workflow_editor/authoring/).
+    # dialogs package's parent (procedo/studio/authoring/).
     return str(Path(sd.__file__).resolve().parents[1] / "authoring" / name)
 
 

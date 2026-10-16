@@ -1,4 +1,4 @@
-"""Procedo Studio's frame (workflow_editor/shell.py, redesign slice 2): the header's pills
+"""Procedo Studio's frame (procedo/studio/shell.py, redesign slice 2): the header's pills
 follow the open test, the Sync pill acknowledges, the OpenCode pill's menu restarts the server,
 Ctrl+1..4 and the segmented switch change the view, the footer names the project, rules, bundle
 and validator and its links act, View hides the fixed columns, the window only hosts the
@@ -12,8 +12,8 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QStatusBar
 
-import workflow_editor.main_window as mw_mod
-from workflow_editor import shell
+import procedo.studio.main_window as mw_mod
+from procedo.studio import shell
 
 from .test_main_window_characterization import (
     _make_project, _open_project, make_window as make_window, mbox as mbox, qapp as qapp,

@@ -8,8 +8,8 @@ import threading
 
 import pytest
 
-from workflow_editor.authoring import _mcp_serve, _project_tools_mcp as server
-from workflow_editor.authoring.netlist_text import board_revision
+from procedo.studio.authoring import _mcp_serve, _project_tools_mcp as server
+from procedo.studio.authoring.netlist_text import board_revision
 
 
 def _board_data():

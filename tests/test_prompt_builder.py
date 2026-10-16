@@ -7,15 +7,15 @@ TaskPromptNotDeclaredError instead of silently substituting text.
 AD_HOC_CHAT is the one grammar-neutral, editor-native exception.
 """
 import pytest
-from workflow_editor.llm import (
+from procedo.studio.llm import (
     PromptBuilder,
     LLMTask,
     LLMRequest,
     NoneBackend,
     TaskPromptNotDeclaredError,
 )
-from workflow_editor.llm.prompt_builder import AD_HOC_CHAT_DEFAULT_PROMPT
-from workflow_editor.core.task_config import ChatConfig, TaskConfig, TaskConfigManager
+from procedo.studio.llm.prompt_builder import AD_HOC_CHAT_DEFAULT_PROMPT
+from procedo.studio.core.task_config import ChatConfig, TaskConfig, TaskConfigManager
 
 
 def _manager_with_prompt(tmp_path, tab_id, task_id, prompt):

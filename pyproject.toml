@@ -3,6 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
+# The distribution keeps its old name until Bench's rename (slice 9) uninstalls the old ones.
 name = "workflow_editor"
 version = "0.1.0"
 description = "Qt workflow editor for authoring structured test procedures"
@@ -27,22 +28,22 @@ dev = [
     "mypy",
 ]
 
-# `python -m workflow_editor` already works via workflow_editor/__main__.py;
+# `python -m procedo.studio` already works via procedo/studio/__main__.py;
 # this exposes the same entry point as a console script.
 [project.scripts]
-workflow_editor = "workflow_editor.__main__:main"
+procedo-studio = "procedo.studio.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["workflow_editor*"]
+include = ["procedo.studio*"]
 
 # Ship the baked-in workflow defaults so an INSTALLED editor (the host installs
 # this package editable into its venv) resolves them via importlib.resources —
 # no filesystem walk-up needed (see procedo.core.workflow_defaults).
 [tool.setuptools.package-data]
-"workflow_editor.core" = ["default_workflows.json"]
+"procedo.studio.core" = ["default_workflows.json"]
 # Procedo Studio's mark (the header) and window icon.
-"workflow_editor" = ["icons/*.svg"]
+"procedo.studio" = ["icons/*.svg"]
 
 # --- Lint gate -------------------------------------------------------------
 # GREEN DAY-1: this tree has never been through a format/autofix pass, so the
@@ -61,8 +62,8 @@ extend-exclude = [
     # Grandfathered: pre-existing F402 (loop-var shadow) and F541 (placeholder-
     # less f-string in the MIXED-EOL main_window.py — do not touch with a
     # reformatter). Deferred, not silenced tree-wide.
-    "workflow_editor/llm/validator_dispatch.py",
-    "workflow_editor/main_window.py",
+    "procedo/studio/llm/validator_dispatch.py",
+    "procedo/studio/main_window.py",
 ]
 
 [tool.ruff.lint]
@@ -71,21 +72,23 @@ select = ["E9", "F"]
 ignore = ["F401", "F841"]
 
 # --- Type gate (Qt-free core only) -----------------------------------------
-# GREEN DAY-1: scoped to workflow_editor/core (the Qt-free logic layer). Qt
+# GREEN DAY-1: scoped to procedo/studio/core (the Qt-free logic layer). Qt
 # dialogs / god-files stay out. Lenient settings + per-module grandfathering
 # keep it green today; ratchet by removing overrides / raising strictness.
 [tool.mypy]
 python_version = "3.10"
-files = ["workflow_editor/core"]
+files = ["procedo/studio/core"]
+# `procedo` is a namespace package (no __init__.py): name modules from this folder.
+explicit_package_bases = true
 ignore_missing_imports = true
 follow_imports = "silent"
 warn_unused_ignores = false
 
 [[tool.mypy.overrides]]
 module = [
-    "workflow_editor.core.procedure_export",
-    "workflow_editor.core.odb_inspect",
-    "workflow_editor.core.artifact_manager",
-    "workflow_editor.core.task_config",
+    "procedo.studio.core.procedure_export",
+    "procedo.studio.core.odb_inspect",
+    "procedo.studio.core.artifact_manager",
+    "procedo.studio.core.task_config",
 ]
 ignore_errors = true

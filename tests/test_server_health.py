@@ -2,8 +2,8 @@
 import socket
 from unittest.mock import MagicMock, patch
 
-from workflow_editor.llm.backend_base import NoneBackend
-from workflow_editor.llm.server_manager import (
+from procedo.studio.llm.backend_base import NoneBackend
+from procedo.studio.llm.server_manager import (
     OpenCodeServerManager,
     fetch_opencode_models,
 )
@@ -25,7 +25,7 @@ def test_fetch_models_lists_provider_models_sorted():
             "openai": {"models": {"gpt-5.2-low": {}}},
         },
     }
-    with patch("workflow_editor.llm.server_manager.requests.get",
+    with patch("procedo.studio.llm.server_manager.requests.get",
                return_value=_fake_resp(200, "application/json", body)):
         assert fetch_opencode_models("http://x:4096") == [
             "my_vllm/gemma", "my_vllm/qwen", "openai/gpt-5.2-low",
@@ -33,17 +33,17 @@ def test_fetch_models_lists_provider_models_sorted():
 
 
 def test_fetch_models_empty_when_not_opencode():
-    with patch("workflow_editor.llm.server_manager.requests.get",
+    with patch("procedo.studio.llm.server_manager.requests.get",
                return_value=_fake_resp(200, "text/html", None)):
         assert fetch_opencode_models("http://x:4096") == []
 
 
 def test_fetch_models_empty_on_unreachable():
     import requests as _rq
-    with patch("workflow_editor.llm.server_manager.requests.get",
+    with patch("procedo.studio.llm.server_manager.requests.get",
                side_effect=_rq.exceptions.ConnectionError()):
         assert fetch_opencode_models("http://x:4096") == []
-from workflow_editor.llm.server_health import (
+from procedo.studio.llm.server_health import (
     ServerError,
     ServerStatus,
     classify_install,
@@ -132,7 +132,7 @@ def test_find_free_port_avoids_busy_port():
 # --------------------------------------------------------------------------- #
 
 def test_none_backend_surfaces_reason():
-    from workflow_editor.llm.backend_base import LLMRequest, LLMTask
+    from procedo.studio.llm.backend_base import LLMRequest, LLMTask
     reason = "OpenCode was not found in the WSL PATH."
     backend = NoneBackend(reason=reason)
     resp = backend.send_request(LLMRequest(task=LLMTask.AD_HOC_CHAT))
@@ -142,6 +142,6 @@ def test_none_backend_surfaces_reason():
 
 
 def test_none_backend_default_reason():
-    from workflow_editor.llm.backend_base import LLMRequest, LLMTask
+    from procedo.studio.llm.backend_base import LLMRequest, LLMTask
     resp = NoneBackend().send_request(LLMRequest(task=LLMTask.AD_HOC_CHAT))
     assert "disabled" in resp.assistant_message.lower()

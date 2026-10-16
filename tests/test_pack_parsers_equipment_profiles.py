@@ -1,5 +1,5 @@
 """Tests for the bundle ``equipment_profiles`` bridge in
-``workflow_editor.pack_ops.pack_parsers`` (Phase B, D4 hard cut).
+``procedo.studio.pack_ops.pack_parsers`` (Phase B, D4 hard cut).
 
 Covers ``_load_bundle_equipment_profiles`` (reads the bundle's
 defaults.json via ``PROCEDO_BUNDLE_DEFAULTS_PATH``) and the
@@ -20,8 +20,8 @@ from tests._qt_stub import ensure_workflow_editor_importable
 
 ensure_workflow_editor_importable()
 
-from workflow_editor.pack_ops import pack_parsers as pp  # noqa: E402
-from workflow_editor.launch_env import BUNDLE_DEFAULTS_PATH  # noqa: E402
+from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
+from procedo.studio.launch_env import BUNDLE_DEFAULTS_PATH  # noqa: E402
 
 
 CONTROLLER_PROFILE = {

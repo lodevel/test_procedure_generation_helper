@@ -11,7 +11,7 @@ import pytest
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QApplication, QPlainTextEdit
 
-from workflow_editor.widgets.find_replace_bar import FindReplaceBar
+from procedo.studio.widgets.find_replace_bar import FindReplaceBar
 
 
 @pytest.fixture
@@ -263,7 +263,7 @@ def test_install_shortcuts_registers_editors_on_bar(qapp):
     """install_find_shortcuts stores the editor list on the bar so
     menu-driven invocations (Edit → Find) get focus-vs-leftmost
     target picking too — not just the keyboard shortcut path."""
-    from workflow_editor.widgets.find_replace_bar import install_find_shortcuts
+    from procedo.studio.widgets.find_replace_bar import install_find_shortcuts
     from PySide6.QtWidgets import QWidget
 
     tab = QWidget()
@@ -276,7 +276,7 @@ def test_install_shortcuts_registers_editors_on_bar(qapp):
 
 def test_show_find_picks_leftmost_when_focus_outside(qapp):
     """No editor in the list has focus → leftmost (editors[0]) wins."""
-    from workflow_editor.widgets.find_replace_bar import install_find_shortcuts
+    from procedo.studio.widgets.find_replace_bar import install_find_shortcuts
     from PySide6.QtWidgets import QWidget
 
     tab = QWidget()

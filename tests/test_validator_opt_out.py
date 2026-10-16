@@ -28,8 +28,8 @@ from pathlib import Path
 
 import pytest
 
-from workflow_editor.llm.validator_dispatch import is_loop_available
-from workflow_editor.llm.validator_loop_settings import (
+from procedo.studio.llm.validator_dispatch import is_loop_available
+from procedo.studio.llm.validator_loop_settings import (
     SECTION_NAME,
     is_enabled,
     save_setting,
@@ -83,7 +83,7 @@ def test_is_loop_available_runs_probe_when_enabled_true(tmp_path, monkeypatch):
     # Simulate wheel-missing so the probe returns False (the test runs
     # in a venv where the wheel may or may not be installed; we don't
     # want availability tied to that).
-    from workflow_editor.pack_ops import pack_parsers
+    from procedo.studio.pack_ops import pack_parsers
     monkeypatch.setattr(
         pack_parsers, "is_available",
         lambda project_root=None: (False, "rules_packager_base not importable in test venv"),
@@ -106,7 +106,7 @@ def test_is_loop_available_surfaces_wheel_import_error(tmp_path, monkeypatch):
     Regression for the user-report 2026-05-11: validator stayed greyed
     out because the host venv had a wheel missing `check_name_fidelity`.
     """
-    from workflow_editor.pack_ops import pack_parsers
+    from procedo.studio.pack_ops import pack_parsers
     fake_error = (
         "rules_packager_base.rules.v2_0_2.parser is not importable: "
         "cannot import name 'check_name_fidelity'. Reinstall the "
@@ -169,7 +169,7 @@ def test_set_validator_status_unchecks_disabled_checkbox(tmp_path):
     """
     from PySide6.QtWidgets import QApplication
     from unittest.mock import MagicMock
-    from workflow_editor.dock.chat_panel import ChatPanel
+    from procedo.studio.dock.chat_panel import ChatPanel
     app = QApplication.instance() or QApplication([])  # noqa: F841
 
     panel = ChatPanel(main_window=MagicMock())
@@ -201,12 +201,12 @@ def test_validate_procedure_button_hidden_when_wheel_unavailable(monkeypatch):
     from unittest.mock import MagicMock
     app = QApplication.instance() or QApplication([])  # noqa: F841
 
-    from workflow_editor.core.task_config import TaskConfigManager
-    from workflow_editor.core.validators_registry import (
+    from procedo.studio.core.task_config import TaskConfigManager
+    from procedo.studio.core.validators_registry import (
         ensure_builtins_registered, unregister_all,
     )
-    from workflow_editor.pack_ops import pack_parsers
-    from workflow_editor.tabs.base_tab import BaseTab
+    from procedo.studio.pack_ops import pack_parsers
+    from procedo.studio.tabs.base_tab import BaseTab
     unregister_all()
     ensure_builtins_registered()
 
@@ -268,11 +268,11 @@ def test_all_validator_buttons_hidden_when_master_toggle_off():
     from PySide6.QtWidgets import QApplication, QHBoxLayout, QPushButton
     from types import SimpleNamespace
     from unittest.mock import MagicMock
-    from workflow_editor.core.task_config import TaskConfigManager
-    from workflow_editor.core.validators_registry import (
+    from procedo.studio.core.task_config import TaskConfigManager
+    from procedo.studio.core.validators_registry import (
         ensure_builtins_registered, unregister_all,
     )
-    from workflow_editor.tabs.base_tab import BaseTab
+    from procedo.studio.tabs.base_tab import BaseTab
     app = QApplication.instance() or QApplication([])  # noqa: F841
     unregister_all()
     ensure_builtins_registered()
@@ -316,7 +316,7 @@ def test_chat_panel_toggle_writes_auto_correct_not_enabled(tmp_path):
     from PySide6.QtWidgets import QApplication
     from types import SimpleNamespace
     from unittest.mock import MagicMock
-    from workflow_editor.dock.chat_panel import ChatPanel
+    from procedo.studio.dock.chat_panel import ChatPanel
     app = QApplication.instance() or QApplication([])  # noqa: F841
 
     root = _project(tmp_path)

@@ -22,7 +22,7 @@ import textwrap
 import pytest
 
 # The server module file, found via the installed package (path-independent).
-import workflow_editor.authoring._project_tools_mcp as _mcp_mod
+import procedo.studio.authoring._project_tools_mcp as _mcp_mod
 
 SERVER_PATH = os.path.abspath(_mcp_mod.__file__)
 

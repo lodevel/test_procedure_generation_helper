@@ -32,8 +32,8 @@ reader.start()
 time.sleep(0.1)
 if mode == 'panel':
     from PySide6.QtWidgets import QApplication
-    from workflow_editor.core import odb_inspect
-    from workflow_editor.widgets.netlist_panel import NetlistPanel, _LIVE_WORKERS
+    from procedo.studio.core import odb_inspect
+    from procedo.studio.widgets.netlist_panel import NetlistPanel, _LIVE_WORKERS
     odb_inspect.odb_cli_path = lambda: root / 'cli.py'
     app = QApplication([])
     panel = NetlistPanel()
@@ -44,7 +44,7 @@ if mode == 'panel':
     result = {'components': panel._components, 'error': panel._status.text()}
     panel.close()
 else:
-    from workflow_editor.authoring import _project_tools_mcp as server
+    from procedo.studio.authoring import _project_tools_mcp as server
     server._CLI_PATH = str(root / 'cli.py')
     result = {}
     def work():

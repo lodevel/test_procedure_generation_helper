@@ -9,7 +9,7 @@ reports only a tiny delta — so reading only the last message collapses the
 context readout to near-zero. The peak across the turn's steps is the real
 context the model saw.
 """
-from workflow_editor.llm.opencode_backend import OpenCodeBackend
+from procedo.studio.llm.opencode_backend import OpenCodeBackend
 
 
 def _msg(role, *, input=0, output=0, cache_read=0, total=None):

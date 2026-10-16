@@ -4,7 +4,7 @@ Locks the body builder shared by both send paths: the 🌐 web tools (+ read_pdf
 ride the per-request web toggle, the filesystem/shell tools are always off, the
 model override is unchanged, and a caller system prompt becomes message ``system``.
 """
-from workflow_editor.llm import LLMRequest, LLMTask, OpenCodeBackend, OpenCodeConfig
+from procedo.studio.llm import LLMRequest, LLMTask, OpenCodeBackend, OpenCodeConfig
 
 # EVERY OpenCode built-in is forced off on every editor request — the LLM gets no
 # filesystem (read/glob/grep/list), shell (bash), file-write (edit/write/patch),

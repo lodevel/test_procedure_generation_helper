@@ -3,7 +3,7 @@
 The QObject ticker needs a running Qt event loop to exercise; the formatter is a
 pure function and carries the formatting contract both chat surfaces rely on.
 """
-from workflow_editor.widgets.work_timer import format_elapsed
+from procedo.studio.widgets.work_timer import format_elapsed
 
 
 def test_format_elapsed_sub_minute():

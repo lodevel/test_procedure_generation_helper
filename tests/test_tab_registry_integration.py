@@ -40,15 +40,15 @@ from unittest.mock import MagicMock
 import pytest
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QPushButton
 
-from workflow_editor.core.task_config import TaskConfigManager
-from workflow_editor.core.validators_registry import (
+from procedo.studio.core.task_config import TaskConfigManager
+from procedo.studio.core.validators_registry import (
     ValidatorContext,
     ensure_builtins_registered,
     register,
     unregister_all,
 )
-from workflow_editor.llm.validator_dispatch import ValidationOutcome
-from workflow_editor.tabs.base_tab import BaseTab
+from procedo.studio.llm.validator_dispatch import ValidationOutcome
+from procedo.studio.tabs.base_tab import BaseTab
 
 
 # ---------------------------------------------------------------------------

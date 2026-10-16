@@ -1,4 +1,4 @@
-"""Procedo Studio's Assistant column (workflow_editor/dock, redesign slice 5): the rules picker
+"""Procedo Studio's Assistant column (procedo/studio/dock, redesign slice 5): the rules picker
 counts the current view's rules and opens their selection, the messages are bubbles per role
 and system lines pills in their tone, the composer's buttons are wired, the context meter and
 the validator dot follow, the Findings tab carries the count, the streaming bubble folds its
@@ -9,9 +9,9 @@ from types import SimpleNamespace
 import pytest
 from PySide6.QtCore import Qt
 
-import workflow_editor.dock.dock_widget as dock_mod
-from workflow_editor.dock.chat_messages import MessageWidget
-from workflow_editor.dock.chat_panel import ChatPanel
+import procedo.studio.dock.dock_widget as dock_mod
+from procedo.studio.dock.chat_messages import MessageWidget
+from procedo.studio.dock.chat_panel import ChatPanel
 
 from .test_main_window_characterization import (
     _make_project, _open_project, make_window as make_window, mbox as mbox, qapp as qapp,
@@ -112,7 +112,7 @@ def test_a_replys_thought_folds_behind_show_thinking(qapp):
 
 def test_details_opens_the_message_details(panel, monkeypatch):
     shown = []
-    monkeypatch.setattr("workflow_editor.dock.chat_panel.MessageDetailDialog",
+    monkeypatch.setattr("procedo.studio.dock.chat_panel.MessageDetailDialog",
                         lambda message, parent: SimpleNamespace(
                             exec=lambda: shown.append((message.full_prompt, message.full_response))))
     panel._current_tab_context = SimpleNamespace(messages=[], cumulative_tokens=0)

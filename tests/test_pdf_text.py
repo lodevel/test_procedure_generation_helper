@@ -1,5 +1,5 @@
-"""Tests for workflow_editor.authoring.pdf_text (path / bytes / url extraction)."""
-from workflow_editor.authoring import pdf_text
+"""Tests for procedo.studio.authoring.pdf_text (path / bytes / url extraction)."""
+from procedo.studio.authoring import pdf_text
 
 
 def make_pdf(path, text="HELLO VIN VOUT GND"):

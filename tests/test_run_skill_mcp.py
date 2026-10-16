@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-import workflow_editor.authoring.rs_core as rs_core
+import procedo.studio.authoring.rs_core as rs_core
 
 SECRET = b"unit-test-secret"
 AUTH_DIR = os.path.dirname(rs_core.__file__)

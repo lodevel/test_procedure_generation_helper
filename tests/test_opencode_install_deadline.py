@@ -4,9 +4,9 @@ import sys
 
 import pytest
 
-from workflow_editor.llm.opencode_backend import OpenCodeConfig
-from workflow_editor.llm.server_health import ServerError
-from workflow_editor.llm.server_manager import OpenCodeServerManager
+from procedo.studio.llm.opencode_backend import OpenCodeConfig
+from procedo.studio.llm.server_health import ServerError
+from procedo.studio.llm.server_manager import OpenCodeServerManager
 
 
 @pytest.mark.parametrize('delay, allowance, available', [(5.2, 10, True), (0.3, 0.05, False)])
@@ -21,7 +21,7 @@ def test_version_probe_uses_startup_allowance(tmp_path, monkeypatch, delay, allo
     def run_fake_wsl(command, **kwargs):
         return real_run([sys.executable, str(cli), *command[1:]], **kwargs)
 
-    monkeypatch.setattr('workflow_editor.llm.server_manager.subprocess.run', run_fake_wsl)
+    monkeypatch.setattr('procedo.studio.llm.server_manager.subprocess.run', run_fake_wsl)
     manager = OpenCodeServerManager(OpenCodeConfig(startup_timeout=allowance))
     assert manager.is_available() is available
     if available:

@@ -8,11 +8,11 @@ from unittest.mock import MagicMock
 import pytest
 from PySide6.QtWidgets import QApplication, QPlainTextEdit
 
-from workflow_editor.core import StepMarkerParser
-from workflow_editor.core.artifact_manager import ArtifactManager
-from workflow_editor.core.procedure_steps import numbered_steps
-from workflow_editor.tabs.json_code_tab import JsonCodeTab
-from workflow_editor.widgets.step_list import StepListCard
+from procedo.studio.core import StepMarkerParser
+from procedo.studio.core.artifact_manager import ArtifactManager
+from procedo.studio.core.procedure_steps import numbered_steps
+from procedo.studio.tabs.json_code_tab import JsonCodeTab
+from procedo.studio.widgets.step_list import StepListCard
 
 STEPS = [
     {"n": 1, "text": "set psu"},

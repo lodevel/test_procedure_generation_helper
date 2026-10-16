@@ -57,7 +57,7 @@ def setUpModule() -> None:
     reg.set_equipment_dispatch({e: {"": e} for e in ("psu", "eload", "scope")})
 
 _RUNNER = (Path(__file__).resolve().parent.parent
-           / "workflow_editor" / "llm" / "_execute_op_subprocess.py")
+           / "procedo" / "studio" / "llm" / "_execute_op_subprocess.py")
 _BSR_PATH = _RUNNER.parent / "_bench_session_runner.py"
 
 # Load the sibling FIRST under its canonical name so the daemon's lazy
@@ -2049,7 +2049,7 @@ class BenchClientLiveTests(unittest.TestCase):
     def _client(self):
         from tests._qt_stub import ensure_workflow_editor_importable
         ensure_workflow_editor_importable()
-        from workflow_editor.pack_ops import bench_client as bc
+        from procedo.studio.pack_ops import bench_client as bc
         c = bc.BenchSessionClient(_proc_file(self), Path("/nonexistent"))
 
         def _start():            # THIS interpreter (no project venv in tests)
@@ -2066,8 +2066,8 @@ class BenchClientLiveTests(unittest.TestCase):
     def test_end_session_is_shutdown(self):
         from tests._qt_stub import ensure_workflow_editor_importable
         ensure_workflow_editor_importable()
-        from workflow_editor.pack_ops import bench_client as bc
-        from workflow_editor.pack_ops.pack_parsers import RemoteSession
+        from procedo.studio.pack_ops import bench_client as bc
+        from procedo.studio.pack_ops.pack_parsers import RemoteSession
         self.assertIs(bc.BenchSessionClient.end_session, RemoteSession.shutdown)
 
     def test_manual_flow_acquire_run_release_end(self):

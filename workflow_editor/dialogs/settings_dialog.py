@@ -1,7 +1,6 @@
 """
-Settings Dialog - Application configuration.
-
-Implements Section 12.2 of the spec with unified task management.
+Settings Dialog - Procedo Studio's settings, as Procedo Bench's: a page list (LLM backend,
+Skills, Validator) beside the selected page, a header and a footer band.
 """
 
 import copy
@@ -11,18 +10,14 @@ import sys
 from pathlib import Path
 from typing import Optional
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QTabWidget,
-    QWidget, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox,
-    QPushButton, QLabel, QGroupBox, QFileDialog, QMessageBox, QPlainTextEdit,
-    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QSplitter
+    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QWidget, QLineEdit, QComboBox,
+    QSpinBox, QDoubleSpinBox, QCheckBox, QPushButton, QLabel, QMessageBox,
 )
 from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtGui import QFont
-from project_services import app_identity
+from project_services import app_identity, ui_kit
+from project_services.page_nav import PagedArea, field_row, heading, page_form
 
-from .. import theme
-from ..core.task_config import TaskConfig, TaskConfigManager, ChatConfig
-from ..llm.backend_base import LLMTask
+from ..core.task_config import TaskConfigManager
 from ..llm.server_manager import fetch_opencode_models
 from ..core.odb_inspect import load_hide_prefixes, save_hide_prefixes
 from ..core.fileio import atomic_write_text
@@ -337,13 +332,21 @@ def build_launch_config(
     return launch_dir
 
 
+def _add_row(form: QFormLayout, label: str, field) -> None:
+    """One row of a page's form, its label in the shared column (a page's forms line up)."""
+    form.addRow(ui_kit.form_label(label, ui_kit.LABEL_WIDTH), field)
+
+
+def _fixed(widget: QWidget, width: int) -> QWidget:
+    """*widget* as wide as the board draws it (a number, a host name)."""
+    widget.setFixedWidth(width)
+    return widget
+
 
 class SettingsDialog(QDialog):
     """
-    Settings dialog for application configuration.
-    
-    Settings are stored in settings.json in user's home directory.
-    Task configurations are managed through TaskConfigManager.
+    Procedo Studio's settings: LLM backend and Skills in ``settings.json``
+    (:func:`get_settings_path`), the Validator page in the open project's config.
     """
 
     # Thread-safe UI marshal: a worker daemon (the model-list fetch, the
@@ -367,8 +370,8 @@ class SettingsDialog(QDialog):
         # thread (AutoConnection -> QueuedConnection from a worker thread).
         self._ui_call.connect(self._run_ui_call)
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(700)
-        self.setMinimumHeight(600)
+        self.setMinimumSize(700, 600)  # every page scrolls when shorter than its fields
+        self.resize(780, 760)
 
         self._settings = load_settings()
         self._task_config_manager = task_config_manager
@@ -418,63 +421,31 @@ class SettingsDialog(QDialog):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        
-        # Tab widget
-        tabs = QTabWidget()
-        
-        # LLM Backend tab (index 0)
-        llm_tab = self._create_llm_tab()
-        tabs.addTab(llm_tab, "LLM Backend")
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(ui_kit.HeaderBand("Settings", "Procedo Studio \u00b7 this PC", stacked=True))
+        self._paged = PagedArea(self, list_width=160)
+        layout.addWidget(self._paged, 1)
+        self._llm_page(self._paged.add_scroll_page("LLM backend"))
+        self._skills_page(self._paged.add_scroll_page("Skills"))
+        self._validator_page(self._paged.add_scroll_page("Validator"))
 
-        # Tasks + Chat editing moved to ProjectConfigDialog ->
-        # Workflows tab (Phase 4). See the workflow editor's
-        # "Configure Workflows…" menu item for the entry point.
-
-        # Validator tab (index 1) - Per-project validator-loop options.
-        # Currently hosts only the global retry cap; reserved for future
-        # validator-related settings (per-artifact toggles, etc.) without
-        # bloating the LLM Backend tab.
-        validator_tab = self._create_validator_tab()
-        tabs.addTab(validator_tab, "Validator")
-
-        layout.addWidget(tabs)
-        
-        # Buttons
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.clicked.connect(self.reject)
-        btn_layout.addWidget(self.cancel_btn)
-        
-        self.save_btn = QPushButton("Save")
+        self.save_btn = ui_kit.primary(QPushButton("Save"))
         self.save_btn.clicked.connect(self._on_save)
-        self.save_btn.setDefault(True)
-        btn_layout.addWidget(self.save_btn)
-        
-        layout.addLayout(btn_layout)
-    
-    def _create_llm_tab(self) -> QWidget:
-        """Create the LLM settings tab."""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        
-        # Backend selection
-        backend_group = QGroupBox("LLM Backend")
-        backend_layout = QFormLayout(backend_group)
-        
-        self.backend_combo = QComboBox()
+        layout.addWidget(ui_kit.FooterBand([self.cancel_btn, self.save_btn]))
+
+    def _llm_page(self, page: QVBoxLayout) -> None:
+        """The backend and its common parameters; the OpenCode server below (opencode only)."""
+        page.addWidget(heading("LLM backend"))
+        form = page_form()
+        self.backend_combo = _fixed(QComboBox(), 220)
         self.backend_combo.addItems(["opencode", "none"])
         self.backend_combo.currentTextChanged.connect(self._on_backend_changed)
-        backend_layout.addRow("Backend:", self.backend_combo)
-        
-        layout.addWidget(backend_group)
-        
-        # Common LLM Parameters
-        common_group = QGroupBox("Common Parameters")
-        common_layout = QFormLayout(common_group)
+        _add_row(form, "Backend", field_row(self.backend_combo, None))
 
-        self.context_window = QSpinBox()
+        self.context_window = _fixed(QSpinBox(), 120)
         self.context_window.setRange(1000, 2_000_000)
         self.context_window.setValue(16384)
         self.context_window.setToolTip(
@@ -483,32 +454,39 @@ class SettingsDialog(QDialog):
             "know when to reset the session.\n"
             "Not sent to the LLM. Examples: GPT-4 → 128000, Gemma 4 26B → 131072, Claude 4.7 → 1000000."
         )
-        common_layout.addRow("Context Window:", self.context_window)
-        
-        self.request_timeout = QDoubleSpinBox()
+        _add_row(form, "Context window", field_row(self.context_window, ui_kit.note("tokens")))
+
+        self.request_timeout = _fixed(QDoubleSpinBox(), 80)
         self.request_timeout.setRange(10.0, 10800.0)
         self.request_timeout.setSingleStep(10.0)
         self.request_timeout.setValue(120.0)
-        self.request_timeout.setSuffix(" sec")
         self.request_timeout.setKeyboardTracking(True)
         self.request_timeout.setToolTip("Request timeout in seconds (10-10800). For long generations, use 300-600 seconds.")
-        common_layout.addRow("Request Timeout:", self.request_timeout)
-        
-        layout.addWidget(common_group)
-        
-        # OpenCode settings
-        self.opencode_group = QGroupBox("OpenCode Settings")
-        opencode_layout = QFormLayout(self.opencode_group)
-        
-        self.opencode_port = QSpinBox()
+        _add_row(form, "Request timeout", field_row(
+            self.request_timeout,
+            ui_kit.note("seconds (10\u201310800); 300\u2013600 for long generations")))
+        page.addLayout(form)
+
+        self.opencode_group = self._opencode_section()
+        page.addWidget(self.opencode_group)
+        page.addStretch()
+
+    def _opencode_section(self) -> QWidget:
+        """The OpenCode server: where it listens, the model, how it starts, its config."""
+        section = QWidget()
+        column = QVBoxLayout(section)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(14)
+        column.addWidget(heading("OpenCode server"))
+        form = page_form()
+
+        self.opencode_host = _fixed(QLineEdit(), 150)
+        self.opencode_host.setPlaceholderText("127.0.0.1")
+        self.opencode_port = _fixed(QSpinBox(), 80)
         self.opencode_port.setRange(1024, 65535)
         self.opencode_port.setValue(4096)
-        opencode_layout.addRow("Port:", self.opencode_port)
-        
-        self.opencode_host = QLineEdit()
-        self.opencode_host.setPlaceholderText("127.0.0.1")
-        opencode_layout.addRow("Host:", self.opencode_host)
-        
+        _add_row(form, "Host \u00b7 port", field_row(self.opencode_host, self.opencode_port, None))
+
         self.opencode_model = QComboBox()
         self.opencode_model.setEditable(True)
         self.opencode_model.setInsertPolicy(QComboBox.NoInsert)
@@ -527,6 +505,63 @@ class SettingsDialog(QDialog):
             "its opencode.json.")
         self.opencode_model_refresh.clicked.connect(
             lambda: self._populate_opencode_models())
+        model_row = QHBoxLayout()
+        model_row.setContentsMargins(0, 0, 0, 0)
+        model_row.addWidget(self.opencode_model, 1)
+        model_row.addWidget(self.opencode_model_refresh)
+        _add_row(form, "Model", model_row)
+        self.opencode_models_note = ui_kit.note("")
+        form.addRow("", self.opencode_models_note)
+
+        self.opencode_wsl_path = QLineEdit()
+        self.opencode_wsl_path.setPlaceholderText("/mnt/c/...")
+        self.opencode_wsl_path.setToolTip("WSL path to OpenCode directory")
+        _add_row(form, "WSL path", self.opencode_wsl_path)
+
+        self.opencode_startup_timeout = _fixed(QDoubleSpinBox(), 80)
+        self.opencode_startup_timeout.setRange(10.0, 300.0)
+        self.opencode_startup_timeout.setValue(60.0)
+        self.opencode_startup_timeout.setToolTip("Timeout for backend startup")
+        _add_row(form, "Startup timeout",
+                 field_row(self.opencode_startup_timeout, ui_kit.note("seconds")))
+
+        self.wizard_max_sessions = _fixed(QSpinBox(), 80)
+        self.wizard_max_sessions.setRange(1, 16)
+        self.wizard_max_sessions.setValue(5)
+        self.wizard_max_sessions.setToolTip(
+            "Max concurrent LLM sessions a batch wizard runs in parallel "
+            "(per-item reads / builds); a wizard's Parallel spin-box "
+            "defaults to this.")
+        _add_row(form, "Wizard sessions",
+                 field_row(self.wizard_max_sessions, ui_kit.note("max concurrent")))
+
+        # The editor's MASTER blueprint (master.json) — providers only, project
+        # agnostic. The per-launch opencode.json is DERIVED from it (MCP built
+        # fresh) at each launch. Generated once from the project; user-editable.
+        self.opencode_config_path = ui_kit.monospace(ui_kit.note(str(get_opencode_master_path())))
+        self.opencode_config_path.setTextInteractionFlags(Qt.TextSelectableByMouse)  # to copy it
+        self.opencode_config_path.setToolTip(self.opencode_config_path.text())  # a path wraps only at its breaks
+        self.open_opencode_config_btn = QPushButton("Open…")
+        self.open_opencode_config_btn.setToolTip(
+            "Open the editor's OpenCode master blueprint (master.json) — the "
+            "project-agnostic providers config. The per-launch opencode.json is "
+            "derived from it (default model stripped so it auto-picks; MCP tools "
+            "built fresh each launch). Edit it to change providers; delete it to "
+            "regenerate from the project.")
+        self.open_opencode_config_btn.clicked.connect(self._on_open_opencode_config)
+        cfg_row = QHBoxLayout()
+        cfg_row.setContentsMargins(0, 0, 0, 0)
+        cfg_row.addWidget(self.opencode_config_path, 1)
+        cfg_row.addWidget(self.open_opencode_config_btn)
+        _add_row(form, "Config", cfg_row)
+
+        _add_row(form, "Server", self._server_row())
+        column.addLayout(form)
+        return section
+
+    def _server_row(self) -> QHBoxLayout:
+        """Start server (only while it is down), Test connection, and what the last model
+        query found."""
         # One-click recovery affordance: shown only when the server reads as down
         # (no /config). It relaunches OUR server on a daemon thread, then
         # re-queries the model list — so a crashed mid-session server can be
@@ -537,88 +572,41 @@ class SettingsDialog(QDialog):
             "the model list refreshes automatically.")
         self.opencode_start_server.clicked.connect(self._on_start_server_clicked)
         self.opencode_start_server.setVisible(False)
-        model_row = QHBoxLayout()
-        model_row.setContentsMargins(0, 0, 0, 0)
-        model_row.addWidget(self.opencode_model, 1)
-        model_row.addWidget(self.opencode_model_refresh)
-        model_row.addWidget(self.opencode_start_server)
-        opencode_layout.addRow("Model:", model_row)
-        self.opencode_models_note = QLabel("")
-        self.opencode_models_note.setStyleSheet(
-            f"color: {theme.muted_color()}; font-size: 11px;")
-        opencode_layout.addRow("", self.opencode_models_note)
-        
-        self.opencode_wsl_path = QLineEdit()
-        self.opencode_wsl_path.setPlaceholderText("/mnt/c/...")
-        self.opencode_wsl_path.setToolTip("WSL path to OpenCode directory")
-        opencode_layout.addRow("WSL Path:", self.opencode_wsl_path)
-        
-        self.opencode_startup_timeout = QDoubleSpinBox()
-        self.opencode_startup_timeout.setRange(10.0, 300.0)
-        self.opencode_startup_timeout.setValue(60.0)
-        self.opencode_startup_timeout.setToolTip("Timeout for backend startup")
-        opencode_layout.addRow("Startup Timeout:", self.opencode_startup_timeout)
+        self.test_connection_btn = QPushButton("Test connection")
+        self.test_connection_btn.clicked.connect(self._on_test_connection)
+        self.opencode_server_pill = QLabel()
+        self.opencode_server_pill.setVisible(False)
+        row = field_row(self.opencode_start_server, self.test_connection_btn,
+                        self.opencode_server_pill, None)
+        row.setAlignment(self.opencode_server_pill, Qt.AlignmentFlag.AlignVCenter)  # a pill, not a bar
+        return row
 
-        self.wizard_max_sessions = QSpinBox()
-        self.wizard_max_sessions.setRange(1, 16)
-        self.wizard_max_sessions.setValue(5)
-        self.wizard_max_sessions.setToolTip(
-            "Max concurrent LLM sessions a batch wizard runs in parallel "
-            "(per-item reads / builds); a wizard's Parallel spin-box "
-            "defaults to this.")
-        opencode_layout.addRow(
-            "Wizard max concurrent sessions:", self.wizard_max_sessions)
+    def _skills_page(self, page: QVBoxLayout) -> None:
+        """The skill chat's starting toggles and the model's prompt shape.
 
-        # The editor's MASTER blueprint (master.json) — providers only, project
-        # agnostic. The per-launch opencode.json is DERIVED from it (MCP built
-        # fresh) at each launch. Generated once from the project; user-editable.
-        cfg_row = QHBoxLayout()
-        cfg_row.setContentsMargins(0, 0, 0, 0)
-        self.opencode_config_path = QLabel(str(get_opencode_master_path()))
-        self.opencode_config_path.setWordWrap(True)
-        self.opencode_config_path.setTextInteractionFlags(
-            Qt.TextSelectableByMouse)
-        self.opencode_config_path.setStyleSheet(
-            f"color: {theme.muted_color()}; font-size: 11px;")
-        cfg_row.addWidget(self.opencode_config_path, 1)
-        self.open_opencode_config_btn = QPushButton("Open…")
-        self.open_opencode_config_btn.setToolTip(
-            "Open the editor's OpenCode master blueprint (master.json) — the "
-            "project-agnostic providers config. The per-launch opencode.json is "
-            "derived from it (default model stripped so it auto-picks; MCP tools "
-            "built fresh each launch). Edit it to change providers; delete it to "
-            "regenerate from the project.")
-        self.open_opencode_config_btn.clicked.connect(self._on_open_opencode_config)
-        cfg_row.addWidget(self.open_opencode_config_btn)
-        opencode_layout.addRow("Config:", cfg_row)
-
-        # Skill-chat default toggles. These only seed the INITIAL state of the
-        # skill chat's per-request toggles; the user can still flip either off/on
-        # per conversation. Both default off (no web / no project-data access
-        # unless explicitly opted in).
-        self.web_default = QCheckBox("Web access on by default (skill chat)")
+        The toggles only seed the INITIAL state of the skill chat's per-request
+        toggles; the user can still flip each off/on per conversation. All default
+        off (no web / no project-data access unless explicitly opted in)."""
+        page.addWidget(heading("Skill chat defaults"))
+        self.web_default = QCheckBox("Web access on by default")
         self.web_default.setToolTip(
             "Seed the skill chat's web toggle ON for new conversations. The "
             "model can still be flipped off per chat. Off by default.")
-        opencode_layout.addRow("", self.web_default)
-
-        self.save_docs_default = QCheckBox(
-            "Save downloaded datasheets by default (skill chat)")
+        self.save_docs_default = QCheckBox("Save downloaded datasheets by default")
         self.save_docs_default.setToolTip(
             "Default state of the skill chat's 💾 Save datasheets toggle: when "
             "on, downloaded datasheets are cached into the project documents "
             "folder for reuse.")
-        opencode_layout.addRow("", self.save_docs_default)
-
-        self.project_tools_default = QCheckBox(
-            "Project data tools on by default (skill chat)")
+        self.project_tools_default = QCheckBox("Project data tools on by default")
         self.project_tools_default.setToolTip(
             "Seed the skill chat's project-data tools toggle ON for new "
             "conversations (netlist/BOM/component access via the project_tools "
             "MCP server). The model can still be flipped off per chat. Off by "
             "default.")
-        opencode_layout.addRow("", self.project_tools_default)
+        page.addLayout(self._checks(self.web_default, self.save_docs_default,
+                                    self.project_tools_default))
 
+        page.addWidget(heading("Models"))
         self.fold_system_into_prompt = QCheckBox(
             "Fold skill into prompt (models with no system role, e.g. Gemma)")
         self.fold_system_into_prompt.setToolTip(
@@ -626,22 +614,18 @@ class SettingsDialog(QDialog):
             "template, so the skill (sent as the message system prompt) is "
             "silently dropped and the model never sees it. Enable this to fold "
             "the skill into the user message instead. Leave OFF for GPT/Claude.")
-        opencode_layout.addRow("", self.fold_system_into_prompt)
+        page.addLayout(self._checks(self.fold_system_into_prompt))
+        page.addStretch()
 
-        layout.addWidget(self.opencode_group)
-        
-        # Test Connection button
-        test_btn_layout = QHBoxLayout()
-        test_btn_layout.addStretch()
-        self.test_connection_btn = QPushButton("Test Connection")
-        self.test_connection_btn.clicked.connect(self._on_test_connection)
-        test_btn_layout.addWidget(self.test_connection_btn)
-        layout.addLayout(test_btn_layout)
-        
-        layout.addStretch()
-        
-        return tab
-    
+    @staticmethod
+    def _checks(*boxes: QCheckBox) -> QVBoxLayout:
+        """Check boxes under a heading, closer to each other than the page's sections."""
+        column = QVBoxLayout()
+        column.setSpacing(8)
+        for box in boxes:
+            column.addWidget(box)
+        return column
+
     def _on_backend_changed(self, backend: str):
         """Handle backend selection change."""
         self.opencode_group.setVisible(backend == "opencode")
@@ -737,9 +721,14 @@ class SettingsDialog(QDialog):
         reachable = bool(models)
         can_start = self._server_manager is not None
         self.opencode_start_server.setVisible(not reachable and can_start)
+        self.opencode_server_pill.setVisible(reachable)
+        if reachable:
+            count = len(models)
+            ui_kit.set_pill(self.opencode_server_pill, "success",
+                            f"\u2713 Connected \u00b7 {count} model{'' if count == 1 else 's'}")
         if reachable:
             self.opencode_models_note.setText(
-                "Pick/copy from the list, TYPE any id (e.g. openai/gpt-5.5), or "
+                "Pick from the list, type any id (e.g. openai/gpt-5.5), or "
                 "leave empty for auto-pick.")
         elif can_start:
             self.opencode_models_note.setText(
@@ -1054,26 +1043,22 @@ class SettingsDialog(QDialog):
 
     
     # ------------------------------------------------------------------ #
-    # Validator tab (per-project: validator_loop.* settings)              #
+    # Validator page (per-project: validator_loop.* settings)             #
     # ------------------------------------------------------------------ #
 
-    def _create_validator_tab(self) -> QWidget:
-        """Build the Validator tab.
-
-        Single field today: ``Max validator-correction retries`` —
-        persisted per-project under ``validator_loop.max_attempts``.
-        Reserved for future fields (per-artifact toggles, etc.).
-        Falls back to a disabled state with explanatory tooltip when no
-        project is open.
-        """
+    def _validator_page(self, page: QVBoxLayout) -> None:
+        """The project's validator: on/off, its auto-correction attempts, and the
+        board netlist's hidden net prefixes — disabled while no project is open
+        (there is nowhere to persist them)."""
         from ..core.task_config import DEFAULT_MAX_VALIDATOR_ATTEMPTS
 
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
+        title = heading("Validator")
+        title.layout().insertWidget(1, ui_kit.set_pill(QLabel(), "info", "this project"))
+        page.addWidget(title)
 
         # Top-level enable/disable: operator opt-out (Phase 4.6).
         # When unchecked, the deterministic validator is skipped, the
-        # auto-correct checkbox is greyed (no loop to run), and the
+        # attempts field is greyed (no loop to run), and the
         # "validator unavailable" chat warning is suppressed.
         self.validator_enabled = QCheckBox("Enable deterministic validator")
         self.validator_enabled.setChecked(True)
@@ -1084,12 +1069,10 @@ class SettingsDialog(QDialog):
             "requires a text_renderer to be picked in "
             "Project Config → Parsers."
         )
-        layout.addWidget(self.validator_enabled)
+        page.addWidget(self.validator_enabled)
 
-        retry_group = QGroupBox("Auto-correction loop")
-        retry_form = QFormLayout(retry_group)
-
-        self.validator_max_attempts = QSpinBox()
+        form = page_form()
+        self.validator_max_attempts = _fixed(QSpinBox(), 80)
         self.validator_max_attempts.setRange(1, 10)
         self.validator_max_attempts.setValue(DEFAULT_MAX_VALIDATOR_ATTEMPTS)
         self.validator_max_attempts.setToolTip(
@@ -1098,50 +1081,31 @@ class SettingsDialog(QDialog):
             "review. Higher values cost more tokens; default 3 resolves "
             "~95%% of fixable failures empirically. Per-project."
         )
-        retry_form.addRow("Max validator-correction attempts:", self.validator_max_attempts)
-
-        # Disable the retry-cap row when the master toggle is off.
-        self.validator_enabled.toggled.connect(retry_group.setEnabled)
-
-        layout.addWidget(retry_group)
+        _add_row(form, "Correction attempts", field_row(
+            self.validator_max_attempts, ui_kit.note("max, auto-correction loop")))
+        # Editable only with a project open (somewhere to save it) and a loop to run.
+        self.validator_enabled.toggled.connect(
+            lambda on: self.validator_max_attempts.setEnabled(on and self._project_root is not None))
 
         # Board-netlist (Text-tab panel) hidden net-name prefixes — per project.
-        netlist_group = QGroupBox("Board netlist")
-        netlist_form = QFormLayout(netlist_group)
-        self.net_hide_prefixes = QLineEdit()
+        self.net_hide_prefixes = _fixed(QLineEdit(), 160)
         self.net_hide_prefixes.setPlaceholderText("Net")
         self.net_hide_prefixes.setToolTip(
             "Comma-separated net-name prefixes hidden by default in the Text "
             "tab's netlist panel (case-insensitive). Default 'Net' hides Altium "
             "autogen names like NetD16_A."
         )
-        netlist_form.addRow("Hidden net prefixes:", self.net_hide_prefixes)
-        layout.addWidget(netlist_group)
+        _add_row(form, "Hidden net prefixes", field_row(self.net_hide_prefixes, None))
+        page.addLayout(form)
 
-        # Helper note + project-scope explanation.
-        note = QLabel(
-            "Settings on this tab are stored per-project in "
-            "<code>config/config.json</code> under the "
-            "<code>validator_loop</code> section. They take effect on "
-            "the next LLM task you run."
-        )
-        note.setWordWrap(True)
-        note.setStyleSheet(f"color: {theme.muted_color()}; font-size: 11px;")
-        layout.addWidget(note)
-
-        # Disable when no project is bound — there's nowhere to persist.
+        page.addWidget(ui_kit.note(
+            "Stored in config/config.json (validator_loop). Applies to the next LLM task."))
         if self._project_root is None:
             self.validator_enabled.setEnabled(False)
             self.validator_max_attempts.setEnabled(False)
             self.net_hide_prefixes.setEnabled(False)
-            disabled_note = QLabel(
-                "<i>No project open — open a project to edit these settings.</i>"
-            )
-            disabled_note.setStyleSheet(f"color: {theme.muted_color()};")
-            layout.addWidget(disabled_note)
-
-        layout.addStretch()
-        return tab
+            page.addWidget(ui_kit.note("No project open — open a project to edit these settings."))
+        page.addStretch()
 
     def _load_validator_values(self) -> None:
         """Populate the Validator tab from the project's

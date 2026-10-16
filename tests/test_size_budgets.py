@@ -41,7 +41,7 @@ _SKIP_DIRS = {"__pycache__", "build", "dist", ".venv"}
 
 FILE_BUDGET: dict[str, int] = {
     "core/task_config.py": 1289,
-    "dialogs/settings_dialog.py": 1305,  # +7: opencode-client migration settings wiring (7985722)
+    "dialogs/settings_dialog.py": 1252,  # -53: its pages are Bench's paged dialog (Studio redesign slice 7b)
     "llm/_execute_op_subprocess.py": 1298,  # +50: bench-session S3 — frame dispatch,
     # reader-thread wiring, and the held-rekey seams (_ensure_held routing,
     # channel-union safe-off fallback, per-path procedure docs); ALL new logic
@@ -83,7 +83,6 @@ CLASS_METHOD_BUDGET: dict[tuple[str, str], int] = {
 }
 
 FUNC_LEN_BUDGET: dict[tuple[str, str], int] = {
-    ("dialogs/settings_dialog.py", "_create_llm_tab"): 187,
 }
 
 

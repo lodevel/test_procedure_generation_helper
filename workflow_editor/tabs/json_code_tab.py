@@ -22,7 +22,6 @@ from .code_tab import PythonSyntaxHighlighter
 from ..core import ArtifactType, StepMarkerParser
 from ..core.procedure_steps import numbered_steps
 from ..llm import TabContext, LLMTask
-from ..dialogs import DiffViewer
 from ..widgets.editor_card import EditorCard
 from ..widgets.find_replace_bar import FindReplaceBar, install_find_shortcuts
 from ..widgets.step_list import StepListCard, step_rows
@@ -230,7 +229,7 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         return parsed
 
     def _handle_code_proposal(self, proposal):
-        """Handle test_code proposal."""
+        """Offer a test_code proposal (``self.code_card``) as a proposal card."""
         # Accept "create" alongside "replace" — see text_json_tab for
         # rationale. "patch" stays excluded.
         if proposal.mode in ("replace", "create"):
@@ -245,8 +244,8 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
             # Preserve operator-pinned bench-identification constants
             # in the proposed code. The LLM doesn't know the bench's
             # real VISA/COM addresses; if it produces defaults, we
-            # substitute the operator's existing values before showing
-            # the diff so the operator only sees real-content changes.
+            # substitute the operator's existing values before proposing
+            # it so the operator only sees real-content changes.
             if current_content.strip():
                 try:
                     json_str = self.artifact_manager.procedure_json.content or ""
@@ -268,20 +267,8 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
                             "constant(s): %s",
                             len(replaced), ", ".join(replaced),
                         )
-
-            # Show diff dialog for user to accept/reject
-            accepted, final_content = DiffViewer.show_diff(
-                current_content,
-                content_str,
-                "Review Changes: test.py",
-                self
-            )
-
-            if accepted:
-                self.code_card.set_text(final_content)
-                self.main_window.dock.chat_panel.add_system_message("✓ Applied changes to test.py", tone="success")
-            else:
-                self.main_window.dock.chat_panel.add_system_message("✗ Rejected changes to test.py", tone="danger")
+            self.propose_edit(self.code_card, content_str,
+                              test=self._ensure_run_state().test)
 
     def refresh_code_parser_button(self):
         """Gate the Quick Code button in two tiers: visible iff the wheel
@@ -374,32 +361,21 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
                     len(replaced), ", ".join(replaced),
                 )
 
-        if current_code:
-            accepted, final_content = DiffViewer.show_diff(
-                current_code,
-                code_str,
-                "Review Changes: test.py (Quick Code)",
-                self,
-            )
-            if not accepted:
+        def done() -> None:
+            if warnings:
+                warn_lines = "\n".join(f"  • {w}" for w in warnings)
                 self.main_window.dock.chat_panel.add_system_message(
-                    "✗ Quick Code — changes rejected.", tone="danger"
+                    f"⚡ Quick Code complete — {len(warnings)} warning(s):\n{warn_lines}",
+                    tone="warning",
                 )
-                return
-            code_str = final_content
+            else:
+                self.main_window.dock.chat_panel.add_system_message(
+                    "⚡ Quick Code complete — no warnings.", tone="success"
+                )
+            self.status_message.emit("⚡ Quick Code complete")
 
-        self.code_card.set_text(code_str)
-
-        if warnings:
-            warn_lines = "\n".join(f"  • {w}" for w in warnings)
-            self.main_window.dock.chat_panel.add_system_message(
-                f"⚡ Quick Code complete — {len(warnings)} warning(s):\n{warn_lines}", tone="warning"
-            )
-        else:
-            self.main_window.dock.chat_panel.add_system_message(
-                "⚡ Quick Code complete — no warnings.", tone="success"
-            )
-        self.status_message.emit("⚡ Quick Code complete")
+        self.propose_edit(self.code_card, code_str, done=done,
+                          rejected="✗ Quick Code — changes rejected.", ask_when_empty=False)
     
     def _on_step_clicked(self, step_num: int):
         """Click a step → jump in BOTH editors (JSON always; code when

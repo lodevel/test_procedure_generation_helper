@@ -98,16 +98,21 @@ class LLMRunState:
     """Free-form storage for the orchestrator (e.g. operator-toggle
     snapshot at run start). Kept here so the dataclass is the single
     place the run's state lives."""
+    test: Optional[tuple] = None
+    """The test open when the run was asked (``core.proposal.current_test``): its replies are
+    for that test only. Kept past the run's end (its reply is handled after the FSM left
+    LLM_REQUESTED)."""
 
     # ------------------------------------------------------------------ #
     # Transitions                                                         #
     # ------------------------------------------------------------------ #
 
-    def start_run(self, task: LLMTask, max_attempts: int) -> None:
-        """Begin a new run. Resets attempt counter; clears prior outcome."""
+    def start_run(self, task: LLMTask, max_attempts: int, test: Optional[tuple]) -> None:
+        """Begin a new run, asked on *test*. Resets attempt counter; clears prior outcome."""
         self._require_in(_TERMINAL, "start_run")
         self.state = RunStateKind.LLM_REQUESTED
         self.task = task
+        self.test = test
         self.attempt = 1
         self.max_attempts = max(1, int(max_attempts))
         self.last_response = None

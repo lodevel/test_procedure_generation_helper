@@ -13,7 +13,6 @@ import logging
 
 from PySide6.QtWidgets import QPushButton
 
-from ..dialogs import DiffViewer
 from ..llm import LLMTask
 from ..llm.reconstruction import reconstructed_or_error
 
@@ -266,7 +265,7 @@ class TextActionsMixin:
         )
 
     def _on_parse_and_generate(self):
-        """Strict one-click: Text → JSON → test.py with diff review.
+        """Strict one-click: Text → JSON → test.py, offered as a proposal card.
         Delegates to the shared LLMTabMixin helper."""
         self._run_deterministic_parse_and_generate()
 
@@ -279,7 +278,7 @@ class TextActionsMixin:
         self._run_task_async(LLMTask.REVIEW_TEXT_PROCEDURE)
 
     def _handle_text_proposal(self, proposal, task=None):
-        """Offer a procedure_text proposal as a diff; apply it when accepted.
+        """Offer a procedure_text proposal as a proposal card.
 
         Accepts "create" alongside "replace" — semantically identical (full
         content for the artifact): the LLM emits "create" for fresh authoring
@@ -305,7 +304,7 @@ class TextActionsMixin:
             content_str, current_content,
             task_override=override, project_root=project_root,
         )
-        banner = None
+        banner = ""
         if err:
             if best_effort is None:
                 # Nothing to show (e.g. parser/wheel unavailable) — warn only.
@@ -313,9 +312,9 @@ class TextActionsMixin:
                     f"⚠ Could not reconstruct procedure_text.md: {err}", tone="warning"
                 )
                 return
-            # Invalid proposal, but a best-effort document exists: still offer a
-            # reviewable diff with a warning banner so the operator can fix /
-            # apply / reject it instead of it being silently dropped.
+            # Invalid proposal, but a best-effort document exists: still offer it,
+            # its card warning and the diff window showing the findings, so the
+            # operator can fix / apply / reject it instead of it being silently dropped.
             banner = (
                 "Proposal failed validation — review and fix before "
                 "applying:\n" + err
@@ -323,20 +322,5 @@ class TextActionsMixin:
             content_str = best_effort
         else:
             content_str = reconstructed
-        accepted, final_content = DiffViewer.show_diff(
-            current_content,
-            content_str,
-            "Review Changes: procedure_text.md",
-            self,
-            banner=banner,
-        )
-
-        if accepted:
-            self.text_card.set_text(final_content)
-            self.main_window.dock.chat_panel.add_system_message(
-                "✓ Applied changes to procedure_text.md", tone="success"
-            )
-        else:
-            self.main_window.dock.chat_panel.add_system_message(
-                "✗ Rejected changes to procedure_text.md", tone="danger"
-            )
+        self.propose_edit(self.text_card, content_str, banner=banner,
+                          test=self._ensure_run_state().test)

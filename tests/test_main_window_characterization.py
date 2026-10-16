@@ -594,8 +594,9 @@ def test_real_edit_save_flips_out_of_sync(make_window, tmp_path):
 @pytest.mark.parametrize("tab", ["text_only_tab", "text_json_tab"])
 def test_parse_and_generate_marks_in_sync(make_window, monkeypatch, tmp_path, tab):
     # procedure.json and test.py both come from the same text in one action:
-    # an out-of-sync test is in sync afterwards, and stays so on reopen.
-    from workflow_editor.dialogs import DiffViewer
+    # an out-of-sync test is in sync afterwards (once its proposal card is
+    # accepted), and stays so on reopen.
+    from workflow_editor.dock.chat_messages import ProposalMessage
     from workflow_editor.pack_ops import pack_parsers
     root = _make_project(tmp_path / "proj")
     t1 = root / "tests" / "t1"
@@ -610,8 +611,12 @@ def test_parse_and_generate_marks_in_sync(make_window, monkeypatch, tmp_path, ta
                         lambda text, project_root=None: ({"id": "t1", "steps": [{"n": 1}]}, []))
     monkeypatch.setattr(pack_parsers, "generate_code",
                         lambda proc, project_root=None: ("def main():\n    return 1\n", []))
-    monkeypatch.setattr(DiffViewer, "show_diff", staticmethod(lambda old, new, *a: (True, new)))
-    getattr(w, tab)._on_parse_and_generate()
+    view = getattr(w, tab)
+    view._on_parse_and_generate()
+    assert "return 1" not in (t1 / "test.py").read_text(encoding="utf-8")  # waits for Accept
+    card = view.tab_context.messages[-1]
+    assert isinstance(card, ProposalMessage)
+    assert card.proposal.accept()
 
     assert "return 1" in (t1 / "test.py").read_text(encoding="utf-8")
     assert w.session_state.artifacts_in_sync is True
@@ -622,9 +627,10 @@ def test_parse_and_generate_marks_in_sync(make_window, monkeypatch, tmp_path, ta
 
 
 def test_parse_and_generate_with_nothing_changed_opens_no_review(make_window, monkeypatch, tmp_path):
-    # The diff base keeps the file's final newline, so output identical to the
-    # files on disk is no change at all: no review dialog opens.
-    from workflow_editor.dialogs import DiffViewer
+    # The diff compares lines (a final newline on one side only is no change),
+    # so output identical to the files on disk is no change at all: no proposal
+    # card waits, the files are simply written.
+    from workflow_editor.dock.chat_messages import ProposalMessage
     from workflow_editor.pack_ops import pack_parsers
     root = _make_project(tmp_path / "proj")
     t1 = root / "tests" / "t1"
@@ -636,11 +642,10 @@ def test_parse_and_generate_with_nothing_changed_opens_no_review(make_window, mo
     monkeypatch.setattr(pack_parsers, "parse_text",
                         lambda text, project_root=None: ({"id": "t1", "steps": []}, []))
     monkeypatch.setattr(pack_parsers, "generate_code", lambda proc, project_root=None: (code, []))
-    reviews = []
-    monkeypatch.setattr(DiffViewer, "exec", lambda self: reviews.append(self) or 0)
     w.text_only_tab._on_parse_and_generate()
 
-    assert reviews == []
+    assert not any(isinstance(m, ProposalMessage) for m in w.text_only_tab.tab_context.messages)
+    assert w.session_state.artifacts_in_sync is True
     assert (t1 / "test.py").read_text(encoding="utf-8") == code
 
 

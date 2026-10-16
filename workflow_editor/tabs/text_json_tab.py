@@ -19,7 +19,6 @@ from .json_tab import JsonSyntaxHighlighter
 from .text_actions import TextActionsMixin
 from ..core import ArtifactType
 from ..llm import TabContext, LLMTask
-from ..dialogs import DiffViewer
 from ..widgets.editor_card import EditorCard
 from ..widgets.find_replace_bar import FindReplaceBar, install_find_shortcuts
 from ..widgets.text_highlighter import ProcedureTextHighlighter
@@ -181,36 +180,23 @@ class TextJsonTab(TextActionsMixin, LLMTabMixin, BaseTab):
             )
             return
 
-        result_str = json.dumps(result, indent=2)
-
-        current_json = self.json_editor.toPlainText().strip()
-        if current_json:
-            # Non-empty JSON — show diff so user can review
-            accepted, final_content = DiffViewer.show_diff(
-                current_json,
-                result_str,
-                "Review Changes: procedure.json (Quick Parse)",
-                self,
-            )
-            if not accepted:
+        def done() -> None:
+            if warnings:
+                warn_lines = "\n".join(f"  • {w}" for w in warnings)
                 self.main_window.dock.chat_panel.add_system_message(
-                    "✗ Quick Parse — changes rejected.", tone="danger"
+                    f"⚡ Quick Parse complete — {len(warnings)} warning(s):\n{warn_lines}",
+                    tone="warning",
                 )
-                return
-            result_str = final_content
+            else:
+                self.main_window.dock.chat_panel.add_system_message(
+                    "⚡ Quick Parse complete — no warnings.", tone="success"
+                )
+            self.status_message.emit("⚡ Quick Parse complete")
 
-        self.json_card.set_text(result_str)
-
-        if warnings:
-            warn_lines = "\n".join(f"  • {w}" for w in warnings)
-            self.main_window.dock.chat_panel.add_system_message(
-                f"⚡ Quick Parse complete — {len(warnings)} warning(s):\n{warn_lines}", tone="warning"
-            )
-        else:
-            self.main_window.dock.chat_panel.add_system_message(
-                "⚡ Quick Parse complete — no warnings.", tone="success"
-            )
-        self.status_message.emit("⚡ Quick Parse complete")
+        # A JSON already there waits for the user's Accept (a proposal card); an empty one
+        # takes the result at once.
+        self.propose_edit(self.json_card, json.dumps(result, indent=2), done=done,
+                          rejected="✗ Quick Parse — changes rejected.", ask_when_empty=False)
 
     def _on_quick_render(self):
         """Deterministic JSON → Text without LLM (rule-based, instant)."""
@@ -252,27 +238,14 @@ class TextJsonTab(TextActionsMixin, LLMTabMixin, BaseTab):
             )
             return
 
-        current_text = self.text_editor.toPlainText().strip()
-        if current_text:
-            accepted, final_content = DiffViewer.show_diff(
-                current_text,
-                result_text,
-                "Review Changes: procedure_text.md (Quick Render)",
-                self,
+        def done() -> None:
+            self.main_window.dock.chat_panel.add_system_message(
+                "⚡ Quick Render complete.", tone="success"
             )
-            if not accepted:
-                self.main_window.dock.chat_panel.add_system_message(
-                    "✗ Quick Render — changes rejected.", tone="danger"
-                )
-                return
-            result_text = final_content
+            self.status_message.emit("⚡ Quick Render complete")
 
-        self.text_card.set_text(result_text)
-
-        self.main_window.dock.chat_panel.add_system_message(
-            "⚡ Quick Render complete.", tone="success"
-        )
-        self.status_message.emit("⚡ Quick Render complete")
+        self.propose_edit(self.text_card, result_text, done=done,
+                          rejected="✗ Quick Render — changes rejected.", ask_when_empty=False)
 
     def _on_derive_json(self):
         """Text → JSON transformation (strict mode)."""

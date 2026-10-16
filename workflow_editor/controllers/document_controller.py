@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QMessageBox
 from project_services.ui_kit import set_pill
 
 from ..core import ArtifactManager, ArtifactType, SessionState
+from ..core.proposal import discard_pending
 from ..shell import VIEWS
 
 if TYPE_CHECKING:
@@ -225,6 +226,8 @@ class DocumentController:
         if mw.artifact_manager and self.check_artifact_coherence():
             return  # User wants to review
 
+        self.discard_proposals()
+
         # Save current session state (includes validation_issues) before switching
         if hasattr(mw, 'session_state') and mw.session_state and mw.session_state._file_path:
             try:
@@ -319,6 +322,7 @@ class DocumentController:
 
         # If the deleted test was the currently opened one, clear everything
         if mw.artifact_manager and mw.artifact_manager.test_dir == path:
+            self.discard_proposals()
             mw.artifact_manager = None
             mw.session_state = None
 
@@ -340,6 +344,15 @@ class DocumentController:
             mw.workspace_widget.set_opened_test(None)
 
         mw.footer.show_message(f"Deleted test: {path.name}", 3000)
+
+    def discard_proposals(self):
+        """The open test is closing: the proposal cards made for it, still waiting in any
+        view's chat, can no longer be applied (each card then says so)."""
+        mw = self._mw
+        count = sum(discard_pending(tab.tab_context.messages) for tab in mw._get_llm_tabs())
+        if count:
+            log.info("Discarded %d pending proposal(s): their test was closed", count)
+            mw.dock.chat_panel.refresh_proposals()
 
     def on_save(self):
         """Save artifacts managed by the current tab.

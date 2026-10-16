@@ -18,6 +18,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
+from ..core.proposal import FileChange, FileText, PartlyApplied, Proposal, current_test
 from ..llm import LLMTask, ChatMessage
 from ..llm.prompt_builder import PromptBuilder, TaskPromptNotDeclaredError
 from ..llm.output_contracts import get_contract_for_tab
@@ -44,15 +45,16 @@ class LLMTabMixin:
     # ------------------------------------------------------------------ #
 
     def _run_deterministic_parse_and_generate(self):
-        """Strict one-click: Text → JSON → test.py with diff review.
+        """Strict one-click: Text → JSON → test.py, offered as one proposal card.
 
         Shared by :class:`TextOnlyTab` and :class:`TextJsonTab`. Reads the
         live text editor, parses to JSON and generates code deterministically
-        (no LLM), aborts on any parser/codegen warning, shows a DiffViewer for
-        each artifact whose current content is non-empty, then writes
-        ``procedure_text`` (if dirty), ``procedure.json`` and ``test.py``.
+        (no LLM), aborts on any parser/codegen warning, then — when
+        procedure.json or test.py already has content that would change —
+        waits for the card's Accept before :meth:`_write_parse_and_generate`
+        writes ``procedure_text`` (if dirty), ``procedure.json`` and ``test.py``.
 
-        Diff bases come from the ArtifactManager. The text and JSON editors
+        The card's bases come from the ArtifactManager. The text and JSON editors
         mirror their content there on every keystroke, so those bases are
         fresh. The ``test_code`` base is whatever was last loaded/saved (no
         Text tab has a code editor to mirror from) — the diff preview for
@@ -61,7 +63,6 @@ class LLMTabMixin:
         """
         from ..core import ArtifactType
         from ..pack_ops import pack_parsers
-        from ..dialogs import DiffViewer
 
         text = self.text_card.editor.toPlainText().strip()
         if not text:
@@ -134,18 +135,6 @@ class LLMTabMixin:
             )
             return
 
-        # --- Review diffs against current artifacts before writing ---
-        current_json = (self.artifact_manager.get_content(ArtifactType.PROCEDURE_JSON) or "").strip()
-        if current_json:
-            accepted, procedure_str = DiffViewer.show_diff(
-                current_json, procedure_str,
-                "Review Changes: procedure.json (Parse + Generate)",
-                self,
-            )
-            if not accepted:
-                _abort("✗ Parse + Generate — JSON changes rejected.")
-                return
-
         current_code = (self.artifact_manager.get_content(ArtifactType.TEST_CODE) or "").strip()
         # Preserve operator-pinned bench-identification constants (VISA/COM,
         # baud, timeout, remote, channel) from the existing test.py. Codegen
@@ -164,32 +153,52 @@ class LLMTabMixin:
                     "Parse + Generate: preserved %d operator-pinned constant(s): %s",
                     len(replaced), ", ".join(replaced),
                 )
-        if current_code:
-            accepted, code = DiffViewer.show_diff(
-                current_code, code,
-                "Review Changes: test.py (Parse + Generate)",
-                self,
-            )
-            if not accepted:
-                _abort("✗ Parse + Generate — code changes rejected.")
-                return
 
-        # --- Write: text (if dirty) → JSON → code ---
+        def current(kind):
+            return lambda: self.artifact_manager.get_content(kind) or ""
+
+        def rejected() -> None:
+            kept = proposal.written()  # an Accept that failed part-way wrote these
+            _abort("✗ Parse + Generate — changes rejected." +
+                   (f" {' + '.join(kept)} stays as written." if kept else ""))
+
+        proposal = Proposal(
+            [FileChange("procedure.json", current(ArtifactType.PROCEDURE_JSON), procedure_str),
+             FileChange("test.py", current(ArtifactType.TEST_CODE), code)],
+            lambda: self._write_parse_and_generate(procedure_str, code), rejected,
+            inputs=[FileText("procedure_text.md", self.text_card.editor.toPlainText)],
+            test=current_test(self.artifact_manager))
+        if any(change.base.strip() for change in proposal.changes):
+            self.main_window.dock.chat_panel.offer_proposal(self.tab_context, proposal)
+        else:  # nothing there yet to overwrite: written at once
+            proposal.accept()
+
+    def _write_parse_and_generate(self, procedure_str: str, code: str) -> None:
+        """Parse + Generate accepted: save the text (if modified), write procedure.json then
+        test.py, and record them in sync. Raises when a file cannot be written —
+        :class:`PartlyApplied` once procedure.json was. Every view's editor of either file shows
+        the artifact afterwards: what was written, or what it held when its write failed."""
+        from ..core import ArtifactType
+
         if self.text_card.dirty and not self.text_card.save():
-            return
+            raise OSError(f"{self.text_card.file_name} could not be saved")
 
-        self.artifact_manager.set_content(ArtifactType.PROCEDURE_JSON, procedure_str)
-        self.artifact_manager.save_artifact(ArtifactType.PROCEDURE_JSON)
-        self.artifact_manager.procedure_json.mark_clean()
-
-        self.artifact_manager.set_content(ArtifactType.TEST_CODE, code)
-        self.artifact_manager.save_artifact(ArtifactType.TEST_CODE)
-        self.artifact_manager.test_code.mark_clean()
-
-        # Reflect the new JSON in the tab's editor if it has one.
-        json_card = self.card_for("procedure_json")
-        if json_card is not None:
-            json_card.load()
+        written: list[str] = []
+        files = ((ArtifactType.PROCEDURE_JSON, "procedure.json", procedure_str),
+                 (ArtifactType.TEST_CODE, "test.py", code))
+        try:
+            for kind, name, content in files:
+                self._write_artifact(kind, content)
+                written.append(name)
+        except Exception as exc:
+            if written:
+                raise PartlyApplied(f"{' + '.join(written)} saved, {name} not: {exc}") from exc
+            raise
+        finally:
+            for tab in self.main_window._get_llm_tabs():
+                for card in tab.cards:
+                    if card.kind in (ArtifactType.PROCEDURE_JSON, ArtifactType.TEST_CODE):
+                        card.load()
 
         self.main_window.dock.chat_panel.add_system_message(
             "⚡ Parse + Generate complete — procedure.json and test.py saved.", tone="success"
@@ -199,22 +208,35 @@ class LLMTabMixin:
         self.main_window._document_controller.mark_in_sync()
         self.artifact_saved.emit()
 
+    def _write_artifact(self, kind, content: str) -> None:
+        """Save *content* as the *kind* artifact; when the write raises, the artifact keeps what
+        it held."""
+        held = self.artifact_manager.get_content(kind)
+        self.artifact_manager.set_content(kind, content)
+        try:
+            self.artifact_manager.save_artifact(kind)
+        except Exception:
+            self.artifact_manager.set_content(kind, held)
+            raise
+
     # ------------------------------------------------------------------ #
     # Task dispatch                                                        #
     # ------------------------------------------------------------------ #
 
-    def _run_task_async(self, task: LLMTask, **kwargs):
-        """Run LLM task asynchronously in a worker thread."""
+    def _run_task_async(self, task: LLMTask, retry: bool = False, **kwargs):
+        """Run LLM task asynchronously in a worker thread (*retry*: the auto-correct loop's
+        next attempt of the current run)."""
         # FSM bootstrap. Two entry paths:
-        #   (a) Operator click — FSM is in IDLE/APPLIED/REJECTED/etc., or
-        #       lingering AWAITING_REVIEW from a prior run the operator
-        #       didn't explicitly accept/reject. Reset and start_run.
-        #   (b) Auto-retry — FSM is in LLM_REQUESTED already (set by
-        #       ``begin_retry``); leave it alone, attempt counter stays.
+        #   (a) Operator request — whatever the FSM holds (a finished run, or
+        #       one a failed request left in LLM_REQUESTED) is reset, and a
+        #       new run starts on the test open now.
+        #   (b) Auto-retry — ``begin_retry`` put the FSM in LLM_REQUESTED;
+        #       the run goes on, attempt counter and test included.
         run_state = self._ensure_run_state()
-        if run_state.state != RunStateKind.LLM_REQUESTED:
+        if not retry:
             run_state.reset_to_idle()
-            run_state.start_run(task, self._resolve_max_attempts(task))
+            run_state.start_run(task, self._resolve_max_attempts(task),
+                                current_test(self.artifact_manager))
         # Sync current editor content to artifact manager so the LLM sees
         # the latest unsaved state, not just the last saved version.
         self.sync_editors_to_artifacts()
@@ -309,6 +331,7 @@ class LLMTabMixin:
         """Handle LLM response from the worker thread.
 
         Linear flow:
+          0. A reply whose test is no longer open is dropped whole (:meth:`_drop_late_reply`).
           1. UI cleanup (cancel-was-pressed early-return; remove thinking message; show raw).
           2. Parse the response (catastrophic parse failure short-circuits).
           3. Append the response as an assistant ChatMessage; update tokens.
@@ -322,6 +345,8 @@ class LLMTabMixin:
         on terminal transitions; the caller-side proposal handlers don't
         need to touch the FSM.
         """
+        if self._drop_late_reply():
+            return
         self.main_window._play_notification_sound()
         is_active = self._is_active_tab()
 
@@ -396,11 +421,11 @@ class LLMTabMixin:
         # 6. Drive the validator-in-the-loop FSM.
         #
         #   VALIDATING → AWAITING_REVIEW (validator passed / skipped)
-        #     → operator DiffViewer → APPLIED / REJECTED → IDLE
+        #     → proposal card in the chat → APPLIED / REJECTED → IDLE
         #   VALIDATING → VALIDATOR_FAIL_RETRYING (auto-retry)
         #     → re-spawn worker; this method re-enters on the next response.
         #   VALIDATING → FAILED_OUT_OF_RETRIES (toggle off / out of attempts)
-        #     → operator DiffViewer with banner → APPLIED / REJECTED → IDLE
+        #     → proposal card with a warning → APPLIED / REJECTED → IDLE
         fsm_decision = self._drive_validator_fsm(response)
         if fsm_decision == "retry":
             return
@@ -420,16 +445,33 @@ class LLMTabMixin:
     # _handle_llm_response sub-steps (extracted for readability)          #
     # ------------------------------------------------------------------ #
 
-    def _cleanup_thinking_ui(self, response, is_active: bool) -> None:
-        """Remove the chat panel's thinking-spinner and surface the raw
-        response in the raw viewer. The chat panel is a shared dock so its
-        re-enable must run unconditionally; only the active-tab-specific UI
-        (thinking-message, raw viewer) is guarded."""
+    def _drop_late_reply(self) -> bool:
+        """The worker answered (a reply or an error) for a test that is no longer open: drop it
+        whole — nothing validated, recorded or shown for the test open now (its chat is that
+        test's), only the log line; the spinner goes and the run ends. True when dropped."""
+        run_state = self._ensure_run_state()
+        if run_state.test == current_test(self.artifact_manager):
+            return False
+        log.warning("Dropped the LLM reply for %s: discarded, its test was closed",
+                    run_state.test[1] if run_state.test else None)
+        self._pending_request = None
+        self._end_thinking(self._is_active_tab())
+        run_state.reset_to_idle()
+        return True
+
+    def _end_thinking(self, is_active: bool) -> None:
+        """Re-enable the chat panel and remove its thinking-spinner. The chat panel is a shared
+        dock so its re-enable runs unconditionally; the spinner is the active tab's."""
         self.main_window.dock.chat_panel.set_llm_active(False)
-        if not is_active:
-            return
-        self.main_window.dock.chat_panel.remove_thinking_message()
-        self.main_window.dock.raw_viewer.show_response(response.raw_response)
+        if is_active:
+            self.main_window.dock.chat_panel.remove_thinking_message()
+
+    def _cleanup_thinking_ui(self, response, is_active: bool) -> None:
+        """End the thinking UI (:meth:`_end_thinking`) and surface the raw response in the raw
+        viewer (the active tab's)."""
+        self._end_thinking(is_active)
+        if is_active:
+            self.main_window.dock.raw_viewer.show_response(response.raw_response)
 
     def _record_assistant_message(
         self, parsed: dict, response, validation_issues: list, is_active: bool,
@@ -544,15 +586,15 @@ class LLMTabMixin:
 
     def _handle_llm_error(self, error_message: str):
         """Handle LLM error from the worker thread."""
+        if self._drop_late_reply():
+            return
         self._pending_request = None
         is_active = self._is_active_tab()
 
         # Re-enable the shared chat panel unconditionally — gating it on the
         # originating tab still being active left the input permanently
         # disabled when the operator switched tabs mid-run.
-        self.main_window.dock.chat_panel.set_llm_active(False)
-        if is_active:
-            self.main_window.dock.chat_panel.remove_thinking_message()
+        self._end_thinking(is_active)
 
         # FSM transition: any LLM error (including cancel) terminates the
         # current run. Cancel routes through the cancel() helper so the
@@ -826,10 +868,9 @@ class LLMTabMixin:
             max_attempts=run_state.max_attempts,
         )
         run_state.begin_retry()
-        # Re-enter the worker-spawn path. _run_task_async sees a non-
-        # terminal FSM (LLM_REQUESTED) so it does NOT call start_run,
-        # preserving the attempt counter.
-        self._run_task_async(run_state.task, user_message=feedback)
+        # Re-enter the worker-spawn path as a retry: no start_run, so the
+        # attempt counter (and the run's test) are preserved.
+        self._run_task_async(run_state.task, retry=True, user_message=feedback)
 
     # ------------------------------------------------------------------ #
     # Per-attempt chat-panel messages (small helpers, easy to tune)       #
@@ -860,15 +901,15 @@ class LLMTabMixin:
         if auto_correct_off:
             return (
                 f"⚠ Validator rejected the response ({n} issue"
-                f"{'s' if n != 1 else ''}). Auto-correct is off; opening "
-                f"DiffViewer with banner — review and apply, fix manually, "
+                f"{'s' if n != 1 else ''}). Auto-correct is off; it is proposed "
+                f"with a warning — review and apply, fix manually, "
                 f"or reject."
             )
         return (
             f"⚠ Auto-correct exhausted after {run_state.max_attempts} "
             f"attempt{'s' if run_state.max_attempts != 1 else ''} "
             f"({n} residual issue{'s' if n != 1 else ''}). "
-            f"DiffViewer is opening with the last response and a banner; "
+            f"The last response is proposed with a warning; "
             f"review and apply, fix manually, or reject."
         )
 
@@ -892,7 +933,7 @@ class LLMTabMixin:
         self.main_window.dock.chat_panel.add_message(
             "system",
             f"ℹ Deterministic validator unavailable ({reason}). "
-            f"Falling back to operator review only — the DiffViewer remains "
+            f"Falling back to operator review only — your Accept on its proposal remains "
             f"the gate before any LLM-proposed change is applied.",
         )
 

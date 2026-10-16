@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Optional, Callable
 
 from project_services import ui_kit
 
+from ..core.proposal import FileChange, Proposal, current_test
 from ..llm.backend_base import LLMTask
 from ..widgets.action_bar import ActionBar, set_task_label, task_button
 from ..widgets.editor_card import EditorCard
@@ -446,9 +447,36 @@ class BaseTab(QWidget):
                 return tc.name
         return self._TASK_DESCRIPTIONS.get(task, f"Run {task.name}")
 
+    def propose_edit(self, card: EditorCard, proposed: str, *, done: Optional[Callable] = None,
+                     rejected: str = "", banner: str = "", ask_when_empty: bool = True,
+                     test: Optional[tuple] = None) -> None:
+        """Offer *proposed* for *card*'s file as a proposal card in this view's chat. Accept
+        puts it in the editor (an edit, as if typed) then runs *done* (by default the chat's
+        "✓ Applied changes to <file>"); Reject posts *rejected* (by default "✗ Rejected changes
+        to <file>"). Without *ask_when_empty* (a ⚡ result) an empty editor takes it at once.
+        *test* is the test it is for: an AI reply's, the one open when it was asked; by default
+        the open one (a ⚡ result, made now)."""
+        chat = self.main_window.dock.chat_panel
+
+        def apply() -> None:
+            card.set_text(proposed)
+            if done is not None:
+                done()
+            else:
+                chat.add_system_message(f"✓ Applied changes to {card.file_name}", tone="success")
+
+        proposal = Proposal(
+            [FileChange(card.file_name, card.editor.toPlainText, proposed)], apply,
+            lambda: chat.add_system_message(
+                rejected or f"✗ Rejected changes to {card.file_name}", tone="danger"),
+            banner, test=test or current_test(self.artifact_manager))
+        if not ask_when_empty and not card.editor.toPlainText().strip():
+            proposal.accept()
+        else:
+            chat.offer_proposal(self.tab_context, proposal)
+
     def _handle_json_proposal(self, proposal):
-        """Offer a procedure.json proposal (``self.json_card``) as a diff; apply
-        it when accepted.
+        """Offer a procedure.json proposal (``self.json_card``) as a proposal card.
 
         Accepts "create" alongside "replace" — semantically identical (full
         content for the artifact). "patch" is intentionally NOT included —
@@ -456,7 +484,6 @@ class BaseTab(QWidget):
         re-dumped with indent=2 and ensure_ascii=False (µ, ±, Ω stay literal);
         content that does not parse is shown as it came.
         """
-        from ..dialogs import DiffViewer
         if proposal.mode not in ("replace", "create"):
             return
         if isinstance(proposal.content, dict):
@@ -468,18 +495,7 @@ class BaseTab(QWidget):
                 proposed = None
         content_str = (json.dumps(proposed, indent=2, ensure_ascii=False)
                        if proposed is not None else str(proposal.content))
-
-        accepted, final_content = DiffViewer.show_diff(
-            self.json_card.editor.toPlainText(),
-            content_str,
-            "Review Changes: procedure.json",
-            self
-        )
-        if accepted:
-            self.json_card.set_text(final_content)
-            self.main_window.dock.chat_panel.add_system_message("✓ Applied changes to procedure.json", tone="success")
-        else:
-            self.main_window.dock.chat_panel.add_system_message("✗ Rejected changes to procedure.json", tone="danger")
+        self.propose_edit(self.json_card, content_str, test=self._ensure_run_state().test)
 
     # Button Label Management
 

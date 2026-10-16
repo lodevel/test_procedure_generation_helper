@@ -1,16 +1,17 @@
 """
-Diff Viewer - Show diffs before applying proposals.
+Diff Viewer - a proposal card's View diff…: the proposed text against the current one, with the
+card's Accept / Reject (:meth:`DiffViewer.review`).
 
 Implements Section 11.4 of the spec.
 """
 
-import difflib
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPlainTextEdit,
     QPushButton, QSplitter
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QTextCharFormat, QColor, QTextCursor, QSyntaxHighlighter
+from ..core.proposal import count_changes, diff_lines
 from ..theme import (
     diff_added_bg, diff_added_fg, diff_removed_bg, diff_removed_fg,
     diff_header_color,
@@ -64,7 +65,9 @@ class DiffViewer(QDialog):
         self._original = original
         self._proposed = proposed
         self._banner = banner
-        self._accepted = False
+        self._diff = diff_lines(original, proposed)
+        #: What the user decided: "accept", "reject", or "" (the window was closed).
+        self.decision = ""
         
         self._setup_ui()
     
@@ -123,9 +126,7 @@ class DiffViewer(QDialog):
         # Add diff highlighter
         self.diff_highlighter = DiffHighlighter(self.diff_view.document())
         
-        # Generate diff
-        diff_text = self._generate_diff()
-        self.diff_view.setPlainText(diff_text)
+        self.diff_view.setPlainText("\n".join(self._diff))
         
         diff_layout.addWidget(self.diff_view)
         
@@ -138,83 +139,35 @@ class DiffViewer(QDialog):
         
         layout.addWidget(v_splitter, stretch=1)
         
-        # Stats
-        stats = self._calculate_stats()
-        stats_label = QLabel(stats)
-        layout.addWidget(stats_label)
+        added, removed = count_changes(self._diff)
+        layout.addWidget(QLabel(f"Changes: +{added} lines, -{removed} lines"))
         
         # Buttons
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         
         self.reject_btn = QPushButton("Reject")
-        self.reject_btn.clicked.connect(self.reject)
+        self.reject_btn.clicked.connect(lambda: self._decide("reject"))
         btn_layout.addWidget(self.reject_btn)
         
         self.accept_btn = QPushButton("Accept Changes")
-        self.accept_btn.clicked.connect(self._on_accept)
+        self.accept_btn.clicked.connect(lambda: self._decide("accept"))
         self.accept_btn.setDefault(True)
         btn_layout.addWidget(self.accept_btn)
         
         layout.addLayout(btn_layout)
     
-    def _generate_diff(self) -> str:
-        """Generate unified diff, line by line: a final newline present on one
-        side only is not a change."""
-        diff = difflib.unified_diff(
-            self._original.splitlines(),
-            self._proposed.splitlines(),
-            fromfile='Original',
-            tofile='Proposed',
-            lineterm=''
-        )
-        
-        return '\n'.join(diff)
-    
-    def _calculate_stats(self) -> str:
-        """Calculate diff statistics."""
-        original_lines = self._original.splitlines()
-        proposed_lines = self._proposed.splitlines()
-        
-        added = 0
-        removed = 0
-        
-        # Simple line count comparison
-        diff = difflib.unified_diff(original_lines, proposed_lines)
-        for line in diff:
-            if line.startswith('+') and not line.startswith('+++'):
-                added += 1
-            elif line.startswith('-') and not line.startswith('---'):
-                removed += 1
-        
-        return f"Changes: +{added} lines, -{removed} lines"
-    
-    def _on_accept(self):
-        """Accept the proposed changes."""
-        self._accepted = True
-        self.accept()
-    
-    def was_accepted(self) -> bool:
-        """Check if changes were accepted."""
-        return self._accepted
-    
-    def get_proposed(self) -> str:
-        """Get the proposed content."""
-        return self._proposed
-    
+    def _decide(self, decision: str) -> None:
+        self.decision = decision
+        if decision == "accept":
+            self.accept()
+        else:
+            self.reject()
+
     @staticmethod
-    def show_diff(original: str, proposed: str, title: str = "Review Changes", parent=None, banner=None) -> tuple:
-        """
-        Show diff dialog and return (accepted, proposed_content).
-        
-        Returns:
-            Tuple of (accepted: bool, content: str)
-        """
-        if original.splitlines() == proposed.splitlines():  # no line differs: nothing to review
-            return (True, proposed)
+    def review(original: str, proposed: str, title: str = "Review Changes", parent=None,
+               banner=None) -> str:
+        """Show the diff window; what the user decided: "accept", "reject" or "" (closed)."""
         dialog = DiffViewer(original, proposed, title, parent, banner)
-        result = dialog.exec()
-        
-        if result == QDialog.Accepted and dialog.was_accepted():
-            return (True, proposed)
-        return (False, original)
+        dialog.exec()
+        return dialog.decision

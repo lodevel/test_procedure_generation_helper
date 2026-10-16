@@ -85,7 +85,6 @@ CLASS_METHOD_BUDGET: dict[tuple[str, str], int] = {
 FUNC_LEN_BUDGET: dict[tuple[str, str], int] = {
     ("dialogs/settings_dialog.py", "_create_llm_tab"): 187,
     ("dock/skill_chat_widget.py", "_setup_ui"): 156,
-    ("tabs/llm_tab_mixin.py", "_run_deterministic_parse_and_generate"): 155,  # -9: the editor cards save (slice 4)
 }
 
 

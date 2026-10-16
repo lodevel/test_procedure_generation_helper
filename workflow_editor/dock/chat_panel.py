@@ -17,7 +17,10 @@ from typing import TYPE_CHECKING, Optional
 
 from project_services import ui_kit
 
-from .chat_messages import MessageDetailDialog, MessageWidget, StreamingBubble
+from .chat_messages import (
+    CLOSED, MessageDetailDialog, MessageWidget, ProposalCard, ProposalMessage, StreamingBubble,
+)
+from ..core.proposal import current_test
 from ..llm.context_usage import format_context_usage, latest_message_total
 from .board_data_checkbox import BoardDataCheckBox
 from ..llm.tab_context import ChatMessage
@@ -30,7 +33,7 @@ from ..llm.tab_context import ChatMessage
 _TOOLTIP_STATUS_AVAILABLE = (
     "Deterministic validator active.\n"
     "Quick Parse / Quick Code work; LLM responses are checked "
-    "before the DiffViewer."
+    "before they are proposed."
 )
 _TOOLTIP_STATUS_UNAVAILABLE = (
     "Deterministic validator unavailable; LLM-only workflow.\n"
@@ -43,8 +46,8 @@ _TOOLTIP_AUTO_CORRECT_AVAILABLE = (
 )
 _TOOLTIP_AUTO_CORRECT_UNAVAILABLE = (
     "Deterministic validator not available — auto-correct loop has "
-    "nothing to validate against. Falls back to operator-only "
-    "DiffViewer review."
+    "nothing to validate against. Falls back to your review of "
+    "the proposal."
 )
 #: The context meter's resolution (the bar's maximum).
 _METER_STEPS = 1000
@@ -140,8 +143,13 @@ class ChatPanel(QWidget):
         self._refresh_validator_ui_for_context(tab_context)
 
     def _add_message_widget(self, msg: "ChatMessage"):
-        """Show one message (its token line drawn from the counts, a system line in its tone),
-        without touching the TabContext."""
+        """Show one message (its token line drawn from the counts, a system line in its tone, a
+        proposal as its card), without touching the TabContext."""
+        if isinstance(msg, ProposalMessage):
+            card = ProposalCard(msg.proposal)
+            card.decided.connect(self.refresh_proposals)
+            self._insert(card)
+            return
         msg_widget = MessageWidget(msg.role, msg.content, msg_id=msg.msg_id,
                                    thinking_content=msg.thinking_content,
                                    prompt_tokens=msg.prompt_tokens,
@@ -461,6 +469,36 @@ class ChatPanel(QWidget):
     def add_system_message(self, content: str, full_prompt: Optional[str] = None, tone: str = "neutral"):
         """Add a system line, a pill in *tone* (success / warning / danger / neutral)."""
         self.add_message("system", content, full_prompt=full_prompt, tone=tone)
+
+    def offer_proposal(self, tab_context: "TabContext", proposal) -> None:
+        """Offer *proposal* (a ``core.proposal.Proposal``) as a card in *tab_context*'s chat:
+        the view that asked, shown now if it is the current one, else when the user returns to
+        it. Nothing is applied until Accept; one whose lines all match applies at once. One made
+        for a test no longer open (a reply that arrived after the switch) is discarded."""
+        if proposal.test != current_test(self.main_window.artifact_manager):
+            log.warning("Discarded %s: its test was closed", proposal.summary())
+            proposal.discard()
+            self._post(tab_context, ChatMessage(
+                role="system", content=f"{proposal.summary()} · {CLOSED}", tone="neutral"))
+            return
+        if not proposal.changes:
+            proposal.accept(reviewed=True)  # nothing to review
+            return
+        self._post(tab_context, ProposalMessage(
+            role="system", content=proposal.summary(), proposal=proposal))
+
+    def _post(self, tab_context: "TabContext", message: "ChatMessage") -> None:
+        """Add *message* to *tab_context*'s history, shown now if it is the current one."""
+        tab_context.messages.append(message)
+        if tab_context is self._current_tab_context:
+            self._add_message_widget(message)
+
+    def refresh_proposals(self) -> None:
+        """Redraw the shown proposal cards (one was decided, or a test closed: the others may
+        have gone stale)."""
+        for message in self._messages():
+            if isinstance(message, ProposalCard):
+                message.refresh()
 
     def add_thinking_message(self):
         """Show the streaming bubble ("💭 Thinking… 0:00"); the reply's chunks arrive through

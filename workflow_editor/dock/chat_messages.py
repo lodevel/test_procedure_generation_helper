@@ -6,11 +6,14 @@ Bench's stylesheet):
     or, for a system / validator line, a centred pill in the tone its sender gives.
   - :class:`StreamingBubble` — the assistant's bubble while a reply streams in
     ("💭 Thinking… 0:07", "✍ Responding…" and the text so far).
+  - :class:`ProposalCard` — a change waiting for the user (a :class:`ProposalMessage`): the file,
+    +a −r, the first changed lines, ✓ Accept / ✗ Reject / View diff….
   - :class:`MessageDetailDialog` — the full prompt and response of one message (Details…, or a
     double-click on the message).
 
 ``ChatPanel`` lays them out; the colours are the stylesheet's (``QFrame#chatBubble[role]``,
-``QLabel#chatSystemLine[pill]``, ``QLabel#thinkingText``, ``QLabel#streamText``).
+``QLabel#chatSystemLine[pill]``, ``QLabel#thinkingText``, ``QLabel#streamText``,
+``QLabel#proposalPreview``).
 """
 from __future__ import annotations
 
@@ -18,6 +21,7 @@ import html
 import json
 import math
 import re
+from dataclasses import dataclass
 from typing import Optional
 
 from PySide6.QtCore import QEvent, Qt, Signal
@@ -29,10 +33,14 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
+    QWidget,
 )
 
 from project_services import ui_kit
 
+from ..core.proposal import APPLIED, DISCARDED, PENDING, REJECTED, Proposal
+from ..dialogs.diff_viewer import DiffViewer
+from ..llm.tab_context import ChatMessage
 from ..widgets.work_timer import WorkTimer
 
 #: The share of the chat's width a message may take: the user's bubble, the others.
@@ -214,6 +222,140 @@ class StreamingBubble(QFrame):
 
     def stop(self) -> None:
         self._timer.stop()
+
+
+@dataclass
+class ProposalMessage(ChatMessage):
+    """A chat message that is a proposal card; its ``content`` is the history's one line
+    (:meth:`Proposal.summary`). It lives in the view's history, so the card survives a view
+    switch."""
+
+    proposal: Optional[Proposal] = None
+
+
+#: A proposal whose test is no longer open (the chat line, the card).
+CLOSED = "Discarded: its test was closed"
+#: What a decided card says instead of its buttons (pill tone, text).
+_OUTCOMES = {
+    APPLIED: ("success", "✓ Applied"),
+    REJECTED: ("danger", "✗ Rejected"),
+    DISCARDED: ("neutral", CLOSED),
+}
+_STALE = "⚠ The file changed since: use View diff…"
+_OUTDATED = "⚠ {} changed since: run it again"
+_FAILED = "✗ {}"
+_INVALID = "⚠ Failed validation: see View diff…"
+
+
+def review_proposal(proposal: Proposal, parent=None) -> None:
+    """View diff…: each file of *proposal* against its CURRENT text in the diff window, in turn.
+    Accept on the last one applies it (the user saw what it replaces, stale or not), Reject on
+    any rejects it, closing a window decides nothing."""
+    for change in proposal.changes:
+        decision = DiffViewer.review(change.read(), change.proposed,
+                                     f"Review Changes: {change.file_name}", parent,
+                                     proposal.banner or None)
+        if decision != "accept":
+            if decision == "reject":
+                proposal.reject()
+            return
+    proposal.accept(reviewed=True)
+
+
+class ProposalCard(QFrame):
+    """A proposal waiting in the chat (board S5): "Proposal", its file, +a −r, the first changed
+    lines, then ✓ Accept / ✗ Reject / View diff… — once decided, what became of it. A stale one
+    (a file changed since) offers no Accept: only View diff…, against the current text; an
+    outdated one (a file it was made from changed) only Reject. An Accept that failed says why.
+
+    The decision is the :class:`Proposal`'s, which outlives the card (the chat redraws its
+    messages on a view switch); ``decided`` asks the chat to redraw its other cards."""
+
+    decided = Signal()
+
+    def __init__(self, proposal: Proposal, parent=None):
+        super().__init__(parent)
+        self.setObjectName("card")
+        self.proposal = proposal
+        self.role, self.share, self.align = "proposal", 1.0, Qt.AlignmentFlag.AlignLeft
+        added, removed = proposal.counts()
+        files = ui_kit.monospace(QLabel(" + ".join(proposal.file_names)))
+        files.setObjectName("proposalFiles")
+        head = ui_kit.hbox(ui_kit.bold("Proposal"), files, None,
+                           ui_kit.set_pill(QLabel(), "info", f"+{added} −{removed}"))
+        head.setContentsMargins(11, 8, 11, 8)
+        head.setSpacing(8)
+        preview = ui_kit.monospace(
+            _text_label("\n".join(proposal.preview()), "proposalPreview", rich=False))
+        self.state_line = QLabel()  # one line: a pill
+        self.state_line.setObjectName("proposalState")
+        self.accept_button = QPushButton("✓ Accept")
+        ui_kit.set_primary(self.accept_button)
+        self.accept_button.clicked.connect(self._on_accept)
+        self.reject_button = ui_kit.set_state(QPushButton("✗ Reject"), "danger", True)
+        self.reject_button.clicked.connect(self._on_reject)
+        self.diff_button = QPushButton("View diff…")
+        self.diff_button.setToolTip("Compare it with the current text, then accept or reject it")
+        self.diff_button.clicked.connect(self._on_view_diff)
+        self.actions = QWidget()
+        buttons = ui_kit.hbox(self.accept_button, self.reject_button, None, self.diff_button)
+        buttons.setSpacing(6)
+        self.actions.setLayout(buttons)
+        foot = QVBoxLayout()
+        foot.setContentsMargins(11, 8, 11, 8)
+        foot.setSpacing(6)
+        foot.addWidget(self.state_line, 0, Qt.AlignmentFlag.AlignLeft)
+        foot.addWidget(self.actions)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(1, 0, 1, 1)  # inside the card's border
+        layout.setSpacing(0)
+        layout.addLayout(head)
+        layout.addWidget(ui_kit.row_rule())
+        layout.addWidget(preview)
+        layout.addWidget(ui_kit.row_rule())
+        layout.addLayout(foot)
+        self.refresh()
+
+    def width_for(self, limit: int) -> int:
+        return limit
+
+    def refresh(self) -> None:
+        """Show where the proposal stands now (a file may have changed since it was drawn)."""
+        proposal = self.proposal
+        pending, stale, outdated = proposal.state == PENDING, proposal.stale(), proposal.outdated()
+        self.actions.setVisible(pending)
+        self.accept_button.setVisible(not proposal.needs_review())
+        self.diff_button.setVisible(not outdated)
+        tip = ""
+        if not pending:
+            tone, text = _OUTCOMES[proposal.state]
+        elif proposal.error:
+            tone, text, tip = "danger", _FAILED.format(proposal.error), proposal.error
+        elif outdated:
+            tone, text = "warning", _OUTDATED.format(" + ".join(outdated))
+        elif stale:
+            tone, text, tip = "warning", _STALE, "View diff… compares it with the current text"
+        else:
+            tone, text, tip = "warning", _INVALID if proposal.banner else "", proposal.banner
+        self.state_line.setVisible(bool(text))
+        ui_kit.set_pill(self.state_line, tone, text)
+        self.state_line.setToolTip(tip)
+
+    def _on_accept(self) -> None:
+        self.proposal.accept()  # refused when a file changed since: the card then says so
+        self._decided()
+
+    def _on_reject(self) -> None:
+        self.proposal.reject()
+        self._decided()
+
+    def _on_view_diff(self) -> None:
+        review_proposal(self.proposal, self.window())
+        self._decided()
+
+    def _decided(self) -> None:
+        self.refresh()
+        self.decided.emit()
 
 
 def format_json_in_content(content: str) -> str:

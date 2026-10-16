@@ -68,8 +68,7 @@ test_procedure_generation_helper/
     ├── llm/                       # LLM integration + execution
     │   ├── backend_base.py        # Abstract LLMBackend + NoneBackend
     │   ├── backend_factory.py     # Per-tab backend instances (BackendConfig)
-    │   ├── opencode_backend.py    # OpenCode (WSL server) backend
-    │   ├── external_api_backend.py# OpenAI-compatible HTTP backend
+    │   ├── opencode_backend.py    # OpenCode backend (re-exports the opencode_client client)
     │   ├── _execute_op_subprocess.py     # Per-op execution daemon (imports drivers)
     │   ├── prompt_builder.py / reconstruction.py / response_parser.py
     │   ├── section_ownership.py / output_contracts.py / validator_dispatch.py
@@ -102,7 +101,7 @@ From `requirements.txt`:
 
 - **Python:** 3.10+
 - **PySide6** ≥ 6.5.0 — Qt GUI framework
-- **requests** ≥ 2.28.0 — HTTP client for the External API backend
+- **requests** ≥ 2.28.0 — HTTP client for the OpenCode server API
 
 The editor process itself needs only these. Hardware drivers (labscpi / fncore,
 VISA, BLE) and the rules/parser wheel are **not** dependencies of the editor — they
@@ -167,27 +166,24 @@ Project-specific parsing/validation then runs in the project's own venv via
 Settings are stored in `%APPDATA%\Procedo\studio\settings.json` (copied once from the old
 `~/.workflow_editor` folder, which is kept) and edited in the
 in-app **Settings** dialog (`procedo/studio/dialogs/settings_dialog.py`). The
-`llm_backend` key selects one of `opencode`, `external_api`, or `none`.
+`llm_backend` key selects `opencode` or `none` (the External API backend was removed;
+OpenCode providers cover OpenAI-compatible endpoints).
 
 ### Model-string format — important
 
-The two backends interpret the **Model** field differently:
+The OpenCode **Model** field is `providerID/modelID`, **split on the FIRST `/`**
+(`_build_message_body` in `external/opencode_client/opencode_client/client.py`, shared by
+the sync and streaming send paths). The text before the first `/` is the OpenCode
+provider; everything after is the model id (which may itself contain `/`).
 
-- **OpenCode** (`opencode_backend.py`): the model is `providerID/modelID`, **split on
-  the FIRST `/`** (`opencode_backend.py:362-367`, `:722-727`). The text before the
-  first `/` is the OpenCode provider; everything after is the model id (which may
-  itself contain `/`).
-  - `anthropic/claude-3-5-sonnet` → provider `anthropic`, model `claude-3-5-sonnet`
-  - `my_vllm/cyankiwi/gemma-3-27b` → provider `my_vllm`, model `cyankiwi/gemma-3-27b`
-  - Leave **blank** to use the OpenCode server default. A bare name with no `/` is
-    ignored — the request omits the `model` field and the server default is used; it
-    is **not** treated as a provider.
-  - The provider (e.g. a custom `@ai-sdk/openai-compatible` provider named `my_vllm`)
-    must exist in your OpenCode config (`~/.config/opencode/` or a project
-    `opencode.json`).
-- **External API** (`external_api_backend.py:116`): the model is sent **verbatim** as
-  the `model` field — **no split, no provider prefix**. Use the plain model name your
-  endpoint expects (e.g. `gpt-4`, `qwen3:8b-16k`). Do **not** slash-prefix it.
+- `anthropic/claude-3-5-sonnet` → provider `anthropic`, model `claude-3-5-sonnet`
+- `my_vllm/cyankiwi/gemma-3-27b` → provider `my_vllm`, model `cyankiwi/gemma-3-27b`
+- Leave **blank** to use the OpenCode server default. A bare name with no `/` is
+  ignored — the request omits the `model` field and the server default is used; it
+  is **not** treated as a provider.
+- The provider (e.g. a custom `@ai-sdk/openai-compatible` provider named `my_vllm`)
+  must exist in your OpenCode config (`~/.config/opencode/` or a project
+  `opencode.json`).
 
 ### OpenCode backend
 
@@ -205,21 +201,6 @@ Runs against an OpenCode server (typically in WSL) on a configurable port (defau
 }
 ```
 `model` is `providerID/modelID`, split on the first `/`; leave it `""` for the server default.
-
-### External API backend (OpenAI-compatible)
-
-```json
-{
-  "llm_backend": "external_api",
-  "external_api": {
-    "url": "https://api.openai.com/v1",
-    "key": "sk-...",
-    "model": "gpt-4"
-  }
-}
-```
-`model` is sent verbatim — no provider prefix. Point `url` at any OpenAI-compatible
-endpoint (e.g. `http://127.0.0.1:11434/v1` for Ollama).
 
 ### `none`
 

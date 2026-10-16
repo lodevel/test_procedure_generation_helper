@@ -5,18 +5,24 @@ A *wizard* the user launches is a FLOW: one or more wizard skills sharing a
 (``<dotted module>:<Attr>``). The editor resolves + launches that entry from the
 head skill's folder — replacing the old hardcoded ``_WIZARD_FLOWS`` list.
 
-Imports ONLY :func:`registry.load_wizards` + :class:`Skill`/:class:`SkillSource`
-— never ``skill_menu`` — so there is no import cycle (``skill_menu`` imports this).
+A head declares the authoring-API version its code needs (``authoring-api:``); a newer
+one than this Studio's is refused here. What the entry receives is built by
+:mod:`.wizard_api`.
+
+Imports ONLY :func:`registry.load_wizards` + :class:`Skill`/:class:`SkillSource` (and
+the host's ``API_VERSION``) — never ``skill_menu`` — so there is no import cycle
+(``skill_menu`` imports this), and stays Qt-free.
 """
 from __future__ import annotations
 
 import importlib
-import inspect
 import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Optional
+
+from project_services.authoring_api import API_VERSION
 
 from . import load_wizards
 from .skill import Skill, SkillSource
@@ -89,11 +95,13 @@ def discover_flows(project_root: Optional[Path] = None) -> List[WizardFlow]:
 def resolve_launch(flow: WizardFlow) -> Any:
     """Import + return a flow's launch entry (a class or callable).
 
-    Inserts the head skill folder on ``sys.path`` (idempotent) so its internal
-    package resolves, then imports the dotted module and returns the attribute.
+    Puts the head skill folder first on ``sys.path`` so its internal package resolves,
+    then imports the dotted module and returns the attribute. Another head's copy of a
+    same-named package imported earlier in this process (an old project's bundle, then
+    a new one) is dropped first: the code that runs is always this head's.
     TRUST-GATED to builtin/bundled sources — this executes the package's Python.
-    Raises :class:`WizardLaunchError` on a bad spec, untrusted source, or import
-    failure (the caller surfaces it)."""
+    Raises :class:`WizardLaunchError` on a bad spec, untrusted source, a newer
+    authoring API than this Studio's, or import failure (the caller surfaces it)."""
     mod_part, sep, attr = flow.launch_spec.partition(":")
     if not sep or not attr.strip():
         raise WizardLaunchError(
@@ -101,21 +109,57 @@ def resolve_launch(flow: WizardFlow) -> Any:
     if flow.head.source not in (SkillSource.BUILTIN, SkillSource.BUNDLED):
         raise WizardLaunchError(
             "launchable wizard code is allowed only from builtin/bundled sources")
-    head_dir = str(Path(flow.head.path))
-    if head_dir not in sys.path:
-        sys.path.insert(0, head_dir)
+    needed = required_api(flow)
+    if needed is not None and needed > API_VERSION:
+        raise WizardLaunchError(
+            f"this wizard needs authoring API {needed}; this Procedo Studio provides "
+            f"{API_VERSION}. Update Procedo Studio.")
+    head_dir = Path(flow.head.path)
+    if str(head_dir) in sys.path:
+        sys.path.remove(str(head_dir))
+    sys.path.insert(0, str(head_dir))
+    module_name = mod_part.strip()
+    _forget_other_copy(module_name.split(".")[0], head_dir)
     try:
-        module = importlib.import_module(mod_part.strip())
+        module = importlib.import_module(module_name)
         entry = getattr(module, attr.strip())
     except Exception as exc:  # noqa: BLE001
-        raise WizardLaunchError(f"could not load {flow.launch_spec!r}: {exc}") from exc
-    # Guard against a same-named internal package shadowing another wizard's: the
-    # resolved module must live under the head folder (skill-relative).
-    mf = getattr(module, "__file__", "") or ""
-    if not mf.startswith(head_dir):
-        log.warning("wizard %r resolved %s outside its package (%s)",
-                    flow.flow_id, mod_part, mf)
+        raise WizardLaunchError(
+            f"could not load {flow.launch_spec!r}: {exc}. If it was just installed, "
+            "rebuild and re-apply the bundle.") from exc
+    if not _is_under(module, head_dir):
+        raise WizardLaunchError(
+            f"{module_name} resolved outside the wizard's folder: {module.__file__}")
     return entry
 
 
-__all__ = ["WizardFlow", "WizardLaunchError", "discover_flows", "resolve_launch"]
+def _is_under(module, folder: Path) -> bool:
+    file = getattr(module, "__file__", None)
+    return bool(file) and Path(file).resolve().is_relative_to(folder.resolve())
+
+
+def _forget_other_copy(package: str, head_dir: Path) -> None:
+    """Drop ``package`` and its submodules from ``sys.modules`` when the cached copy is
+    not this head's, so the next import loads the head's own copy."""
+    cached = sys.modules.get(package)
+    if cached is None or _is_under(cached, head_dir):
+        return
+    for name in [n for n in sys.modules if n == package or n.startswith(package + ".")]:
+        del sys.modules[name]
+    importlib.invalidate_caches()
+
+
+def required_api(flow: WizardFlow) -> Optional[int]:
+    """The authoring-API version the flow's head declares (``authoring-api:``), or None
+    when it declares none. Raises :class:`WizardLaunchError` on a value that is not a
+    whole number."""
+    value = (flow.head.metadata or {}).get("authoring-api")
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise WizardLaunchError(f"authoring-api must be a whole number, got {value!r}")
+    return value
+
+
+__all__ = ["WizardFlow", "WizardLaunchError", "discover_flows", "required_api",
+           "resolve_launch"]

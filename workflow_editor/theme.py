@@ -23,8 +23,8 @@ def tone(token: str) -> QColor:
     return QColor(fluent_qss.tokens(is_dark())[token])
 
 
-# ── The bundled DCDC wizard's colour (its Finish page; copies ship in every project's
-#    bundle, so the name stays until wizards get their own host API) ──
+# ── The Finish-page colour of DCDC wizard copies in bundles built before the authoring
+#    API (they import it); deleted with their launch branch in rename slice 8 ──
 
 def chat_assistant_border() -> str:
     """Border for assistant messages in chat."""

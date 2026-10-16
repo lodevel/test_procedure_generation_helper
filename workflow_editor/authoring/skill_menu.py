@@ -16,7 +16,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import QInputDialog, QMessageBox
 
-from . import load_skills, load_wizards, locations, wizard_flows
+from . import load_skills, load_wizards, locations, wizard_api, wizard_flows
 from .context_sources import (
     ArtifactProvider,
     ArtifactsSource,
@@ -195,38 +195,37 @@ def _make_insert_callback(main_window):
 
 
 def _launch_wizard_flow(main_window, flow) -> None:
-    """Resolve + launch a wizard FLOW's entry-point (a class or callable). A class is
-    constructed as a modeless dialog held on ``main_window._wizard_dialogs`` (so the
-    GC doesn't collect it) with its Finish wired to the main-window refresh; a
-    callable owns its own wiring. Resolve/import errors are surfaced to the user."""
+    """Resolve + launch a wizard FLOW's entry-point (a class or callable), handing it the
+    authoring API (:func:`wizard_api.wizard_host`). A class is constructed as a
+    modeless dialog held on ``main_window._wizard_dialogs`` (so the GC doesn't collect
+    it) with its Finish wired to the main-window refresh; a callable owns its own
+    wiring. Resolve/import/version/construction errors are surfaced to the user."""
     import inspect
     from PySide6.QtWidgets import QMessageBox
     try:
         entry = wizard_flows.resolve_launch(flow)
-    except Exception:  # noqa: BLE001 — a bad/stale launch must not crash the menu
+        host = wizard_api.wizard_host(flow, main_window)
+        if not inspect.isclass(entry):
+            if not callable(entry):
+                raise wizard_flows.WizardLaunchError(
+                    f"its entry is neither a class nor a callable: {entry!r}")
+            entry(host)
+            return
+        dlg = entry(host, parent=main_window)
+    except Exception as exc:  # noqa: BLE001 — a bad/stale launch must not crash the menu
         log.exception("wizard launch failed for flow %r", getattr(flow, "flow_id", "?"))
-        QMessageBox.warning(
-            main_window, "Wizards",
-            "Could not launch this wizard — its code could not be loaded (see logs). "
-            "If it was just installed, rebuild and re-apply the bundle.",
-        )
+        QMessageBox.warning(main_window, "Wizards", f"Could not launch this wizard: {exc}")
         return
-    if inspect.isclass(entry):
-        dlg = entry(main_window, parent=main_window)
-        # On Finish (Accept), refresh the main window so new tests appear without a reload.
-        dlg.finished.connect(lambda result: _refresh_main_after_wizard(main_window, result))
-        refs = getattr(main_window, "_wizard_dialogs", None)
-        if refs is None:
-            refs = []
-            main_window._wizard_dialogs = refs
-        refs.append(dlg)
-        dlg.show()
-        dlg.raise_()
-        dlg.activateWindow()
-    elif callable(entry):
-        entry(main_window)
-    else:
-        log.error("wizard flow entry is neither class nor callable: %r", entry)
+    # On Finish (Accept), refresh the main window so new tests appear without a reload.
+    dlg.finished.connect(lambda result: _refresh_main_after_wizard(main_window, result))
+    refs = getattr(main_window, "_wizard_dialogs", None)
+    if refs is None:
+        refs = []
+        main_window._wizard_dialogs = refs
+    refs.append(dlg)
+    dlg.show()
+    dlg.raise_()
+    dlg.activateWindow()
 
 
 def _refresh_main_after_wizard(main_window, result) -> None:

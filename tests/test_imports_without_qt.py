@@ -13,6 +13,7 @@ from pathlib import Path
 _QT_ADAPTERS = {
     "workflow_editor.llm.worker",  # QThread around one LLM request
     "workflow_editor.authoring.skill_menu",  # the Skills menu (QAction / dialogs)
+    "workflow_editor.authoring.wizard_api",  # makes a wizard's skill-chat widget
 }
 
 _PROBE = """

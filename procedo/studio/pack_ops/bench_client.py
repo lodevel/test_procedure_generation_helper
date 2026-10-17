@@ -130,7 +130,8 @@ class BenchSessionClient(RemoteSession):
     # -- the long exchange ---------------------------------------------------
     def run_test(self, run_id: str, module_path: str | Path,
                  results_dir: str | Path, *, on_output=None,
-                 on_prompt=None) -> dict[str, Any]:
+                 on_prompt=None, stop_at_first_fail: bool = False,
+                 switch_off_on_stop: bool = True) -> dict[str, Any]:
         """Run one generated test in the holder.  BLOCKS (no per-frame
         timeout) until the daemon's final response.
 
@@ -141,7 +142,17 @@ class BenchSessionClient(RemoteSession):
         ``_bench_session_runner`` for the ``result`` summary shape; verdicts
         are read from ``results.json`` in ``results_dir``.  A response with
         ``session_ended`` means the ladder ended the session (daemon exits);
-        this channel is then marked dead."""
+        this channel is then marked dead.
+
+        ``stop_at_first_fail`` / ``switch_off_on_stop`` ride the frame only
+        when they differ from the defaults, so default frames are unchanged."""
+        frame = {"cmd": "run_test", "run_id": run_id,
+                 "module_path": str(module_path),
+                 "results_dir": str(results_dir)}
+        if stop_at_first_fail:
+            frame["stop_at_first_fail"] = True
+        if not switch_off_on_stop:
+            frame["switch_off_on_stop"] = False
         with self._lock:
             if self._dead:
                 return {"ok": False, "kind": "SessionDead",
@@ -164,9 +175,7 @@ class BenchSessionClient(RemoteSession):
             self._in_run = True
             try:
                 try:
-                    self._post({"cmd": "run_test", "run_id": run_id,
-                                "module_path": str(module_path),
-                                "results_dir": str(results_dir)})
+                    self._post(frame)
                 except (BrokenPipeError, OSError, ValueError) as exc:
                     return self._dead_resp("SessionDead", f"write failed: {exc}")
                 while True:

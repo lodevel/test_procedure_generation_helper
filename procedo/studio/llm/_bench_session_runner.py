@@ -68,7 +68,8 @@ Bench-session frames (requests ride the daemon's NDJSON protocol)
 
   {"cmd": "release_run", "run_id"} -> {"ok": true}   # devices STAY held
 
-  {"cmd": "run_test", "run_id", "module_path", "results_dir"?}
+  {"cmd": "run_test", "run_id", "module_path", "results_dir"?,
+   "stop_at_first_fail"?: true, "switch_off_on_stop"?: false}
     The daemon imports the test under a UNIQUE module name (a mid-session
     regeneration is never served from sys.modules), builds the holder-side
     ExecutionContext (devices from the run view, owned=False for held,
@@ -936,6 +937,10 @@ def _cmd_run_test(d: dict, session, req: dict):
         prompt=lambda text: _prompt_via_frames(d, st, run, text),
         cancelled=lambda: _cancelled_poll(d, st, run),
     )
+    # Attributes, not kwargs: the wheel is the bundle's, so an older
+    # ExecutionContext without the fields must not raise here.
+    ctx.stop_at_first_fail = bool(req.get("stop_at_first_fail", False))
+    ctx.switch_off_on_stop = bool(req.get("switch_off_on_stop", True))
     out = _FrameStdout(d)
     saved_stdout = sys.stdout
     saved_cwd = os.getcwd()

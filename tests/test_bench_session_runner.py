@@ -1372,6 +1372,62 @@ class RunTestTests(_BenchBase):
         self.assertEqual(len(self._devcalls("PHYS", "close")), 1)
         self.assertFalse(s.held)
 
+    # -- stop-at-first-fail options ride the frame, set as ATTRIBUTES ------
+    _RECORDER = (
+        "import json, pathlib\n"
+        "BENCH_SESSION_API = 1\n"
+        "def main(ctx):\n"
+        "    pathlib.Path(ctx.results_dir, 'seen.json').write_text(json.dumps(\n"
+        "        [ctx.stop_at_first_fail, ctx.switch_off_on_stop]))\n"
+        "    return {'overall': 'PASS', 'aborted': False, 'error': False}\n")
+
+    def _seen(self, extra, ctx_class=None):
+        s = self._session()
+        rid = self._acquired(s)
+        self._reader([])
+        req = {"cmd": "run_test", "run_id": rid,
+               "module_path": str(self._module(self._RECORDER)),
+               "results_dir": self.tmp.name, **extra}
+        if ctx_class is None:
+            resp, _ = self._dispatch(s, req)
+        else:
+            from unittest import mock
+            with mock.patch("rules_packager_base.execution_context."
+                            "ExecutionContext", ctx_class):
+                resp, _ = self._dispatch(s, req)
+        return resp, json.loads(
+            (Path(self.tmp.name) / "seen.json").read_text(encoding="utf-8"))
+
+    def test_stop_at_first_fail_frame_sets_ctx(self):
+        self.assertEqual(self._seen({"stop_at_first_fail": True})[1],
+                         [True, True])
+
+    def test_stop_at_first_fail_absent_is_off(self):
+        self.assertEqual(self._seen({})[1], [False, True])
+
+    def test_switch_off_on_stop_false_frame_sets_ctx(self):
+        self.assertEqual(self._seen({"switch_off_on_stop": False})[1],
+                         [False, False])
+
+    def test_old_wheel_context_without_the_fields_does_not_raise(self):
+        # An older bundle's ExecutionContext has no such fields and its
+        # __init__ rejects unknown kwargs: the daemon must set attributes.
+        class Old:
+            def __init__(self, devices, owned, keep_state, results_dir,
+                         prompt, cancelled):
+                self.results_dir = results_dir
+
+            def install(self):
+                pass
+
+            def restore(self):
+                pass
+
+        resp, seen = self._seen({"stop_at_first_fail": True,
+                                 "switch_off_on_stop": False}, ctx_class=Old)
+        self.assertTrue(resp["ok"], resp)
+        self.assertEqual(seen, [True, False])
+
     def test_held_endpoint_gone_ends_session_via_ladder(self):
         # F-H3a (context-build failure): a vanished held endpoint is the
         # same unexpected-failure ladder — session ends, stop.
@@ -2069,6 +2125,27 @@ class BenchClientLiveTests(unittest.TestCase):
         from procedo.studio.pack_ops import bench_client as bc
         from procedo.studio.pack_ops.pack_parsers import RemoteSession
         self.assertIs(bc.BenchSessionClient.end_session, RemoteSession.shutdown)
+
+    def test_run_test_frame_carries_the_options_only_when_non_default(self):
+        from types import SimpleNamespace
+        c = self._client()
+        frames: list = []
+        c._post = frames.append
+        c._proc = SimpleNamespace(
+            stdout=SimpleNamespace(readline=lambda: '{"ok": true}\n'),
+            poll=lambda: None)
+        c._alive = lambda: True
+        for kw, extra in (
+                ({}, {}),
+                ({"stop_at_first_fail": True}, {"stop_at_first_fail": True}),
+                ({"switch_off_on_stop": False}, {"switch_off_on_stop": False}),
+                ({"stop_at_first_fail": True, "switch_off_on_stop": False},
+                 {"stop_at_first_fail": True, "switch_off_on_stop": False})):
+            frames.clear()
+            c.run_test("r", "m.py", "res", **kw)
+            self.assertEqual(frames, [{"cmd": "run_test", "run_id": "r",
+                                       "module_path": "m.py",
+                                       "results_dir": "res", **extra}])
 
     def test_manual_flow_acquire_run_release_end(self):
         c = self._client()

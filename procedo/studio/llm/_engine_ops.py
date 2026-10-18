@@ -1,11 +1,10 @@
-"""The engine's op table: one implementation for every process that runs an op.
+"""The engine's op table, and which frames each engine role takes.
 
-Loaded by FILE PATH next to its callers in the project venv (the persistent
-daemon ``_execute_op_subprocess.py`` through ``_sib``, the one-shot
-``pack_ops/_pack_parsers_subprocess.py`` by path) — never through the
-``procedo.studio`` package, whose init imports PySide6 (absent from the
-project venv). Each op is computation on the spec it is given plus the
-in-memory pack registry: a document travels IN the spec, never as a path.
+Loaded by FILE PATH by the persistent daemon ``_execute_op_subprocess.py``
+(through ``_sib``) in the project venv — never through the ``procedo.studio``
+package, whose init imports PySide6 (absent from the project venv). Each op is
+computation on the spec it is given plus the in-memory pack registry: a
+document travels IN the spec, never as a path.
 
 Spec: ``{"op": "<op_name>", ...op-specific fields...}``
 
@@ -15,7 +14,6 @@ Result (error):   ``{"ok": false, "error": "<message>",
 
 Ops:
   is_available  → {"ok": true, "available": bool, "reason": str}
-  supports      → {"ok": true, "supported": bool}   (input: {"attr": str})
   parse_text    → {"ok": true, "json": dict, "warnings": [str]}
                   or {"ok": false, "kind": "ParseFailure", "error": str,
                       "code": str, "line": int|null, "column": int|null,
@@ -93,42 +91,12 @@ def _op_is_available(spec: dict) -> dict:
         }
 
 
-def _op_supports(spec: dict) -> dict:
-    """Whether the installed wheel exposes a named top-level function.
-
-    Gates UI buttons on optional/newer parser features (e.g. ``sync_meta_text``):
-    an older wheel that imports fine but predates the function reports
-    ``supported=False`` so the button is hidden rather than raising
-    AttributeError on click.
-    """
-    try:
-        wheel = _import_wheel()
-    except ImportError:
-        return {"ok": True, "supported": False}
-    attrs = spec.get("attrs")  # list -> True only if ALL present (multi-fn gate)
-    if attrs is not None:
-        return {"ok": True, "supported": all(hasattr(wheel, a) for a in attrs)}
-    return {"ok": True, "supported": hasattr(wheel, spec["attr"])}
-
-
 def _op_parse_text(spec: dict) -> dict:
-    text = spec["text"]
     raw_root = spec.get("project_root")
-    wheel = _import_wheel()
-    # Older wheels (< the Commit C bump) don't accept project_root yet.
-    # Fall back to the no-kwarg call so a stale project venv stays usable.
-    if raw_root is not None:
-        from pathlib import Path as _Path
-        try:
-            result = wheel.parse(text, project_root=_Path(raw_root))
-        except TypeError:
-            result = wheel.parse(text)
-    else:
-        result = wheel.parse(text)
+    result = _import_wheel().parse(
+        spec["text"], project_root=Path(raw_root) if raw_root is not None else None)
     if not result.success or result.json is None:
-        errors = result.errors if hasattr(result, "errors") else [
-            f for f in result.findings if f.severity == "error"
-        ]
+        errors = result.errors
         primary = errors[0] if errors else None
         return {
             "ok": False,
@@ -165,9 +133,7 @@ def _op_render_text(spec: dict) -> dict:
 def _op_export_rows(spec: dict) -> dict:
     """Full-fidelity document-export rows, computed IN THE PROJECT VENV
     where every bundle pack (labscpi/fncore/...) is importable — the GUI
-    process typically lacks them, so pack ops would render blank there.
-    Raises AttributeError -> ParserUnavailable on wheels predating the
-    export API; the GUI falls back to its in-process path."""
+    process typically lacks them, so pack ops would render blank there."""
     from rules_packager_base.rules.v2_0_2 import extractors as _extractors
 
     def _ser(rows):
@@ -344,7 +310,6 @@ def _op_build_manual_result(spec: dict) -> dict:
 
 _OPS = {
     "is_available": _op_is_available,
-    "supports": _op_supports,
     "parse_text": _op_parse_text,
     "render_text": _op_render_text,
     "refresh_media": _op_refresh_media,
@@ -361,25 +326,31 @@ _OPS = {
 }
 
 
-def load_registry(spec: dict) -> None:
-    """Populate the process-global pack registry from the spec's
-    ``_bundle_dir`` (the one-shot runner: a fresh process per op)."""
-    bundle_dir = spec.get("_bundle_dir")
-    if bundle_dir:
-        from rules_packager_base.rules.v2_0_2.parser._pack_registry import (
-            load_packs_into_registry,
-        )
-        load_packs_into_registry(Path(bundle_dir))
+# The run's own ops: all a RUN engine computes besides its instrument frames.
+_RUN_OPS = ("build_manual_run", "build_manual_result")
 
 
-def run(spec: dict, registry=load_registry) -> dict:
-    """Run ``spec["op"]``; never raises. ``registry(spec)`` loads the packs
-    first (the daemon passes its once-per-process load). A load failure does
+def refusal(role: str, req: dict) -> dict | None:
+    """``Protocol`` for a frame outside ``role``'s job, else None. RUN takes the
+    instrument and bench frames and the run's own ops; TOOLS takes every op and
+    never a frame that could open a device. Both take ping and shutdown."""
+    cmd, op = req.get("cmd"), req.get("op")
+    takes = cmd == "op" if role == "tools" else (cmd != "op" or op in _RUN_OPS)
+    if takes or cmd in ("ping", "shutdown"):
+        return None
+    what = f"op {op!r}" if cmd == "op" else f"{cmd!r}"
+    return {"ok": False, "kind": "Protocol", "error": f"the {role} engine does not take {what}"}
+
+
+def run(spec: dict, registry=None) -> dict:
+    """Run ``spec["op"]``; never raises. ``registry(spec)``, when given, loads the
+    packs first (the daemon's once-per-process load). A load failure does
     not fail the op: it degrades to 'unknown pack' findings. Unknown op →
     ``Other``; ImportError → ``ParserUnavailable``; any other exception →
     ``Other`` with its traceback."""
     try:
-        registry(spec)
+        if registry is not None:
+            registry(spec)
     except Exception:  # noqa: BLE001
         pass
     op = spec.get("op")

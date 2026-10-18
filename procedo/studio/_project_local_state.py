@@ -33,7 +33,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from procedo.core import project_local_state
+from procedo.core import project_local_state, venv_pool
 
 
 class ProjectVenv(NamedTuple):
@@ -67,6 +67,16 @@ def venv(project_root: Path) -> Optional[ProjectVenv]:
     if python is None:
         return None
     return ProjectVenv(Path(python), Path(project_root) / "bundle")
+
+
+def claim_engine(project_root: Path, pid: int) -> Optional[Path]:
+    """Claim this project's venv for an engine process (its pid), so a Reinstall or an
+    eviction in any window refuses while it runs. Returns the folder claimed."""
+    return venv_pool.claim_child(project_root, pid, venv_pool.engine_token())
+
+
+def release_engine(folder: Optional[Path], pid: int) -> None:
+    venv_pool.release(folder, pid, venv_pool.engine_token())
 
 
 def why_no_venv(project_root: Path) -> str:

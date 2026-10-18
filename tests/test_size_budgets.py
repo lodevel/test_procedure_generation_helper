@@ -71,7 +71,7 @@ FILE_BUDGET: dict[str, int] = {
     # llm/_hold_resolution.py (fold-first rule, stale drop, ns rebind); the
     # daemon file only delegates and records the open.
     "llm/opencode_backend.py": 1251,  # +9: bare-except cleanup log lines
-    "pack_ops/pack_parsers.py": 1624,  # -139: the build_manual_* bridges went with the guided run's engine op (engine_process slice 1)
+    "pack_ops/pack_parsers.py": 1426,  # -198: the one-shot spawn, the old-wheel probes and their cache went (engine_process slice 2a)
     "llm/tab_context.py": 1057,
     "llm/validator_dispatch.py": 1163,
     "main_window.py": 1640,  # -44: Word export keywords and About left for dialogs/ (Studio redesign slice 7a)

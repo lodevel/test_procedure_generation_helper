@@ -2088,7 +2088,7 @@ class DaemonWireTests(unittest.TestCase):
     def test_eof_during_idle_reaches_teardown_backstop(self):
         # ping, then close stdin WITHOUT shutdown: the reader signals EOF
         # through the queue and the loop exits cleanly through _teardown.
-        proc = subprocess.run([sys.executable, str(_RUNNER)],
+        proc = subprocess.run([sys.executable, str(_RUNNER), "--role", "run"],
                               input='{"cmd":"ping"}\n',
                               capture_output=True, text=True, timeout=30)
         objs = [json.loads(ln) for ln in proc.stdout.splitlines() if ln.strip()]
@@ -2111,7 +2111,7 @@ class BenchClientLiveTests(unittest.TestCase):
         def _start():            # THIS interpreter (no project venv in tests)
             c._bundle_dir = None
             c._proc = subprocess.Popen(
-                [sys.executable, str(_RUNNER)],
+                [sys.executable, str(_RUNNER), "--role", "run"],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, text=True, bufsize=1)
             c._dead = False

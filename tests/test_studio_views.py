@@ -100,7 +100,6 @@ def test_pack_buttons_stay_hidden_until_the_wheel_provides_them(opened, monkeypa
              to.parse_and_generate_btn, jc.quick_code_btn]
 
     monkeypatch.setattr(pack_parsers, "is_available", lambda root=None: (False, "no wheel"))
-    monkeypatch.setattr(pack_parsers, "supports_sync_meta", lambda root=None: False)
     for tab in (tj, to):
         tab.refresh_parser_button()
     jc.refresh_code_parser_button()
@@ -109,7 +108,6 @@ def test_pack_buttons_stay_hidden_until_the_wheel_provides_them(opened, monkeypa
     assert not _divider_visible(tj)
 
     monkeypatch.setattr(pack_parsers, "is_available", lambda root=None: (True, ""))
-    monkeypatch.setattr(pack_parsers, "supports_sync_meta", lambda root=None: True)
     monkeypatch.setattr(pack_parsers, "can", lambda cap, text, root=None: (
         (False, [("PSU1", "labscpi")]) if cap == "emit" else (True, [])))
     monkeypatch.setattr(pack_parsers, "can_for_types", lambda cap, types, root=None: (True, []))

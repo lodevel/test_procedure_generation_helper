@@ -1,4 +1,4 @@
-"""Phase 5.1: direct wheel-side parser/validator helpers — subprocess edition.
+"""Phase 5.1: direct wheel-side parser/validator helpers, run in the project's engine.
 
 Each entry point dispatches to the **project's** venv Python rather than the
 editor's own interpreter, so the wheel imported is the one bundled with the
@@ -10,33 +10,11 @@ editor stays usable with no project open.
 
 Mechanism
 ---------
-- Sibling script ``_pack_parsers_subprocess.py`` is a standalone CLI runner.
-  It reads a JSON op-spec from stdin and writes a JSON result to stdout.
-- The subprocess is invoked by FILE PATH (not ``-m``)::
-
-      <machine-local venv>/Scripts/python.exe <abs>/_pack_parsers_subprocess.py
-
-  That venv is NOT inside the project any more: it lives under the per-user
-  app-data root, keyed by ``project_id`` (see ``_project_local_state``), whose
-  ``ProjectVenv`` carries the interpreter and the project's bundle dir together
-  because the second can no longer be derived from the first.
-
-  Invoking via ``-m`` would trigger ``procedo/studio/__init__.py`` which
-  imports PySide6 (the editor GUI). The project venv has the bundle wheels
-  but NOT PySide6 — and shouldn't, since it is for test execution only.
-  Running the script by path keeps ``__name__ == "__main__"`` and skips the
-  package init entirely.
-
-Fallback (project_root=None)
------------------------------
-``is_available()`` and every other entry point call the in-process helpers
-(``_inproc_*``) directly.  This is the original behaviour; it is kept because
-the GUI may probe ``is_available()`` during startup before any project is open.
-
-is_available() caching
------------------------
-``is_available(project_root)`` is cheap but may be polled on every repaint; it is
-cached per ``(interpreter path, mtime)`` — a project root no longer names a venv.
+An op is a frame to the project's TOOLS engine (:mod:`.engine`): one persistent
+``llm/_execute_op_subprocess.py --role tools`` per project, run by FILE PATH in
+the machine-local venv (``_project_local_state``), serving the op table
+``llm/_engine_ops.py``. By path, not ``-m``: ``procedo/studio/__init__.py``
+imports PySide6, which the project venv does not have.
 """
 from __future__ import annotations
 
@@ -59,8 +37,7 @@ from ..llm import section_ownership
 
 log = logging.getLogger(__name__)
 
-# Wheel version we expect (used in error messages only; the subprocess
-# runner imports the real wheel).
+# Wheel version we expect (used in error messages only).
 _REQUIRED_WHEEL = "rules_packager_base.rules.v2_0_2.parser"
 
 # Default timeouts (seconds).
@@ -99,123 +76,20 @@ def _timeout() -> int:
 
 
 # ---------------------------------------------------------------------------
-# is_available() cache
-# ---------------------------------------------------------------------------
-
-# Cache: (python path, spec JSON) -> the wheel's answer. The wheel's fixed answers
-# (is_available, supports_*, the section-ownership default) cannot change for one
-# interpreter, and the path identifies it (pool folders are keyed by wheel content).
-# Only real answers are stored; a transport failure is asked again next time.
-_PROBE_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
-
-
-def _cached_probe(
-    venv: _project_local_state.ProjectVenv,
-    spec: dict[str, Any],
-    timeout: int,
-) -> dict[str, Any]:
-    """Ask the wheel ``spec`` once per interpreter path; a failed ask (timeout,
-    launch error, no valid answer) is returned but not remembered."""
-    key = (str(venv.python), json.dumps(spec, sort_keys=True))
-    if key in _PROBE_CACHE:
-        return _PROBE_CACHE[key]
-    result = _subprocess_call(venv, spec, timeout=timeout)
-    if result.get("ok"):
-        _PROBE_CACHE[key] = result
-    return result
-
-
-def _cached_is_available(venv: _project_local_state.ProjectVenv) -> tuple[bool, str]:
-    result = _cached_probe(venv, {"op": "is_available"}, _TIMEOUT_IS_AVAILABLE)
-    if result.get("ok") and "available" in result:
-        return result["available"], result.get("reason", "")
-    return False, result.get("error", "subprocess error")
-
-
-def _cached_supports(venv: _project_local_state.ProjectVenv, **attrs: Any) -> bool:
-    result = _cached_probe(venv, {"op": "supports", **attrs}, _timeout())
-    return bool(result.get("ok") and result.get("supported"))
-
-
-# ---------------------------------------------------------------------------
-# Subprocess dispatcher
+# Engine dispatcher
 # ---------------------------------------------------------------------------
 
 
-def _subprocess_call(
-    venv: _project_local_state.ProjectVenv,
-    spec: dict[str, Any],
-    timeout: int,
-    runner_name: str = "_pack_parsers_subprocess.py",
-) -> dict[str, Any]:
-    """Invoke the subprocess runner and return its parsed JSON output.
-
-    Never raises — returns ``{"ok": False, "error": ..., "kind": ...}`` on
-    any transport-level failure so callers can map it uniformly.
-
-    The runner is invoked as a standalone script file, NOT via ``-m``.
-    Running it as a module would trigger ``procedo/studio/__init__.py``
-    which imports PySide6 (the editor GUI). The project's venv has the
-    bundle wheels but NOT PySide6 — and shouldn't, since the project
-    venv is for test execution, not the editor UI. Invoking by path
-    sets ``__name__ == "__main__"`` and skips the package init.
-
-    ``runner_name`` selects the sibling runner script in ``pack_ops/``.
-    """
-    runner_path = Path(__file__).resolve().parent / runner_name
-
-    # Tell the child where the project bundle lives so it can populate the pack
-    # registry before running the op. It comes from the PROJECT ROOT, resolved
-    # alongside the interpreter (:class:`ProjectVenv`) — deriving it from the
-    # interpreter's own path stopped being possible the day the venv moved out
-    # of the project. Injected once here rather than in every op-spec builder.
-    spec = {**spec, "_bundle_dir": str(venv.bundle_dir)}
-
-    try:
-        proc = subprocess.run(
-            [str(venv.python), str(runner_path)],
-            input=json.dumps(spec),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        return {
-            "ok": False,
-            "kind": "ParserUnavailable",
-            "error": f"Subprocess timed out after {timeout}s (op={spec.get('op')})",
-        }
-    except Exception as exc:  # noqa: BLE001
-        return {
-            "ok": False,
-            "kind": "ParserUnavailable",
-            "error": f"Failed to launch subprocess: {exc}",
-        }
-
-    if proc.returncode != 0:
-        stderr = proc.stderr.strip() if proc.stderr else "(no stderr)"
-        return {
-            "ok": False,
-            "kind": "ParserUnavailable",
-            "error": f"Subprocess exited {proc.returncode}: {stderr}",
-        }
-
-    try:
-        return json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        return {
-            "ok": False,
-            "kind": "Other",
-            "error": f"Subprocess stdout is not valid JSON: {exc}\nstdout={proc.stdout!r}",
-        }
+def _engine_call(project_root: Path, spec: dict[str, Any],
+                 timeout: Optional[float] = None) -> dict[str, Any]:
+    """``spec`` answered by the project's TOOLS engine: the op's result dict, or
+    ``{"ok": False, "kind", "error"}``. Raises ParserUnavailable without a venv."""
+    from . import engine  # engine builds on RemoteSession below
+    return engine.tools_op(project_root, spec, timeout or _timeout())
 
 
 def _resolve_project_python(project_root: Path) -> _project_local_state.ProjectVenv:
-    """The project's interpreter AND bundle dir; ParserUnavailable when there is none.
-
-    Callers bind the result as ``venv`` and hand it straight to
-    :func:`_subprocess_call`; it is a ``ProjectVenv``, not a path.
-    """
+    """The project's interpreter AND bundle dir; ParserUnavailable when there is none."""
     resolved = _project_local_state.venv(project_root)
     if resolved is None:
         raise ParserUnavailable(_project_local_state.why_no_venv(project_root))
@@ -297,8 +171,7 @@ def is_available(
 
     When ``project_root`` is None (no project open), probes the editor's own
     venv via in-process import (original behaviour). When ``project_root`` is
-    given, invokes the project venv Python as a subprocess; result is cached
-    per ``(venv_python_path, mtime)``.
+    given, asks the project's engine.
     """
     if project_root is None:
         try:
@@ -308,10 +181,12 @@ def is_available(
             return False, str(exc)
 
     try:
-        venv = _resolve_project_python(project_root)
+        result = _engine_call(project_root, {"op": "is_available"}, _TIMEOUT_IS_AVAILABLE)
     except ParserUnavailable as exc:
         return False, str(exc)
-    return _cached_is_available(venv)
+    if result.get("ok") and "available" in result:
+        return result["available"], result.get("reason", "")
+    return False, result.get("error", "engine error")
 
 
 def parse_text(
@@ -326,18 +201,14 @@ def parse_text(
     if project_root is None:
         return _inproc_parse_text(text)
 
-    venv = _resolve_project_python(project_root)
-    result = _subprocess_call(
-        venv,
-        {"op": "parse_text", "text": text, "project_root": str(project_root)},
-        timeout=_timeout(),
-    )
+    result = _engine_call(
+        project_root, {"op": "parse_text", "text": text, "project_root": str(project_root)})
 
     if not result.get("ok"):
         kind = result.get("kind", "Other")
         if kind == "ParseFailure":
             return _reconstruct_parse_failure(result)
-        raise ParserUnavailable(result.get("error", "subprocess error"))
+        raise ParserUnavailable(result.get("error", "engine error"))
 
     return result["json"], result.get("warnings", [])
 
@@ -350,14 +221,10 @@ def render_text(
     if project_root is None:
         return _inproc_render_text(procedure_json)
 
-    venv = _resolve_project_python(project_root)
-    result = _subprocess_call(
-        venv,
-        {"op": "render_text", "procedure_json": procedure_json},
-        timeout=_timeout(),
-    )
+    result = _engine_call(
+        project_root, {"op": "render_text", "procedure_json": procedure_json})
     if not result.get("ok"):
-        raise ParserUnavailable(result.get("error", "subprocess error"))
+        raise ParserUnavailable(result.get("error", "engine error"))
     return result["text"]
 
 
@@ -378,14 +245,10 @@ def refresh_media(
         _media.populate_media(procedure_json)
         return procedure_json
 
-    venv = _resolve_project_python(project_root)
-    result = _subprocess_call(
-        venv,
-        {"op": "refresh_media", "procedure_json": procedure_json},
-        timeout=_timeout(),
-    )
+    result = _engine_call(
+        project_root, {"op": "refresh_media", "procedure_json": procedure_json})
     if not result.get("ok"):
-        raise ParserUnavailable(result.get("error", "subprocess error"))
+        raise ParserUnavailable(result.get("error", "engine error"))
     return result["json"]
 
 
@@ -396,19 +259,15 @@ def export_rows(
     """Document-export rows (steps, expected) computed by the project
     venv's wheel — the only environment guaranteed to have every bundle
     pack importable, so pack ops render their canonical clause instead
-    of blank. Raises :class:`ParserUnavailable` when the installed
-    wheel predates the export API."""
+    of blank. Raises :class:`ParserUnavailable` when the engine cannot
+    answer."""
     if project_root is None:
         raise ParserUnavailable("export_rows requires a project venv")
 
-    venv = _resolve_project_python(project_root)
-    result = _subprocess_call(
-        venv,
-        {"op": "export_rows", "procedure_json": procedure_json},
-        timeout=_timeout(),
-    )
+    result = _engine_call(
+        project_root, {"op": "export_rows", "procedure_json": procedure_json})
     if not result.get("ok"):
-        raise ParserUnavailable(result.get("error", "subprocess error"))
+        raise ParserUnavailable(result.get("error", "engine error"))
     return result.get("steps", []), result.get("expected", [])
 
 
@@ -416,17 +275,12 @@ def export_rows_batch(
     procedures: list[dict[str, Any]],
     project_root: Path,
 ) -> list[dict]:
-    """Batched :func:`export_rows` — one project-venv spawn for a whole
-    export run. Returns one ``{"steps": [...], "expected": [...]}`` per
-    input procedure. Raises :class:`ParserUnavailable` on old wheels."""
-    venv = _resolve_project_python(project_root)
-    result = _subprocess_call(
-        venv,
-        {"op": "export_rows", "procedures": procedures},
-        timeout=_timeout(),
-    )
+    """Batched :func:`export_rows` — one engine op for a whole export run.
+    Returns one ``{"steps": [...], "expected": [...]}`` per input procedure.
+    Raises :class:`ParserUnavailable` when the engine cannot answer."""
+    result = _engine_call(project_root, {"op": "export_rows", "procedures": procedures})
     if not result.get("ok"):
-        raise ParserUnavailable(result.get("error", "subprocess error"))
+        raise ParserUnavailable(result.get("error", "engine error"))
     return result.get("results", [])
 
 
@@ -443,14 +297,9 @@ def renumber_steps_text(
     if project_root is None:
         return _inproc_renumber_steps(text)
 
-    venv = _resolve_project_python(project_root)
-    result = _subprocess_call(
-        venv,
-        {"op": "renumber_steps", "text": text},
-        timeout=_timeout(),
-    )
+    result = _engine_call(project_root, {"op": "renumber_steps", "text": text})
     if not result.get("ok"):
-        raise ParserUnavailable(result.get("error", "subprocess error"))
+        raise ParserUnavailable(result.get("error", "engine error"))
     return result["text"]
 
 
@@ -486,18 +335,16 @@ def sync_equipment_from_steps(
     if project_root is None:
         return _inproc_sync_equipment(text, controller_profiles)
 
-    venv = _resolve_project_python(project_root)
-    result = _subprocess_call(
-        venv,
+    result = _engine_call(
+        project_root,
         {
             "op": "sync_equipment",
             "text": text,
             "controller_profiles": controller_profiles,
         },
-        timeout=_timeout(),
     )
     if not result.get("ok"):
-        raise ParserUnavailable(result.get("error", "subprocess error"))
+        raise ParserUnavailable(result.get("error", "engine error"))
     return result["text"], result.get("warnings", [])
 
 
@@ -513,35 +360,10 @@ def sync_meta_text(
     if project_root is None:
         return _inproc_sync_meta(text)
 
-    venv = _resolve_project_python(project_root)
-    result = _subprocess_call(
-        venv,
-        {"op": "sync_meta", "text": text},
-        timeout=_timeout(),
-    )
+    result = _engine_call(project_root, {"op": "sync_meta", "text": text})
     if not result.get("ok"):
-        raise ParserUnavailable(result.get("error", "subprocess error"))
+        raise ParserUnavailable(result.get("error", "engine error"))
     return result["text"], result.get("warnings", [])
-
-
-def supports_sync_meta(project_root: Optional[Path] = None) -> bool:
-    """Whether the ACTIVE wheel provides ``sync_meta_text``.
-
-    The "Sync Meta" button is gated on this: the feature is delivered by the
-    package, so if the installed wheel predates it (imports fine but lacks the
-    function) the button is hidden rather than shown-then-erroring on click.
-    Mirrors :func:`is_available`'s in-proc/subprocess split. Best-effort — any
-    probe failure returns ``False`` (hide the button)."""
-    if project_root is None:
-        try:
-            return hasattr(_inproc_import_wheel(), "sync_meta_text")
-        except ParserUnavailable:
-            return False
-    try:
-        venv = _resolve_project_python(project_root)
-    except ParserUnavailable:
-        return False
-    return _cached_supports(venv, attr="sync_meta_text")
 
 
 def sync_meta_json(
@@ -564,46 +386,6 @@ def sync_meta_json(
     reparsed, _ = parse_text(synced, project_root=project_root)
     meta = reparsed.get("meta")
     return meta if isinstance(meta, dict) else {}
-
-
-def supports_build_manual_run(project_root: Optional[Path] = None) -> bool:
-    """Whether the ACTIVE wheel provides ``build_manual_run`` — gates the
-    "Guided Manual" entry point so an older wheel (imports fine but predates the
-    feature) hides the action rather than erroring on launch. Mirrors
-    :func:`supports_sync_meta`; any probe failure returns ``False``."""
-    if project_root is None:
-        try:
-            return hasattr(_inproc_import_wheel(), "build_manual_run")
-        except ParserUnavailable:
-            return False
-    try:
-        venv = _resolve_project_python(project_root)
-    except ParserUnavailable:
-        return False
-    return _cached_supports(venv, attr="build_manual_run")
-
-
-# Every wheel name the guided-manual mode needs end-to-end (walk the plan, Finish/
-# Save, readings keyed by row: base 2.2.0). The launch button gates on ALL of them
-# so it never enables a mode the operator couldn't complete.
-_GUIDED_MANUAL_FNS = ("build_manual_run", "build_manual_result", "READINGS_BY_ROW")
-
-
-def supports_guided_manual(project_root: Optional[Path] = None) -> bool:
-    """Whether the wheel exposes EVERY function guided-manual needs
-    (:data:`_GUIDED_MANUAL_FNS`). Mirrors :func:`supports_sync_meta`'s in-proc /
-    subprocess split; any probe failure returns ``False``."""
-    if project_root is None:
-        try:
-            wheel = _inproc_import_wheel()
-            return all(hasattr(wheel, fn) for fn in _GUIDED_MANUAL_FNS)
-        except ParserUnavailable:
-            return False
-    try:
-        venv = _resolve_project_python(project_root)
-    except ParserUnavailable:
-        return False
-    return _cached_supports(venv, attrs=list(_GUIDED_MANUAL_FNS))
 
 
 def _load_bundle_equipment_profiles(
@@ -736,16 +518,22 @@ class RemoteSession:
     ``procedure_path`` are injected per frame; the daemon json.loads the
     document ONCE per session from that path for instrument frames.  An engine
     op (:meth:`engine_op`) carries its own document instead.
+
+    ``role`` is the daemon's job (``--role``): ``run`` holds instruments,
+    ``tools`` serves ops only (:mod:`.engine`, with no ``procedure_path``).
     """
 
-    def __init__(self, procedure_path: Path | str, project_root: Path) -> None:
-        self._procedure_path = str(Path(procedure_path).resolve())
+    def __init__(self, procedure_path: Path | str | None, project_root: Path,
+                 role: str = "run") -> None:
+        self._procedure_path = str(Path(procedure_path).resolve()) if procedure_path else None
         self._project_root = Path(project_root)
+        self._role = role
         self._proc: Optional[subprocess.Popen] = None
         self._stderr_tail: deque = deque(maxlen=80)
         self._lock = threading.Lock()
         self._dead = False
         self._bundle_dir: Optional[str] = None
+        self._claim: Optional[tuple[Optional[Path], int]] = None   # (venv folder, pid) a TOOLS claimed
         # The daemon runs with cwd here so a relative file write (e.g. a scope
         # screenshot saved by ``save_screenshot(filename=...)``) lands in a known
         # temp dir, not the GUI's cwd; the host harvests these into the result dir
@@ -763,12 +551,19 @@ class RemoteSession:
         self._bundle_dir = str(venv.bundle_dir)
         # Daemon stayed in llm/ when pack_parsers moved to pack_ops/ (29e5f66).
         runner = Path(__file__).resolve().parent.parent / "llm" / "_execute_op_subprocess.py"
+        temp = str(temp_root.root())         # the child's temp files go with this app's
         self._proc = subprocess.Popen(
-            [str(venv.python), str(runner)],
+            [str(venv.python), str(runner), "--role", self._role],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1,
             cwd=str(self._screenshot_dir),   # relative file writes (screenshots) land here
+            env={**os.environ, "TEMP": temp, "TMP": temp},
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
+        self._release_claim()
+        if self._role == "tools":   # RUN holders claim through the bench session until slice 3
+            self._claim = (_project_local_state.claim_engine(self._project_root, self._proc.pid),
+                           self._proc.pid)
         self._dead = False
         self._stderr_tail.clear()
         threading.Thread(target=self._drain_stderr, args=(self._proc,),
@@ -827,8 +622,9 @@ class RemoteSession:
                 return self._dead_resp("ParserUnavailable", str(exc))
             except Exception as exc:  # noqa: BLE001
                 return self._dead_resp("SessionDead", f"failed to start daemon: {exc}")
-            frame = {**frame, "_bundle_dir": self._bundle_dir,
-                     "procedure_path": self._procedure_path}
+            frame = {**frame, "_bundle_dir": self._bundle_dir}
+            if self._procedure_path:
+                frame["procedure_path"] = self._procedure_path
             try:
                 self._proc.stdin.write(json.dumps(frame) + "\n")
                 self._proc.stdin.flush()
@@ -957,7 +753,7 @@ class RemoteSession:
                   **fields: Any) -> dict[str, Any]:
         """One engine op (``llm/_engine_ops.py``) in this live daemon, with its
         document in ``fields`` (``procedure_json``). Returns the op's result
-        dict as the one-shot runner would, or the session's typed failure."""
+        dict, or the session's typed failure."""
         return self._request({"cmd": "op", "op": op, **fields}, timeout or _timeout())
 
     def ping(self, timeout: float = 5) -> dict[str, Any]:
@@ -973,6 +769,7 @@ class RemoteSession:
             except Exception:  # noqa: BLE001
                 self._terminate()
             self._dead = True
+        self._release_claim()
         shutil.rmtree(self._screenshot_dir, ignore_errors=True)
         return res
 
@@ -980,10 +777,34 @@ class RemoteSession:
         """Hard-stop a wedged daemon (the parent's last-resort)."""
         self._dead = True
         self._terminate()
+        self._release_claim()
+
+    def close(self, grace: float = 5) -> None:
+        """End the daemon as this process's exit would: close its stdin, so it tears
+        down and exits on its own (a venv launcher only after its python); kill it
+        if it is still there after ``grace`` seconds."""
+        self._dead = True
+        if self._proc is not None and self._proc.poll() is None:
+            try:
+                self._proc.stdin.close()
+                self._proc.wait(timeout=grace)
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                self._terminate()
+        self._release_claim()
+
+    def _release_claim(self) -> None:
+        if self._claim is not None:
+            _project_local_state.release_engine(*self._claim)
+            self._claim = None
 
     @property
     def dead(self) -> bool:
         return self._dead
+
+    @property
+    def alive(self) -> bool:
+        """Its daemon was started and is still running."""
+        return self._alive()
 
 
 def safe_off_remote(
@@ -1153,14 +974,9 @@ def generate_code(
     if project_root is None:
         return _inproc_generate_code(procedure)
 
-    venv = _resolve_project_python(project_root)
-    result = _subprocess_call(
-        venv,
-        {"op": "generate_code", "procedure": procedure},
-        timeout=_timeout(),
-    )
+    result = _engine_call(project_root, {"op": "generate_code", "procedure": procedure})
     if not result.get("ok"):
-        raise ParserUnavailable(result.get("error", "subprocess error"))
+        raise ParserUnavailable(result.get("error", "engine error"))
     return result["code"], result.get("warnings", [])
 
 
@@ -1188,7 +1004,6 @@ def validate(
             check_names=check_names,
         )
 
-    venv = _resolve_project_python(project_root)
     spec: dict[str, Any] = {"op": "validate", "mode": mode, "check_names": check_names}
     if text is not None:
         spec["text"] = text
@@ -1197,9 +1012,9 @@ def validate(
     if original_text is not None:
         spec["original_text"] = original_text
 
-    result = _subprocess_call(venv, spec, timeout=_timeout())
+    result = _engine_call(project_root, spec)
     if not result.get("ok"):
-        raise ParserUnavailable(result.get("error", "subprocess error"))
+        raise ParserUnavailable(result.get("error", "engine error"))
 
     return _ValidateReport(_reconstruct_issues_from_dicts(result.get("findings", [])))
 
@@ -1231,10 +1046,9 @@ def get_section_ownership(
     override = section_ownership.load_config_override(project_root)
     loaded = section_ownership.load_bundle_ownership(project_root / "bundle")
     if loaded is None:
-        venv = _resolve_project_python(project_root)
-        result = _cached_probe(venv, {"op": "section_ownership"}, _timeout())
+        result = _engine_call(project_root, {"op": "section_ownership"})
         if not result.get("ok"):
-            raise ParserUnavailable(result.get("error", "subprocess error"))
+            raise ParserUnavailable(result.get("error", "engine error"))
         loaded = dict(result["ownership"])
     # Override layers over whichever base won (bundle side-car OR wheel
     # default); it never shrinks the section universe on its own.
@@ -1256,9 +1070,8 @@ def reconstruct_text(
         pr = _inproc_import_wheel().reconstruct(fragment, prior, owned_sections)
         return _ReconstructReport.from_parse_result(pr)
 
-    venv = _resolve_project_python(project_root)
-    result = _subprocess_call(
-        venv,
+    result = _engine_call(
+        project_root,
         {
             "op": "reconstruct",
             "fragment": fragment,
@@ -1267,10 +1080,9 @@ def reconstruct_text(
                 sorted(owned_sections) if owned_sections is not None else None
             ),
         },
-        timeout=_timeout(),
     )
     if not result.get("ok"):
-        raise ParserUnavailable(result.get("error", "subprocess error"))
+        raise ParserUnavailable(result.get("error", "engine error"))
     return _ReconstructReport.from_dict(result)
 
 
@@ -1284,19 +1096,9 @@ def _inproc_parse_text(
     *,
     project_root: Optional[Path] = None,
 ) -> tuple[dict[str, Any], list[str]]:
-    wheel = _inproc_import_wheel()
-    # Older wheels (< the Commit C bump) don't accept project_root yet.
-    # Fall back to the no-kwarg call so the test harness can keep using
-    # whatever wheel happens to be installed.
-    try:
-        result = wheel.parse(text, project_root=project_root)
-    except TypeError:
-        result = wheel.parse(text)
+    result = _inproc_import_wheel().parse(text, project_root=project_root)
     if not result.success or result.json is None:
-        errors = result.errors if hasattr(result, "errors") else [
-            f for f in result.findings if f.severity == "error"
-        ]
-        raise _make_parse_failure(errors, result.findings)
+        raise _make_parse_failure(result.errors, result.findings)
     warnings = [
         _format_finding(f) for f in result.findings if f.severity == "warning"
     ]

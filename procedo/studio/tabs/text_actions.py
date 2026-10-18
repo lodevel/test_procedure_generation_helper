@@ -102,9 +102,7 @@ class TextActionsMixin:
         available, _ = pack_parsers.is_available(project_root)
         for button, _tip, _caps in self._pack_gates():
             button.setVisible(available)
-        # Sync Meta gates on the function itself, not just wheel-imports: an old
-        # wheel imports (available=True) yet lacks sync_meta_text.
-        self.sync_meta_btn.setVisible(pack_parsers.supports_sync_meta(project_root))
+        self.sync_meta_btn.setVisible(available)
         if available:
             self._apply_capability_gating(project_root)
 

@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Optional
 
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
-from procedo.core import app_settings, config_manager
+from procedo.core import app_settings, config_manager, display_snapshot
 from procedo.core.new_project_dialog import NewProjectDialog
 
 from .. import _project_local_state
@@ -267,27 +267,15 @@ def watch_project_bundle(mw) -> None:
 def bundle_signature_changed(mw) -> bool:
     """True when the bundle's identity moved since the last check.
 
-    Signature = mtimes of the bundle dir + bundle.json +
-    defaults.json (None per missing entry). An import swaps the
-    whole dir, so all three change; unrelated project-root events
-    (test folders created, etc.) leave the signature alone — the
-    noise filter that keeps root-watch events from causing reload
-    storms (task #39, mirrors display_snapshot_watcher's
-    bundle-key check).
+    Signature = the host's ``display_snapshot.bundle_key`` (mtimes of the
+    bundle dir, bundle.json, defaults.json and the install record). An
+    import swaps the whole dir, so they change; unrelated project-root
+    events (test folders created, etc.) leave the signature alone — the
+    noise filter that keeps root-watch events from causing reload storms
+    (task #39).
     """
     root = getattr(mw.project_manager, "project_root", None)
-    if root is None:
-        sig = None
-    else:
-        bundle_dir = Path(root) / "bundle"
-        parts = []
-        for p in (bundle_dir, bundle_dir / "bundle.json",
-                  bundle_dir / "defaults.json"):
-            try:
-                parts.append(p.stat().st_mtime_ns)
-            except OSError:
-                parts.append(None)
-        sig = tuple(parts)
+    sig = None if root is None else display_snapshot.bundle_key(Path(root))
     changed = sig != mw._bundle_signature
     mw._bundle_signature = sig
     return changed

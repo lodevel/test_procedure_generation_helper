@@ -136,28 +136,27 @@ def test_the_bundle_dir_is_the_projects_even_though_the_venv_is_elsewhere(venvs_
     assert python.parents[2] != project
 
 
-def test_every_op_spec_carries_the_projects_bundle_dir(venvs_root, tmp_path, monkeypatch):
+def test_every_op_frame_carries_the_projects_bundle_dir(
+    venvs_root, screenshot_dir, tmp_path, monkeypatch
+):
+    """An op goes to the project's TOOLS engine: the machine-local interpreter runs
+    the daemon by path with ``--role tools``, and the frame names the bundle."""
+    from procedo.studio.pack_ops import engine
+
     project = _project(tmp_path)
     python = _install_interpreter(project)
-    seen: dict = {}
+    daemons: list[_FakeDaemon] = []
+    monkeypatch.setattr(engine, "_slots", {})
+    monkeypatch.setattr(pack_parsers.subprocess, "Popen",
+                        lambda argv, **_k: daemons.append(_FakeDaemon(argv)) or daemons[-1])
 
-    class _Finished:
-        returncode = 0
-        stdout = json.dumps({"ok": True})
-        stderr = ""
+    pack_parsers.is_available(project)
 
-    def fake_run(argv, **kwargs):
-        seen["argv"] = argv
-        seen["spec"] = json.loads(kwargs["input"])
-        return _Finished()
-
-    monkeypatch.setattr(pack_parsers.subprocess, "run", fake_run)
-    pack_parsers._subprocess_call(
-        pack_parsers._resolve_project_python(project), {"op": "is_available"}, timeout=5
-    )
-
-    assert seen["argv"][0] == str(python)
-    assert seen["spec"]["_bundle_dir"] == str(project / "bundle")
+    assert daemons[0].argv[0] == str(python)
+    assert daemons[0].argv[1].endswith("_execute_op_subprocess.py")
+    assert daemons[0].argv[2:] == ["--role", "tools"]
+    assert daemons[0].frames[0]["op"] == "is_available"
+    assert daemons[0].frames[0]["_bundle_dir"] == str(project / "bundle")
 
 
 def test_no_venv_is_still_parser_unavailable(venvs_root, tmp_path):
@@ -231,6 +230,7 @@ class _FakeDaemon:
         self.argv = argv
         self.frames: list[dict] = []
         self.returncode = None
+        self.pid = 4242
         self.stdout = _Pipe()
         self.stderr = _Pipe()
         self.stdin = self

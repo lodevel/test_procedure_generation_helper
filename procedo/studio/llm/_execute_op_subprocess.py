@@ -2,13 +2,13 @@
 
 Invoked by FILE PATH (NOT ``-m``) in the *project* venv::
 
-    <machine-local venv>/<bin>/python <abs>/_execute_op_subprocess.py
+    <machine-local venv>/<bin>/python <abs>/_execute_op_subprocess.py --role run|tools
 
 Running via ``-m`` would trigger ``procedo/studio/__init__.py`` (PySide6, absent
 from the project venv); invoking by path keeps ``__name__ == "__main__"`` and
 skips the package init.  It serves the engine's op table (``op`` frames,
-``_engine_ops.py``) and ALSO imports the hardware drivers (labscpi / fncore) —
-it is the only runner that talks to a real instrument.
+``_engine_ops.py``) and, as RUN, imports the hardware drivers (labscpi /
+fncore).  Each role refuses frames outside its job (``_engine_ops.refusal``).
 
 Why a daemon (not one-shot)
 ---------------------------
@@ -119,6 +119,7 @@ endpoint/channel set with its stored reconnect data, never a parsed string.
 """
 from __future__ import annotations
 
+import argparse
 import atexit
 import json
 import numbers
@@ -1120,10 +1121,8 @@ _PROTO_OUT = None
 _BENCH_CMDS = ("acquire_run", "release_run", "run_test", "cancel_run",
                "prompt_response")
 def _sib(name: str):
-    """Lazy sibling import (file-path invocation puts llm/ on sys.path; the
-    import must NOT go through the procedo.studio package — PySide6 is
-    absent from project venvs).  One accessor serves every sibling;
-    sys.modules is the cache."""
+    """Lazy sibling import, never through the procedo.studio package (PySide6
+    is absent from project venvs); sys.modules is the cache."""
     try:
         return sys.modules[name]
     except KeyError:
@@ -1248,6 +1247,9 @@ def _dispatch(session: _Session, req: dict):
 
 def main() -> None:
     global _SESSION, _PROTO_OUT
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--role", choices=("run", "tools"), required=True)
+    role = parser.parse_args().role
     # Isolate the protocol channel at the OS level: dup the real stdout to a
     # private fd for frames, then point fd 1 (what C-level VISA/driver code calls
     # "stdout") at stderr so stray bytes can't corrupt a frame.  Python-level
@@ -1266,9 +1268,8 @@ def main() -> None:
         except Exception:  # noqa: BLE001 — not all signals settable on Windows
             pass
 
-    # THE one reader thread + queue (bench-session S3): the main loop and any
-    # in-run waits (prompt/cancel) consume from the same queue; the reader
-    # signals EOF through it so this loop still reaches the final _teardown.
+    # THE one reader thread + queue (bench-session S3), shared with in-run waits
+    # (prompt/cancel); EOF comes through it, so the loop reaches the _teardown.
     reader = _bench().start_reader(sys.stdin)
     while True:
         line = reader.next_line()      # blocking; None = EOF (parent closed pipe)
@@ -1283,7 +1284,8 @@ def main() -> None:
             _write_frame(proto_out, {"ok": False, "kind": "Protocol",
                                      "error": f"bad frame: {exc}"})
             continue
-        response, stop = _dispatch(_SESSION, req)
+        refused = _sib("_engine_ops").refusal(role, req)
+        response, stop = (refused, False) if refused else _dispatch(_SESSION, req)
         _write_frame(proto_out, response)
         if stop:
             break

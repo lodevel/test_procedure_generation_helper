@@ -67,9 +67,7 @@ class StudioAuthoringApi:
         am.set_json_from_dict(procedure)
         am.save_artifact(ArtifactType.PROCEDURE_JSON)
 
-    def sync_meta_text(self, text: str) -> Optional[str]:
-        if not pack_parsers.supports_sync_meta(self.project_root):
-            return None
+    def sync_meta_text(self, text: str) -> str:
         synced, _warnings = pack_parsers.sync_meta_text(text, project_root=self.project_root)
         return synced
 

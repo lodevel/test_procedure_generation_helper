@@ -229,9 +229,6 @@ class BuildManualRunOpTests(unittest.TestCase):
         }))
         return pp.ManualRunResult.from_dict(json.loads(json.dumps(engine_ops.run(spec))))
 
-    def test_supported(self) -> None:
-        self.assertIs(pp.supports_build_manual_run(), True)
-
     def test_static_plan_pending_with_expected_joined(self) -> None:
         run = self._run()
         self.assertEqual(run.test_name, "T")

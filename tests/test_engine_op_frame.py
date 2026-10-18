@@ -1,7 +1,7 @@
 """The live daemon answers an engine ``op`` frame (engine_process plan, slice 1).
 
-One op table (``llm/_engine_ops.py``) serves the daemon and the one-shot runner,
-so the guided run's rematerialize gets the same answer either way. The op judges
+One op table (``llm/_engine_ops.py``) serves every engine process, so the daemon's
+answer is the op table's answer over the JSON boundary. The op judges
 the document IN the frame: it never reads the path, never changes the daemon's
 latched instrument document, and a bundle that will not load degrades it instead
 of failing it.
@@ -30,7 +30,6 @@ pytestmark = pytest.mark.skipif(
 
 _STUDIO = Path(__file__).resolve().parent.parent / "procedo" / "studio"
 _DAEMON = _STUDIO / "llm" / "_execute_op_subprocess.py"
-_ONE_SHOT = _STUDIO / "pack_ops" / "_pack_parsers_subprocess.py"
 
 _spec = importlib.util.spec_from_file_location("_exec_op_runner_opframe", _DAEMON)
 er = importlib.util.module_from_spec(_spec)
@@ -79,11 +78,9 @@ def _inputs(doc: dict) -> dict:
     return {"measurements": rows, "controls": {}, "operator_verdicts": {3: "PASS"}}
 
 
-def _one_shot(spec: dict) -> dict:
-    proc = subprocess.run([sys.executable, str(_ONE_SHOT)], input=json.dumps(spec),
-                          capture_output=True, text=True, timeout=60)
-    assert proc.returncode == 0, proc.stderr
-    return json.loads(proc.stdout)
+def _in_process(spec: dict) -> dict:
+    """The op table run here, over the same JSON boundary the daemon's pipe is."""
+    return json.loads(json.dumps(engine_ops.run(json.loads(json.dumps(spec)))))
 
 
 @pytest.fixture(scope="module")
@@ -93,7 +90,8 @@ def live_session():
 
     def _start():
         sess._bundle_dir = None
-        sess._proc = subprocess.Popen([sys.executable, str(_DAEMON)], stdin=subprocess.PIPE,
+        sess._proc = subprocess.Popen([sys.executable, str(_DAEMON), "--role", "run"],
+                                      stdin=subprocess.PIPE,
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                       text=True, bufsize=1)
         sess._dead = False
@@ -104,23 +102,23 @@ def live_session():
 
 
 @pytest.mark.parametrize("name", sorted(PROCEDURES))
-def test_the_daemon_op_answers_what_the_one_shot_runner_answers(live_session, name):
+def test_the_daemon_op_answers_what_the_op_table_answers(live_session, name):
     doc = _document(name)
     fields = {"procedure_json": doc, **_inputs(doc)}
     live = live_session.engine_op("build_manual_run", **fields)
     assert live["ok"] and live["steps"]
-    assert live == _one_shot({"op": "build_manual_run", **fields})
+    assert live == _in_process({"op": "build_manual_run", **fields})
     assert any(s["verdict"] for s in live["steps"])   # the readings reached the verdicts
     if name == "linear":         # and the operator's verdict did (the observation 2.0 alone is no "lit")
         assert [s["verdict"] for s in live["steps"] if s["kind"] == "judge"] == ["PASS"]
 
 
-def test_the_daemon_result_op_answers_what_the_one_shot_runner_answers(live_session):
+def test_the_daemon_result_op_answers_what_the_op_table_answers(live_session):
     doc = _document("bind_in_for")
     fields = {"procedure_json": doc, **_inputs(doc)}
     live = live_session.engine_op("build_manual_result", **fields)
     assert live["ok"] and live["result"]["verdicts"]
-    assert live == _one_shot({"op": "build_manual_result", **fields})
+    assert live == _in_process({"op": "build_manual_result", **fields})
 
 
 def test_the_op_judges_the_frame_document_never_the_path_nor_the_latch(tmp_path):
@@ -154,7 +152,7 @@ def test_a_bundle_that_will_not_load_degrades_the_op_but_refuses_instruments(mon
     assert exec_ops["ok"] is False and "bundle broken" in exec_ops["error"]
 
 
-def test_error_kinds_match_the_one_shot_table(monkeypatch):
+def test_error_kinds_keep_the_exception_table(monkeypatch):
     unknown = engine_ops.run({"op": "nope"})
     assert (unknown["ok"], unknown["kind"]) == (False, "Other") and "Unknown op" in unknown["error"]
 

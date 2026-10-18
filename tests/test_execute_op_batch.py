@@ -334,7 +334,7 @@ class ProtocolLoopTests(unittest.TestCase):
 
     def test_framed_loop_ping_unknown_badframe_shutdown(self):
         inp = '{"cmd":"ping"}\n{"cmd":"bogus"}\nnot json\n{"cmd":"shutdown"}\n'
-        proc = subprocess.run([sys.executable, str(_RUNNER)], input=inp,
+        proc = subprocess.run([sys.executable, str(_RUNNER), "--role", "run"], input=inp,
                               capture_output=True, text=True, timeout=30)
         objs = [json.loads(ln) for ln in proc.stdout.splitlines() if ln.strip()]
         self.assertEqual(proc.returncode, 0)
@@ -457,7 +457,7 @@ class RemoteSessionLiveTransportTests(unittest.TestCase):
         def _start():               # use THIS interpreter (no project venv in test env)
             s._bundle_dir = None
             s._proc = subprocess.Popen(
-                [sys.executable, str(runner)],
+                [sys.executable, str(runner), "--role", "run"],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, text=True, bufsize=1)
             s._dead = False

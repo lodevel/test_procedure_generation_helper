@@ -31,10 +31,11 @@ import its LLM backends.
 - **Diff-gated edits.** Every LLM-proposed change to an artifact is shown in a
   side-by-side diff (`dialogs/diff_viewer.py`) and applied only on explicit accept.
 - **Pack-driven parsing/validation.** Parsing, codegen, and validation are dispatched
-  to the *project's* venv via `procedo/studio/pack_ops/pack_parsers.py` (which spawns
-  `_pack_parsers_subprocess.py` against the `rules_packager_base` wheel), so the
-  rules/wheel used are the ones bundled with the active project — not the editor's
-  own interpreter.
+  to the *project's* venv via `procedo/studio/pack_ops/pack_parsers.py` (each op a
+  frame to the project's persistent engine process, `pack_ops/engine.py`, which
+  runs `llm/_execute_op_subprocess.py --role tools` against the
+  `rules_packager_base` wheel), so the rules/wheel used are the ones bundled with
+  the active project — not the editor's own interpreter.
 - **Per-op execution daemon.** `procedo/studio/llm/_execute_op_subprocess.py` is a
   persistent runner that executes individual procedure ops against live equipment
   (used by Procedo Bench's interactive/manual runner).
@@ -76,7 +77,7 @@ test_procedure_generation_helper/
     │   └── worker.py              # Async LLM worker thread
     ├── pack_ops/                  # The bridge into the project venv
     │   ├── pack_parsers.py        # Façade: parse/codegen/validate in project venv
-    │   └── _pack_parsers_subprocess.py   # Parser runner (imports the wheel only)
+    │   └── engine.py              # One engine process per project and role
     ├── tabs/                      # Tab widgets
     │   ├── text_only_tab.py       # "Text" tab
     │   ├── text_json_tab.py       # "Text-JSON" tab
@@ -105,8 +106,8 @@ From `requirements.txt`:
 
 The editor process itself needs only these. Hardware drivers (labscpi / fncore,
 VISA, BLE) and the rules/parser wheel are **not** dependencies of the editor — they
-live in each *project's* venv and are invoked there by the subprocess runners
-(`_pack_parsers_subprocess.py`, `_execute_op_subprocess.py`).
+live in each *project's* venv and are invoked there by the engine process
+(`_execute_op_subprocess.py`).
 
 ## Launching
 

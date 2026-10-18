@@ -100,29 +100,39 @@ def _timeout() -> int:
 # is_available() cache
 # ---------------------------------------------------------------------------
 
-# Cache: (project_root_str, mtime_ns) → (available, reason)
-_IS_AVAILABLE_CACHE: dict[tuple[str, int], tuple[bool, str]] = {}
+# Cache: (python path, spec JSON) -> the wheel's answer. The wheel's fixed answers
+# (is_available, supports_*, the section-ownership default) cannot change for one
+# interpreter, and the path identifies it (pool folders are keyed by wheel content).
+# Only real answers are stored; a transport failure is asked again next time.
+_PROBE_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
+
+
+def _cached_probe(
+    venv: _project_local_state.ProjectVenv,
+    spec: dict[str, Any],
+    timeout: int,
+) -> dict[str, Any]:
+    """Ask the wheel ``spec`` once per interpreter path; a failed ask (timeout,
+    launch error, no valid answer) is returned but not remembered."""
+    key = (str(venv.python), json.dumps(spec, sort_keys=True))
+    if key in _PROBE_CACHE:
+        return _PROBE_CACHE[key]
+    result = _subprocess_call(venv, spec, timeout=timeout)
+    if result.get("ok"):
+        _PROBE_CACHE[key] = result
+    return result
 
 
 def _cached_is_available(venv: _project_local_state.ProjectVenv) -> tuple[bool, str]:
-    try:
-        mtime = venv.python.stat().st_mtime_ns
-    except OSError:
-        return False, f"Project venv Python not found: {venv.python}"
-    key = (str(venv.python), mtime)
-    if key in _IS_AVAILABLE_CACHE:
-        return _IS_AVAILABLE_CACHE[key]
-    result = _subprocess_call(
-        venv,
-        {"op": "is_available"},
-        timeout=_TIMEOUT_IS_AVAILABLE,
-    )
+    result = _cached_probe(venv, {"op": "is_available"}, _TIMEOUT_IS_AVAILABLE)
     if result.get("ok") and "available" in result:
-        out = (result["available"], result.get("reason", ""))
-    else:
-        out = (False, result.get("error", "subprocess error"))
-    _IS_AVAILABLE_CACHE[key] = out
-    return out
+        return result["available"], result.get("reason", "")
+    return False, result.get("error", "subprocess error")
+
+
+def _cached_supports(venv: _project_local_state.ProjectVenv, **attrs: Any) -> bool:
+    result = _cached_probe(venv, {"op": "supports", **attrs}, _timeout())
+    return bool(result.get("ok") and result.get("supported"))
 
 
 # ---------------------------------------------------------------------------
@@ -529,12 +539,7 @@ def supports_sync_meta(project_root: Optional[Path] = None) -> bool:
         venv = _resolve_project_python(project_root)
     except ParserUnavailable:
         return False
-    result = _subprocess_call(
-        venv,
-        {"op": "supports", "attr": "sync_meta_text"},
-        timeout=_timeout(),
-    )
-    return bool(result.get("ok") and result.get("supported"))
+    return _cached_supports(venv, attr="sync_meta_text")
 
 
 def sync_meta_json(
@@ -626,12 +631,7 @@ def supports_build_manual_run(project_root: Optional[Path] = None) -> bool:
         venv = _resolve_project_python(project_root)
     except ParserUnavailable:
         return False
-    result = _subprocess_call(
-        venv,
-        {"op": "supports", "attr": "build_manual_run"},
-        timeout=_timeout(),
-    )
-    return bool(result.get("ok") and result.get("supported"))
+    return _cached_supports(venv, attr="build_manual_run")
 
 
 # Every wheel name the guided-manual mode needs end-to-end (walk the plan, Finish/
@@ -654,12 +654,7 @@ def supports_guided_manual(project_root: Optional[Path] = None) -> bool:
         venv = _resolve_project_python(project_root)
     except ParserUnavailable:
         return False
-    result = _subprocess_call(
-        venv,
-        {"op": "supports", "attrs": list(_GUIDED_MANUAL_FNS)},
-        timeout=_timeout(),
-    )
-    return bool(result.get("ok") and result.get("supported"))
+    return _cached_supports(venv, attrs=list(_GUIDED_MANUAL_FNS))
 
 
 def build_manual_result(
@@ -1320,14 +1315,10 @@ def get_section_ownership(
     loaded = section_ownership.load_bundle_ownership(project_root / "bundle")
     if loaded is None:
         venv = _resolve_project_python(project_root)
-        result = _subprocess_call(
-            venv,
-            {"op": "section_ownership"},
-            timeout=_timeout(),
-        )
+        result = _cached_probe(venv, {"op": "section_ownership"}, _timeout())
         if not result.get("ok"):
             raise ParserUnavailable(result.get("error", "subprocess error"))
-        loaded = result["ownership"]
+        loaded = dict(result["ownership"])
     # Override layers over whichever base won (bundle side-car OR wheel
     # default); it never shrinks the section universe on its own.
     return {**loaded, **override} if override else loaded

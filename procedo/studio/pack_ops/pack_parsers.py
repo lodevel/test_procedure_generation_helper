@@ -44,6 +44,7 @@ import functools
 import json
 import logging
 import os
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -52,6 +53,7 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, NoReturn, Optional
 
+from procedo.core import temp_root
 from .. import _project_local_state, launch_env
 from ..llm import section_ownership
 
@@ -746,9 +748,9 @@ class RemoteSession:
         self._bundle_dir: Optional[str] = None
         # The daemon runs with cwd here so a relative file write (e.g. a scope
         # screenshot saved by ``save_screenshot(filename=...)``) lands in a known
-        # temp dir, not the GUI's cwd; the host harvests these into the result
-        # dir on Finish & Save.
-        self._screenshot_dir = Path(tempfile.mkdtemp(prefix="tpg_shots_"))
+        # temp dir, not the GUI's cwd; the host harvests these into the result dir
+        # on Finish & Save, before close's shutdown() removes it (kill() keeps it).
+        self._screenshot_dir = Path(tempfile.mkdtemp(prefix="tpg_shots_", dir=temp_root.root()))
 
     @property
     def screenshot_dir(self) -> Path:
@@ -962,18 +964,16 @@ class RemoteSession:
         return self._request({"cmd": "ping"}, timeout)
 
     def shutdown(self, timeout: Optional[int] = None) -> dict[str, Any]:
-        """Safe-off all held + close (unlock) + exit. Idempotent / safe to call
-        on an already-dead session."""
-        if self._proc is None or self._dead:
-            return {"ok": True, "log": []}
-        res = self._request(
-            {"cmd": "shutdown"},
-            timeout or (_TIMEOUT_REMOTE_EXEC + 30))
-        try:
-            self._proc.wait(timeout=5)
-        except Exception:  # noqa: BLE001
-            self._terminate()
-        self._dead = True
+        """Safe-off all held + close (unlock) + exit, then drop the screenshot dir. Idempotent."""
+        res = {"ok": True, "log": []}
+        if self._proc is not None and not self._dead:
+            res = self._request({"cmd": "shutdown"}, timeout or (_TIMEOUT_REMOTE_EXEC + 30))
+            try:
+                self._proc.wait(timeout=5)
+            except Exception:  # noqa: BLE001
+                self._terminate()
+            self._dead = True
+        shutil.rmtree(self._screenshot_dir, ignore_errors=True)
         return res
 
     def kill(self) -> None:

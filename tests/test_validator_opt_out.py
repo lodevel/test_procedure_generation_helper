@@ -190,7 +190,7 @@ def test_set_validator_status_unchecks_disabled_checkbox(tmp_path):
     assert panel.auto_correct_checkbox.isChecked() is True
 
 
-def test_validate_procedure_button_hidden_when_wheel_unavailable(monkeypatch):
+def test_validate_procedure_button_hidden_when_wheel_unavailable(monkeypatch, tmp_path):
     """Phase 5.1: the rules_packager_base `validate_procedure` validator
     is gated on `pack_parsers.is_available()` — i.e. the wheel imports
     cleanly. When the wheel is missing, the pack-shipped validator must
@@ -216,9 +216,7 @@ def test_validate_procedure_button_hidden_when_wheel_unavailable(monkeypatch):
         lambda project_root=None: (False, "rules_packager_base not in this venv"),
     )
 
-    import tempfile
-    from pathlib import Path
-    tmp = Path(tempfile.mkdtemp(prefix="test_btn_hide_"))
+    tmp = tmp_path
     cfg = tmp / "config"
     cfg.mkdir()
     import json as _json
@@ -257,11 +255,8 @@ def test_validate_procedure_button_hidden_when_wheel_unavailable(monkeypatch):
     # the wheel — keeps showing.
     assert "core.check_python_syntax" in button_ids
 
-    import shutil
-    shutil.rmtree(tmp, ignore_errors=True)
 
-
-def test_all_validator_buttons_hidden_when_master_toggle_off():
+def test_all_validator_buttons_hidden_when_master_toggle_off(tmp_path):
     """Master toggle OFF (validator_loop.enabled=false) hides ALL
     validator buttons regardless of which specific validator is
     listed."""
@@ -277,9 +272,8 @@ def test_all_validator_buttons_hidden_when_master_toggle_off():
     unregister_all()
     ensure_builtins_registered()
 
-    import tempfile, json as _json
-    from pathlib import Path
-    tmp = Path(tempfile.mkdtemp(prefix="test_master_off_"))
+    import json as _json
+    tmp = tmp_path
     cfg = tmp / "config"
     cfg.mkdir()
     (cfg / "config.json").write_text(_json.dumps({
@@ -304,9 +298,6 @@ def test_all_validator_buttons_hidden_when_master_toggle_off():
     layout = QHBoxLayout(tab)
     added = tab._build_validator_buttons(layout)
     assert added == 0
-
-    import shutil
-    shutil.rmtree(tmp, ignore_errors=True)
 
 
 def test_chat_panel_toggle_writes_auto_correct_not_enabled(tmp_path):

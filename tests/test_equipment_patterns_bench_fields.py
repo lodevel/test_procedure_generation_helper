@@ -34,7 +34,7 @@ class TestEquipmentPatternsFromBenchFields(unittest.TestCase):
             os.environ[BUNDLE_DEFAULTS_PATH] = self._saved
 
     def _pm_with_bench(self, bench: dict) -> ProjectManager:
-        d = Path(tempfile.mkdtemp())
+        d = Path(self.enterContext(tempfile.TemporaryDirectory()))
         (d / "bundle").mkdir()
         (d / "bundle" / "defaults.json").write_text(
             json.dumps({"pack_dispatch": {"bench_fields": bench}}), encoding="utf-8"
@@ -57,7 +57,7 @@ class TestEquipmentPatternsFromBenchFields(unittest.TestCase):
         self.assertFalse(matches("psu1.set_voltage(channel=1, volts=5.0)\n"))
 
     def test_no_bench_fields_no_config_returns_empty(self):
-        d = Path(tempfile.mkdtemp())
+        d = Path(self.enterContext(tempfile.TemporaryDirectory()))
         pm = ProjectManager()
         pm.project_root = d
         self.assertEqual(pm.load_equipment_patterns(), [])

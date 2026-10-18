@@ -50,8 +50,7 @@ def venvs_root():
 @pytest.fixture
 def screenshot_dir(tmp_path, monkeypatch):
     """``RemoteSession.__init__`` mkdtemps a ``tpg_shots_*`` dir for the daemon's
-    relative writes and nothing deletes it. Keep it inside ``tmp_path`` so a
-    safe-off pin does not leak one into the system temp folder per run."""
+    relative writes. Pin it inside ``tmp_path`` so a test can name it."""
     shots = tmp_path / "tpg_shots"
     shots.mkdir()
     monkeypatch.setattr(pack_parsers.tempfile, "mkdtemp", lambda *a, **k: str(shots))

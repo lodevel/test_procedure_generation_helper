@@ -5,7 +5,6 @@ These run locally without LLM, providing quick syntax checks.
 """
 
 import py_compile
-import tempfile
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
@@ -90,32 +89,15 @@ class CodeValidator:
             result.add_error("Code content is empty")
             return result
         
-        # Write to temp file and compile
+        # Compile in memory, worded as py_compile words it: py_compile of a temp
+        # file also left its .pyc in the temp folder's __pycache__, one per check.
         try:
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                suffix=".py",
-                delete=False,
-                encoding="utf-8"
-            ) as f:
-                f.write(content)
-                temp_path = Path(f.name)
-            
-            try:
-                py_compile.compile(str(temp_path), doraise=True)
-            except py_compile.PyCompileError as e:
-                # Extract line number from error
-                error_msg = str(e)
-                result.add_error(
-                    f"Python syntax error: {error_msg}",
-                    code="PY_COMPILE_ERROR"
-                )
-            finally:
-                temp_path.unlink()
+            compile(content.encode("utf-8"), "test.py", "exec")  # bytes: a BOM reads as py_compile reads it
         except Exception as e:
+            error_msg = str(py_compile.PyCompileError(type(e), e, "test.py"))
             result.add_error(
-                f"Failed to validate code: {e}",
-                code="VALIDATION_ERROR"
+                f"Python syntax error: {error_msg}",
+                code="PY_COMPILE_ERROR"
             )
         
         return result

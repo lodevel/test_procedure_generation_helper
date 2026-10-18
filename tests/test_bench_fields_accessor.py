@@ -36,7 +36,7 @@ class TestBenchFieldsAccessor(unittest.TestCase):
             os.environ[BUNDLE_DEFAULTS_PATH] = self._saved
 
     def _bundle(self, bench: dict) -> None:
-        d = tempfile.mkdtemp()
+        d = self.enterContext(tempfile.TemporaryDirectory())
         (Path(d) / "defaults.json").write_text(
             json.dumps({"pack_dispatch": {"bench_fields": bench}}), encoding="utf-8"
         )
@@ -70,7 +70,7 @@ class TestBenchFieldsAccessor(unittest.TestCase):
         self.assertEqual(pp.bench_constant_names("psu", "PSU1"), [])
 
     def test_empty_when_pre_benchfields_bundle(self):
-        d = tempfile.mkdtemp()
+        d = self.enterContext(tempfile.TemporaryDirectory())
         (Path(d) / "defaults.json").write_text(
             json.dumps({"pack_dispatch": {"capabilities": {}}}), encoding="utf-8"
         )

@@ -124,7 +124,7 @@ def main() -> int:
 
     # One-shot, before anything reads a setting: the old names' data to Procedo. Bench runs
     # the same at its start; whichever starts first migrates, the markers make the other a no-op.
-    from procedo.core import app_identity, app_identity_migration
+    from procedo.core import app_identity, app_identity_migration, temp_root
 
     app_identity_migration.migrate()
     
@@ -137,6 +137,7 @@ def main() -> int:
     log.debug("Creating QApplication...")
     app_identity.claim_taskbar_identity(app_identity.STUDIO_APP_ID)
     app = QApplication(sys.argv)
+    temp_root.start(app)
     app.setApplicationName("Procedo Studio")
     app.setApplicationVersion("0.1.0")
     app.setOrganizationName(app_identity.SETTINGS_ORGANIZATION)

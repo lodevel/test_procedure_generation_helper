@@ -8,7 +8,7 @@ import argparse
 import re
 from pathlib import Path
 
-from procedo.core import app_identity, app_identity_migration
+from procedo.core import app_identity, app_identity_migration, temp_root
 
 from procedo.studio import __main__ as studio_main
 from procedo.studio import main_window
@@ -94,6 +94,9 @@ def test_studio_start_migrates_before_anything_reads_its_settings(monkeypatch):
         def exec(self):
             return 0
 
+        class aboutToQuit:  # noqa: N801 — Qt's spelling; temp_root.start hooks it
+            connect = staticmethod(lambda slot: None)
+
     class _Window:
         """The real window's first act: ``self._settings = load_settings()``."""
 
@@ -106,6 +109,7 @@ def test_studio_start_migrates_before_anything_reads_its_settings(monkeypatch):
     monkeypatch.setattr(studio_main, "parse_args", _args)
     monkeypatch.setattr("procedo.studio.logging_config.setup_logging", lambda **kw: None)
     monkeypatch.setattr(studio_main, "QApplication", _App)
+    monkeypatch.setattr(temp_root, "sweep", lambda: None)
     monkeypatch.setattr(studio_main, "MainWindow", _Window)
     monkeypatch.setattr(studio_main, "apply_app_theme", lambda name, app: name)
     monkeypatch.setattr(app_identity_migration, "migrate", lambda: seen.append("migrate"))

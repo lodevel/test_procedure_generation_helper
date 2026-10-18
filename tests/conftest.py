@@ -1,5 +1,6 @@
 ﻿"""Test fixtures."""
 import pytest
+from . import temp_guard
 from procedo.studio.llm import (
     LLMRequest, LLMTask, NoneBackend, OpenCodeBackend, OpenCodeConfig
 )
@@ -45,6 +46,7 @@ def _populate_pack_registry() -> None:
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "integration: requires real LLM backend")
+    config.pluginmanager.register(temp_guard)
     _populate_pack_registry()
 
 

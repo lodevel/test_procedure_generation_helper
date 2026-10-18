@@ -48,7 +48,7 @@ import subprocess
 import tempfile
 import threading
 from collections import deque
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, NoReturn, Optional
 
@@ -564,59 +564,6 @@ def sync_meta_json(
     return meta if isinstance(meta, dict) else {}
 
 
-def _load_procedure_document(procedure_path: Path | str) -> dict[str, Any]:
-    """json.load the procedure document for the in-process bridge branch.
-    Raises :class:`ParserUnavailable` (the bridges' uniform failure type) with
-    a clear message when the file is missing/unreadable/not JSON."""
-    path = Path(procedure_path)
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ParserUnavailable(f"cannot read procedure file {str(path)!r}: {exc}")
-
-
-def build_manual_run(
-    procedure_path: Path | str,
-    measurements: Optional[dict] = None,
-    controls: Optional[dict] = None,
-    project_root: Optional[Path] = None,
-    operator_verdicts: Optional[dict] = None,
-) -> "ManualRunResult":
-    """Materialize a guided-manual run plan from the procedure.json at
-    ``procedure_path`` — the wheel-side StepperSession surfaced to the GUI's
-    guided-manual execution mode.
-
-    ``measurements`` maps a row's ``node_path`` (each loop turn its own) to the
-    operator's entered value (drives @IF branches and live PASS/FAIL verdicts);
-    ``controls`` maps a loop-sentinel ``node_path`` to its decision. Both are
-    optional — omit for the static (no-input) plan. Returns a
-    :class:`ManualRunResult` (the GUI never imports the wheel's dataclasses).
-    Raises :class:`ParserUnavailable` if the wheel isn't importable or the
-    file is unreadable.
-    """
-    procedure_path = str(Path(procedure_path).resolve())
-    if project_root is None:
-        return _inproc_build_manual_run(
-            _load_procedure_document(procedure_path),
-            measurements, controls, operator_verdicts)
-
-    venv = _resolve_project_python(project_root)
-    result = _subprocess_call(
-        venv,
-        {
-            "op": "build_manual_run",
-            "procedure_path": procedure_path,
-            "measurements": measurements,
-            "controls": controls,
-            "operator_verdicts": operator_verdicts,
-        },
-        timeout=_timeout(),
-    )
-    if not result.get("ok"):
-        raise ParserUnavailable(result.get("error", "subprocess error"))
-    return ManualRunResult.from_dict(result)
-
-
 def supports_build_manual_run(project_root: Optional[Path] = None) -> bool:
     """Whether the ACTIVE wheel provides ``build_manual_run`` — gates the
     "Guided Manual" entry point so an older wheel (imports fine but predates the
@@ -655,44 +602,6 @@ def supports_guided_manual(project_root: Optional[Path] = None) -> bool:
     except ParserUnavailable:
         return False
     return _cached_supports(venv, attrs=list(_GUIDED_MANUAL_FNS))
-
-
-def build_manual_result(
-    procedure_path: Path | str,
-    measurements: Optional[dict] = None,
-    controls: Optional[dict] = None,
-    project_root: Optional[Path] = None,
-    operator_verdicts: Optional[dict] = None,
-) -> dict:
-    """Evaluate a guided-manual run (procedure.json at ``procedure_path``) into
-    a ``results.json``-compatible dict — byte-compatible with the automated
-    test.py output (same Result schema, same build_criteria/eval_verdicts), so
-    the GUI's status badges + report generation consume it unchanged. Dispatches
-    into the PROJECT venv (subprocess) when ``project_root`` is set — the same
-    wheel that runs the test. Raises :class:`ParserUnavailable` if the wheel
-    isn't importable or the file is unreadable."""
-    procedure_path = str(Path(procedure_path).resolve())
-    if project_root is None:
-        return _inproc_build_manual_result(
-            _load_procedure_document(procedure_path),
-            measurements, controls, operator_verdicts)
-
-    venv = _resolve_project_python(project_root)
-    result = _subprocess_call(
-        venv,
-        {
-            "op": "build_manual_result",
-            "procedure_path": procedure_path,
-            "measurements": measurements,
-            "controls": controls,
-            "operator_verdicts": operator_verdicts,
-        },
-        timeout=_timeout(),
-    )
-    if not result.get("ok"):
-        raise ParserUnavailable(result.get("error", "subprocess error"))
-    out = result.get("result")
-    return out if isinstance(out, dict) else {}
 
 
 def _load_bundle_equipment_profiles(
@@ -823,7 +732,8 @@ class RemoteSession:
     "error": ..., "stderr": [...]}`` so the dialog can trigger recovery (fresh
     safe-off) and surface "session lost".  ``_bundle_dir`` and
     ``procedure_path`` are injected per frame; the daemon json.loads the
-    document ONCE per session from that path.
+    document ONCE per session from that path for instrument frames.  An engine
+    op (:meth:`engine_op`) carries its own document instead.
     """
 
     def __init__(self, procedure_path: Path | str, project_root: Path) -> None:
@@ -1040,6 +950,13 @@ class RemoteSession:
             {"cmd": "raw", "device": device, "etype": etype, "subtype": subtype,
              "text": text, "bench_map": {device: bench}},
             timeout or _TIMEOUT_REMOTE_EXEC)
+
+    def engine_op(self, op: str, timeout: Optional[int] = None,
+                  **fields: Any) -> dict[str, Any]:
+        """One engine op (``llm/_engine_ops.py``) in this live daemon, with its
+        document in ``fields`` (``procedure_json``). Returns the op's result
+        dict as the one-shot runner would, or the session's typed failure."""
+        return self._request({"cmd": "op", "op": op, **fields}, timeout or _timeout())
 
     def ping(self, timeout: float = 5) -> dict[str, Any]:
         return self._request({"cmd": "ping"}, timeout)
@@ -1420,43 +1337,6 @@ def _inproc_generate_code(procedure: dict[str, Any]) -> tuple[str, list[str]]:
     return code, []
 
 
-def _inproc_build_manual_run(
-    procedure_json: dict[str, Any],
-    measurements: Optional[dict],
-    controls: Optional[dict],
-    operator_verdicts: Optional[dict] = None,
-) -> "ManualRunResult":
-    wheel = _inproc_import_wheel()
-    if not hasattr(wheel, "build_manual_run"):
-        # Old wheel imports fine but predates the feature — surface the declared
-        # exception (matches the subprocess path) instead of a raw AttributeError.
-        raise ParserUnavailable(
-            f"{_REQUIRED_WHEEL} predates build_manual_run; reinstall a newer "
-            f"rules_packager_base wheel. The LLM fallback remains available."
-        )
-    # Normalize None -> {} to match the subprocess worker exactly (both paths
-    # then hand the wheel the same shapes).
-    run = wheel.build_manual_run(
-        procedure_json, measurements or {}, controls or {}, operator_verdicts or {})
-    return ManualRunResult.from_wheel(run)
-
-
-def _inproc_build_manual_result(
-    procedure_json: dict[str, Any],
-    measurements: Optional[dict],
-    controls: Optional[dict],
-    operator_verdicts: Optional[dict] = None,
-) -> dict:
-    wheel = _inproc_import_wheel()
-    if not hasattr(wheel, "build_manual_result"):
-        raise ParserUnavailable(
-            f"{_REQUIRED_WHEEL} predates build_manual_result; reinstall a newer "
-            f"rules_packager_base wheel. The LLM fallback remains available."
-        )
-    return wheel.build_manual_result(
-        procedure_json, measurements or {}, controls or {}, operator_verdicts or {})
-
-
 def _inproc_validate(
     *,
     text: Optional[str],
@@ -1608,8 +1488,7 @@ class _ReconstructReport:
 
 # ---------------------------------------------------------------------------
 # Guided-manual run plan: editor-facing views over the wheel's ManualRun /
-# StepDescriptor, so the GUI consumes one stable shape across both the
-# in-process (dataclass) and subprocess (JSON) paths.
+# StepDescriptor as the build_manual_run engine op returns them (JSON).
 #
 # These two are PUBLIC (unlike the private _Report/_Issue siblings above)
 # because they are the GUI-facing RETURN type of build_manual_run: the modal
@@ -1656,27 +1535,18 @@ class ManualStep:
 
 @dataclass(frozen=True)
 class ManualRunResult:
-    """Editor-facing guided-manual run plan returned by :func:`build_manual_run`.
+    """Editor-facing guided-manual run plan: the ``build_manual_run`` engine op's
+    result (:meth:`RemoteSession.engine_op`).
 
     ``steps`` is the on-path plan the operator walks; ``skipped`` holds off-path
     bindings (retained as ``SKIP``); ``aborted`` is set when an ``@ABORT``
-    truncated the plan. Build via :meth:`from_wheel` (in-process) or
-    :meth:`from_dict` (subprocess) — both funnel through :meth:`ManualStep.from_dict`."""
+    truncated the plan. Build via :meth:`from_dict`, which funnels through
+    :meth:`ManualStep.from_dict`."""
 
     test_name: str = ""
     steps: tuple[ManualStep, ...] = ()       # on-path plan
     skipped: tuple[ManualStep, ...] = ()     # off-path bindings (retained as SKIP)
     aborted: bool = False
-
-    @classmethod
-    def from_wheel(cls, run: Any) -> "ManualRunResult":
-        """Wrap an in-process wheel ``ManualRun`` (StepDescriptor dataclasses)."""
-        return cls(
-            test_name=run.test_name,
-            steps=tuple(ManualStep.from_dict(asdict(s)) for s in run.steps),
-            skipped=tuple(ManualStep.from_dict(asdict(s)) for s in run.skipped),
-            aborted=bool(run.aborted),
-        )
 
     @classmethod
     def from_dict(cls, d: dict) -> "ManualRunResult":

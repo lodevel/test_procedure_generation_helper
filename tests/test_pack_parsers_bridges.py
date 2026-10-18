@@ -21,7 +21,7 @@ from tests._qt_stub import ensure_workflow_editor_importable
 ensure_workflow_editor_importable()
 
 from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
-from procedo.studio.pack_ops import _pack_parsers_subprocess as worker  # noqa: E402
+from procedo.studio.llm import _engine_ops as engine_ops  # noqa: E402
 
 from tests import _env
 
@@ -209,31 +209,31 @@ DMM_GENERIC : dmm
 """
 
 
-def _write_procedure_file(case: unittest.TestCase, procedure_json: dict) -> Path:
-    """Write ``procedure_json`` to a tmp ``procedure.json`` (the bridges are
-    path-based; the file outlives the test via addCleanup)."""
-    td = tempfile.TemporaryDirectory()
-    case.addCleanup(td.cleanup)
-    path = Path(td.name) / "procedure.json"
-    path.write_text(json.dumps(procedure_json), encoding="utf-8")
-    return path
-
-
-class BuildManualRunInProcTests(unittest.TestCase):
-    """In-process guided-manual run plan (``project_root=None`` → wheel default).
+class BuildManualRunOpTests(unittest.TestCase):
+    """The ``build_manual_run`` engine op on the document it is sent, read back
+    through ``ManualRunResult.from_dict`` (what the guided dialog does), with the
+    spec crossing the JSON boundary as it does over the daemon pipe.
 
     Uses base ``dmm`` / operator-read steps so no pack registry is needed.
     """
 
     def setUp(self) -> None:
-        procedure_json, _ = pp.parse_text(PROC_MANUAL)
-        self.procedure_path = _write_procedure_file(self, procedure_json)
+        self.procedure_json, _ = pp.parse_text(PROC_MANUAL)
+
+    def _run(self, measurements: dict | None = None) -> "pp.ManualRunResult":
+        spec = json.loads(json.dumps({
+            "op": "build_manual_run",
+            "procedure_json": self.procedure_json,
+            "measurements": measurements,
+            "controls": None,
+        }))
+        return pp.ManualRunResult.from_dict(json.loads(json.dumps(engine_ops.run(spec))))
 
     def test_supported(self) -> None:
         self.assertIs(pp.supports_build_manual_run(), True)
 
     def test_static_plan_pending_with_expected_joined(self) -> None:
-        run = pp.build_manual_run(self.procedure_path)
+        run = self._run()
         self.assertEqual(run.test_name, "T")
         self.assertIs(run.aborted, False)
         bindings = [s for s in run.steps if s.is_binding]
@@ -242,18 +242,13 @@ class BuildManualRunInProcTests(unittest.TestCase):
         self.assertEqual([s.verdict for s in bindings], ["", ""])
         self.assertTrue(bindings[0].expected_text.startswith("{1} <"))
 
-    def test_live_verdicts_from_measurements(self) -> None:
-        # readings keyed by row (in-proc: passed straight through)
-        run = pp.build_manual_run(self.procedure_path, {"steps[0]": 4.0, "steps[1]": 2.0})
+    def test_row_keys_cross_and_verdicts_match(self) -> None:
+        run = self._run({"steps[0]": 4.0, "steps[1]": 2.0})
         by_ref = {s.ref: s.verdict for s in run.steps if s.is_binding}
         self.assertEqual(by_ref, {1: "PASS", 2: "FAIL"})
 
-    def test_unreadable_path_raises_parser_unavailable(self) -> None:
-        with self.assertRaises(pp.ParserUnavailable):
-            pp.build_manual_run(self.procedure_path.parent / "missing.json")
-
     def test_steps_are_frozen_manual_step_views(self) -> None:
-        run = pp.build_manual_run(self.procedure_path)
+        run = self._run()
         self.assertTrue(all(isinstance(s, pp.ManualStep) for s in run.steps))
         self.assertIsInstance(run, pp.ManualRunResult)
         # attribute access (frozen dataclass), not dict access
@@ -261,45 +256,16 @@ class BuildManualRunInProcTests(unittest.TestCase):
         with self.assertRaises(Exception):
             run.steps[0].verdict = "PASS"  # frozen
 
-
-class BuildManualRunSubprocessMarshallingTests(unittest.TestCase):
-    """Cross the JSON boundary explicitly (no real subprocess): the worker op +
-    ``ManualRunResult.from_dict`` must carry the row-keyed readings and
-    reconstruct the same verdicts."""
-
-    def setUp(self) -> None:
-        procedure_json, _ = pp.parse_text(PROC_MANUAL)
-        self.procedure_path = _write_procedure_file(self, procedure_json)
-
-    def _round_trip(self, measurements: dict) -> "pp.ManualRunResult":
-        spec = {
-            "op": "build_manual_run",
-            "procedure_path": str(self.procedure_path),
-            "measurements": measurements,
-            "controls": None,
-        }
-        spec = json.loads(json.dumps(spec))
-        result = json.loads(json.dumps(worker._op_build_manual_run(spec)))
-        return pp.ManualRunResult.from_dict(result)
-
-    def test_row_keys_cross_and_verdicts_match(self) -> None:
-        run = self._round_trip({"steps[0]": 4.0, "steps[1]": 2.0})
-        by_ref = {s.ref: s.verdict for s in run.steps if s.is_binding}
-        self.assertEqual(by_ref, {1: "PASS", 2: "FAIL"})
-        self.assertTrue(all(isinstance(s, pp.ManualStep) for s in run.steps))
-
     def test_int_keyed_helper(self) -> None:
-        self.assertEqual(worker._int_keyed({"1": 4.0, "2": 2.0}), {1: 4.0, 2: 2.0})
-        self.assertEqual(worker._int_keyed(None), {})
-        self.assertEqual(worker._int_keyed({"x": 1}), {"x": 1})  # non-int left as-is
+        self.assertEqual(engine_ops._int_keyed({"1": 4.0, "2": 2.0}), {1: 4.0, 2: 2.0})
+        self.assertEqual(engine_ops._int_keyed(None), {})
+        self.assertEqual(engine_ops._int_keyed({"x": 1}), {"x": 1})  # non-int left as-is
 
-    def test_unreadable_path_returns_error_result(self) -> None:
-        out = worker._op_build_manual_run({
-            "op": "build_manual_run",
-            "procedure_path": str(self.procedure_path.parent / "missing.json"),
-        })
-        self.assertFalse(out["ok"])
-        self.assertIn("cannot read procedure file", out["error"])
+    def test_a_document_that_is_not_an_object_is_an_error_result(self) -> None:
+        for doc in (None, [1, 2]):
+            out = engine_ops.run({"op": "build_manual_run", "procedure_json": doc})
+            self.assertEqual((out["ok"], out["kind"]), (False, "Other"))
+            self.assertIn("not a JSON object", out["error"])
 
 
 class ManualStepSchemaParityTests(unittest.TestCase):

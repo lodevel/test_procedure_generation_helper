@@ -6,10 +6,9 @@ Invoked by FILE PATH (NOT ``-m``) in the *project* venv::
 
 Running via ``-m`` would trigger ``procedo/studio/__init__.py`` (PySide6, absent
 from the project venv); invoking by path keeps ``__name__ == "__main__"`` and
-skips the package init.  Sibling to ``_pack_parsers_subprocess.py``, but where
-that runner only imports ``rules_packager_base`` (the parser), this one ALSO
-imports the hardware drivers (labscpi / fncore) — it is the only runner that
-talks to a real instrument.
+skips the package init.  It serves the engine's op table (``op`` frames,
+``_engine_ops.py``) and ALSO imports the hardware drivers (labscpi / fncore) —
+it is the only runner that talks to a real instrument.
 
 Why a daemon (not one-shot)
 ---------------------------
@@ -21,10 +20,6 @@ session and holds a SINGLE session per "per_session" device, closing (and
 unlocking) only at ``shutdown`` / interpreter exit.  Devices whose policy is
 "per_step" (serial packs — lifecycle ``remote: False`` — by default) keep the
 cheap connect->op->close-per-op model — they can go down safely between steps.
-
-NOTE: the matching persistent PARENT transport (pack_parsers) is the Phase-2
-seam.  Until it speaks this framed protocol, this runner is unreachable — do NOT
-drive any UI ⚡/run against it on real hardware yet.
 
 Connection-lifecycle policy (per device)
 -----------------------------------------
@@ -55,7 +50,10 @@ corrupt a frame.  Tracebacks travel inside the response JSON, never printed.
   Request  (one line) — every frame may carry "procedure_path" (abs path to
   procedure.json; the parent injects it per frame).  The document is
   json.load'ed ONCE per session from that path (latched like ``_bundle_dir``);
-  frames never embed the document itself:
+  instrument frames never embed the document itself.  An ``op`` frame does:
+    {"cmd": "op", "op": "<name>", "procedure_json"?: {...}, ...}   # the op's
+     spec (_engine_ops.py); answered with the op's result; never reads the
+     path, never changes the latched document, never opens a device
     {"cmd": "exec_ops", "_bundle_dir": "<abs>", "procedure_path": "<abs>",
      "ops": [{"node_path": str, "op": {...}}, ...],
      "bench_map": {device: {"visa"|"port"..., "session_policy": "..."}},
@@ -1124,7 +1122,7 @@ _BENCH_CMDS = ("acquire_run", "release_run", "run_test", "cancel_run",
 def _sib(name: str):
     """Lazy sibling import (file-path invocation puts llm/ on sys.path; the
     import must NOT go through the procedo.studio package — PySide6 is
-    absent from project venvs).  One accessor serves both siblings;
+    absent from project venvs).  One accessor serves every sibling;
     sys.modules is the cache."""
     try:
         return sys.modules[name]
@@ -1210,6 +1208,8 @@ def _dispatch(session: _Session, req: dict):
     """Return ``(response, stop)``.  ``stop`` ends the loop (shutdown)."""
     cmd = req.get("cmd")
     try:
+        if cmd == "op":
+            return _sib("_engine_ops").run(req, lambda r: _load_bundle(session, r)), False
         _load_bundle(session, req)
         err = _load_procedure(session, req)
         if err and cmd == "exec_ops":

@@ -256,9 +256,8 @@ class ProjectManager:
         1. CLI --rules-root if provided (this call's arg, OR the sticky
            override set via :attr:`cli_rules_root_override` at startup)
         2. <project_root>/config/rules/ (spec default)
-        3. <project_root>/rules/ (common alternative)
-        4. <project_root>/../rules/ (sibling folder)
-        5. Return False to indicate user prompt needed
+        3. <project_root>/../rules/ (sibling folder)
+        4. Return False to indicate user prompt needed
 
         Returns True if rules were found, False if user needs to choose.
         """
@@ -281,11 +280,10 @@ class ProjectManager:
             else:
                 log.warning(f"CLI rules root invalid: {effective_cli}")
         
-        # 2-4. Fallback locations
+        # 2-3. Fallback locations (never <project_root>/rules: a project has no root rules/)
         if self.project_root is not None:
             fallback_locations = [
                 self.project_root / "config" / "rules",  # Spec default
-                self.project_root / "rules",              # Common alternative
                 self.project_root.parent / "rules",       # Sibling folder
             ]
             
@@ -297,7 +295,7 @@ class ProjectManager:
                     log.info(f"Rules auto-detected: {location}")
                     return True
         
-        # 5. Not found - user prompt needed
+        # 4. Not found - user prompt needed
         log.warning("Rules not found in any fallback location")
         return False
     

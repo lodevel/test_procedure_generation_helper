@@ -243,21 +243,24 @@ def test_the_validator_dialog_shows_the_counts_and_one_card_per_issue(qapp):
     assert QApplication.clipboard().text().startswith("- [error] E-EQUIP-UNKNOWN: PSU2")
 
 
-def test_the_rule_selector_counts_the_ticked_rules_and_saves_each_tick(qapp):
+def test_the_rule_selector_counts_the_ticked_rules_and_saves_each_tick(qapp, tmp_path):
     saved = []
     tcm = SimpleNamespace(
         get_all_tasks_for_tab=lambda tab: [SimpleNamespace(selected_rules=["a.md", "c.md"])],
         set_selected_rules_for_tab=lambda tab, rules: saved.append((tab, rules)),
         save_config=lambda: None)
-    pm = SimpleNamespace(get_rules_files=lambda: [Path("a.md"), Path("b.md"), Path("c.md")])
+    for name in ("a.md", "b.md", "c.md"):
+        (tmp_path / name).write_text("x" * 1500, encoding="utf-8")
+    pm = SimpleNamespace(project_root=None, get_rule_docs=lambda: [
+        project_manager.RuleDoc(name, tmp_path / name, "bundle") for name in ("a.md", "b.md", "c.md")])
     dlg = RuleSelectorDialog("text_json", pm, tcm, view=shell.VIEWS[1][0])
     header, footer, primaries = _frame(dlg)
     assert (header.title.text(), header.subtitle.text()) == ("Select rules", "Text–JSON view")
     assert [b.text() for b in primaries] == ["OK"]
-    assert footer.note.text() == "2 of 3 rules selected"
+    assert footer.note.text() == "2 of 3 rules selected · 3 KB"
 
     dlg.rules.set_checked(["a.md", "b.md", "c.md"])
-    assert footer.note.text() == "3 of 3 rules selected"
+    assert footer.note.text() == "3 of 3 rules selected · 5 KB"
     assert saved[-1] == ("text_json", ["a.md", "b.md", "c.md"])
     assert dlg.get_selected_rules() == ["a.md", "b.md", "c.md"]
 

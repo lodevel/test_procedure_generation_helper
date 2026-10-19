@@ -51,6 +51,18 @@ def test_build_pdf_tools_mcp_block_shape():
     ]
 
 
+def test_build_pdf_tools_mcp_block_passes_the_project_rules_folder():
+    block = mcp_config.build_pdf_tools_mcp_block(
+        venv_python_win=r"C:\Workspace\.venv\Scripts\python.exe",
+        mcp_script_win=r"C:\Workspace\editor\_pdf_tool_mcp.py",
+        documents_dir_win=r"C:\Projects\demo\documents",
+        rules_dir_win=r"C:\Projects\demo\bundle\rules",
+        project_rules_dir_win=r"C:\Projects\demo\config\project_rules",
+    )
+    assert block["pdf_tools"]["command"][-2:] == [
+        "--project-rules-dir", r"C:\Projects\demo\config\project_rules"]  # stays Windows
+
+
 def test_build_project_tools_mcp_block_shape():
     block = mcp_config.build_project_tools_mcp_block(
         venv_python_win=r"C:\Workspace\.venv\Scripts\python.exe",

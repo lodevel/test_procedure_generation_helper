@@ -1,7 +1,5 @@
 """list_documents + read_document — the always-on, sandboxed local-document tools
 of the pdf-tools MCP server (no network; usable without the web toggle)."""
-import os
-
 from procedo.studio.authoring import _pdf_tool_mcp as m
 
 
@@ -15,7 +13,7 @@ def test_list_documents_lists_files_recursively(tmp_path):
     (tmp_path / "sub" / "U34_TDN1.pdf").write_text("y")
     out = _text(m._handle_list_documents(str(tmp_path)))
     assert "U86_LT8609A.pdf" in out
-    assert os.path.join("sub", "U34_TDN1.pdf") in out
+    assert "sub/U34_TDN1.pdf" in out  # the name read_document takes, on every OS
 
 
 def test_list_documents_empty(tmp_path):

@@ -13,10 +13,60 @@ import logging
 import re
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import NamedTuple, Optional
 from enum import Enum, auto
 
+from procedo.core.config_manager import PROJECT_RULES, project_rule_doc_paths
+
+from .fileio import atomic_create
+
 log = logging.getLogger(__name__)
+
+#: A project's own rule documents, sent on top of the bundle rules (which files are rule
+#: documents there: ``config_manager.project_rule_doc_paths``, the one definition).
+PROJECT_RULES_DIR = Path("config", PROJECT_RULES)
+#: The key of a project document: this prefix + its file name (a bundle rule's is its name).
+PROJECT_RULE_PREFIX = "project/"
+#: Above this a text document is added with a warning; above the max it is refused.
+RULE_DOC_WARN_BYTES = 16 * 1024
+RULE_DOC_MAX_BYTES = 64 * 1024
+#: Above this a PDF is added with a warning (never refused: whether the model reads it is
+#: the user's business).
+PDF_DOC_WARN_BYTES = 2 * 1024 * 1024
+#: Heads the project documents wherever they are sent after the bundle rules (owner
+#: decision 2026-10-19: they win).
+PROJECT_RULES_WIN = ("The documents below are this project's own rules: where they conflict "
+                     "with the bundle rules, the project rules win.")
+#: Stands in the rules text for a document sent as a file (see ``attached_as_file``).
+ATTACHED_NOTE = "(attached to this message as a file)"
+
+
+def attached_as_file(path: Path) -> bool:
+    """True for a document sent as it is, as a file part (a PDF), not in the rules text."""
+    return path.suffix.lower() == ".pdf"
+
+
+def warn_above(path: Path) -> int:
+    """The size (bytes) above which adding the document *path* is worth a warning."""
+    return PDF_DOC_WARN_BYTES if attached_as_file(path) else RULE_DOC_WARN_BYTES
+
+
+class RuleDoc(NamedTuple):
+    """One rule document a view can send: *key* is what ``selected_rules`` stores."""
+    key: str
+    path: Path
+    origin: str  # "bundle" (the bundle's rules, or the folder picked instead) | "project"
+
+
+class RuleDocError(Exception):
+    """A document that cannot be added; the message says why, for the user."""
+
+
+def _bundle_rule_files(folder: Optional[Path]) -> list[Path]:
+    """The bundle rule documents in *folder*: its ``*.md`` files (any case), sorted."""
+    if folder is None or not folder.is_dir():
+        return []
+    return sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".md")
 
 
 class RulesState(Enum):
@@ -24,6 +74,16 @@ class RulesState(Enum):
     NOT_CHECKED = auto()
     LOADED = auto()
     NONE = auto()  # The open project has no rules
+
+
+def kilobytes(size: int) -> str:
+    """*size* bytes as whole KB, rounded up ("17 KB")."""
+    return f"{max(1, -(-size // 1024))} KB"
+
+
+def rule_doc_detail(doc: RuleDoc, size: int) -> str:
+    """How a list describes *doc* of *size* bytes: "3 KB", "project · 3 KB" for a project's."""
+    return f"project · {kilobytes(size)}" if doc.origin == "project" else kilobytes(size)
 
 
 @dataclass
@@ -77,9 +137,6 @@ class ProjectManager:
     # Rules link); forgotten when another project opens.
     _picked_rules_root: Optional[Path] = field(default=None, repr=False)
 
-    # Cached rules content
-    _rules_content: Optional[str] = field(default=None, repr=False)
-    _rules_files: list[Path] = field(default_factory=list, repr=False)
     _equipment_patterns_cache: Optional[list[re.Pattern[str]]] = field(default=None, repr=False)
 
     def set_project_root(self, path: Path) -> bool:
@@ -272,44 +329,60 @@ class ProjectManager:
         return True
 
     def _use_rules(self, path: Optional[Path]) -> None:
-        """Load the rule docs of *path*; None: no rules."""
+        """Use the rule docs of *path*; None: no rules."""
         self.rules_root = path
         self.rules_state = RulesState.LOADED if path is not None else RulesState.NONE
-        self._load_rules()
     
     def _is_valid_rules_root(self, path: Path) -> bool:
         """Check if path contains any markdown files."""
-        if not path.exists() or not path.is_dir():
-            return False
-        
-        md_files = list(path.glob("*.md"))
-        return len(md_files) > 0
+        return bool(_bundle_rule_files(path))
     
-    def _load_rules(self) -> None:
-        """Load and concatenate all rule markdown files."""
-        if self.rules_root is None:
-            self._rules_content = None
-            self._rules_files = []
-            return
-        
-        self._rules_files = sorted(self.rules_root.glob("*.md"))
-        
-        contents = []
-        for md_file in self._rules_files:
-            header = f"\n{'='*60}\n# Rules from: {md_file.name}\n{'='*60}\n"
-            content = md_file.read_text(encoding="utf-8")
-            contents.append(header + content)
-        
-        self._rules_content = "\n".join(contents)
-    
-    def get_rules_content(self) -> Optional[str]:
-        """Get concatenated rules content for LLM prompts."""
-        return self._rules_content
-    
-    def get_rules_files(self) -> list[Path]:
-        """Get list of rule files."""
-        return self._rules_files.copy()
-    
+    def project_rules_dir(self) -> Optional[Path]:
+        """``<project>/config/project_rules`` (it may not exist); None without a project."""
+        return self.project_root / PROJECT_RULES_DIR if self.project_root is not None else None
+
+    def get_rule_docs(self) -> list[RuleDoc]:
+        """Every rule document a view can send, scanned now: the bundle's rules (or the folder
+        picked instead), keyed by file name, then the project's own documents, keyed
+        ``project/<name>`` so a bundle rule of the same name never clashes."""
+        return ([RuleDoc(p.name, p, "bundle") for p in _bundle_rule_files(self.rules_root)]
+                + [RuleDoc(PROJECT_RULE_PREFIX + p.name, p, "project")
+                   for p in project_rule_doc_paths(self.project_rules_dir())])
+
+    def add_project_rule_doc(self, source: Path) -> RuleDoc:
+        """Copy *source* (verbatim) into the project's rules folder, creating it; never over a
+        document of the same name. RuleDocError (its message for the user) when it cannot."""
+        folder = self.project_rules_dir()
+        if folder is None:
+            raise RuleDocError("Open a project first.")
+        if source not in project_rule_doc_paths(source.parent):  # not a kind the project lists
+            raise RuleDocError(f"{source.name}: a project rule document is .md or .txt text, "
+                               "or a PDF.")
+        if not attached_as_file(source):
+            self._check_text_doc(source)
+        data = source.read_bytes()
+        target = folder / source.name
+        try:
+            atomic_create(target, data)
+        except FileExistsError:
+            raise RuleDocError(
+                f"The project already has a document named {source.name}: remove it first "
+                "(Open folder).") from None
+        return RuleDoc(PROJECT_RULE_PREFIX + target.name, target, "project")
+
+    @staticmethod
+    def _check_text_doc(source: Path) -> None:
+        """RuleDocError unless *source* is UTF-8 text of at most RULE_DOC_MAX_BYTES."""
+        size = source.stat().st_size
+        if size > RULE_DOC_MAX_BYTES:
+            raise RuleDocError(
+                f"{source.name} is {kilobytes(size)}: a project rule document can be at "
+                f"most {kilobytes(RULE_DOC_MAX_BYTES)}, it is sent with every request.")
+        try:
+            source.read_bytes().decode("utf-8")
+        except UnicodeDecodeError:
+            raise RuleDocError(f"{source.name} is not UTF-8 text.") from None
+
     def get_rules_display(self) -> str:
         """Get rules state for display in window header."""
         if self.rules_state == RulesState.LOADED and self.rules_root:

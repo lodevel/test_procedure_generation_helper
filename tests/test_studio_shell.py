@@ -142,6 +142,23 @@ def test_footer_names_project_rules_bundle_validator(opened):
     assert w.validator_label.text() == "Validator: off · 5 attempts"
 
 
+def test_footer_and_picker_count_the_project_rule_documents(opened):
+    w, root = opened
+    (root / "config" / "project_rules").mkdir()
+    for name in ("x.md", "y.txt"):
+        (root / "config" / "project_rules" / name).write_text("own", encoding="utf-8")
+
+    w._update_project_rules_indicators()  # no bundle rules: the project documents alone
+    assert w.rules_link.text() == "Rules: none + 2 project"
+    assert w.dock.rules_picker.text() == "Rules · 2 of 2 ▾"
+
+    _bundled(root, "proj")
+    w.project_manager.detect_rules_root()
+    w._update_project_rules_indicators()
+    assert w.rules_link.text() == f"Rules: {(root / 'bundle' / 'rules').relative_to(root)} · 1 doc + 2 project"
+    assert w.dock.rules_picker.text() == "Rules · 3 of 3 ▾"
+
+
 def _bundled(root, name):
     """*root* (a ``_make_project``) with a complete bundle holding one rule doc."""
     (root / "bundle" / "defaults.json").write_text("{}", encoding="utf-8")
@@ -163,11 +180,12 @@ def test_launched_on_a_project_then_opening_others_follows_each_ones_bundle(make
     _open_project(w, b)  # File > Open Project
     assert w.rules_link.text() == in_bundle
     assert str(b / "bundle" / "rules") in w.rules_link.toolTip()
-    assert "rule of b" in w.project_manager.get_rules_content()
+    assert [d.path.read_text(encoding="utf-8") for d in w.project_manager.get_rule_docs()] == [
+        "# rule of b\n"]
 
     _open_project(w, bare)
     assert w.rules_link.text() == "Rules: none"
-    assert w.project_manager.get_rules_content() is None
+    assert w.project_manager.get_rule_docs() == []
 
 
 def test_footer_links_open_a_project_and_pick_the_rules(make_window, monkeypatch):

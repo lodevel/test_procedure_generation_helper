@@ -15,9 +15,9 @@ client's ``protocolVersion``; notifications (no ``id``) get no response;
 Runs as a standalone script (launched by absolute path from an arbitrary cwd),
 so it bootstraps its own import path before importing the package.
 """
-import json
 import os
 import sys
+from pathlib import Path
 
 
 # --- path-independent import bootstrap -------------------------------------
@@ -29,10 +29,15 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from procedo.core.config_manager import project_rule_doc_paths  # noqa: E402
 from procedo.studio.authoring.pdf_text import (  # noqa: E402
     extract_pdf_pages,
     extract_pdf_text,
     fetch_and_extract,
+)
+from procedo.studio.core.project_manager import (  # noqa: E402
+    PROJECT_RULE_PREFIX,
+    attached_as_file,
 )
 
 
@@ -47,8 +52,8 @@ TOOLS = [
             "PDF content (they only handle HTML pages), so whenever you have a "
             "PDF URL or a PDF in the documents folder, call read_pdf — never "
             "webfetch on a .pdf. 'source' is an http(s) URL to a PDF, or the "
-            "name of a PDF file in the project's documents folder (local lookups "
-            "are sandboxed to that folder). Returns the text layer (pin tables, "
+            "name of a PDF file list_documents shows (local lookups read only "
+            "those). Returns the text layer (pin tables, "
             "body text); scanned/image-only PDFs have no text layer and cannot "
             "be read this way."
         ),
@@ -57,8 +62,8 @@ TOOLS = [
             "properties": {
                 "source": {
                     "type": "string",
-                    "description": "An http(s) URL to a PDF, or a filename/relative "
-                    "path inside the documents folder.",
+                    "description": "An http(s) URL to a PDF, or a name list_documents "
+                    "shows.",
                 }
             },
             "required": ["source"],
@@ -103,9 +108,8 @@ TOOLS = [
         "name": "read_document",
         "description": (
             "Read a LOCAL document PDF from the project's documents folder and "
-            "return its text layer. 'name' is a filename/relative path inside the "
-            "documents folder (use list_documents to discover names). Sandboxed to "
-            "that folder; no network, so it works WITHOUT web access. For a PDF at "
+            "return its text layer. 'name' is a name list_documents shows (only "
+            "those are read); no network, so it works WITHOUT web access. For a PDF at "
             "an http(s) URL, use read_pdf instead (that one needs web)."
         ),
         "inputSchema": {
@@ -154,7 +158,9 @@ TOOLS = [
         "name": "list_rules",
         "description": (
             "List the procedure GRAMMAR / rule files available for this project so "
-            "you can see what's there. No arguments. Pair with read_rule. Local "
+            "you can see what's there: the bundle's rule files, then the project's "
+            "own rule documents, listed as project/<name> (where the two conflict, "
+            "the project rules win). No arguments. Pair with read_rule. Local "
             "only, no network — always available."
         ),
         "inputSchema": {"type": "object", "properties": {}},
@@ -163,16 +169,17 @@ TOOLS = [
         "name": "read_rule",
         "description": (
             "Read a GRAMMAR / rule file (returns its text) so you can write VALID "
-            "procedure text. 'name' is a filename from list_rules. Sandboxed to the "
-            "rules folder; no network — always available. Do NOT re-read a rule that "
-            "is already present in your context."
+            "procedure text. 'name' is an entry from list_rules (a file name, or "
+            "project/<name> for a project document; a PDF one returns its extracted "
+            "text). Sandboxed to the rules folders; no network — always available. "
+            "Do NOT re-read a rule that is already present in your context."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Filename of a rule file (see list_rules).",
+                    "description": "An entry of list_rules (a file name or project/<name>).",
                 }
             },
             "required": ["name"],
@@ -192,27 +199,16 @@ def _text_result(text):
     return {"content": [{"type": "text", "text": text}]}
 
 
-def _resolve_local(source: str, documents_dir: str):
-    """Resolve ``source`` to a real path INSIDE ``documents_dir``, or ``None``.
+def _listed(files, name):
+    """The ONE confinement rule of every read tool: *name* reads a file only when it
+    is an entry of the tool's listing *files* (what list_documents / list_rules
+    show); no path, traversal, absolute path or NTFS stream reaches anything else.
+    None when it is not one."""
+    return (files or {}).get(name.strip())
 
-    Accepts a bare filename, a relative path, or an absolute path — as long as
-    the resolved real path is contained within the real documents dir. Anything
-    that escapes (``..`` traversal, an absolute path elsewhere, a symlink out)
-    returns ``None`` so the caller can deny access.
-    """
-    base = os.path.realpath(documents_dir)
-    if os.path.isabs(source):
-        candidate = source
-    else:
-        candidate = os.path.join(base, source)
-    real = os.path.realpath(candidate)
-    # Containment check: real must be base itself or a descendant of base.
-    if real == base:
-        return None  # the dir itself is not a file
-    base_prefix = base + os.sep
-    if not real.startswith(base_prefix):
-        return None
-    return real
+
+def _denied(name, list_tool):
+    return _text_result(f"Access denied: {name.strip()!r} is not a file {list_tool} shows.")
 
 
 def _safe_pdf_name(save_as):
@@ -240,11 +236,9 @@ def _handle_read_pdf(arguments, documents_dir):
         text = fetch_and_extract(source)
         return _text_result(text if text is not None else _UNREADABLE_MSG)
 
-    resolved = _resolve_local(source, documents_dir)
+    resolved = _listed(_folder_files(documents_dir), source)
     if resolved is None:
-        return _text_result(
-            "Access denied: that path is outside the documents folder."
-        )
+        return _denied(source, "list_documents")
     text = extract_pdf_text(resolved)
     return _text_result(text if text is not None else _UNREADABLE_MSG)
 
@@ -281,66 +275,95 @@ def _handle_save_pdf(arguments, documents_dir):
     return _text_result(text)
 
 
-def _list_dir(directory, missing_msg, empty_msg, header):
-    """List files under a sandboxed folder (relative paths, capped). Shared by
-    list_documents and list_rules so they can't drift."""
+def _folder_files(directory):
+    """The files under *directory* by their path relative to it, "/"-separated on
+    every OS (the names the list tools show and the read tools take), or None when
+    it is not a folder."""
     base = os.path.realpath(directory)
     if not os.path.isdir(base):
-        return _text_result(missing_msg)
-    names = []
+        return None
+    found = {}
     for root, _dirs, files in os.walk(base):
         for fn in files:
-            names.append(os.path.relpath(os.path.join(root, fn), base))
-            if len(names) >= 500:
-                break
-        if len(names) >= 500:
-            break
+            path = os.path.join(root, fn)
+            found[os.path.relpath(path, base).replace(os.sep, "/")] = path
+    return found
+
+
+_LIST_CAP = 500  # names shown by a list tool
+
+
+def _list_names(names, missing_msg, empty_msg, header):
+    """The listing of *names* (None: no folder), the first _LIST_CAP shown. Shared
+    by list_documents and list_rules so they can't drift."""
+    if names is None:
+        return _text_result(missing_msg)
     if not names:
         return _text_result(empty_msg)
-    names.sort()
-    return _text_result(header + "\n" + "\n".join("- " + n for n in names))
+    more = f"\n(+{len(names) - _LIST_CAP} more)" if len(names) > _LIST_CAP else ""
+    return _text_result(
+        header + "\n" + "\n".join("- " + n for n in names[:_LIST_CAP]) + more)
 
 
 def _handle_list_documents(documents_dir):
-    return _list_dir(
-        documents_dir, "(no documents folder for this project)",
+    files = _folder_files(documents_dir)
+    return _list_names(
+        sorted(files) if files is not None else None,
+        "(no documents folder for this project)",
         "(documents folder is empty)",
         "Documents available (read one with read_document):")
 
 
-def _handle_list_rules(rules_dir):
-    return _list_dir(
-        rules_dir, "(no rules folder for this project)",
+def _rule_files(rules_dir, project_rules_dir):
+    """Every file read_rule may read, by the key list_rules shows it under: the
+    bundle's (path relative to its rules folder), then the project's own rule
+    documents (``project/<name>``: exactly the files Studio sends). None when there
+    is neither."""
+    bundle = _folder_files(rules_dir)
+    own = {PROJECT_RULE_PREFIX + p.name: str(p)
+           for p in project_rule_doc_paths(Path(project_rules_dir) if project_rules_dir else None)}
+    if bundle is None and not own:
+        return None
+    return {**dict(sorted((bundle or {}).items())), **own}
+
+
+def _handle_list_rules(rules_dir, project_rules_dir=None):
+    files = _rule_files(rules_dir, project_rules_dir)
+    return _list_names(
+        list(files) if files is not None else None,
+        "(no rules folder for this project)",
         "(rules folder is empty)",
         "Grammar/rule files available (read one with read_rule):")
 
 
-def _handle_read_rule(arguments, rules_dir):
-    """Read a LOCAL rule/grammar file as TEXT (not PDF), sandboxed to the rules
-    folder — no network."""
+def _handle_read_rule(arguments, rules_dir, project_rules_dir=None):
+    """Read a LOCAL rule file as TEXT — no network. Only an entry list_rules shows
+    is read (one confinement rule for both folders: no path, no traversal, no NTFS
+    stream); a PDF gives its extracted text."""
     name = (arguments or {}).get("name")
     if not isinstance(name, str) or not name.strip():
         return _text_result("read_rule requires a non-empty 'name' string.")
-    resolved = _resolve_local(name.strip(), rules_dir)
-    if resolved is None:
-        return _text_result("Access denied: that path is outside the rules folder.")
+    path = _listed(_rule_files(rules_dir, project_rules_dir), name)
+    if path is None:
+        return _denied(name, "list_rules")
+    if attached_as_file(Path(path)):
+        text = extract_pdf_text(path)
+        return _text_result(text if text is not None else _UNREADABLE_MSG)
     try:
-        with open(resolved, encoding="utf-8", errors="replace") as fh:
+        with open(path, encoding="utf-8-sig", errors="replace") as fh:
             return _text_result(fh.read())
     except OSError as exc:
         return _text_result(f"Could not read the rule file: {exc}")
 
 
 def _handle_read_document(arguments, documents_dir):
-    """Read a LOCAL document from the sandboxed folder — no network branch."""
+    """Read a LOCAL document list_documents shows — no network branch."""
     name = (arguments or {}).get("name")
     if not isinstance(name, str) or not name.strip():
         return _text_result("read_document requires a non-empty 'name' string.")
-    resolved = _resolve_local(name.strip(), documents_dir)
+    resolved = _listed(_folder_files(documents_dir), name)
     if resolved is None:
-        return _text_result(
-            "Access denied: that path is outside the documents folder."
-        )
+        return _denied(name, "list_documents")
     text = extract_pdf_text(resolved)
     return _text_result(text if text is not None else _UNREADABLE_MSG)
 
@@ -355,9 +378,9 @@ def _handle_search_document(arguments, documents_dir):
         return _text_result("search_document requires a 'name' (a PDF in the documents folder).")
     if not isinstance(query, str) or not query.strip():
         return _text_result("search_document requires a 'query' string to find.")
-    resolved = _resolve_local(name.strip(), documents_dir)
+    resolved = _listed(_folder_files(documents_dir), name)
     if resolved is None:
-        return _text_result("Access denied: that path is outside the documents folder.")
+        return _denied(name, "list_documents")
     pages = extract_pdf_pages(resolved)
     if pages is None:
         return _text_result(_UNREADABLE_MSG)
@@ -403,6 +426,7 @@ def main(argv=None):
         argv = sys.argv[1:]
     documents_dir = _parse_dir_arg(argv, "--documents-dir", os.getcwd())
     rules_dir = _parse_dir_arg(argv, "--rules-dir", os.getcwd())
+    project_rules_dir = _parse_dir_arg(argv, "--project-rules-dir", None)
 
     import _mcp_serve  # sibling module (authoring/ is sys.path[0] for the
     # launched script); avoids triggering the heavy authoring/__init__ chain.
@@ -412,8 +436,8 @@ def main(argv=None):
         "read_document": lambda a: _handle_read_document(a, documents_dir),
         "search_document": lambda a: _handle_search_document(a, documents_dir),
         "list_documents": lambda a: _handle_list_documents(documents_dir),
-        "list_rules": lambda a: _handle_list_rules(rules_dir),
-        "read_rule": lambda a: _handle_read_rule(a, rules_dir),
+        "list_rules": lambda a: _handle_list_rules(rules_dir, project_rules_dir),
+        "read_rule": lambda a: _handle_read_rule(a, rules_dir, project_rules_dir),
     }
     _mcp_serve.serve(SERVER_INFO, TOOLS, dispatch)
 

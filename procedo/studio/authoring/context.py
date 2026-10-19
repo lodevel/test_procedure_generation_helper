@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Sequence
 
 
@@ -30,10 +31,12 @@ class ContextItem:
 @dataclass(frozen=True)
 class ContextBundle:
     """The assembled push payload: the concatenated text plus its size (for the
-    picker's token readout)."""
+    picker's token readout), and the *files* sent as they are with it (a PDF rule
+    document), as the Studio tabs attach them."""
 
     text: str
     char_count: int
+    files: tuple[Path, ...] = ()
 
     @property
     def approx_tokens(self) -> int:
@@ -57,6 +60,10 @@ class ContextSource(ABC):
     def materialize(self, keys: Sequence[str]) -> str:
         """Render the chosen ``keys`` to text. Unknown keys are ignored."""
 
+    def files(self, keys: Sequence[str]) -> list[Path]:
+        """The chosen ``keys``' documents sent as they are, attached as files: none here."""
+        return []
+
 
 def assemble(
     selections: Sequence[tuple[ContextSource, Sequence[str]]],
@@ -64,14 +71,16 @@ def assemble(
     """Concatenate the checked items across sources into one payload.
 
     Each source contributes a ``# <title>`` section; sources with no checked
-    keys (or empty content) are skipped entirely."""
+    keys (or empty content) are skipped entirely. The files to attach come along."""
     blocks: list[str] = []
+    files: list[Path] = []
     for source, keys in selections:
         if not keys:
             continue
+        files += source.files(keys)
         body = source.materialize(keys).strip()
         if not body:
             continue
         blocks.append(f"# {source.title}\n\n{body}")
     text = "\n\n".join(blocks)
-    return ContextBundle(text=text, char_count=len(text))
+    return ContextBundle(text=text, char_count=len(text), files=tuple(files))

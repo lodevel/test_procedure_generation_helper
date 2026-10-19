@@ -21,6 +21,8 @@ from .backend_base import LLMBackend, LLMRequest, LLMResponse, LLMTask
 from .output_contracts import get_contract_for_tab, get_allowed_artifacts, get_task_expected_artifacts
 from .prompt_builder import PromptBuilder
 from .response_parser import ResponseParser
+from ..core.fileio import content_digest
+from ..core.project_manager import ATTACHED_NOTE, PROJECT_RULES_WIN, RuleDoc, attached_as_file
 from ..core.session_state import SessionState
 
 if TYPE_CHECKING:
@@ -36,6 +38,14 @@ log = logging.getLogger(__name__)
 # no semantic value the LLM uses to perform its tasks. Strip them on read so the
 # markdown source on disk stays canonical while the LLM payload is leaner.
 _LLM_USELESS_FRONTMATTER_FIELDS = frozenset({"related", "audience"})
+
+
+def _project_rules_preamble(attached: bool) -> str:
+    """Heads the project's own rule documents, sent after the bundle rules: they win (owner
+    decision 2026-10-19); *attached*: some come as files attached to the message."""
+    return (f"\n{'='*60}\n# Project rules\n{'='*60}\n"
+            + PROJECT_RULES_WIN + "\n"
+            + ("Some of them are attached to this message as files.\n" if attached else ""))
 
 
 def _strip_llm_useless_frontmatter(content: str) -> str:
@@ -188,7 +198,6 @@ class TabContext:
         self._last_json_content: Optional[str] = None
         self._last_code_content: Optional[str] = None
         self._last_text_content: Optional[str] = None
-        self._rules_sent: bool = False
         
         log.info(
             f"TabContext initialized for {tab_id} (project_root={self.project_manager.project_root})"
@@ -280,28 +289,26 @@ class TabContext:
         self._last_json_content = None
         self._last_code_content = None
         self._last_text_content = None
-        self._rules_sent = False
         log.info(f"TabContext {self.tab_id}: conversation reset (_first_interaction=True, optimization state cleared)")
     
     def get_selected_rules(self) -> list[str]:
-        """Resolve the rule filenames to send for the current LLM request.
+        """Resolve the rule document keys to send for the current LLM request.
 
         After Phase 1 of the workflows-to-project-config refactor,
         ``selected_rules`` is per-task. We pick the task that's actively
         being executed (``self._current_task``) when one is set, and fall
         back to the tab's first task otherwise. The ``"all"`` sentinel
-        expands against the project's available rule files.
+        expands against every rule document: the bundle's and the project's.
         """
         raw = self._raw_selected_rules_for_current_task()
-        if raw is None or raw == "all":
-            return [rf.name for rf in self.project_manager.get_rules_files()]
         if isinstance(raw, list):
             return list(raw)
-        log.warning(
-            f"TabContext {self.tab_id}: unexpected selected_rules type %r; falling back to all",
-            type(raw).__name__,
-        )
-        return [rf.name for rf in self.project_manager.get_rules_files()]
+        if raw is not None and raw != "all":
+            log.warning(
+                f"TabContext {self.tab_id}: unexpected selected_rules type %r; falling back to all",
+                type(raw).__name__,
+            )
+        return [doc.key for doc in self.project_manager.get_rule_docs()]
 
     def _raw_selected_rules_for_current_task(self):
         """Look up the per-task ``selected_rules`` value (no expansion)."""
@@ -370,7 +377,6 @@ class TabContext:
         self._last_json_content = None
         self._last_code_content = None
         self._last_text_content = None
-        self._rules_sent = False
         self._first_interaction = True
         
         log.info(
@@ -395,7 +401,6 @@ class TabContext:
         self._last_json_content = None
         self._last_code_content = None
         self._last_text_content = None
-        self._rules_sent = False
         self._first_interaction = True
         
         log.info(f"TabContext {self.tab_id}: backend session reset, optimization state cleared")
@@ -453,26 +458,6 @@ class TabContext:
             return True
         return content != self._last_text_content
     
-    def _should_include_rules(self, content: Optional[str], force: bool) -> bool:
-        """
-        Determine if rules should be included in request.
-        
-        Args:
-            content: Current rules content
-            force: If True, always include
-            
-        Returns:
-            True if rules should be included
-        """
-        if not content:
-            return False
-        if force or self._first_interaction:
-            return True
-        if not self._rules_sent:
-            return True
-        # Check if rules changed
-        return self._has_rules_changed(content)
-    
     def _update_optimization_state(self, request: LLMRequest):
         """
         Update optimization state after building request.
@@ -506,9 +491,8 @@ class TabContext:
         
         # Track rules content if included
         if request.rules_content:
-            self._rules_sent = True
-            self._update_rules_checksum(request.rules_content)
-            log.debug(f"TabContext {self.tab_id}: Updated rules checksum, rules_sent=True")
+            self._update_rules_checksum(request.rules_content, request.attachments)
+            log.debug(f"TabContext {self.tab_id}: Updated rules checksum")
     
     def confirm_request_delivered(self, request: LLMRequest) -> None:
         """Mark artifacts and rules in *request* as successfully delivered.
@@ -537,38 +521,43 @@ class TabContext:
             "checksum cleared"
         )
     
+    def _selected_rule_docs(self) -> list[RuleDoc]:
+        """The selected rule documents on disk, bundle rules first (missing ones logged)."""
+        selected = set(self.get_selected_rules())
+        docs = [doc for doc in self.project_manager.get_rule_docs() if doc.key in selected]
+        for key in sorted(selected - {doc.key for doc in docs}):
+            log.warning(f"TabContext {self.tab_id}: selected rule document not found: {key}")
+        return docs
+
+    def get_selected_rules_files(self) -> list[Path]:
+        """The selected documents sent as they are, attached as files (PDFs)."""
+        return [doc.path for doc in self._selected_rule_docs() if attached_as_file(doc.path)]
+
     def get_selected_rules_content(self) -> Optional[str]:
-        """
-        Get concatenated content of selected rules only.
-        
-        Returns:
-            Concatenated markdown content of selected rules, or None if no rules
-        """
-        log.info(f"TabContext {self.tab_id}: get_selected_rules_content() called")
-        if self.project_manager.rules_root is None:
-            log.warning(f"TabContext {self.tab_id}: rules_root is None!")
-            return None
-        
-        log.info(f"TabContext {self.tab_id}: rules_root = {self.project_manager.rules_root}")
-        selected_filenames = self.get_selected_rules()
-        log.info(f"TabContext {self.tab_id}: get_selected_rules_content() loading {len(selected_filenames)} rules: {selected_filenames}")
-        if not selected_filenames:
-            log.warning(f"TabContext {self.tab_id}: No rules selected!")
-            return None
-        
-        contents = []
-        for filename in selected_filenames:
-            rule_path = self.project_manager.rules_root / filename
-            if rule_path.exists():
-                header = f"\n{'='*60}\n# Rules from: {filename}\n{'='*60}\n"
-                content = rule_path.read_text(encoding="utf-8")
-                content = _strip_llm_useless_frontmatter(content)
-                contents.append(header + content)
+        """The selected rule documents, concatenated for the LLM (None: none): the bundle
+        rules first, then the project's own documents under a header saying they win
+        where the two conflict; a PDF is only named here, it is attached as a file."""
+        parts: dict[str, list[str]] = {"bundle": [], "project": []}
+        attached = False
+        for doc in self._selected_rule_docs():
+            if attached_as_file(doc.path):
+                attached = True
+                content = ATTACHED_NOTE + "\n"
             else:
-                log.warning(f"Selected rule file not found: {filename}")
-        
+                try:
+                    content = _strip_llm_useless_frontmatter(
+                        doc.path.read_text(encoding="utf-8-sig"))
+                except (OSError, UnicodeDecodeError) as exc:
+                    log.warning(f"TabContext {self.tab_id}: cannot read {doc.path}: {exc}")
+                    continue
+            title = "Project rules" if doc.origin == "project" else "Rules"
+            parts[doc.origin].append(
+                f"\n{'='*60}\n# {title} from: {doc.path.name}\n{'='*60}\n{content}")
+        if parts["project"]:
+            parts["project"].insert(0, _project_rules_preamble(attached))
+        contents = parts["bundle"] + parts["project"]
         return "\n".join(contents) if contents else None
-    
+
     def send_task(
         self,
         task: LLMTask,
@@ -669,15 +658,16 @@ class TabContext:
         
         # Check if rules have changed
         current_rules_content = self.get_selected_rules_content()
-        rules_changed = self._has_rules_changed(current_rules_content)
+        current_rules_files = self.get_selected_rules_files()
+        rules_changed = self._has_rules_changed(current_rules_content, current_rules_files)
         
         # Build request with filtered rules (send on first interaction, force mode, OR when rules changed)
         if self._first_interaction or force or rules_changed:
-            rules_content = current_rules_content
+            rules_content, rules_files = current_rules_content, current_rules_files
             reason = "first" if self._first_interaction else ("force" if force else "changed")
             log.debug(f"TabContext {self.tab_id}: Including rules (reason={reason})")
         else:
-            rules_content = None  # Rules sent once, LLM remembers via conversation history
+            rules_content, rules_files = None, []  # sent once, the conversation remembers them
             log.debug(f"TabContext {self.tab_id}: Skipping rules (already sent, unchanged)")
         
         # Get tab-specific output contract. Resolve section ownership from the
@@ -712,6 +702,7 @@ class TabContext:
             test_code=context.get("test_code"),
             session_summary=session_summary,
             rules_content=rules_content,  # Filtered rules only, sent once
+            attachments=rules_files,  # the selected PDFs, with the rules
             output_contract=output_contract,  # Tab-specific contract
             # Bundle-declared CUSTOM tasks route via AD_HOC_CHAT but carry
             # their own id so prompt resolution uses THEIR prompt_template.
@@ -981,45 +972,18 @@ class TabContext:
         ).hexdigest()
         self._first_interaction = False
     
-    def _has_rules_changed(self, current_rules_content: Optional[str]) -> bool:
-        """
-        Check if rules have changed since last sent to LLM.
-        
-        Args:
-            current_rules_content: Current rules content (or None if no rules)
-            
-        Returns:
-            True if rules have been modified, False otherwise
-        """
-        import hashlib
-        
-        # If no current rules, check if we previously had rules
-        if current_rules_content is None:
+    def _has_rules_changed(self, content: Optional[str], files: list[Path] = ()) -> bool:
+        """True when the rules (*content* and the attached *files*) differ from those last
+        sent; no checksum yet (never sent, or the selection changed) counts as changed."""
+        if content is None:
             return self._rules_checksum is not None
-        
-        # If we have current rules but no stored checksum, rules have changed
-        # This handles two cases:
-        # 1. First time sending rules (checksum never set)
-        # 2. Checksum deliberately cleared (e.g., rule selection changed)
-        # In both cases, rules should be sent to the LLM
-        if self._rules_checksum is None:
-            return True  # Treat None checksum as "rules changed"
-        
-        # Compare checksums
-        current_hash = hashlib.md5(current_rules_content.encode()).hexdigest()
-        return current_hash != self._rules_checksum
-    
-    def _update_rules_checksum(self, rules_content: str):
-        """
-        Update stored checksum for rules content.
-        
-        Args:
-            rules_content: Rules content that was sent
-        """
-        import hashlib
-        self._rules_checksum = hashlib.md5(rules_content.encode()).hexdigest()
+        return self._rules_checksum != content_digest(content, files)
+
+    def _update_rules_checksum(self, content: str, files: list[Path] = ()) -> None:
+        """Remember the rules sent: *content* and the attached *files*."""
+        self._rules_checksum = content_digest(content, files)
         log.debug(f"TabContext {self.tab_id}: rules checksum updated")
-    
+
     def mark_artifact_modified(self, artifact_name: str):
         """
         Mark artifact as modified (will be sent on next request).

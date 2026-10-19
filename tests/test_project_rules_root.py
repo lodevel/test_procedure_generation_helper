@@ -25,6 +25,11 @@ def _project(tmp_path, name, *rule_dirs, bundle=True):
     return root
 
 
+def _texts(pm):
+    """The text of each rule document the project manager offers now."""
+    return [doc.path.read_text(encoding="utf-8") for doc in pm.get_rule_docs()]
+
+
 def _open(pm, root):
     """What every project open does: set the root, then detect its rules."""
     assert pm.set_project_root(root)
@@ -38,7 +43,7 @@ def test_opening_a_project_reads_its_active_bundles_rules(tmp_path):
     assert _open(pm, root) is True
     assert pm.rules_root == root / "bundle" / "rules"
     assert pm.rules_state is RulesState.LOADED
-    assert "rule of a in bundle/rules" in pm.get_rules_content()
+    assert _texts(pm) == ["rule of a in bundle/rules"]
 
 
 def test_no_bundle_means_no_rules_and_old_locations_are_never_read(tmp_path):
@@ -47,7 +52,7 @@ def test_no_bundle_means_no_rules_and_old_locations_are_never_read(tmp_path):
 
     assert _open(pm, root) is False
     assert pm.rules_root is None  # the footer shows "Rules: none"
-    assert pm.get_rules_content() is None
+    assert _texts(pm) == []
     for rel in ("rules", "config/rules", "../rules"):
         assert (root / rel / "rule.md").read_text(encoding="utf-8") == f"rule of a in {rel}"
 
@@ -68,7 +73,7 @@ def test_opening_another_project_switches_to_its_rules(tmp_path):
 
     assert _open(pm, b) is True
     assert pm.rules_root == b / "bundle" / "rules"
-    assert "rule of b" in pm.get_rules_content() and "rule of a" not in pm.get_rules_content()
+    assert _texts(pm) == ["rule of b in bundle/rules"]
 
 
 def test_a_project_without_a_bundle_does_not_keep_the_previous_projects_rules(tmp_path):
@@ -80,7 +85,7 @@ def test_a_project_without_a_bundle_does_not_keep_the_previous_projects_rules(tm
     assert _open(pm, bare) is False
     assert pm.rules_root is None
     assert pm.rules_state is RulesState.NONE
-    assert pm.get_rules_content() is None and pm.get_rules_files() == []
+    assert _texts(pm) == []
 
 
 def test_a_picked_folder_holds_for_its_project_only(tmp_path):
@@ -92,7 +97,7 @@ def test_a_picked_folder_holds_for_its_project_only(tmp_path):
     assert pm.set_rules_root(a / "picked")
     assert pm.detect_rules_root() is True  # opening a test detects again
     assert pm.rules_root == a / "picked"
-    assert "rule of a in picked" in pm.get_rules_content()
+    assert _texts(pm) == ["rule of a in picked"]
 
     _open(pm, b)
     assert pm.rules_root == b / "bundle" / "rules"

@@ -119,6 +119,10 @@ def test_build_launch_config_fresh_mcp_paths_with_project(config_dir, tmp_path):
     project.mkdir()
     tgz = project / "board.tgz"
     tgz.write_bytes(b"fake-archive")
+    (project / "bundle" / "rules").mkdir(parents=True)  # a loadable bundle with rules
+    (project / "bundle" / "bundle.json").write_text(
+        json.dumps({"id": "baseline", "version": "2.10.0"}), encoding="utf-8")
+    (project / "bundle" / "defaults.json").write_text("{}", encoding="utf-8")
 
     # Create a deterministic BUNDLED tool folder so we can assert its command.
     myfix_dir = project / "bundle" / "authoring_skills" / "myfix"
@@ -151,6 +155,7 @@ def test_build_launch_config_fresh_mcp_paths_with_project(config_dir, tmp_path):
     assert pdf_cmd[3] == str(project / "documents")
     assert pdf_cmd[4] == "--rules-dir"
     assert pdf_cmd[5] == str(project / "bundle" / "rules")
+    assert pdf_cmd[6:] == ["--project-rules-dir", str(project / "config" / "project_rules")]
     # The documents dir is created so the server launches cleanly.
     assert (project / "documents").is_dir()
 

@@ -40,7 +40,7 @@ _SKIP_DIRS = {"__pycache__", "build", "dist", ".venv"}
 # carve the file, then lower or delete its entry.
 
 FILE_BUDGET: dict[str, int] = {
-    "core/task_config.py": 1289,
+    "core/task_config.py": 1288,
     "dialogs/settings_dialog.py": 1252,  # -53: its pages are Bench's paged dialog (Studio redesign slice 7b)
     "llm/_execute_op_subprocess.py": 1283,  # -15: the per-path procedure latch went (engine_process slice 3)
     # +50: bench-session S3 — frame dispatch,
@@ -73,7 +73,7 @@ FILE_BUDGET: dict[str, int] = {
     # daemon file only delegates and records the open.
     "llm/opencode_backend.py": 1251,  # +9: bare-except cleanup log lines
     "pack_ops/pack_parsers.py": 1419,  # -7: the per-instance screenshot folder went (the guided run owns its folder)
-    "llm/tab_context.py": 1057,
+    "llm/tab_context.py": 1053,
     "llm/validator_dispatch.py": 1163,
     "main_window.py": 1640,  # -44: Word export keywords and About left for dialogs/ (Studio redesign slice 7a)
 }

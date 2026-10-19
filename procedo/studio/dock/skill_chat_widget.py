@@ -15,10 +15,10 @@ The brain it drives is reused, not reimplemented:
 * :class:`~procedo.studio.authoring.SkillChatSession` — turn logic + prompt
   assembly (``start_user_turn`` / ``record_assistant`` / ``interpret``).
 * :func:`~procedo.studio.authoring.assemble` — turns the picker's selection into
-  the pushed context text.
+  the pushed context (its text and the files attached with it).
 * :class:`~procedo.studio.widgets.skill_context_picker.SkillContextPicker` — the
   checkable context browser (built ONLY when ``sources`` is given; otherwise a
-  host pushes the context string via :meth:`set_pushed_context`).
+  host pushes the context via :meth:`set_pushed_context`).
 * :class:`~procedo.studio.llm.worker.LLMWorker` — runs the send off the UI
   thread; driven with ``LLMRequest(raw_prompt=...)`` so the backend bypasses its
   JSON output contract.
@@ -51,7 +51,7 @@ from PySide6.QtWidgets import (
 from procedo.core import ui_kit
 from procedo.bench import fluent_qss, theme
 
-from ..authoring import SkillChatSession, assemble
+from ..authoring import ContextBundle, SkillChatSession, assemble
 from ..widgets.skill_context_picker import SkillContextPicker
 from ..llm.backend_base import LLMRequest, LLMTask
 from ..llm.context_usage import format_context_usage, used_tokens
@@ -59,6 +59,8 @@ from ..llm.worker import LLMWorker
 from ..widgets.work_timer import WorkTimer
 
 log = logging.getLogger(__name__)
+
+_NO_CONTEXT = ContextBundle("", 0)
 
 
 #: The Assistant column's composer input height (board S9).
@@ -117,7 +119,7 @@ class SkillChatWidget(QWidget):
             backend_factory: Factory exposing ``create_backend(tab_id=...)`` and
                 (for the restart button) ``server_manager``.
             sources: Context picker sources (one tab each). ``None``/empty → NO
-                context panel; the host pushes the context string instead via
+                context panel; the host pushes the context instead via
                 :meth:`set_pushed_context`.
             documents_dir: Folder backing the picker's Documents tab (or None).
             backend_tab_id: Dedicated-backend / OpenCode-session id. Each embed
@@ -160,8 +162,8 @@ class SkillChatWidget(QWidget):
         # (speaker, text) blocks. Includes transient System/You lines that are
         # NOT (yet) session turns; a re-render from the session rebuilds it.
         self._blocks: list[tuple[str, str]] = []
-        # Raw context string pushed by the host when there is NO picker.
-        self._pushed_context: str = ""
+        # The context pushed by the host when there is NO picker.
+        self._pushed_context: ContextBundle = _NO_CONTEXT
 
         # Widgets that may not be built (gated by the show_* flags). ``header`` is the
         # window header a host shows above the widget: the skill picker and the skill's
@@ -190,7 +192,7 @@ class SkillChatWidget(QWidget):
             opencode_settings.get("project_tools_default", False))
 
         # The picker is built ONLY when sources are supplied; otherwise the host
-        # pushes the context string (and no context panel is shown).
+        # pushes the context (and no context panel is shown).
         self._picker: Optional[SkillContextPicker] = (
             SkillContextPicker(sources, documents_dir=documents_dir) if sources else None)
         self._setup_ui()
@@ -389,18 +391,23 @@ class SkillChatWidget(QWidget):
                 self._skill_combo.blockSignals(False)
         self._switch_to(skill)
 
-    def set_pushed_context(self, text: str) -> None:
-        """Set the raw context string pushed on the next send when there is NO
-        picker (e.g. the wizard's netlist). Fed to ``session.set_context`` in the
-        send path instead of ``assemble(picker.selections())``."""
-        self._pushed_context = text or ""
+    def set_pushed_context(self, context: Optional[ContextBundle]) -> None:
+        """Set the context pushed on the next send when there is NO picker: what
+        another chat's :meth:`resolved_context` returned (its text and the files
+        attached with it), unchanged; None or "" (a wizard copy from an older bundle)
+        for none. Fed to ``session.set_context`` in the send path instead of
+        ``assemble(picker.selections())``."""
+        self._pushed_context = context or _NO_CONTEXT
 
-    def resolved_context(self) -> str:
-        """The context string this widget would send right now — the picker's
-        assembled selection (when it has a picker) or the host's pushed string.
-        Hosts read this to PROPAGATE one widget's chosen context to another: a
-        batch wizard hands one page's picker selection to every per-item build chat."""
-        return self._resolve_context()
+    def resolved_context(self) -> ContextBundle:
+        """The context this widget would send right now — the picker's assembled
+        selection (when it has a picker) or the host's pushed one: its text and the
+        files attached with it. Hosts read this to PROPAGATE one widget's chosen
+        context to another: a batch wizard hands one page's picker selection to every
+        per-item build chat (the ONE place the picker-vs-pushed fork lives)."""
+        if self._picker is not None:
+            return assemble(self._picker.selections())
+        return self._pushed_context
 
     def run_kickoff(self, priming: str = "") -> None:
         """Start the skill with the resolved context (Run path). A non-empty
@@ -409,7 +416,7 @@ class SkillChatWidget(QWidget):
         prompt only). No-op if a request is in flight or the session is started."""
         if self._worker is not None or self._session.started:
             return
-        self._session.set_context(self._resolve_context())
+        self._stage_context()
         title = (self._skill.title or self._skill.skill_id) if self._skill else "skill"
         self._append_line("System", f"Running '{title}'…")
         priming = (priming or "").strip()
@@ -430,7 +437,7 @@ class SkillChatWidget(QWidget):
             return
         # Refresh the pushed context (it rides the first send, and again only when
         # the resolved selection changes — see SkillChatSession._lead_context).
-        self._session.set_context(self._resolve_context())
+        self._stage_context()
         prompt = self._session.start_user_turn(text)
         self._append_line("You", text)
         self._dispatch(prompt, interactive=True)  # a user answer/refine: may jump the queue
@@ -490,12 +497,10 @@ class SkillChatWidget(QWidget):
 
     # -- context resolution seam ---------------------------------------------
 
-    def _resolve_context(self) -> str:
-        """The ONE place the picker-vs-pushed-string fork lives: the picker's
-        assembled text when a picker exists, else the host's pushed string."""
-        if self._picker is not None:
-            return assemble(self._picker.selections()).text
-        return self._pushed_context
+    def _stage_context(self) -> None:
+        """Hand the session the context resolved now: its text and attached files."""
+        context = self.resolved_context()
+        self._session.set_context(context.text, context.files)
 
     def _index_of(self, skill) -> int:
         """Index of ``skill`` in ``self._skills`` matched by ``skill_id`` (robust to
@@ -577,14 +582,16 @@ class SkillChatWidget(QWidget):
         (the wizard's scheduler) the actual fire is routed through it — run now or
         queued — and the widget LOCKS immediately (``_set_busy`` disables input +
         Send) so no second turn is submitted while one is pending; with no gate it
-        fires at once (the Skills-menu chat path)."""
+        fires at once (the Skills-menu chat path). The files staged with the turn's
+        context are attached to it."""
         self._set_busy(True)  # pending OR running: lock the UI, block a re-submit
+        files = self._session.pending_files
         try:
             if self._dispatch_gate is not None:
-                self._dispatch_gate(lambda: self._really_dispatch(prompt),
+                self._dispatch_gate(lambda: self._really_dispatch(prompt, files),
                                     interactive=interactive)
             else:
-                self._really_dispatch(prompt)
+                self._really_dispatch(prompt, files)
         except Exception:
             # A synchronous dispatch/setup failure (the scheduler already released
             # any slot it took) must not leave the widget locked with no worker.
@@ -592,7 +599,7 @@ class SkillChatWidget(QWidget):
             self._set_busy(False)
             self._status.set_full_text("Failed to start — see logs.")
 
-    def _really_dispatch(self, prompt: str) -> None:
+    def _really_dispatch(self, prompt: str, files: list) -> None:
         """Build the worker and start streaming — the actual fire, run immediately
         or released later by the gate. Assumes the UI is already locked busy."""
         backend = self._ensure_backend()
@@ -638,6 +645,7 @@ class SkillChatWidget(QWidget):
             # the backend turns those on and every other skill tool explicitly off.
             skill_servers_enabled=_declared,
             run_skill_enabled=_run_skill,
+            attachments=files,  # a PDF rule document, sent as it is (as the tabs do)
         )
         self._worker = LLMWorker(backend, request, parent=self)
         self._worker.text_chunk.connect(self._on_text_chunk)

@@ -11,6 +11,7 @@ from procedo.studio.authoring import (
     assemble,
     format_netlist,
 )
+from procedo.studio.core.project_manager import RuleDoc
 
 
 def test_context_bundle_approx_tokens():
@@ -128,8 +129,9 @@ def test_rules_source_lists_and_applies_transform(tmp_path):
     r1.write_text("rule one body", encoding="utf-8")
     r2 = tmp_path / "r2.md"
     r2.write_text("rule two body", encoding="utf-8")
-    src = RulesSource(lambda: [r2, r1], transform=str.upper)
-    assert [i.key for i in src.list_items()] == ["r1.md", "r2.md"]   # sorted
+    src = RulesSource(lambda: [RuleDoc("r1.md", r1, "bundle"), RuleDoc("r2.md", r2, "bundle")],
+                      transform=str.upper)
+    assert [i.key for i in src.list_items()] == ["r1.md", "r2.md"]   # the documents' order
     out = src.materialize(["r1.md"])
     assert "## r1.md" in out and "RULE ONE BODY" in out
     assert "r2" not in out.lower()
@@ -138,7 +140,7 @@ def test_rules_source_lists_and_applies_transform(tmp_path):
 def test_rules_source_ignores_unknown_key(tmp_path):
     r1 = tmp_path / "r1.md"
     r1.write_text("body", encoding="utf-8")
-    src = RulesSource(lambda: [r1])
+    src = RulesSource(lambda: [RuleDoc("r1.md", r1, "bundle")])
     assert src.materialize(["ghost.md"]) == ""
 
 

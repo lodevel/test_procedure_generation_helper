@@ -155,7 +155,8 @@ menu ("Edit in Procedo Studio"). `src/procedo/bench/main_window.py::_launch_work
 formats a configured command template (its `{python}` placeholder defaults to the
 GUI's `sys.executable`), launches it via `subprocess.Popen`, and appends
 `--project-root` and `--test-name`; Studio reads the rules of each project it opens
-from that project's active bundle (`bundle/rules/`).
+from that project's active bundle (`bundle/rules/`), plus the project's own rule
+documents (`config/project_rules/`), which win where they conflict.
 No `PYTHONPATH` injection: `procedo.studio` is installed editable in the GUI venv
 (ADR 0003). The editor path and command
 template are set on Procedo Bench's **Settings → Procedo Studio** page.

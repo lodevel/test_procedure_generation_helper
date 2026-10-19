@@ -115,13 +115,14 @@ def build_sources(main_window, root: Optional[Path]):
     pm = main_window.project_manager
     am = getattr(main_window, "artifact_manager", None)
 
-    # Rules — the same docs the text tab sends; strip LLM-useless frontmatter.
+    # Rules — the same documents the Studio tabs send (bundle + project); strip
+    # LLM-useless frontmatter.
     try:
         from ..llm.tab_context import _strip_llm_useless_frontmatter as _strip
     except Exception:  # noqa: BLE001
         def _strip(s):
             return s
-    sources = [RulesSource(pm.get_rules_files, transform=_strip)]
+    sources = [RulesSource(pm.get_rule_docs, transform=_strip)]
 
     documents_dir = (root / _DOCS_SUBDIR) if root else None
     if documents_dir is not None:

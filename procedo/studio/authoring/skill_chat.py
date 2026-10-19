@@ -20,8 +20,10 @@ That keeps the prompt-assembly and turn logic unit-testable.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
+from ..core.fileio import content_digest
 from .skill import Skill
 
 
@@ -39,18 +41,29 @@ class SkillChatSession:
 
     skill: Skill
     context_text: str = ""
+    # Files sent as they are with the context (a PDF rule document), attached to the
+    # message the context rides.
+    context_files: tuple[Path, ...] = ()
     turns: list[SkillTurn] = field(default_factory=list)
-    # Context already DELIVERED to the model (committed on a successful reply) and
-    # context staged for the in-flight turn. Context rides the first message and
-    # again only when it changes; both gate on success so a failed send re-sends it.
-    _delivered_context: str = ""
-    _pending_context: Optional[str] = None
+    # The digest (text + the files' bytes, as the Studio tabs compute it) of the
+    # context already DELIVERED to the model (committed on a successful reply), and
+    # the (digest, files) staged for the in-flight turn. Context rides the first
+    # message and again only when it changes (a file's contents too); both gate on
+    # success so a failed send re-sends it.
+    _delivered_digest: str = ""
+    _pending_context: Optional[tuple[str, tuple[Path, ...]]] = None
 
-    def set_context(self, context_text: str) -> None:
-        """Set the pushed context. It rides the next send when it differs from what
-        the model already holds — the first message, or whenever the user changes
-        the checked context mid-conversation."""
+    def set_context(self, context_text: str, files=()) -> None:
+        """Set the pushed context and the *files* sent with it. They ride the next
+        send when they differ from what the model already holds — the first message,
+        or whenever the user changes the checked context mid-conversation."""
         self.context_text = context_text
+        self.context_files = tuple(files)
+
+    @property
+    def pending_files(self) -> list[Path]:
+        """The files to attach to the in-flight send (they ride with its context)."""
+        return list(self._pending_context[1]) if self._pending_context else []
 
     @property
     def started(self) -> bool:
@@ -70,10 +83,11 @@ class SkillChatSession:
         when there is nothing to (re)send) and records it as PENDING until the reply
         lands (:meth:`record_assistant` commits it, :meth:`drop_last_user_turn`
         un-stages it)."""
-        ctx = self.context_text.strip()
-        if ctx and ctx != self._delivered_context:
-            self._pending_context = ctx
-            return ctx
+        text = self.context_text.strip()
+        digest = content_digest(text, self.context_files) if text else ""
+        if digest and digest != self._delivered_digest:
+            self._pending_context = (digest, self.context_files)
+            return text
         self._pending_context = None
         return ""
 
@@ -99,7 +113,7 @@ class SkillChatSession:
         """Append the model's reply and COMMIT any context staged for that turn (it
         has now reached the model)."""
         if self._pending_context is not None:
-            self._delivered_context = self._pending_context
+            self._delivered_digest = self._pending_context[0]
             self._pending_context = None
         self.turns.append(SkillTurn("assistant", text))
 

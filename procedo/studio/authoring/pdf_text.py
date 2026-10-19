@@ -35,7 +35,7 @@ def _extract_from_reader(reader, max_chars: int) -> Optional[str]:
             text = page.extract_text() or ""
         except Exception:  # a single bad page shouldn't drop the whole datasheet
             continue
-        text = text.strip()
+        text = text.strip()[: max_chars - total]  # the cap holds inside a long page too
         if not text:
             continue
         parts.append(f"[page {index + 1}]\n{text}")

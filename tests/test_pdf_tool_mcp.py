@@ -152,7 +152,7 @@ def test_read_pdf_absolute_outside_denied(server):
     assert "denied" in text.lower()
 
 
-def test_read_pdf_missing_file_returns_unreadable(server):
+def test_read_pdf_missing_file_is_refused(server):
     srv, _docs = server
     _handshake(srv)
     resp = srv.request(
@@ -161,8 +161,8 @@ def test_read_pdf_missing_file_returns_unreadable(server):
         {"name": "read_pdf", "arguments": {"source": "nope.pdf"}},
     )
     text = resp["result"]["content"][0]["text"]
-    # Inside the sandbox but absent → unreadable message, not access-denied.
-    assert "Could not read the PDF" in text
+    # Not a file list_documents shows → refused, like any other name.
+    assert "denied" in text.lower() and "list_documents" in text
 
 
 def test_ping(server):

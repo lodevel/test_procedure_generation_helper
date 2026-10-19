@@ -142,21 +142,20 @@ def _mcp_script_win(name: str) -> str:
 
 
 def _build_pdf_tools_block(project_root: Optional[Path]) -> dict:
-    """Build the ``pdf_tools`` MCP block FRESH for ``project_root``.
-
-    Computes the venv python, the script path, the project's documents dir and
-    the bundle's rules dir all at RUNTIME (no baked paths). ``project_root`` may
-    be ``None`` (no project open) — documents/rules then point at a portable
-    placeholder under the config dir so the server still launches cleanly.
+    """Build the ``pdf_tools`` MCP block FRESH for ``project_root``: the venv python, the
+    script, its documents dir, its active bundle's rules (``active_rules_dir``, as Studio) and
+    its own rule documents' folder, at RUNTIME; else a placeholder under the config dir.
     """
+    from procedo.core import bundle_registry
+    from ..core.project_manager import PROJECT_RULES_DIR
     from ..llm.mcp_config import build_pdf_tools_mcp_block
 
     if project_root is not None:
-        documents_dir = project_root / "documents"
-        rules_dir = project_root / "bundle" / "rules"
+        documents_dir, own_rules = project_root / "documents", project_root / PROJECT_RULES_DIR
+        rules_dir = bundle_registry.active_rules_dir(project_root)
     else:
-        documents_dir = get_opencode_config_dir() / "documents"
-        rules_dir = get_opencode_config_dir() / "rules"
+        documents_dir, own_rules, rules_dir = get_opencode_config_dir() / "documents", "", None
+    rules_dir = rules_dir or get_opencode_config_dir() / "rules"
     try:
         documents_dir.mkdir(parents=True, exist_ok=True)
     except OSError:
@@ -166,6 +165,7 @@ def _build_pdf_tools_block(project_root: Optional[Path]) -> dict:
         mcp_script_win=_mcp_script_win("_pdf_tool_mcp.py"),
         documents_dir_win=str(documents_dir),
         rules_dir_win=str(rules_dir),
+        project_rules_dir_win=str(own_rules),
     )
 
 

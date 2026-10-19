@@ -682,10 +682,6 @@ class TaskConfigManager:
         return migrated
 
     # ------------------------------------------------------------------
-    # Save
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
     # Snapshot stamping (Codex H2: pack defaults never round-trip through save)
     # ------------------------------------------------------------------
 
@@ -1113,6 +1109,17 @@ class TaskConfigManager:
                 # previously-pack-only tasks the user is implicitly
                 # claiming ownership of by editing rules).
                 self._stamp_task_in_snapshot(tab_id, task.id)
+
+    def add_rule_to_selections(self, key: str) -> None:
+        """Tick rule document *key* (one just added to the project) in every task's non-empty
+        ``selected_rules`` list, in every tab: "all" / None include it already, [] sends none."""
+        with self._lock:
+            for tab_id, tasks in self._task_configs.items():
+                for task in tasks:
+                    if task.selected_rules and isinstance(task.selected_rules, list) \
+                            and key not in task.selected_rules:
+                        task.selected_rules.append(key)
+                        self._stamp_task_in_snapshot(tab_id, task.id)
 
 
 # ---------------------------------------------------------------------------

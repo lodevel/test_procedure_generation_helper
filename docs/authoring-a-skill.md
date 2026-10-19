@@ -123,7 +123,7 @@ a live size readout, so you can see how much you are sending.
 
 | Tab | What it offers |
 |---|---|
-| **Rules** | The same rule docs the text tab sends. |
+| **Rules** | The same rule docs the text tab sends: the bundle's rules, then the project's own documents (`project/<name>`). |
 | **Documents** | Files in `<project>/documents/`. Drop reference docs (datasheets, spec extracts, notes) there to make them selectable. |
 | **Artifacts** | **Procedure text**, **Procedure JSON**, **Test code**, and **Netlist** (the ODB++ board rendered to text). |
 

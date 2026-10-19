@@ -244,11 +244,14 @@ def refresh_footer(ws: StudioWorkspace) -> None:
     ws.project_link.setToolTip(
         (f"{root}\n" if root else "") + "Click to open a project.")
     rules = Path(pm.rules_root) if pm.rules_root else None
+    docs = pm.get_rule_docs()
+    own = sum(doc.origin == "project" for doc in docs)
     if rules is None:
-        ws.rules_link.setText("Rules: none")
+        text = "Rules: none"
     else:
-        docs = len(pm.get_rules_files())
-        ws.rules_link.setText(f"Rules: {_short(rules, root)} · {docs} doc{'' if docs == 1 else 's'}")
+        n = len(docs) - own
+        text = f"Rules: {_short(rules, root)} · {n} doc{'' if n == 1 else 's'}"
+    ws.rules_link.setText(text + (f" + {own} project" if own else ""))
     ws.rules_link.setToolTip((f"{rules}\n" if rules else "") + "Click to choose the rules folder.")
     ws.dock.refresh_rules_picker()  # the Assistant's picker counts the same rules
     ws.bundle_label.setText(f"Bundle: {bundle_name(root) or 'none'}")

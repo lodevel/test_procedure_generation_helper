@@ -118,7 +118,29 @@ _TEXT_SHOT = _TEXT_QUICK.replace(
     "SCOPE1 : scope channels=[1]\nDMM1 : dmm",
 ).replace("# BENCH-Q", "# BENCH-S")
 
-_TEXTS = {"quick": _TEXT_QUICK, "wait": _TEXT_WAIT, "shot": _TEXT_SHOT}
+# Two manual instruments (the run patches their *_REMOTE to False), then a wait.
+_TEXT_MANUAL = """# BENCH-M
+Bench-session fixture.
+
+## Meta
+format_version: 2.0.2
+board: K
+rules_pack: rules_packager_base@2.0.5
+labscpi_pack: labscpi@2.0.1
+
+## Steps
+1. Set PSU1 CH1 voltage = 5.0 V.
+2. Set ELOAD1 CH1 current = 0.5 A.
+
+## Equipment
+PSU1 : psu channels=[{1, max_voltage=24.0 V, max_current=2.0 A}]
+ELOAD1 : eload channels=[{1, max_current=1.0 A}]
+"""
+
+_TEXTS = {"quick": _TEXT_QUICK, "wait": _TEXT_WAIT, "shot": _TEXT_SHOT,
+          "manual": _TEXT_MANUAL,
+          "manual_wait": _TEXT_MANUAL.replace(
+              "\n\n## Equipment", "\n3. Wait 30 s.\n\n## Equipment")}
 
 
 @functools.lru_cache(maxsize=None)
@@ -1592,13 +1614,12 @@ class RunTestTests(_BenchBase):
         self.assertTrue(resp["result"]["aborted"])
         self.assertIn("ack", self.proto.kinds())
         self.assertTrue(self._offs())               # ladder safe-off ran
-        # the stale response reaches the MAIN loop and is rejected (typed)
+        # the stale response reaches the MAIN loop and is dropped: no response
         line = bsr._READER.next_line()
         self.assertIsNotNone(line)
         late, stop = self._dispatch(s, json.loads(line))
         self.assertFalse(stop)
-        self.assertFalse(late["ok"])
-        self.assertIn("no prompt outstanding", late["error"])
+        self.assertIsNone(late)
         # EOF signalled through the queue — the loop would reach _teardown
         self.assertIsNone(bsr._READER.next_line())
         # session alive: next acquire works
@@ -1626,19 +1647,75 @@ class RunTestTests(_BenchBase):
         rejects = [f for f in self.proto.frames if f.get("kind") == "reject"]
         self.assertTrue(any(f.get("cmd") == "exec_ops" for f in rejects))
 
-    def test_cancel_and_prompt_response_idle_are_typed(self):
+    def test_idle_cancel_is_typed_and_idle_prompt_response_unanswered(self):
         s = self._session()
         resp, _ = self._dispatch(s, {"cmd": "cancel_run", "run_id": "nope"})
         self.assertFalse(resp["ok"])
         self.assertEqual(resp["kind"], "UnknownRun")
         resp, _ = self._dispatch(s, {"cmd": "prompt_response", "id": 9,
                                      "text": "x"})
-        self.assertFalse(resp["ok"])
-        self.assertIn("no prompt outstanding", resp["error"])
+        self.assertIsNone(resp)
         resp, _ = self._dispatch(s, {"cmd": "run_test", "run_id": "nope",
                                      "module_path": "x", "results_dir": "y"})
         self.assertFalse(resp["ok"])
         self.assertEqual(resp["kind"], "UnknownRun")
+
+
+# ---------------------------------------------------------------------------
+# A stop never cuts the test's cleanup short: every manual SAFE STATE reminder
+# is still shown and the run ends as an operator stop (session kept).
+# ---------------------------------------------------------------------------
+
+_SAFE_STATES = ["SAFE STATE: Ensure ELOAD1 output is OFF.",
+                "SAFE STATE: Ensure PSU1 output is OFF."]
+
+
+class StopKeepsCleanupTests(_BenchBase):
+    def _acquire_manual(self):
+        s = self._session()
+        resp = self._acquire(s, [
+            {"test_id": "BENCH-M", "local_name": name, "etype": etype,
+             "bench": {"remote": False}}
+            for name, etype in (("PSU1", "psu"), ("ELOAD1", "eload"))])
+        self.assertTrue(resp["ok"], resp)
+        return s, resp["run_id"]
+
+    def _run_manual(self, s, rid, kind, script):
+        code = (_code(kind).replace("PSU1_REMOTE = True", "PSU1_REMOTE = False")
+                .replace("ELOAD1_REMOTE = True", "ELOAD1_REMOTE = False"))
+        resp, stop = self._run(s, rid, self._module(code), script)
+        self.assertFalse(stop)
+        self.assertTrue(resp["ok"], resp)
+        self.assertFalse(resp["result"]["error"], resp)
+        self.assertNotIn("session_ended", resp)
+        shown = [t for t in self.proto.texts("output") if t.startswith("SAFE STATE")]
+        self.assertEqual(shown, _SAFE_STATES)
+        return resp
+
+    def test_stop_mid_step_shows_every_reminder_and_aborts(self):
+        s, rid = self._acquire_manual()
+        cancel = _line({"cmd": "cancel_run", "run_id": rid})
+        resp = self._run_manual(s, rid, "manual_wait", [
+            _answer(""), _answer(""), ("delay", 0.6, cancel), self._hold()])
+        self.assertTrue(resp["result"]["aborted"])
+        # the reminders after the stop are shown, never awaited
+        self.assertEqual(len(self.proto.texts("prompt")), 2)
+
+    def test_stop_at_a_reminder_still_shows_the_next(self):
+        s, rid = self._acquire_manual()
+        box: dict = {}
+
+        def stop_at_first_reminder(frame):
+            box["id"] = frame["id"]
+            return _line({"cmd": "cancel_run", "run_id": rid})
+
+        def host_answers_it():   # Bench answers the pending prompt on Stop
+            return _line({"cmd": "prompt_response", "id": box["id"], "text": ""})
+
+        self._run_manual(s, rid, "manual", [
+            _answer(""), _answer(""), ("prompt", stop_at_first_reminder),
+            ("delay", 0.05, host_answers_it), self._hold()])
+        self.assertEqual(len(self.proto.texts("prompt")), 3)
 
 
 # ---------------------------------------------------------------------------
@@ -2231,6 +2308,39 @@ class BenchClientLiveTests(unittest.TestCase):
         out = c.end_session()
         self.assertTrue(out.get("ok"), out)
         self.assertTrue(c.dead)
+
+    def test_stop_at_a_body_prompt_keeps_every_later_response_its_own(self):
+        # Bench's Stop at a body prompt: cancel_run posted, then the pending
+        # prompt answered with "" — that late answer must never be answered,
+        # or the NEXT control request reads its response (off-by-one desync).
+        c = self._client()
+        acq = c.acquire_run([
+            {"test_id": "BENCH-Q", "local_name": name, "etype": etype,
+             "bench": {"remote": False}}
+            for name, etype in (("PSU1", "psu"), ("DMM1", "dmm"))])
+        self.assertTrue(acq.get("ok"), acq)
+        rid = acq["run_id"]
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        module = Path(td.name) / "test.py"
+        module.write_text(
+            _code("quick").replace("PSU1_REMOTE = True", "PSU1_REMOTE = False"),
+            encoding="utf-8")
+
+        def on_prompt(text):
+            if "Read DC voltage" in text:
+                c.cancel_run(rid)          # Stop: cancel posted, then "" below
+            return ""
+
+        res = c.run_test(rid, module, Path(td.name) / "results",
+                         on_prompt=on_prompt)
+        self.assertTrue(res["result"]["aborted"], res)
+        self.assertNotIn("session_ended", res)
+        self.assertEqual(c.release_run(rid), {"ok": True, "run_id": rid})
+        dry = c.plan_only([{"test_id": "T", "local_name": "PSU1", "etype": "psu",
+                            "bench": {"remote": False}}])
+        self.assertTrue(dry.get("dry_run"), dry)
+        self.assertTrue(c.end_session().get("ok"))
 
     def test_plan_only_holds_nothing_and_matches_acquire(self):
         # F-dryrun client seam: plan_only == acquire_run + dry_run over the

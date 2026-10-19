@@ -86,13 +86,12 @@ Bench-session frames (requests ride the daemon's NDJSON protocol)
     structured unconfirmed-off snapshot — daemon module docstring).
     Verdicts are read host-side from results.json.
 
-  {"cmd": "cancel_run", "run_id"} -> sets the flag ``ctx.cancelled()`` reads
-    (delivered at step boundaries / _sleep slices / prompt waits).  In-run it
-    is consumed from the queue and acknowledged with an "ack" frame; idle it
-    gets a normal response.
+  {"cmd": "cancel_run", "run_id"} -> sets the flag ``ctx.cancelled()`` reads (at step
+    boundaries / _sleep slices / prompt waits, never in the test's cleanup); in-run it is
+    acknowledged with an "ack" frame, idle it gets a normal response.
 
   {"cmd": "prompt_response", "id", "text"} -> resolves the pending prompt;
-    with no prompt outstanding it is rejected (typed).
+    with none outstanding it is dropped, never answered (the host posts it).
 
 Failure ladder (keyed off the RETURNED Result — emitted ``main`` swallows its
 own exceptions):
@@ -577,18 +576,19 @@ def _cancelled_poll(d: dict, st: BenchState, run: _Run) -> bool:
 
 
 def _prompt_via_frames(d: dict, st: BenchState, run: _Run, text) -> str:
-    """Holder-side ``ctx.prompt``: emit a correlated ``{"kind":"prompt"}``
-    frame and BLOCK on the reader queue for its prompt_response.
-    ``cancel_run`` during the wait aborts the test (OperatorStop — an abort,
-    not an error); any other frame gets a typed rejection."""
-    from rules_packager_base.execution_context import OperatorStop
+    """Holder-side ``ctx.prompt``: a correlated ``{"kind":"prompt"}`` frame, then BLOCK
+    for its prompt_response.  A stop aborts the test (OperatorStop) but never its cleanup
+    (``stop_ignored``): there a prompt after a stop only shows its text (already output)."""
+    from rules_packager_base import OperatorStop, stop_ignored
+    if run.cancelled and stop_ignored():
+        return ""
     pid = next(st.prompt_seq)
     _emit(d, {"kind": "prompt", "id": pid, "text": str(text)})
     rd = _READER
     if rd is None:
         raise RuntimeError("no stdin reader; operator prompt unavailable")
     while True:
-        if run.cancelled:
+        if run.cancelled and not stop_ignored():
             raise OperatorStop("operator stop requested during a prompt")
         item = rd.get()
         if item is _EOF:
@@ -978,7 +978,7 @@ def _cmd_run_test(d: dict, session, req: dict):
 
 def handle(d: dict, session, req: dict):
     """Dispatch one bench-session frame.  Returns ``(response, stop)`` with
-    the same contract as the daemon's ``_dispatch`` branches."""
+    the same contract as the daemon's ``_dispatch`` branches (None: no response)."""
     cmd = req.get("cmd")
     if cmd == "acquire_run":
         resp = _cmd_acquire_run(d, session, req)
@@ -989,10 +989,9 @@ def handle(d: dict, session, req: dict):
         return _cmd_release_run(d, session, req), False
     if cmd == "cancel_run":
         return _cmd_cancel_run(d, session, req), False
-    if cmd == "prompt_response":
-        # Reaching the MAIN loop means no prompt wait consumed it.
-        return {"ok": False, "kind": "Protocol",
-                "error": "prompt_response with no prompt outstanding"}, False
+    if cmd == "prompt_response":   # late (Bench's "" after a Stop): posted, so never answered
+        print(f"late prompt_response dropped (id {req.get('id')!r})", file=sys.stderr)
+        return None, False
     if cmd == "run_test":
         return _cmd_run_test(d, session, req)
     return {"ok": False, "kind": "Protocol",

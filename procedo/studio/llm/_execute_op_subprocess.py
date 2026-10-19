@@ -1117,8 +1117,7 @@ _PROTO_OUT = None
 # Bench-session frames — ALL new machinery lives in the sibling module
 # _bench_session_runner.py; this file only dispatches.  "end_session" is
 # deliberately NOT in this set: it IS the existing "shutdown" frame.
-_BENCH_CMDS = ("acquire_run", "release_run", "run_test", "cancel_run",
-               "prompt_response")
+_BENCH_CMDS = ("acquire_run", "release_run", "run_test", "cancel_run", "prompt_response")
 def _sib(name: str):
     """Lazy sibling import, never through the procedo.studio package (PySide6
     is absent from project venvs); sys.modules is the cache."""
@@ -1271,7 +1270,8 @@ def main() -> None:
             continue
         refused = _sib("_engine_ops").refusal(role, req)
         response, stop = (refused, False) if refused else _dispatch(_SESSION, req)
-        _write_frame(proto_out, response)
+        if response is not None:       # a late prompt_response gets none
+            _write_frame(proto_out, response)
         if stop:
             break
     # EOF / shutdown — final idempotent teardown (no-op if shutdown already ran).

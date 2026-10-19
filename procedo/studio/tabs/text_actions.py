@@ -13,8 +13,10 @@ import logging
 
 from PySide6.QtWidgets import QPushButton
 
+from ..core.proposal import FileChange, FileText, PartlyApplied, Proposal, current_test
 from ..llm import LLMTask
 from ..llm.reconstruction import reconstructed_or_error
+from ..pack_ops import engine_async
 
 log = logging.getLogger(__name__)
 
@@ -113,6 +115,8 @@ class TextActionsMixin:
         from ..pack_ops import pack_parsers
         text = self.text_card.editor.toPlainText()
         for button, tip, caps in self._pack_gates():
+            if engine_async.busy(button):
+                continue
             try:
                 missing = []
                 for cap in caps:
@@ -150,13 +154,21 @@ class TextActionsMixin:
         original = self.text_card.editor.toPlainText()
         if not original:
             return
+        project_root = getattr(self.project_manager, "project_root", None)
+        engine_async.call(
+            project_root,
+            lambda: pack_parsers.sync_equipment_from_steps(original, project_root=project_root),
+            lambda answer: self._sync_equipment_done(original, answer),
+            button=self.sync_equipment_btn)
+
+    def _sync_equipment_done(self, original: str, answer) -> None:
+        from ..pack_ops import pack_parsers
         try:
-            project_root = getattr(self.project_manager, "project_root", None)
-            new_text, warnings = pack_parsers.sync_equipment_from_steps(
-                original, project_root=project_root,
-            )
+            new_text, warnings = answer()
         except pack_parsers.ParserUnavailable as exc:
             self.show_error("Sync Equipment failed", str(exc))
+            return
+        if not engine_async.unchanged(self.text_card.editor, original, self.status_message.emit):
             return
         if any("[SYNCEQP_BLOCKED]" in w for w in warnings):
             self.status_message.emit(
@@ -202,13 +214,19 @@ class TextActionsMixin:
         original = self.text_card.editor.toPlainText()
         if not original:
             return
+        project_root = getattr(self.project_manager, "project_root", None)
+        engine_async.call(
+            project_root, lambda: pack_parsers.sync_meta_text(original, project_root=project_root),
+            lambda answer: self._sync_meta_done(original, answer), button=self.sync_meta_btn)
+
+    def _sync_meta_done(self, original: str, answer) -> None:
+        from ..pack_ops import pack_parsers
         try:
-            project_root = getattr(self.project_manager, "project_root", None)
-            new_text, warnings = pack_parsers.sync_meta_text(
-                original, project_root=project_root,
-            )
+            new_text, warnings = answer()
         except pack_parsers.ParserUnavailable as exc:
             self.show_error("Sync Meta failed", str(exc))
+            return
+        if not engine_async.unchanged(self.text_card.editor, original, self.status_message.emit):
             return
         if new_text == original:
             self.status_message.emit(
@@ -239,13 +257,20 @@ class TextActionsMixin:
         original = self.text_card.editor.toPlainText()
         if not original:
             return
+        project_root = getattr(self.project_manager, "project_root", None)
+        engine_async.call(
+            project_root,
+            lambda: pack_parsers.renumber_steps_text(original, project_root=project_root),
+            lambda answer: self._renumber_done(original, answer), button=self.renumber_steps_btn)
+
+    def _renumber_done(self, original: str, answer) -> None:
+        from ..pack_ops import pack_parsers
         try:
-            project_root = getattr(self.project_manager, "project_root", None)
-            renumbered = pack_parsers.renumber_steps_text(
-                original, project_root=project_root,
-            )
+            renumbered = answer()
         except pack_parsers.ParserUnavailable as exc:
             self.show_error("Renumber failed", str(exc))
+            return
+        if not engine_async.unchanged(self.text_card.editor, original, self.status_message.emit):
             return
         if renumbered == original:
             self.status_message.emit("Steps already sequential")
@@ -263,9 +288,191 @@ class TextActionsMixin:
         )
 
     def _on_parse_and_generate(self):
-        """Strict one-click: Text → JSON → test.py, offered as a proposal card.
-        Delegates to the shared LLMTabMixin helper."""
-        self._run_deterministic_parse_and_generate()
+        """Strict one-click: Text → JSON → test.py, offered as one proposal card.
+
+        Reads the live text editor, parses to JSON then generates code deterministically
+        (no LLM), each off the GUI thread, aborts on any parser/codegen warning, then — when
+        procedure.json or test.py already has content that would change — waits for the
+        card's Accept before :meth:`_write_parse_and_generate` writes ``procedure_text`` (if
+        dirty), ``procedure.json`` and ``test.py``.
+
+        The card's bases come from the ArtifactManager. The text and JSON editors mirror
+        their content there on every keystroke, so those bases are fresh. The ``test_code``
+        base is whatever was last loaded/saved (no Text tab has a code editor to mirror
+        from) — the diff preview for test.py may therefore lag an out-of-band edit, but the
+        write itself is always correct.
+        """
+        from ..pack_ops import pack_parsers
+        sent = self.text_card.editor.toPlainText()
+        text = sent.strip()
+        if not text:
+            self.show_warning("No Content", "Procedure text is empty. Add text first.")
+            return
+        project_root = getattr(self.project_manager, "project_root", None)
+        engine_async.call(
+            project_root, lambda: pack_parsers.parse_text(text, project_root=project_root),
+            lambda answer: self._parse_and_generate_parsed(sent, answer),
+            button=self.parse_and_generate_btn)
+
+    def _parse_and_generate_abort(self, reason: str) -> None:
+        self.main_window.dock.chat_panel.add_system_message(reason, tone="danger")
+
+    def _parse_and_generate_parsed(self, sent: str, answer) -> None:
+        """Text → JSON (strict) answered: on to JSON → code."""
+        from ..pack_ops import pack_parsers
+        try:
+            procedure, parse_warnings = answer()
+        except pack_parsers.ParserUnavailable as e:
+            self.show_warning("Parser Unavailable", str(e))
+            return
+        except Exception as e:
+            log.exception("Parse + Generate: parse_text raised")
+            from ..dialogs.validator_error_dialog import ValidatorErrorDialog
+            ValidatorErrorDialog.show_from_exception(
+                e, title="Parse + Generate — parser findings",
+                intro="The deterministic Text→JSON parser rejected the input.",
+                parent=self,
+            )
+            return
+
+        if parse_warnings:
+            warn_lines = "\n".join(f"  • {w}" for w in parse_warnings)
+            self._parse_and_generate_abort(
+                f"✗ Parse + Generate aborted — parser produced {len(parse_warnings)} warning(s).")
+            self.show_warning(
+                "Parse + Generate — strict",
+                f"Parser produced {len(parse_warnings)} warning(s); aborting "
+                f"(strict mode):\n\n{warn_lines}",
+            )
+            return
+        project_root = getattr(self.project_manager, "project_root", None)
+        engine_async.call(
+            project_root, lambda: pack_parsers.generate_code(procedure, project_root=project_root),
+            lambda answer: self._parse_and_generate_generated(sent, procedure, answer),
+            button=self.parse_and_generate_btn)
+
+    def _parse_and_generate_generated(self, sent: str, procedure: dict, answer) -> None:
+        """JSON → code (strict) answered: offer both files as one card."""
+        from ..core import ArtifactType
+        from ..pack_ops import pack_parsers
+
+        # ensure_ascii=False matches the LLM JSON-proposal write path so the
+        # diff base (artifact_manager content) doesn't show spurious \uXXXX vs
+        # literal-unit-symbol noise (µ, ±, Ω are common in this domain).
+        procedure_str = json.dumps(procedure, indent=2, ensure_ascii=False)
+        try:
+            code, gen_warnings = answer()
+        except pack_parsers.ParserUnavailable as e:
+            self.show_warning("Parser Unavailable", str(e))
+            return
+        except Exception as e:
+            log.exception("Parse + Generate: generate_code raised")
+            from ..dialogs.validator_error_dialog import ValidatorErrorDialog
+            ValidatorErrorDialog.show_from_exception(
+                e, title="Parse + Generate — codegen findings",
+                intro="The deterministic JSON→Code generator failed.",
+                parent=self,
+            )
+            return
+
+        if gen_warnings:
+            warn_lines = "\n".join(f"  • {w}" for w in gen_warnings)
+            self._parse_and_generate_abort(
+                f"✗ Parse + Generate aborted — codegen produced {len(gen_warnings)} warning(s).")
+            self.show_warning(
+                "Parse + Generate — strict",
+                f"Codegen produced {len(gen_warnings)} warning(s); aborting "
+                f"before writing files (strict mode):\n\n{warn_lines}",
+            )
+            return
+        if not engine_async.unchanged(self.text_card.editor, sent, self.status_message.emit):
+            return
+
+        current_code = (self.artifact_manager.get_content(ArtifactType.TEST_CODE) or "").strip()
+        # Preserve operator-pinned bench-identification constants (VISA/COM,
+        # baud, timeout, remote, channel) from the existing test.py. Codegen
+        # emits inventory defaults (ASRL1::INSTR, COM1) that would otherwise
+        # clobber the operator's real bench addresses on every regen. Same
+        # merge json_code_tab's Quick Code applies.
+        if current_code:
+            from ..llm.code_constants_merge import preserve_bench_constants
+            equipment_ids = [
+                eq.get("id") for eq in (procedure.get("equipment") or [])
+                if isinstance(eq, dict) and eq.get("id")
+            ]
+            code, replaced = preserve_bench_constants(code, current_code, equipment_ids)
+            if replaced:
+                log.info(
+                    "Parse + Generate: preserved %d operator-pinned constant(s): %s",
+                    len(replaced), ", ".join(replaced),
+                )
+
+        def current(kind):
+            return lambda: self.artifact_manager.get_content(kind) or ""
+
+        def rejected() -> None:
+            kept = proposal.written()  # an Accept that failed part-way wrote these
+            self._parse_and_generate_abort(
+                "✗ Parse + Generate — changes rejected."
+                + (f" {' + '.join(kept)} stays as written." if kept else ""))
+
+        proposal = Proposal(
+            [FileChange("procedure.json", current(ArtifactType.PROCEDURE_JSON), procedure_str),
+             FileChange("test.py", current(ArtifactType.TEST_CODE), code)],
+            lambda: self._write_parse_and_generate(procedure_str, code), rejected,
+            inputs=[FileText("procedure_text.md", self.text_card.editor.toPlainText)],
+            test=current_test(self.artifact_manager))
+        if any(change.base.strip() for change in proposal.changes):
+            self.main_window.dock.chat_panel.offer_proposal(self.tab_context, proposal)
+        else:  # nothing there yet to overwrite: written at once
+            proposal.accept()
+
+    def _write_parse_and_generate(self, procedure_str: str, code: str) -> None:
+        """Parse + Generate accepted: save the text (if modified), write procedure.json then
+        test.py, and record them in sync. Raises when a file cannot be written —
+        :class:`PartlyApplied` once procedure.json was. Every view's editor of either file shows
+        the artifact afterwards: what was written, or what it held when its write failed."""
+        from ..core import ArtifactType
+
+        if self.text_card.dirty and not self.text_card.save():
+            raise OSError(f"{self.text_card.file_name} could not be saved")
+
+        written: list[str] = []
+        files = ((ArtifactType.PROCEDURE_JSON, "procedure.json", procedure_str),
+                 (ArtifactType.TEST_CODE, "test.py", code))
+        try:
+            for kind, name, content in files:
+                self._write_artifact(kind, content)
+                written.append(name)
+        except Exception as exc:
+            if written:
+                raise PartlyApplied(f"{' + '.join(written)} saved, {name} not: {exc}") from exc
+            raise
+        finally:
+            for tab in self.main_window._get_llm_tabs():
+                for card in tab.cards:
+                    if card.kind in (ArtifactType.PROCEDURE_JSON, ArtifactType.TEST_CODE):
+                        card.load()
+
+        self.main_window.dock.chat_panel.add_system_message(
+            "⚡ Parse + Generate complete — procedure.json and test.py saved.", tone="success"
+        )
+        self.status_message.emit("⚡ Parse + Generate complete")
+        # Both files were just generated from the same text: they are in sync.
+        self.main_window._document_controller.mark_in_sync()
+        self.artifact_saved.emit()
+
+    def _write_artifact(self, kind, content: str) -> None:
+        """Save *content* as the *kind* artifact; when the write raises, the artifact keeps what
+        it held."""
+        held = self.artifact_manager.get_content(kind)
+        self.artifact_manager.set_content(kind, content)
+        try:
+            self.artifact_manager.save_artifact(kind)
+        except Exception:
+            self.artifact_manager.set_content(kind, held)
+            raise
+
 
     # ---- the assistant on the text --------------------------------------------------------
 
@@ -298,10 +505,19 @@ class TextActionsMixin:
         # body sections; identity is parser-owned.
         project_root = getattr(self.project_manager, "project_root", None)
         override = self._task_section_override(task)
-        reconstructed, best_effort, err = reconstructed_or_error(
-            content_str, current_content,
-            task_override=override, project_root=project_root,
-        )
+        test = self._ensure_run_state().test
+        engine_async.call(
+            project_root,
+            lambda: reconstructed_or_error(content_str, current_content,
+                                           task_override=override, project_root=project_root),
+            lambda answer: self._offer_reconstructed(current_content, test, answer))
+
+    def _offer_reconstructed(self, current_content: str, test, answer) -> None:
+        """The reconstruction answered: offer it as a card for the text it was made from."""
+        reconstructed, best_effort, err = answer()
+        if not engine_async.unchanged(self.text_card.editor, current_content,
+                                      self.status_message.emit):
+            return
         banner = ""
         if err:
             if best_effort is None:
@@ -320,5 +536,4 @@ class TextActionsMixin:
             content_str = best_effort
         else:
             content_str = reconstructed
-        self.propose_edit(self.text_card, content_str, banner=banner,
-                          test=self._ensure_run_state().test)
+        self.propose_edit(self.text_card, content_str, banner=banner, test=test)

@@ -22,7 +22,8 @@ import procedo.studio.tabs.llm_tab_mixin as llm_tab_mixin
 import procedo.studio.tabs.text_actions as text_actions
 
 from .test_main_window_characterization import (
-    _make_project, _open_project, make_window as make_window, mbox as mbox, qapp as qapp,
+    _make_project, _open_project, _settle, make_window as make_window, mbox as mbox,
+    qapp as qapp,
 )
 
 TEXT = "# t1\n\nBody of t1.\n"
@@ -166,6 +167,7 @@ def test_a_proposal_waits_as_a_card_and_accept_applies_it_as_the_dialog_did(open
     if kind == "text":
         view, card, offer = w.text_only_tab, w.text_only_tab.text_card, PROPOSED_TEXT
         view._handle_text_proposal(_llm(offer))
+        _settle()
         expected = offer
     elif kind == "json":
         view, card = w.json_code_tab, w.json_code_tab.json_card
@@ -204,6 +206,7 @@ def test_reject_leaves_the_artifact_unchanged(opened):
     w = opened
     view = w.text_only_tab
     view._handle_text_proposal(_llm(PROPOSED_TEXT))
+    _settle()
     _cards(w)[0].reject_button.click()
     assert view.text_card.editor.toPlainText() == TEXT
     assert w.artifact_manager.get_content(view.text_card.kind) == TEXT
@@ -230,6 +233,7 @@ def test_a_card_whose_file_changed_since_applies_only_from_the_diff_against_the_
     w = opened
     view = w.text_only_tab
     view._handle_text_proposal(_llm(PROPOSED_TEXT))
+    _settle()
     card = _cards(w)[0]
     view.text_card.editor.setPlainText(TEXT + "typed after the proposal\n")
 
@@ -252,7 +256,9 @@ def test_accepting_one_card_makes_the_others_for_that_file_stale(opened):
     w = opened
     view = w.text_only_tab
     view._handle_text_proposal(_llm(PROPOSED_TEXT))
+    _settle()
     view._handle_text_proposal(_llm(TEXT + "\nAnother idea.\n"))
+    _settle()
     first, second = _cards(w)
     first.accept_button.click()
     assert second.proposal.stale()
@@ -269,6 +275,7 @@ def test_view_diff_decides_as_the_cards_buttons(opened, monkeypatch, button, sta
     w = opened
     view = w.text_only_tab
     view._handle_text_proposal(_llm(PROPOSED_TEXT))
+    _settle()
     shown = _review(monkeypatch, button)
     _cards(w)[0].diff_button.click()
     assert shown == [(TEXT, PROPOSED_TEXT)]
@@ -280,8 +287,10 @@ def test_a_card_survives_a_view_switch_and_waits_in_the_view_that_asked(opened):
     w = opened
     view = w.text_only_tab
     w.text_json_tab._handle_text_proposal(_llm(PROPOSED_TEXT))  # asked by a view not shown
+    _settle()
     assert _cards(w) == []
     view._handle_text_proposal(_llm(PROPOSED_TEXT))
+    _settle()
     proposal = _cards(w)[0].proposal
 
     _show(w, w.json_code_tab)
@@ -300,6 +309,7 @@ def test_opening_another_test_discards_the_waiting_cards(opened):
     w = opened
     view = w.text_only_tab
     view._handle_text_proposal(_llm(PROPOSED_TEXT))
+    _settle()
     w.json_code_tab._handle_code_proposal(_llm("def main():\n    return 2\n"))
     waiting = [m.proposal for v in w._get_llm_tabs() for m in v.tab_context.messages
                if isinstance(m, ProposalMessage)]
@@ -325,6 +335,7 @@ def test_a_quick_parse_result_waits_as_a_card_unless_the_json_is_empty(opened, m
     before = view.json_card.editor.toPlainText()
 
     view._on_quick_parse()
+    _settle()
     assert view.json_card.editor.toPlainText() == before
     (card,) = _cards(w)
     card.accept_button.click()
@@ -333,6 +344,7 @@ def test_a_quick_parse_result_waits_as_a_card_unless_the_json_is_empty(opened, m
 
     view.json_card.set_text("")
     view._on_quick_parse()  # nothing there to overwrite: no card
+    _settle()
     assert view.json_card.editor.toPlainText() == expected
     assert len(_cards(w)) == 1
 
@@ -364,6 +376,7 @@ def test_a_reply_that_arrives_after_a_test_switch_is_never_a_card_for_the_new_te
     on_disk = (t2 / "procedure_text.md").read_bytes()
 
     view._apply_proposals(SimpleNamespace(procedure_text=_llm(PROPOSED_TEXT)))  # t1's reply
+    _settle()
 
     assert _cards(w) == []
     message = _last(view)
@@ -375,6 +388,7 @@ def test_a_reply_that_arrives_after_a_test_switch_is_never_a_card_for_the_new_te
     w.open_test(w.root / "tests" / "t1")
     view._run_task_async(LLMTask.REVIEW_TEXT_PROCEDURE)  # asked on the test still open
     view._apply_proposals(SimpleNamespace(procedure_text=_llm(PROPOSED_TEXT)))
+    _settle()
     assert [c.proposal.state for c in _cards(w)] == [PENDING]
 
 
@@ -429,6 +443,7 @@ def generated(opened, monkeypatch):
     w.on_disk = {name: (w.t1 / name).read_bytes()
                  for name in ("procedure_text.md", "procedure.json", "test.py")}
     w.text_only_tab._on_parse_and_generate()
+    _settle(lambda: _cards(w))
     (w.card,) = _cards(w)
     return w
 
@@ -524,7 +539,9 @@ def test_an_accept_whose_text_save_fails_writes_nothing(generated, read_only, mb
     read_only(w.t1 / "procedure_text.md")
     view.text_card.editor.setPlainText(TEXT + "Edited.\n")
     # the text changed after the card: Parse + Generate is run again on the edited text
+    asked = len(_cards(w))
     view._on_parse_and_generate()
+    _settle(lambda: len(_cards(w)) > asked)
     card = _cards(w)[-1]
 
     card.accept_button.click()
@@ -572,6 +589,7 @@ def test_a_reply_for_a_test_deleted_and_recreated_is_dropped(opened, monkeypatch
 
     assert view._drop_late_reply()
     view._apply_proposals(SimpleNamespace(procedure_text=_llm(PROPOSED_TEXT)))
+    _settle()
     assert _cards(w) == []
     assert view.text_card.editor.toPlainText() == "# t1\n\nA new t1.\n"
 
@@ -583,6 +601,7 @@ def test_a_proposal_that_failed_validation_shows_its_findings_before_any_accept(
     monkeypatch.setattr(text_actions, "reconstructed_or_error",
                         lambda content, current, **kw: (None, content, "Step 1: no verb"))
     view._handle_text_proposal(_llm(PROPOSED_TEXT))
+    _settle()
     (card,) = _cards(w)
 
     assert not card.accept_button.isVisibleTo(card)

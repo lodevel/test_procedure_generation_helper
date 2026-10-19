@@ -12,6 +12,7 @@ from pathlib import Path
 # The Qt adapters that live next to the logic they drive.
 _QT_ADAPTERS = {
     "procedo.studio.llm.worker",  # QThread around one LLM request
+    "procedo.studio.pack_ops.engine_async",  # engine calls off the GUI thread
     "procedo.studio.authoring.skill_menu",  # the Skills menu (QAction / dialogs)
     "procedo.studio.authoring.wizard_api",  # makes a wizard's skill-chat widget
 }

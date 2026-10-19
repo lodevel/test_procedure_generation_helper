@@ -24,6 +24,8 @@ Conventions (mirrors the host repo's test_main_window_run_report.py):
 
 import json
 import os
+import threading
+import time
 
 import pytest
 
@@ -38,6 +40,7 @@ from PySide6.QtWidgets import (  # noqa: E402
 )
 
 import procedo.studio.main_window as mw_mod  # noqa: E402
+from procedo.studio.pack_ops import engine_async  # noqa: E402
 from procedo.core import app_settings  # noqa: E402
 from procedo.studio.llm.backend_factory import BACKEND_TYPE_NONE  # noqa: E402
 
@@ -134,6 +137,29 @@ def _make_project(root: Path, tests=("t1",), with_bundle=True) -> Path:
         (d / "test.py").write_text("def main():\n    return 0\n",
                                    encoding="utf-8")
     return root
+
+
+def _settle(until=None, timeout=10):
+    """Pump until ``until()`` holds; without one, until no engine call has run for 50 ms (each
+    runs off the GUI thread, and an answer may start another)."""
+    def quiet():
+        return not any(t.name == engine_async.THREAD for t in threading.enumerate())
+
+    end = time.monotonic() + timeout
+    quiet_since = None
+    while time.monotonic() < end:
+        QApplication.processEvents()
+        if until is not None:
+            if until():
+                return
+        elif not quiet():
+            quiet_since = None
+        elif quiet_since is None:
+            quiet_since = time.monotonic()
+        elif time.monotonic() - quiet_since > 0.05:
+            return
+        time.sleep(0.001)
+    assert until is None or until(), "the awaited engine answer never landed"
 
 
 def _open_project(w, root: Path) -> None:
@@ -580,6 +606,8 @@ def test_parse_and_generate_marks_in_sync(make_window, monkeypatch, tmp_path, ta
                         lambda proc, project_root=None: ("def main():\n    return 1\n", []))
     view = getattr(w, tab)
     view._on_parse_and_generate()
+    _settle(lambda: view.tab_context.messages
+            and isinstance(view.tab_context.messages[-1], ProposalMessage))
     assert "return 1" not in (t1 / "test.py").read_text(encoding="utf-8")  # waits for Accept
     card = view.tab_context.messages[-1]
     assert isinstance(card, ProposalMessage)
@@ -610,6 +638,7 @@ def test_parse_and_generate_with_nothing_changed_opens_no_review(make_window, mo
                         lambda text, project_root=None: ({"id": "t1", "steps": []}, []))
     monkeypatch.setattr(pack_parsers, "generate_code", lambda proc, project_root=None: (code, []))
     w.text_only_tab._on_parse_and_generate()
+    _settle()
 
     assert not any(isinstance(m, ProposalMessage) for m in w.text_only_tab.tab_context.messages)
     assert w.session_state.artifacts_in_sync is True

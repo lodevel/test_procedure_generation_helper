@@ -13,12 +13,12 @@ Instance attributes expected on ``self`` (provided by BaseTab / __init__):
   tab_id, tab_context, task_config_manager, main_window, status_message
 """
 
-import json
+import functools
 import logging
 from datetime import datetime
 from typing import Optional
 
-from ..core.proposal import FileChange, FileText, PartlyApplied, Proposal, current_test
+from ..core.proposal import current_test
 from ..llm import LLMTask, ChatMessage
 from ..llm.prompt_builder import PromptBuilder, TaskPromptNotDeclaredError
 from ..llm.output_contracts import get_contract_for_tab
@@ -32,6 +32,7 @@ from ..llm.validator_dispatch import (
     validate_response,
 )
 from ..llm.worker import LLMWorker
+from ..pack_ops import engine_async
 from ..llm.transcript_replay import serialize_transcript
 
 log = logging.getLogger(__name__)
@@ -39,185 +40,6 @@ log = logging.getLogger(__name__)
 
 class LLMTabMixin:
     """Mixin providing the shared LLM async pipeline for editor tabs."""
-
-    # ------------------------------------------------------------------ #
-    # Deterministic one-click pipeline (shared by Text tabs)              #
-    # ------------------------------------------------------------------ #
-
-    def _run_deterministic_parse_and_generate(self):
-        """Strict one-click: Text → JSON → test.py, offered as one proposal card.
-
-        Shared by :class:`TextOnlyTab` and :class:`TextJsonTab`. Reads the
-        live text editor, parses to JSON and generates code deterministically
-        (no LLM), aborts on any parser/codegen warning, then — when
-        procedure.json or test.py already has content that would change —
-        waits for the card's Accept before :meth:`_write_parse_and_generate`
-        writes ``procedure_text`` (if dirty), ``procedure.json`` and ``test.py``.
-
-        The card's bases come from the ArtifactManager. The text and JSON editors
-        mirror their content there on every keystroke, so those bases are
-        fresh. The ``test_code`` base is whatever was last loaded/saved (no
-        Text tab has a code editor to mirror from) — the diff preview for
-        test.py may therefore lag an out-of-band edit, but the write itself
-        is always correct.
-        """
-        from ..core import ArtifactType
-        from ..pack_ops import pack_parsers
-
-        text = self.text_card.editor.toPlainText().strip()
-        if not text:
-            self.show_warning("No Content", "Procedure text is empty. Add text first.")
-            return
-
-        project_root = getattr(self.project_manager, "project_root", None)
-
-        def _abort(reason: str):
-            self.main_window.dock.chat_panel.add_system_message(reason, tone="danger")
-
-        # --- Text → JSON (strict) ---
-        try:
-            procedure, parse_warnings = pack_parsers.parse_text(
-                text, project_root=project_root,
-            )
-        except pack_parsers.ParserUnavailable as e:
-            self.show_warning("Parser Unavailable", str(e))
-            return
-        except Exception as e:
-            log.exception("Parse + Generate: parse_text raised")
-            from ..dialogs.validator_error_dialog import ValidatorErrorDialog
-            ValidatorErrorDialog.show_from_exception(
-                e, title="Parse + Generate — parser findings",
-                intro="The deterministic Text→JSON parser rejected the input.",
-                parent=self,
-            )
-            return
-
-        if parse_warnings:
-            warn_lines = "\n".join(f"  • {w}" for w in parse_warnings)
-            _abort(f"✗ Parse + Generate aborted — parser produced {len(parse_warnings)} warning(s).")
-            self.show_warning(
-                "Parse + Generate — strict",
-                f"Parser produced {len(parse_warnings)} warning(s); aborting "
-                f"(strict mode):\n\n{warn_lines}",
-            )
-            return
-
-        # ensure_ascii=False matches the LLM JSON-proposal write path so the
-        # diff base (artifact_manager content) doesn't show spurious \uXXXX vs
-        # literal-unit-symbol noise (µ, ±, Ω are common in this domain).
-        procedure_str = json.dumps(procedure, indent=2, ensure_ascii=False)
-
-        # --- JSON → code (strict) ---
-        try:
-            code, gen_warnings = pack_parsers.generate_code(
-                procedure, project_root=project_root,
-            )
-        except pack_parsers.ParserUnavailable as e:
-            self.show_warning("Parser Unavailable", str(e))
-            return
-        except Exception as e:
-            log.exception("Parse + Generate: generate_code raised")
-            from ..dialogs.validator_error_dialog import ValidatorErrorDialog
-            ValidatorErrorDialog.show_from_exception(
-                e, title="Parse + Generate — codegen findings",
-                intro="The deterministic JSON→Code generator failed.",
-                parent=self,
-            )
-            return
-
-        if gen_warnings:
-            warn_lines = "\n".join(f"  • {w}" for w in gen_warnings)
-            _abort(f"✗ Parse + Generate aborted — codegen produced {len(gen_warnings)} warning(s).")
-            self.show_warning(
-                "Parse + Generate — strict",
-                f"Codegen produced {len(gen_warnings)} warning(s); aborting "
-                f"before writing files (strict mode):\n\n{warn_lines}",
-            )
-            return
-
-        current_code = (self.artifact_manager.get_content(ArtifactType.TEST_CODE) or "").strip()
-        # Preserve operator-pinned bench-identification constants (VISA/COM,
-        # baud, timeout, remote, channel) from the existing test.py. Codegen
-        # emits inventory defaults (ASRL1::INSTR, COM1) that would otherwise
-        # clobber the operator's real bench addresses on every regen. Same
-        # merge json_code_tab's Quick Code applies.
-        if current_code:
-            from ..llm.code_constants_merge import preserve_bench_constants
-            equipment_ids = [
-                eq.get("id") for eq in (procedure.get("equipment") or [])
-                if isinstance(eq, dict) and eq.get("id")
-            ]
-            code, replaced = preserve_bench_constants(code, current_code, equipment_ids)
-            if replaced:
-                log.info(
-                    "Parse + Generate: preserved %d operator-pinned constant(s): %s",
-                    len(replaced), ", ".join(replaced),
-                )
-
-        def current(kind):
-            return lambda: self.artifact_manager.get_content(kind) or ""
-
-        def rejected() -> None:
-            kept = proposal.written()  # an Accept that failed part-way wrote these
-            _abort("✗ Parse + Generate — changes rejected." +
-                   (f" {' + '.join(kept)} stays as written." if kept else ""))
-
-        proposal = Proposal(
-            [FileChange("procedure.json", current(ArtifactType.PROCEDURE_JSON), procedure_str),
-             FileChange("test.py", current(ArtifactType.TEST_CODE), code)],
-            lambda: self._write_parse_and_generate(procedure_str, code), rejected,
-            inputs=[FileText("procedure_text.md", self.text_card.editor.toPlainText)],
-            test=current_test(self.artifact_manager))
-        if any(change.base.strip() for change in proposal.changes):
-            self.main_window.dock.chat_panel.offer_proposal(self.tab_context, proposal)
-        else:  # nothing there yet to overwrite: written at once
-            proposal.accept()
-
-    def _write_parse_and_generate(self, procedure_str: str, code: str) -> None:
-        """Parse + Generate accepted: save the text (if modified), write procedure.json then
-        test.py, and record them in sync. Raises when a file cannot be written —
-        :class:`PartlyApplied` once procedure.json was. Every view's editor of either file shows
-        the artifact afterwards: what was written, or what it held when its write failed."""
-        from ..core import ArtifactType
-
-        if self.text_card.dirty and not self.text_card.save():
-            raise OSError(f"{self.text_card.file_name} could not be saved")
-
-        written: list[str] = []
-        files = ((ArtifactType.PROCEDURE_JSON, "procedure.json", procedure_str),
-                 (ArtifactType.TEST_CODE, "test.py", code))
-        try:
-            for kind, name, content in files:
-                self._write_artifact(kind, content)
-                written.append(name)
-        except Exception as exc:
-            if written:
-                raise PartlyApplied(f"{' + '.join(written)} saved, {name} not: {exc}") from exc
-            raise
-        finally:
-            for tab in self.main_window._get_llm_tabs():
-                for card in tab.cards:
-                    if card.kind in (ArtifactType.PROCEDURE_JSON, ArtifactType.TEST_CODE):
-                        card.load()
-
-        self.main_window.dock.chat_panel.add_system_message(
-            "⚡ Parse + Generate complete — procedure.json and test.py saved.", tone="success"
-        )
-        self.status_message.emit("⚡ Parse + Generate complete")
-        # Both files were just generated from the same text: they are in sync.
-        self.main_window._document_controller.mark_in_sync()
-        self.artifact_saved.emit()
-
-    def _write_artifact(self, kind, content: str) -> None:
-        """Save *content* as the *kind* artifact; when the write raises, the artifact keeps what
-        it held."""
-        held = self.artifact_manager.get_content(kind)
-        self.artifact_manager.set_content(kind, content)
-        try:
-            self.artifact_manager.save_artifact(kind)
-        except Exception:
-            self.artifact_manager.set_content(kind, held)
-            raise
 
     # ------------------------------------------------------------------ #
     # Task dispatch                                                        #
@@ -233,6 +55,10 @@ class LLMTabMixin:
         #   (b) Auto-retry — ``begin_retry`` put the FSM in LLM_REQUESTED;
         #       the run goes on, attempt counter and test included.
         run_state = self._ensure_run_state()
+        if getattr(self, "_validator_check", None) is not None:
+            # A check still running belongs to the run replaced now: its answer is dropped.
+            self._validator_check = None
+            self.main_window.dock.chat_panel.set_llm_active(False)
         if not retry:
             run_state.reset_to_idle()
             run_state.start_run(task, self._resolve_max_attempts(task),
@@ -418,27 +244,20 @@ class LLMTabMixin:
                 "text only.",
             )
 
-        # 6. Drive the validator-in-the-loop FSM.
-        #
-        #   VALIDATING → AWAITING_REVIEW (validator passed / skipped)
-        #     → proposal card in the chat → APPLIED / REJECTED → IDLE
-        #   VALIDATING → VALIDATOR_FAIL_RETRYING (auto-retry)
-        #     → re-spawn worker; this method re-enters on the next response.
-        #   VALIDATING → FAILED_OUT_OF_RETRIES (toggle off / out of attempts)
-        #     → proposal card with a warning → APPLIED / REJECTED → IDLE
-        fsm_decision = self._drive_validator_fsm(response)
-        if fsm_decision == "retry":
-            return
-        if fsm_decision == "halt_for_operator":
-            # Validator surfaced only operator-only errors (test ID,
-            # description, pack versions). Retrying would waste turns —
-            # surface findings to the operator without applying.
-            return
+        # 6. Drive the validator-in-the-loop FSM. The check runs on a worker (~6 engine round
+        #    trips); steps 6b-7 resume in :meth:`_on_validator_result` when it answers.
+        #   VALIDATING → AWAITING_REVIEW (passed / skipped) → proposal card → APPLIED / REJECTED
+        #   VALIDATING → VALIDATOR_FAIL_RETRYING → re-spawn worker; re-enters on its response
+        #   VALIDATING → FAILED_OUT_OF_RETRIES (toggle off / out of attempts) → card with warning
+        self._start_validator_check(response)
 
-        # 7. Apply proposals and finish. Thread the task so the apply-path
-        # reconstruction uses the same per-task section override as the
-        # prompt emit-list and the before-validate reconstruction.
-        self._apply_proposals(response, task=run_state.task)
+    def _finish_response(self, response, fsm_decision: str) -> None:
+        """6b + 7. A retry or an operator-only halt ends here (the retry's reply re-enters the
+        handler; on a halt the findings are the operator's to fix); else apply the proposals,
+        the task threaded for the apply-path reconstruction's per-task section override."""
+        if fsm_decision in ("retry", "halt_for_operator"):
+            return
+        self._apply_proposals(response, task=self._ensure_run_state().task)
         self.status_message.emit(f"LLM task completed ({response.total_tokens} tokens)")
 
     # ------------------------------------------------------------------ #
@@ -730,8 +549,54 @@ class LLMTabMixin:
             log.exception("get_auto_correct_enabled() raised; defaulting to ON")
             return True
 
-    def _drive_validator_fsm(self, response) -> str:
-        """Advance the FSM by one step against the LLM response.
+    def _start_validator_check(self, response) -> None:
+        """Start the deterministic check of *response* on a worker; the chat stays locked (no
+        new message, nothing to cancel) until :meth:`_on_validator_result` resumes. Without a
+        run in LLM_REQUESTED (defensive: a request fired outside the normal flow) the FSM is
+        reset and the proposals are applied unchecked."""
+        run_state = self._ensure_run_state()
+        if run_state.state != RunStateKind.LLM_REQUESTED:
+            log.debug("FSM in %s when handling a response: reset, apply-only", run_state.state.name)
+            run_state.reset_to_idle()
+            self._finish_response(response, "continue")
+            return
+        run_state.begin_validating(response)
+        # The inputs are read here, on the GUI thread; the worker only reads its copies.
+        check = self._validator_check_call(response)
+        token = self._validator_check = object()
+        self.main_window.dock.chat_panel.set_llm_active(True, cancellable=False)
+        self.status_message.emit("Checking the proposal…")
+        engine_async.call(getattr(self.tab_context.project_manager, "project_root", None), check,
+                          lambda answer: self._on_validator_answer(token, answer))
+
+    def _claim_validator_check(self, token) -> bool:
+        """True when *token*'s check is the one still awaited (it no longer is, the chat unlocks);
+        False for a late answer: a newer run, or a closed test, dropped the check."""
+        if token is not getattr(self, "_validator_check", None):
+            log.info("Dropped a late proposal-check result: its run was replaced")
+            return False
+        self._validator_check = None
+        self.main_window.dock.chat_panel.set_llm_active(False)
+        return True
+
+    def _on_validator_answer(self, token, answer) -> None:
+        """The check answered: continue the FSM with its outcome. A check that raised ends the
+        run, its error shown as an LLM error is."""
+        if not self._claim_validator_check(token) or self._drop_late_reply():
+            return
+        try:
+            outcome = answer()
+        except Exception as exc:  # noqa: BLE001 — told to the operator
+            log.error("The proposal check failed: %s", exc, exc_info=True)
+            self._ensure_run_state().reset_to_idle()
+            if self._is_active_tab():
+                self.show_error("Validator Error", str(exc))
+            return
+        response = self._ensure_run_state().last_response
+        self._finish_response(response, self._drive_validator_fsm(response, outcome))
+
+    def _drive_validator_fsm(self, response, outcome: ValidationOutcome) -> str:
+        """Advance the FSM (in VALIDATING) by one step with the check's *outcome* for *response*.
 
         Returns one of:
           - ``"continue"`` — caller should run ``_apply_proposals`` and
@@ -746,24 +611,6 @@ class LLMTabMixin:
         the outcome of this attempt and what happens next.
         """
         run_state = self._ensure_run_state()
-        # If the FSM was never started (defensive — e.g. a request fired
-        # outside the normal _run_task_async flow), reset to a clean
-        # state and fall through to apply. Without the reset, the FSM
-        # would linger in a non-terminal state and the next operator
-        # task would still be cleared up by ``_run_task_async``'s
-        # bootstrap, but an intermediate validator query would see
-        # stale data.
-        if run_state.state != RunStateKind.LLM_REQUESTED:
-            log.debug(
-                "FSM unexpectedly in %s when handling response; "
-                "resetting and falling back to apply-only.",
-                run_state.state.name,
-            )
-            run_state.reset_to_idle()
-            return "continue"
-
-        run_state.begin_validating(response)
-        outcome = self._compute_validator_outcome(response)
         run_state.last_outcome = outcome
 
         if outcome.skipped:
@@ -833,8 +680,9 @@ class LLMTabMixin:
         )
         return "continue"
 
-    def _compute_validator_outcome(self, response) -> ValidationOutcome:
-        """Build the :class:`ValidationOutcome` for the current response.
+    def _validator_check_call(self, response):
+        """The no-argument call that builds the :class:`ValidationOutcome` for *response*, with
+        its inputs read now.
 
         Single point of contact with the dispatcher — keeps the FSM driver
         independent of the artifact-manager layout."""
@@ -852,8 +700,8 @@ class LLMTabMixin:
         # override threads through so before-validate reconstruction uses the
         # same LLM-owned set as the prompt emit-list and at-apply path.
         override = self._task_section_override(run_state.task)
-        return validate_response(
-            response, current, project_root, task_override=override
+        return functools.partial(
+            validate_response, response, current, project_root, task_override=override
         )
 
     def _spawn_retry_worker(self, outcome: ValidationOutcome) -> None:

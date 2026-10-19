@@ -22,6 +22,7 @@ from .code_tab import PythonSyntaxHighlighter
 from ..core import ArtifactType, StepMarkerParser
 from ..core.procedure_steps import numbered_steps
 from ..llm import TabContext, LLMTask
+from ..pack_ops import engine_async
 from ..widgets.editor_card import EditorCard
 from ..widgets.find_replace_bar import FindReplaceBar, install_find_shortcuts
 from ..widgets.step_list import StepListCard, step_rows
@@ -284,8 +285,11 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
 
     def _apply_codegen_gating(self, project_root):
         """Enable Quick Code only if every equipment type in the JSON has a
-        codegen-capable pack. Best-effort: any failure leaves it enabled."""
+        codegen-capable pack. Best-effort: any failure leaves it enabled. A running Quick Code
+        keeps it disabled until it answers."""
         from ..pack_ops import pack_parsers
+        if engine_async.busy(self.quick_code_btn):
+            return
         try:
             doc = json.loads(self.json_editor.toPlainText() or "{}")
             etypes = [e.get("type") for e in (doc.get("equipment") or [])
@@ -306,7 +310,8 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
     def _on_quick_code(self):
         """Deterministic JSON → Code without LLM (rule-based, instant)."""
         from ..pack_ops import pack_parsers
-        json_text = self.json_editor.toPlainText().strip()
+        sent = self.json_editor.toPlainText()
+        json_text = sent.strip()
         if not json_text:
             self.show_warning("No Content", "JSON editor is empty. Add JSON before generating code.")
             return
@@ -316,11 +321,16 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
             self.show_error("Invalid JSON", f"Cannot parse procedure JSON:\n\n{e}")
             return
 
+        project_root = getattr(self.project_manager, "project_root", None)
+        engine_async.call(
+            project_root, lambda: pack_parsers.generate_code(procedure, project_root),
+            lambda answer: self._quick_code_done(sent, procedure, answer),
+            button=self.quick_code_btn)
+
+    def _quick_code_done(self, sent: str, procedure: dict, answer) -> None:
+        from ..pack_ops import pack_parsers
         try:
-            code_str, warnings = pack_parsers.generate_code(
-                procedure,
-                getattr(self.project_manager, "project_root", None),
-            )
+            code_str, warnings = answer()
         except pack_parsers.ParserUnavailable as e:
             self.show_warning("Code Generator Unavailable", str(e))
             return
@@ -336,6 +346,8 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
                 ),
                 parent=self,
             )
+            return
+        if not engine_async.unchanged(self.json_editor, sent, self.status_message.emit):
             return
 
         current_code = self.code_editor.toPlainText().strip()

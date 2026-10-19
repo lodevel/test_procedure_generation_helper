@@ -236,7 +236,8 @@ class DocumentController:
                 log.warning(f"Failed to save session state before switching tests: {e}")
 
         # Initialize managers for this test
-        mw.artifact_manager = ArtifactManager()
+        am = mw.artifact_manager = ArtifactManager()
+        am.on_media_refreshed = lambda: self._show_refreshed_json(am)
         mw.artifact_manager.set_test_dir(path)
         mw.artifact_manager.load_all()  # Load existing files from disk
         mw.artifact_manager.set_exclusion_patterns(
@@ -380,6 +381,18 @@ class DocumentController:
         # Refresh workspace test list to update artifact indicators
         mw.workspace_widget.refresh()
         mw.footer.show_message("Saved", 2000)
+
+    def _show_refreshed_json(self, am: ArtifactManager) -> None:
+        """A save's media refresh landed: the procedure.json editors show what is on disk (a
+        test closed since shows nothing of it)."""
+        from ..widgets.editor_card import refresh_editor_after_save
+        if am is not self._mw.artifact_manager:
+            return
+        content = am.get_content(ArtifactType.PROCEDURE_JSON)
+        for tab in self._mw._get_llm_tabs():
+            for card in tab.cards:
+                if card.kind is ArtifactType.PROCEDURE_JSON:
+                    refresh_editor_after_save(card.editor, content)
 
     def check_sync_hashes(self):
         """Compare current artifact content hashes against the last-acknowledged baseline.

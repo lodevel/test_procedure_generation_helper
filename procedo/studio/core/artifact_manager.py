@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .fileio import atomic_write_text
 from .sync_utils import normalize_for_hash
@@ -85,6 +85,8 @@ class ArtifactManager:
     PROCEDURE_TEXT_NAME = "procedure_text.md"
     SESSION_FILE_NAME = ".llm_session.json"
     _exclusion_patterns: list[re.Pattern[str]] = field(default_factory=list, repr=False)
+    #: Called on the GUI thread once a save's refreshed media were written (the views show them).
+    on_media_refreshed: Optional[Callable[[], None]] = field(default=None, repr=False)
     
     def set_test_dir(self, test_dir: Path) -> None:
         """Set the test directory and update file paths."""
@@ -145,13 +147,13 @@ class ArtifactManager:
         # never drift from the folder. Mirror the correction back into
         # artifact.content so the editor matches disk.
         artifact.content = self._enforce_folder_id(artifact_type, artifact.content)
-        if artifact_type is ArtifactType.PROCEDURE_JSON:
-            artifact.content = self._refresh_media(artifact.content)
 
         atomic_write_text(artifact.file_path, artifact.content)
         artifact.mark_clean()
         artifact.mark_needs_resync()  # Mark for resync so LLM sees manual changes
         artifact.last_modified = datetime.now()
+        if artifact_type is ArtifactType.PROCEDURE_JSON:
+            self._refresh_media(artifact)
     
     def _enforce_folder_id(self, artifact_type: ArtifactType, content: str) -> str:
         """Force the procedure id to the sanitized folder name.
@@ -166,29 +168,41 @@ class ArtifactManager:
         }
         return enforce_folder_id(self.test_dir, names[artifact_type], content)
 
-    def _refresh_media(self, content: str) -> str:
-        """Derived data follows its source: a procedure.json that did not come
-        from the parser (a hand edit, an accepted LLM proposal) gets its step
-        media recomputed by the pack's one catalogue before it reaches disk;
-        on parser output this changes nothing. Content that is not a JSON
-        object is saved as written; a pack that cannot run is logged and the
-        content saved as written (a save never fails for a picture)."""
+    def _refresh_media(self, artifact: Artifact) -> None:
+        """Derived data follows its source: a saved procedure.json that did not
+        come from the parser (a hand edit, an accepted LLM proposal) gets its
+        step media recomputed by the pack's one catalogue, off the GUI thread,
+        and written again; on parser output this changes nothing. The save
+        itself never waits for it. The refresh is dropped when the content
+        changed since (typed meanwhile, it stays unsaved), and a pack that
+        cannot run is logged (a save never fails for a picture). Content that
+        is not a JSON object is left as written."""
+        saved = artifact.content
         try:
-            doc = json.loads(content)
+            doc = json.loads(saved)
         except ValueError:
-            return content
+            return
         if not isinstance(doc, dict):
-            return content
-        from ..pack_ops import pack_parsers
+            return
+        from ..pack_ops import engine_async, pack_parsers
         root = self.test_dir.parent.parent if self.test_dir is not None else None
         if root is None or not (root / "tests").is_dir():
             root = None                      # no project layout: the editor's own pack
-        try:
-            doc = pack_parsers.refresh_media(doc, root)
-        except pack_parsers.ParserUnavailable as exc:
-            logging.getLogger(__name__).warning("media not refreshed on save: %s", exc)
-            return content
-        return json.dumps(doc, indent=2, ensure_ascii=False)
+
+        def done(answer) -> None:
+            try:
+                refreshed = json.dumps(answer(), indent=2, ensure_ascii=False)
+            except pack_parsers.ParserUnavailable as exc:
+                logging.getLogger(__name__).warning("media not refreshed on save: %s", exc)
+                return
+            if refreshed == saved or artifact.content != saved or artifact.original_content != saved:
+                return
+            atomic_write_text(artifact.file_path, refreshed)
+            artifact.content = artifact.original_content = refreshed
+            if self.on_media_refreshed is not None:
+                self.on_media_refreshed()
+
+        engine_async.call(root, lambda: pack_parsers.refresh_media(doc, root), done)
 
     def save_all(self) -> list[ArtifactType]:
         """Save all dirty artifacts. Returns list of saved artifact types."""

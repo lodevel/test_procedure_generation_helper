@@ -529,11 +529,12 @@ class ChatPanel(QWidget):
             row.deleteLater()
             self._streaming = None
 
-    def set_llm_active(self, active: bool):
-        """Enable/disable controls based on LLM request state."""
+    def set_llm_active(self, active: bool, cancellable: bool = True):
+        """Enable/disable controls based on LLM request state (*cancellable*: Cancel stays enabled
+        while active; a proposal check has nothing to cancel)."""
         self.send_btn.setEnabled(not active)
         self.input_field.setEnabled(not active)
-        self.cancel_btn.setEnabled(active)
+        self.cancel_btn.setEnabled(active and cancellable)
 
     def set_validator_status(self, available: bool, reason: str = "") -> None:
         """Update the validator-status indicator AND the auto-correct

@@ -19,6 +19,7 @@ from .json_tab import JsonSyntaxHighlighter
 from .text_actions import TextActionsMixin
 from ..core import ArtifactType
 from ..llm import TabContext, LLMTask
+from ..pack_ops import engine_async
 from ..widgets.editor_card import EditorCard
 from ..widgets.find_replace_bar import FindReplaceBar, install_find_shortcuts
 from ..widgets.text_highlighter import ProcedureTextHighlighter
@@ -151,18 +152,24 @@ class TextJsonTab(TextActionsMixin, LLMTabMixin, BaseTab):
     def _on_quick_parse(self):
         """Deterministic Text → JSON without LLM (rule-based, instant)."""
         from ..pack_ops import pack_parsers
-        text = self.text_editor.toPlainText().strip()
+        sent = self.text_editor.toPlainText()
+        text = sent.strip()
         if not text:
             self.show_warning("No Content", "Procedure text is empty. Add text before parsing.")
             return
+        project_root = getattr(self.project_manager, "project_root", None)
+        engine_async.call(
+            project_root, lambda: pack_parsers.parse_text(text, project_root=project_root),
+            lambda answer: self._quick_parse_done(sent, answer), button=self.quick_parse_btn)
 
+    def _quick_parse_done(self, sent: str, answer) -> None:
+        from ..pack_ops import pack_parsers
         # pack_parsers.parse_text raises ParseFailure on grammar errors
         # (with .code, .fix_hint, .findings — same shape the legacy
         # ParseError carried) or ParserUnavailable if the wheel isn't
         # importable. Route both through the structured dialog.
-        project_root = getattr(self.project_manager, "project_root", None)
         try:
-            result, warnings = pack_parsers.parse_text(text, project_root=project_root)
+            result, warnings = answer()
         except pack_parsers.ParserUnavailable as e:
             self.show_warning("Parser Unavailable", str(e))
             return
@@ -178,6 +185,8 @@ class TextJsonTab(TextActionsMixin, LLMTabMixin, BaseTab):
                 ),
                 parent=self,
             )
+            return
+        if not engine_async.unchanged(self.text_editor, sent, self.status_message.emit):
             return
 
         def done() -> None:
@@ -201,7 +210,8 @@ class TextJsonTab(TextActionsMixin, LLMTabMixin, BaseTab):
     def _on_quick_render(self):
         """Deterministic JSON → Text without LLM (rule-based, instant)."""
         from ..pack_ops import pack_parsers
-        json_text = self.json_editor.toPlainText().strip()
+        sent = self.json_editor.toPlainText()
+        json_text = sent.strip()
         if not json_text:
             self.show_warning(
                 "No JSON",
@@ -217,10 +227,14 @@ class TextJsonTab(TextActionsMixin, LLMTabMixin, BaseTab):
             return
 
         project_root = getattr(self.project_manager, "project_root", None)
+        engine_async.call(
+            project_root, lambda: pack_parsers.render_text(procedure, project_root=project_root),
+            lambda answer: self._quick_render_done(sent, answer), button=self.quick_render_btn)
+
+    def _quick_render_done(self, sent: str, answer) -> None:
+        from ..pack_ops import pack_parsers
         try:
-            result_text = pack_parsers.render_text(
-                procedure, project_root=project_root,
-            )
+            result_text = answer()
         except pack_parsers.ParserUnavailable as e:
             self.show_warning("Parser Unavailable", str(e))
             return
@@ -236,6 +250,8 @@ class TextJsonTab(TextActionsMixin, LLMTabMixin, BaseTab):
                 ),
                 parent=self,
             )
+            return
+        if not engine_async.unchanged(self.json_editor, sent, self.status_message.emit):
             return
 
         def done() -> None:

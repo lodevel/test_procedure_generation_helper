@@ -18,7 +18,7 @@ from ..core import odb_inspect
 from ..core.artifact_manager import ArtifactManager, ArtifactType
 from ..dialogs.settings_dialog import load_settings, save_settings
 from ..dock.skill_chat_widget import SkillChatWidget
-from ..pack_ops import pack_parsers
+from ..pack_ops import engine_async, pack_parsers
 from . import load_wizards
 
 log = logging.getLogger(__name__)
@@ -68,11 +68,14 @@ class StudioAuthoringApi:
         am.save_artifact(ArtifactType.PROCEDURE_JSON)
 
     def sync_meta_text(self, text: str) -> str:
-        synced, _warnings = pack_parsers.sync_meta_text(text, project_root=self.project_root)
+        root = self.project_root
+        synced, _warnings = engine_async.wait(
+            root, lambda: pack_parsers.sync_meta_text(text, project_root=root))
         return synced
 
     def parse_procedure_text(self, text: str) -> dict:
-        procedure, _warnings = pack_parsers.parse_text(text, self.project_root)
+        root = self.project_root
+        procedure, _warnings = engine_async.wait(root, lambda: pack_parsers.parse_text(text, root))
         return procedure
 
     def load_board(self) -> dict:

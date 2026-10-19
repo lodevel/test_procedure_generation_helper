@@ -1,7 +1,8 @@
 """Procedo Studio's dialogs (redesign slice 7a, boards S8 Syntax, S9 Skill chat, S10 Validator
 errors / Select rules, S12 the small ones): each is Bench's frame — a header band, a footer
 band, one primary button — and keeps its functions: find in page, the skill picker, the insert
-callback, the rule count, the validator's issue cards, the tests to export, the rotation."""
+callback, the rule count, the validator's issue cards, the tests to export; the board's picture
+at the board's angle, opened in Bench's image popup."""
 
 from __future__ import annotations
 
@@ -27,7 +28,10 @@ from procedo.studio.dialogs.validator_error_dialog import ValidatorErrorDialog
 from procedo.studio.dock.skill_chat_dialog import SkillChatDialog
 from procedo.studio.dock.skill_chat_widget import SkillChatWidget
 from procedo.studio.llm.validator_dispatch import ValidationIssueView, ValidationOutcome
-from procedo.studio.widgets.netlist_panel import _BoardImagePopup
+from procedo.bench.image_popup import ImagePopup
+from procedo.core import board_view, config_manager
+from procedo.studio.widgets import netlist_panel
+from procedo.studio.widgets.netlist_panel import NetlistPanel
 from procedo.studio.widgets.rule_selector import RuleSelectorDialog
 
 from .test_main_window_characterization import qapp as qapp
@@ -314,15 +318,29 @@ def test_about_shows_the_studio_mark_its_name_and_version(qapp):
     assert any(not label.pixmap().isNull() for label in dlg.findChildren(QLabel))  # the mark
 
 
-def test_the_board_image_popup_rotates_both_views(qapp):
-    wide, zoomed = QPixmap(300, 100), QPixmap(200, 100)
-    dlg = _BoardImagePopup(zoomed, wide, "C42 pin 2", "KC30_revC.tgz")
-    header, footer, primaries = _frame(dlg)
-    assert (header.title.text(), header.subtitle.text()) == ("C42 pin 2", "KC30_revC.tgz")
-    assert [b.text() for b in primaries] == ["Close"]
-    assert dlg._wide_lbl.pixmap().size().toTuple() == (300, 100)
+def test_the_board_view_shows_at_the_boards_angle_and_its_popup_is_benchs(qapp, tmp_path, monkeypatch):
+    config_manager.write_config_section(tmp_path / "config", "board_view", {"rotation": 90})
+    panel = NetlistPanel()
+    panel._project_root = tmp_path
+    panel.set_hint("KC30_revC.tgz")
+    panel.show_image(QPixmap(200, 100), QPixmap(300, 100), "C42 pin 2")
+    shown = panel._viewer_label.pixmap()
+    assert shown.height() > shown.width()  # the board's 90°
 
-    rotate_right = next(b for b in footer.findChildren(QPushButton) if b.text() == "Rotate right ↷")
-    rotate_right.click()
-    assert dlg._wide_lbl.pixmap().size().toTuple() == (100, 300)
-    assert dlg._zoom_lbl.pixmap().size().toTuple() == (100, 200)
+    opened = []
+
+    class _Popup(ImagePopup):
+        def exec(self):  # the operator turns the board right once, then closes
+            opened.append(self)
+            next(b for b in self.findChildren(QPushButton) if b.text() == "⟳").click()
+            return 0
+
+    monkeypatch.setattr(netlist_panel, "ImagePopup", _Popup)
+    panel._on_viewer_click(None)
+    header = opened[0].findChild(ui_kit.HeaderBand)
+    assert (header.title.text(), header.subtitle.text()) == ("C42 pin 2", "KC30_revC.tgz")
+    assert opened[0].angle == 180 and board_view.rotation(tmp_path) == 180
+    board_view.wait_saved()
+    shown = panel._viewer_label.pixmap()
+    assert shown.width() > shown.height()  # the viewer follows the popup's turn
+    panel.close()

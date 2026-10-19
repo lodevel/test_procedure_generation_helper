@@ -13,83 +13,18 @@ archive (never an error).
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal, QThread, QTimer
-from PySide6.QtGui import QPixmap, QTransform
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTabWidget,
     QTreeWidget, QTreeWidgetItem, QLabel, QCheckBox, QScrollArea, QSplitter,
-    QDialog, QPushButton, QApplication,
+    QApplication,
 )
 
-from procedo.core import ui_kit
+from procedo.core import board_view, ui_kit
 from procedo.bench import theme
+from procedo.bench.image_popup import ImagePopup
 
 from ..board_source import find_odb_tgz
-
-
-class _BoardImagePopup(QDialog):
-    """Full board image (board S12): wide (context) + zoomed (detail) side by side, each on
-    a card, under a header naming the part (*caption*) and the board (*subtitle*); Rotate
-    left / right; click either image, or Close, to close. Mirrors the main GUI's
-    interactive-execution popup."""
-
-    _MAX = 560
-
-    def __init__(self, zoomed, wide, caption="", subtitle="", parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(caption or "Board image")
-        self._zoomed, self._wide, self._angle = zoomed, wide, 0
-
-        rotate_left = QPushButton("↶ Rotate left")
-        rotate_left.clicked.connect(lambda: self._rotate(-90))
-        rotate_right = QPushButton("Rotate right ↷")
-        rotate_right.clicked.connect(lambda: self._rotate(90))
-        close_btn = ui_kit.primary(QPushButton("Close"))
-        close_btn.clicked.connect(self.accept)
-        body = ui_kit.framed(
-            self, ui_kit.HeaderBand(caption or "Board image", subtitle, stacked=True),
-            ui_kit.FooterBand([close_btn], left=[rotate_left, rotate_right]))
-        row = ui_kit.hbox()
-        row.setSpacing(14)
-        self._wide_lbl = (self._image_card(row, "Wide view")
-                          if wide is not None and not wide.isNull() else None)
-        self._zoom_lbl = self._image_card(row, "Zoomed view")
-        body.addLayout(row)
-
-        self._update()
-
-    def _image_card(self, row, title: str) -> QLabel:
-        """A card titled *title* in *row*; returns the label its image is drawn on."""
-        card = ui_kit.Card(title)
-        label = QLabel()
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setCursor(Qt.CursorShape.PointingHandCursor)
-        label.mousePressEvent = lambda e: self.close()
-        card.body.addWidget(label)
-        row.addWidget(card)
-        return label
-
-    def _rotate(self, delta: int) -> None:
-        self._angle = (self._angle + delta) % 360
-        self._update()
-
-    def _scaled(self, pm: QPixmap) -> QPixmap:
-        if self._angle:
-            pm = pm.transformed(QTransform().rotate(self._angle),
-                                Qt.TransformationMode.SmoothTransformation)
-        if pm.width() > self._MAX or pm.height() > self._MAX:
-            pm = pm.scaled(self._MAX, self._MAX,
-                           Qt.AspectRatioMode.KeepAspectRatio,
-                           Qt.TransformationMode.SmoothTransformation)
-        return pm
-
-    def _update(self) -> None:
-        if self._zoomed is not None and not self._zoomed.isNull():
-            self._zoom_lbl.setPixmap(self._scaled(self._zoomed))
-        if (self._wide_lbl is not None and self._wide is not None
-                and not self._wide.isNull()):
-            self._wide_lbl.setPixmap(self._scaled(self._wide))
-        self.adjustSize()
-
 from ..core import odb_inspect
 
 # Keep worker threads referenced until they finish, so a fast close doesn't
@@ -154,6 +89,7 @@ class _LoadWorker(QThread):
 
     def run(self) -> None:  # noqa: D401
         try:
+            board_view.rotation(self._root)  # the board's angle, read here: off the UI thread
             data = odb_inspect.load_board(self._root)
         except Exception:  # noqa: BLE001
             data = {"components": [], "nets": []}
@@ -194,6 +130,7 @@ class NetlistPanel(ui_kit.Card):
         self._load_worker = None
         self._cur_zoom: QPixmap | None = None
         self._cur_wide: QPixmap | None = None
+        self._turned: QPixmap | None = None  # the viewer's picture at the board's angle, unscaled
         self._cur_cap: str = ""
         self._rendering = False
         self._render_pending = None         # (refdes, pad) to render after current
@@ -289,6 +226,8 @@ class NetlistPanel(ui_kit.Card):
         """Load the project's netlist off-thread and populate. Safe to call on
         every project change."""
         self._project_root = project_root
+        if project_root is not None:
+            board_view.forget(project_root)  # a project (re)loaded reads its angle again
         tgz = find_odb_tgz(project_root) if project_root is not None else None
         self.set_hint(tgz.name if tgz is not None else "")
         self._hide_prefixes = odb_inspect.load_hide_prefixes(project_root)
@@ -460,7 +399,7 @@ class NetlistPanel(ui_kit.Card):
     # -- viewer ---------------------------------------------------------------
 
     def set_viewer_status(self, text: str) -> None:
-        self._cur_zoom = self._cur_wide = None
+        self._cur_zoom = self._cur_wide = self._turned = None
         self._viewer_caption.setText("")
         self._viewer_label.setPixmap(QPixmap())
         self._viewer_label.setText(text or "")
@@ -470,10 +409,8 @@ class NetlistPanel(ui_kit.Card):
     def show_image(self, zpix, wpix, caption: str) -> None:
         self._cur_zoom, self._cur_wide, self._cur_cap = zpix, wpix, caption
         self._viewer_caption.setText(caption)
-        pm = zpix if (zpix is not None and not zpix.isNull()) else wpix
-        if pm is not None and not pm.isNull():
-            self._viewer_label.setText("")
-            self._render_scaled(pm)
+        self._viewer_label.setText("")
+        if self._show_turned():
             self._viewer_label.setCursor(Qt.CursorShape.PointingHandCursor)
             self._full_view.setEnabled(True)
         else:
@@ -484,11 +421,21 @@ class NetlistPanel(ui_kit.Card):
         """Click the inline image → full wide+zoomed view (like the interactive
         execution explorer)."""
         if self._cur_zoom is not None or self._cur_wide is not None:
-            _BoardImagePopup(self._cur_zoom, self._cur_wide, self._cur_cap,
-                             self.hint.text().removeprefix("· "), self).exec()
+            ImagePopup(self._cur_zoom or self._cur_wide, self._cur_wide, self._cur_cap,
+                       self._project_root, self.hint.text().removeprefix("· "), self).exec()
+            self._show_turned()  # turned in the popup: turned here too
 
-    def _render_scaled(self, pm: QPixmap) -> None:
-        """*pm* fitted into the image well (never enlarged)."""
+    def _show_turned(self) -> bool:
+        """Turn the viewer's picture (zoomed preferred) to the board's angle, once, and fit it;
+        False when there is none."""
+        self._turned = board_view.turned_view(self._cur_zoom, self._cur_wide, self._project_root)
+        if self._turned is not None:
+            self._render_scaled()
+        return self._turned is not None
+
+    def _render_scaled(self) -> None:
+        """The turned picture fitted into the image well (never enlarged)."""
+        pm = self._turned
         well = self._viewer_scroll.viewport().size()
         width = min(max(120, well.width() - 8), pm.width())
         height = min(max(80, well.height() - 8), pm.height())
@@ -498,7 +445,5 @@ class NetlistPanel(ui_kit.Card):
 
     def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
         super().resizeEvent(event)
-        pm = self._cur_zoom if (self._cur_zoom is not None
-                                and not self._cur_zoom.isNull()) else self._cur_wide
-        if pm is not None and not pm.isNull():
-            self._render_scaled(pm)
+        if self._turned is not None:
+            self._render_scaled()

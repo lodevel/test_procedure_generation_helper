@@ -266,17 +266,56 @@ class BuildManualRunOpTests(unittest.TestCase):
 
 
 class ManualStepSchemaParityTests(unittest.TestCase):
-    """``ManualStep`` mirrors the wheel's ``StepDescriptor`` field-for-field.
-    Catches drift: if the wheel adds/renames a field, this fails so the GUI view
-    is updated deliberately rather than silently dropping it in ``from_dict``."""
+    """``ManualStep`` mirrors the wheel's ``StepDescriptor`` field-for-field, plus
+    the Wait fields the build_manual_run op adds. Catches drift: if the wheel
+    adds/renames a field, this fails so the GUI view is updated deliberately
+    rather than silently dropping it in ``from_dict``."""
 
     def test_field_names_match_wheel_stepdescriptor(self) -> None:
         from dataclasses import fields
         from rules_packager_base.rules.v2_0_2.parser.manual_run import StepDescriptor
         self.assertEqual(
             {f.name for f in fields(pp.ManualStep)},
-            {f.name for f in fields(StepDescriptor)},
+            {f.name for f in fields(StepDescriptor)} | {"wait_s", "wait_refused"},
         )
+
+
+class ManualRunEngineReadsTests(unittest.TestCase):
+    """What the app never computes itself: a Wait's delay, a typed reading, a
+    criterion's readings — the engine's, in its ops."""
+
+    def _wait(self, duration, unit="s", op="wait") -> dict:
+        from rules_packager_base.rules.v2_0_2.parser.manual_run import StepDescriptor
+        return engine_ops._step_payload(StepDescriptor(
+            node_path="steps[0]", n=1, op=op, text="", resolved_op={"duration": duration, "duration_unit": unit}))
+
+    def test_a_wait_carries_its_seconds_or_why_they_are_refused(self) -> None:
+        self.assertEqual(self._wait(100, "ms")["wait_s"], 0.1)
+        self.assertEqual(self._wait("-0.5")["wait_s"], 0)      # below 0 waits none, as test.py
+        refused = self._wait("MAX")
+        self.assertEqual((refused.get("wait_s"), refused["wait_refused"]), (None, "not a number: 'MAX'"))
+        self.assertNotIn("wait_s", self._wait(5, op="note"))
+        step = pp.ManualStep.from_dict(self._wait(2))
+        self.assertEqual((step.wait_s, step.wait_refused), (2, ""))
+
+    def test_a_typed_reading_is_read_or_refused_by_the_engine(self) -> None:
+        def read(kind, text, **op):
+            return engine_ops.run({"op": "manual_reading", "text": text,
+                                   "step": {"kind": kind, "expected_text": "", "resolved_op": op}})
+        self.assertEqual(read("read", "200 mV"), {"ok": True, "value": 0.2, "refusal": ""})
+        self.assertEqual(read("text", " 4B ")["value"], " 4B ")
+        self.assertEqual(read("bytes", "FB 00", count=2, signed=True)["value"], -1280)
+        self.assertIn("isn't a number", read("read", "5 apples")["refusal"])
+
+    def test_a_reading_is_a_run_op(self) -> None:
+        self.assertIsNone(engine_ops.refusal("run", {"cmd": "op", "op": "manual_reading"}))
+
+    def test_a_criterions_readings_are_the_engines_entry_refs(self) -> None:
+        crit = {"type": "logic", "op": "or", "parts": [
+            {"type": "lt", "ref": 1, "limit": 1}, {"type": "range", "ref": {"range": [3, 4]}, "lower": 0, "upper": 5},
+            {"type": "lt", "ref": 1, "limit": 2}]}
+        out = engine_ops.run({"op": "criterion_refs", "criteria": {"0:a": crit}})
+        self.assertEqual(out, {"ok": True, "refs": {"0:a": ["1", "3", "4"]}})
 
 
 if __name__ == "__main__":

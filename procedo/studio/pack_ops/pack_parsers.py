@@ -1285,19 +1285,17 @@ class _ReconstructReport:
 # Guided-manual run plan: editor-facing views over the wheel's ManualRun /
 # StepDescriptor as the build_manual_run engine op returns them (JSON).
 #
-# These two are PUBLIC (unlike the private _Report/_Issue siblings above)
-# because they are the GUI-facing RETURN type of build_manual_run: the modal
-# binds their field names directly, so a leading underscore would leak into
-# call sites. Collections are tuples so the frozen views are genuinely immutable.
+# These two are PUBLIC (unlike the private _Report/_Issue siblings above): they are
+# the GUI-facing RETURN type of build_manual_run, whose field names the modal binds
+# directly. Collections are tuples so the frozen views are genuinely immutable.
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class ManualStep:
-    """One step in a guided-manual run — a faithful mirror of the wheel's
-    ``StepDescriptor`` (the source of truth for these fields; a CI test asserts
-    field-name parity). Built only via :meth:`from_dict`, which ignores unknown
-    keys so a newer wheel adding a field never breaks construction here."""
+    """One step in a guided-manual run — a mirror of the wheel's ``StepDescriptor``
+    (a CI test asserts field-name parity) plus what the build_manual_run op adds
+    (a Wait's delay). Built only via :meth:`from_dict`, which ignores unknown keys."""
 
     node_path: str = ""
     n: int = 0
@@ -1318,6 +1316,8 @@ class ManualStep:
     # op with per-iteration substitution applied (mirrors StepDescriptor.resolved_op);
     # excluded from eq/hash so a dict field keeps the frozen step hashable.
     resolved_op: Optional[dict] = field(default=None, compare=False)
+    wait_s: Optional[float] = None  # a Wait's delay, read by the engine (the op adds it)
+    wait_refused: str = ""          # or why the engine refused its value (test.py's message)
 
     @classmethod
     def from_dict(cls, d: dict) -> "ManualStep":
@@ -1330,18 +1330,16 @@ class ManualStep:
 
 @dataclass(frozen=True)
 class ManualRunResult:
-    """Editor-facing guided-manual run plan: the ``build_manual_run`` engine op's
-    result (:meth:`RemoteSession.engine_op`).
-
-    ``steps`` is the on-path plan the operator walks; ``skipped`` holds off-path
-    bindings (retained as ``SKIP``); ``aborted`` is set when an ``@ABORT``
-    truncated the plan. Build via :meth:`from_dict`, which funnels through
-    :meth:`ManualStep.from_dict`."""
+    """Editor-facing guided-manual run plan: the ``build_manual_run`` engine op's result.
+    ``steps`` is the on-path plan the operator walks; ``skipped`` holds off-path bindings
+    (retained as ``SKIP``); ``aborted`` is set when an ``@ABORT`` truncated the plan;
+    ``channels``: each instrument's declared power channels (its safe-off's)."""
 
     test_name: str = ""
     steps: tuple[ManualStep, ...] = ()       # on-path plan
     skipped: tuple[ManualStep, ...] = ()     # off-path bindings (retained as SKIP)
     aborted: bool = False
+    channels: dict = field(default_factory=dict)  # device -> its declared channels, the engine's
 
     @classmethod
     def from_dict(cls, d: dict) -> "ManualRunResult":
@@ -1351,6 +1349,7 @@ class ManualRunResult:
             steps=tuple(ManualStep.from_dict(s) for s in d.get("steps", [])),
             skipped=tuple(ManualStep.from_dict(s) for s in d.get("skipped", [])),
             aborted=bool(d.get("aborted", False)),
+            channels=dict(d.get("channels") or {}),
         )
 
 

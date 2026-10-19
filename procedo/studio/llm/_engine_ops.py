@@ -36,8 +36,16 @@ Ops:
                       "skipped": [{...StepDescriptor...}]}
                      (input: {"procedure_json": {...}, "measurements",
                       "controls", "operator_verdicts"})
+                     (each Wait step adds ``wait_s`` or ``wait_refused``;
+                      + "channels": {device: [declared power channels]})
   build_manual_result → {"ok": true, "result": {...results.json schema...}}
                         (input: the same fields)
+  manual_reading → {"ok": true, "value": any, "refusal": str}
+                   (input: {"step": {kind, expected_text, resolved_op}, "text"})
+  criterion_refs → {"ok": true, "refs": {key: [str]}}  (input: {"criteria": {key: criterion}})
+  bench_identity → {"ok": true, "endpoints": [str|null], "channels": [[int]]}  (input: {"benches": [bench]})
+  pack_contract → {"ok": true, "packs": {module: {"items": [ContractItem], "error": str|null}}}
+                  (input: {"modules": [pack parser module]})
   display_snapshot → {"ok": true, "wheel": {module, file, version},
                       "tests": [{folder, mtime_ns, size, text_newer,
                                  data: {meta, steps, expected, equipment},
@@ -49,6 +57,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import re
 import traceback
 from dataclasses import asdict
 from pathlib import Path
@@ -298,10 +307,37 @@ def _op_build_manual_run(spec: dict) -> dict:
     return {
         "ok": True,
         "test_name": run.test_name,
-        "steps": [asdict(s) for s in run.steps],
-        "skipped": [asdict(s) for s in run.skipped],
+        "steps": [_step_payload(s) for s in run.steps],
+        "skipped": [_step_payload(s) for s in run.skipped],
         "aborted": run.aborted,
+        "channels": _declared_channels(procedure_json),
     }
+
+
+def _declared_channels(procedure_json: dict) -> dict:
+    """Each instrument's declared power channels — what a safe-off of it turns
+    off — by the wheel's equipment extractor; a device declaring none is the
+    single-channel default, [1]."""
+    from rules_packager_base.rules.v2_0_2 import extractors
+
+    return {eq.id: sorted({ch.channel for ch in eq.channels if isinstance(ch.channel, int)}) or [1]
+            for eq in extractors.extract_equipment_requirements(procedure_json)}
+
+
+def _step_payload(step) -> dict:
+    """A StepDescriptor as the guided run takes it; a Wait's delay read here by
+    the one setpoint reader: ``wait_s`` (seconds, none below 0, as test.py
+    waits), or ``wait_refused`` — test.py's message for a value it refuses
+    (`${t}` = MAX), never a silent 0 s."""
+    d = asdict(step)
+    op = d.get("resolved_op") or {}
+    if d.get("op") == "wait" and op.get("duration") is not None:
+        from rules_packager_base.test_helpers import setpoint
+        try:
+            d["wait_s"] = max(setpoint(op["duration"], op.get("duration_unit") or "s"), 0)
+        except ValueError as exc:
+            d["wait_refused"] = str(exc)
+    return d
 
 
 def _op_build_manual_result(spec: dict) -> dict:
@@ -314,6 +350,190 @@ def _op_build_manual_result(spec: dict) -> dict:
     result = _import_wheel().build_manual_result(
         procedure_json, measurements, controls, operator_verdicts)
     return {"ok": True, "result": result}
+
+
+# -- a guided run's typed readings ----------------------------------------------
+
+# A bus read typed by hand: `0x` + hex digits or decimal digits is the value;
+# two or more hex pairs, single-spaced as the board prints them, are its bytes.
+_PRINTED_BYTES_RE = re.compile(r"[0-9A-Fa-f]{2}(?: [0-9A-Fa-f]{2})+")
+
+
+def _op_manual_reading(spec: dict) -> dict:
+    """What a reading entered as text stores for its step (``value``) and why a
+    typed one is refused (``refusal``, "" when it is not) — the one reading
+    rule of the guided run, typed or from the bench. ``step`` carries the
+    step's ``kind``, ``expected_text`` and ``resolved_op``."""
+    step, text = spec.get("step") or {}, str(spec.get("text", ""))
+    value = _reading_value(step, text)
+    refused = _reading_expects_number(step) and not isinstance(value, (int, float))
+    return {"ok": True, "value": value, "refusal": _reading_refusal(step, text) if refused else ""}
+
+
+def _reading_value(step: dict, text: str):
+    """A text reading (a UART answer, the board's hex) and a typed answer read as
+    text keep their string, as test.py does — "4B" is not the number 4, "1" is
+    the answer "1"; a bytes reading is :func:`_bytes_value`; every other
+    reading is the number the one reader takes (parse_number, test.py's
+    read_measurement and read_typed: ``8``, ``8e3``, ``0x10``, ``200 mV``),
+    else the stripped text, which a step needing a number refuses."""
+    kind = step.get("kind", "")
+    if kind in ("text", "prompt"):
+        return text
+    if kind == "bytes":
+        return _bytes_value(step.get("resolved_op") or {}, text.strip())
+    from rules_packager_base import parse_number
+
+    try:
+        return parse_number(text.strip())
+    except ValueError:
+        return text.strip()
+
+
+def _bytes_format(op: dict) -> tuple:
+    """(count, little_endian, signed, lowest value, highest value) of a bus read."""
+    count, signed = int(op.get("count") or 0), bool(op.get("signed"))
+    bits = 8 * count
+    low, high = (-(1 << (bits - 1)), (1 << (bits - 1)) - 1) if signed else (0, (1 << bits) - 1)
+    return count, bool(op.get("little_endian")), signed, low, high
+
+
+def _typed_int(typed: str):
+    """A value typed by hand, by the one reader (parse_number: `0x` + hex digits,
+    or decimal digits): its int, else None (a fraction, a unit, a number past
+    Python's digit limit)."""
+    from rules_packager_base import parse_number
+
+    try:
+        value = parse_number(typed)
+    except ValueError:
+        return None
+    return value if isinstance(value, int) else None
+
+
+def _bytes_value(op: dict, typed: str):
+    """A bus read typed by hand: a value within what the read holds, or the bytes
+    pasted as the board prints them, read with the step's own format by
+    bytes_to_int — the one conversion; anything else stays the string, refused."""
+    from rules_packager_base import bytes_to_int
+
+    count, little_endian, signed, low, high = _bytes_format(op)
+    value = _typed_int(typed)
+    if value is not None:
+        return value if low <= value <= high else typed
+    if _PRINTED_BYTES_RE.fullmatch(typed):
+        try:
+            return bytes_to_int(typed, count, little_endian=little_endian, signed=signed)
+        except ValueError:
+            pass  # fewer pairs than the read takes: refused
+    return typed
+
+
+def _reading_expects_number(step: dict) -> bool:
+    """A bus read, an operator read, a measure and a typed answer read as a
+    number (kind ``number``: the base decides) are always NUMBERS; a text
+    reading and a typed answer read as text never are; another reading is one
+    unless its expected value quotes a string literal (a digital answer, e.g.
+    ``{1} = '1'``) — then a string is fine — or it has no expected criterion."""
+    kind = step.get("kind", "")
+    if kind in ("text", "prompt"):
+        return False   # a UART answer, a typed answer read as text: whatever the criterion looks like
+    if kind in ("bytes", "read", "measure", "number"):
+        return True    # whatever an `or` / `and` hint quotes for another reading
+    et = step.get("expected_text") or ""
+    return bool(et) and "'" not in et and '"' not in et
+
+
+def _reading_refusal(step: dict, typed: str) -> str:
+    """Why a typed reading the step needs as a number was refused. A 0x value
+    above a signed read's range but within its bytes is the board's bytes
+    typed as one number: the refusal gives the signed value of one byte, or
+    shows more as the board prints them."""
+    typed = typed.strip()
+    if step.get("kind") != "bytes":
+        return f"“{typed}” isn't a number — enter a numeric reading (e.g. 5.2)."
+    count, little_endian, _signed, low, high = _bytes_format(step.get("resolved_op") or {})
+    value = _typed_int(typed) if typed.startswith("0x") else None
+    if value is not None and high < value < 1 << 8 * count:
+        if count == 1:
+            return (f"“{typed}” is out of a signed 1-byte read's range — the signed value of {typed} is "
+                    f"{value - 256}: type {value - 256}.")
+        printed = value.to_bytes(count, "little" if little_endian else "big").hex(" ").upper()
+        return (f"“{typed}” is out of a signed {count}-byte read's range — paste the bytes as the board "
+                f"prints them, e.g. {printed}.")
+    if count == 1:
+        return (f"“{typed}” is no 1-byte reading — type the value ({low} to {high}): 0x… as the board prints it, "
+                "or decimal.")
+    return (f"“{typed}” is no {count}-byte reading — type the value ({low} to {high}, 0x… for hex), "
+            "or paste the bytes as the board prints them.")
+
+
+def _op_criterion_refs(spec: dict) -> dict:
+    """The readings each results.json criterion judges (``spec["criteria"]``: key ->
+    criterion), as the wheel's entry_refs reads them (test.py's reads), each ref
+    as a string — what a report's units map and Measured column list."""
+    from rules_packager_base.test_helpers import entry_refs
+
+    criteria = spec.get("criteria") or {}
+    return {"ok": True, "refs": {key: [str(r) for r in entry_refs(crit)] for key, crit in criteria.items()}}
+
+
+def _op_bench_identity(spec: dict) -> dict:
+    """Each bench dict's (``spec["benches"]``) canonical endpoint — the physical
+    instrument it reaches, one key for every spelling of one port (``COM22`` of a
+    serial controller, ``ASRL22::INSTR`` of a VISA instrument), None when it
+    names no address — and its declared power channels: the wheel's one
+    canonicalization (bench_endpoints), never a guess of the app's."""
+    from rules_packager_base.bench_endpoints import canonical_endpoint, channels_of
+
+    def endpoint(bench):
+        try:
+            return canonical_endpoint(bench)
+        except ValueError:
+            return None
+
+    benches = spec.get("benches") or []
+    return {"ok": True, "endpoints": [endpoint(b) for b in benches], "channels": [channels_of(b) for b in benches]}
+
+
+def _op_pack_contract(spec: dict) -> dict:
+    """Each pack parser module (``spec["modules"]``) checked against the
+    pack-author contract, here in the project venv — the packs the bundle
+    installed: its ContractItem rows, or why it could not be checked."""
+    from rules_packager_base.pack_contract import check_pack_contract
+
+    packs = {}
+    for name in spec.get("modules") or []:
+        try:
+            rows = check_pack_contract(importlib.import_module(name), _rules_index(name))
+            packs[name] = {"items": [asdict(row) for row in rows], "error": None}
+        except Exception as exc:  # noqa: BLE001 — one pack's failure is its section's
+            packs[name] = {"items": [], "error": f"{type(exc).__name__}: {exc}"}
+    return {"ok": True, "packs": packs}
+
+
+def _rules_index(module_name: str) -> dict | None:
+    """The pack's parsed ``rules_index.json``, or None when it ships none: the
+    installed package's ``rules/<version>/`` index whose
+    ``pack_capabilities.parser_fragment_module`` names *module_name* —
+    self-validating, so a stale unversioned ``rules/rules_index.json`` (no
+    ``pack_capabilities``) never matches. None is a legal checker input."""
+    import importlib.resources
+
+    try:
+        entries = list((importlib.resources.files(module_name.split(".")[0]) / "rules").iterdir())
+    except Exception:  # noqa: BLE001 — no rules dir: no index
+        return None
+    for entry in entries:
+        try:
+            index = entry / "rules_index.json"
+            data = json.loads(index.read_text(encoding="utf-8")) if entry.is_dir() and index.is_file() else {}
+        except Exception:  # noqa: BLE001 — an unreadable index is no index
+            continue
+        caps = data.get("pack_capabilities")
+        if isinstance(caps, dict) and caps.get("parser_fragment_module") == module_name:
+            return data
+    return None
 
 
 # The four DISPLAY domains snapshotted for the app. The validate_* twins
@@ -496,12 +716,16 @@ _OPS = {
     "reconstruct": _op_reconstruct,
     "build_manual_run": _op_build_manual_run,
     "build_manual_result": _op_build_manual_result,
+    "manual_reading": _op_manual_reading,
+    "criterion_refs": _op_criterion_refs,
+    "pack_contract": _op_pack_contract,
+    "bench_identity": _op_bench_identity,
     "display_snapshot": _op_display_snapshot,
 }
 
 
 # The run's own ops: all a RUN engine computes besides its instrument frames.
-_RUN_OPS = ("build_manual_run", "build_manual_result")
+_RUN_OPS = ("build_manual_run", "build_manual_result", "manual_reading")
 
 
 def refusal(role: str, req: dict) -> dict | None:

@@ -146,17 +146,19 @@ def test_stop_ends_the_instances_running_out_of_a_venv_and_only_those(project, s
     assert _available(project)["ok"] and len(spawns) == 2
 
 
-def test_stop_waits_for_the_op_in_flight(project, spawns):
-    """``stop`` takes the slot lock: it never shuts an instance down under an op."""
+def test_stop_never_waits_on_a_busy_slot_s_lock(project, spawns):
+    """The GUI thread calls ``stop`` (Studio's project switch, a bundle change): it
+    closes the instance without the slot's lock, which a worker's op holds."""
     assert _available(project)["ok"]
     slot = next(iter(engine._slots.values()))
+    proc = slot.session._proc
     done = threading.Event()
     with slot.lock:
-        t = threading.Thread(target=lambda: (engine.stop(venv_folder=Path(sys.executable).parent.parent),
-                                             done.set()))
+        t = threading.Thread(target=lambda: (engine.stop(project_root=project), done.set()))
         t.start()
-        assert not done.wait(0.5) and slot.session.alive
-    assert done.wait(30) and slot.session is None
+        assert done.wait(15), "stop waited on the slot's lock"
+        assert slot.session is None and proc.wait(timeout=15) is not None
+    t.join(5)
 
 
 def test_a_dead_instance_is_not_restarted_to_be_stopped(project, spawns):
@@ -181,23 +183,23 @@ def test_a_dead_instance_is_not_restarted_to_be_replaced(project, spawns):
 def test_a_tools_instance_claims_its_venv_for_its_pid_until_it_ends(project, spawns, monkeypatch):
     seen: list = []
     monkeypatch.setattr(_project_local_state, "claim_engine",
-                        lambda root, pid: seen.append(("claim", pid)) or project / "venv")
+                        lambda root, pid, role: seen.append(("claim", pid, role)) or project / "venv")
     monkeypatch.setattr(_project_local_state, "release_engine",
-                        lambda folder, pid: seen.append(("release", pid)))
+                        lambda folder, pid, role: seen.append(("release", pid, role)))
     assert _available(project)["ok"] and _available(project)["ok"]
     pid = _session(project)._proc.pid
-    assert seen == [("claim", pid)]
+    assert seen == [("claim", pid, "tools")]
     engine.stop_all()
-    assert seen == [("claim", pid), ("release", pid)]
+    assert seen == [("claim", pid, "tools"), ("release", pid, "tools")]
 
 
 @pytest.fixture
 def claims(monkeypatch, project):
     seen: list = []
     monkeypatch.setattr(_project_local_state, "claim_engine",
-                        lambda root, pid: seen.append(("claim", pid)) or project / "venv")
+                        lambda root, pid, role: seen.append(("claim", pid)) or project / "venv")
     monkeypatch.setattr(_project_local_state, "release_engine",
-                        lambda folder, pid: seen.append(("release", pid)))
+                        lambda folder, pid, role: seen.append(("release", pid)))
     return seen
 
 
@@ -221,7 +223,7 @@ def test_a_restarted_process_releases_the_old_claim_before_it_claims(project, sp
 
 
 def test_close_kills_a_process_that_ignores_stdin_eof(project):
-    sess = pack_parsers.RemoteSession(None, project, role="tools")
+    sess = pack_parsers.RemoteSession(project, role="tools")
     sess._proc = _REAL_POPEN([sys.executable, "-c", "import time; time.sleep(60)"],
                              stdin=subprocess.PIPE)
     started = time.monotonic()
@@ -299,6 +301,7 @@ class _Fake:
         self.returncode = None
         self.pid = 4242
         self.terminated = False
+        self.hung = False   # a hung process ignores stdin EOF: only a kill ends it
         self._out: queue.Queue = queue.Queue()
         self._pending = 0
         self.stdin, self.stdout, self.stderr = self, self, io.StringIO("")
@@ -311,6 +314,8 @@ class _Fake:
         step = self.plan.pop(0) if self.plan else "ok"
         if step == "ok":
             self._out.put(json.dumps({"ok": True, "frame": len(self.frames)}) + "\n")
+        elif step == "hang":
+            self.hung = True
         elif step == "die":
             threading.Timer(self.delay, self._die).start()
         elif step.startswith("{"):
@@ -333,8 +338,14 @@ class _Fake:
         return self.returncode
 
     def wait(self, timeout=None):
+        if self.returncode is None and self.hung:   # it waits out the grace, as a real one would
+            time.sleep(timeout or 0)
+            raise subprocess.TimeoutExpired("fake engine", timeout)
         self.returncode = self.returncode if self.returncode is not None else 0
         return self.returncode
+
+    def close(self) -> None:   # stdin closed: a hung process does not notice
+        pass
 
     def terminate(self) -> None:
         self.terminated = True
@@ -564,3 +575,119 @@ def test_stop_locks_only_the_slots_it_ends(project, spawns, tmp_path):
     with theirs.lock:                         # busy with a frame
         engine.stop(project_root=project)     # would hang if it locked every slot
     assert theirs.session is not None
+
+
+def test_stop_under_a_hung_op_ends_it_and_the_op_is_not_retried(project, fakes):
+    """A wedged engine: ``stop`` returns at once (the close's grace, then a kill),
+    the op in flight ends lost instead of waiting out its 30 s deadline, and no
+    retry starts an instance for a project that just closed."""
+    started, plans = fakes
+    plans += [(["ok", "hang"], 0.0), (["ok"], 0.0)]
+    assert _available(project)["ok"]
+    box: dict = {}
+    worker = threading.Thread(target=lambda: box.update(res=_available(project, 30)))
+    worker.start()
+    while not started[0].hung:
+        time.sleep(0.01)
+    begun = time.monotonic()
+    engine.stop(project_root=project)
+    worker.join(20)
+    assert time.monotonic() - begun < 15 and not worker.is_alive()
+    assert box["res"]["kind"] == "ParserUnavailable" and started[0].terminated
+    assert len(started) == 1
+
+
+# --- the RUN instance (slice 3) ---------------------------------------------
+
+
+def test_run_is_taken_once_while_live_and_fresh_once_its_holder_ended_it(project, spawns):
+    """Only a holder ends RUN: while one is live a second holder gets None (never a
+    second process on the instruments); once it ended, the next take is fresh."""
+    first = engine.run(project)
+    assert first.ping()["pong"] and engine.run(project) is None
+    assert engine.run_for_recovery(project) == (first, False)
+    first.shutdown()
+    second = engine.run(project)
+    assert second is not None and second is not first and not second.alive
+    second.shutdown()                       # never started: ended all the same
+    assert engine.run(project) is not None
+    assert [argv[1:] for argv, _kw in spawns] == [[str(_DAEMON), "--role", "run"]]
+
+
+def test_a_run_whose_process_died_is_not_restarted_by_the_registry(project, spawns):
+    first = engine.run(project)
+    assert first.ping()["pong"]
+    first._proc.kill()
+    first._proc.wait(timeout=10)
+    assert first.ping()["kind"] == "SessionDead"     # the holder learns it: its lost path
+    taken, fresh = engine.run_for_recovery(project)
+    assert fresh and taken is not first and len(spawns) == 1
+    taken.shutdown()
+
+
+def test_stop_and_the_exit_hook_leave_a_live_run_to_its_holder(project, spawns):
+    run = engine.run(project)
+    assert run.ping()["pong"]
+    engine.stop(project_root=project)
+    engine.stop(venv_folder=Path(sys.executable).parent.parent)
+    engine.stop_all()
+    assert run.alive and run.ping()["pong"]
+    assert engine.run_for_recovery(project) == (run, False)   # a recovery may still drive it
+    run.shutdown()
+
+
+def test_run_claims_its_venv_as_a_bench_holder_tools_as_this_app_s_engine(monkeypatch):
+    from procedo.core import venv_pool
+
+    seen = []
+    monkeypatch.setattr(venv_pool, "claim_child", lambda root, pid, token: seen.append(token))
+    _project_local_state.claim_engine(Path("p"), 1, "run")
+    _project_local_state.claim_engine(Path("p"), 1, "tools")
+    assert seen == [venv_pool.BENCH, venv_pool.engine_token()]
+
+
+def test_a_recovery_safe_off_never_starts_a_second_run_beside_a_live_one(project, spawns):
+    """Recovery and RUN are never two live processes on the instruments: with a
+    holder's RUN still live, the off goes through it, and it stays its holder's."""
+    run = engine.run(project)
+    assert run.ping()["pong"]
+    pack_parsers.safe_off_remote([], {}, project)   # no packs here: the frame's answer is moot
+    assert len(spawns) == 1 and run.alive
+    run.shutdown()
+    pack_parsers.safe_off_remote([], {}, project)   # a fresh one, ended
+    assert len(spawns) == 2 and engine.run(project) is not None
+
+
+def test_a_project_stop_returns_at_once_even_on_a_wedged_engine(project, fakes):
+    """Studio's project switch and bundle change call it on the GUI thread: the
+    close (its grace, then the kill) happens on a thread; the op in flight still
+    ends lost, unretried."""
+    started, plans = fakes
+    plans += [(["ok", "hang"], 0.0)]
+    assert _available(project)["ok"]
+    box: dict = {}
+    worker = threading.Thread(target=lambda: box.update(res=_available(project, 30)))
+    worker.start()
+    while not started[0].hung:
+        time.sleep(0.01)
+    begun = time.monotonic()
+    engine.stop(project_root=project)
+    assert time.monotonic() - begun < 1.0
+    worker.join(20)
+    assert box["res"]["kind"] == "ParserUnavailable" and started[0].terminated
+
+
+def test_a_stop_landing_while_an_instance_is_replaced_leaves_none_running(project, spawns, monkeypatch):
+    """``stop`` takes no lock, so it can land between ``_replace`` retiring the old
+    instance and placing the new one: that new one is retired again, never left
+    running for a project that just closed."""
+    real = engine._replace
+
+    def replace_under_a_stop(slot, key, role, root):
+        engine.stop(project_root=project)      # the GUI thread's stop, mid-replace
+        real(slot, key, role, root)
+
+    monkeypatch.setattr(engine, "_replace", replace_under_a_stop)
+    answer = _available(project)
+    assert (answer["ok"], answer["kind"]) == (False, "ParserUnavailable")
+    assert spawns == [] and _session(project) is None

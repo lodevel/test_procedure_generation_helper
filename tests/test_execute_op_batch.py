@@ -14,7 +14,6 @@ import importlib.util
 import json
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -46,15 +45,6 @@ _PROC = {"equipment": [{"id": "PSU1", "type": "psu"},
                        {"id": "ELOAD1", "type": "eload"}]}
 _BENCH = {"PSU1": {"visa": "MOCK", "_dev": "PSU1"},
           "ELOAD1": {"visa": "MOCK", "_dev": "ELOAD1"}}
-
-
-def _proc_file(case: unittest.TestCase, proc: dict = _PROC) -> Path:
-    """Write ``proc`` to a tmp procedure.json (RemoteSession is path-based)."""
-    td = tempfile.TemporaryDirectory()
-    case.addCleanup(td.cleanup)
-    path = Path(td.name) / "procedure.json"
-    path.write_text(json.dumps(proc), encoding="utf-8")
-    return path
 
 
 def _set_v(device, node="s", volts=5.0):
@@ -99,7 +89,7 @@ class DaemonRunnerTests(unittest.TestCase):
     def _session(self, proc: dict = _PROC):
         s = er._Session()
         s.lifecycle = reg.get_lifecycle()
-        s.procedure_json = proc          # the daemon's _load_procedure latch
+        s.procedure_json = proc          # the document the frame carried (_take_document)
         return s
 
     def _devcalls(self, device, method):
@@ -258,25 +248,46 @@ class DaemonRunnerTests(unittest.TestCase):
                                                 "channels": [1]}]})
         self.assertEqual(r2["kind"], "NoLifecycle")
 
-    # -- no procedure document ever latched -> hard visible error, no exec -----
-    def test_unreadable_procedure_path_blocks_only_exec_ops(self):
-        """A bad procedure_path must gate exec_ops ONLY — safe_off, ping and
-        shutdown proceed (recovery safe-off is the last line of defense and
-        must never be blocked by a missing document)."""
-        s = self._session()
-        s.procedure_json = None
-        bad = {"procedure_path": "/nonexistent/procedure.json"}
-        resp, stop = er._dispatch(s, {"cmd": "exec_ops", "ops": [],
-                                      "bench_map": {}, **bad})
-        self.assertFalse(resp["ok"])
-        self.assertEqual(resp["kind"], "NoProcedure")
-        resp, stop = er._dispatch(s, {"cmd": "ping", **bad})
-        self.assertTrue(resp.get("pong"))
-        resp, stop = er._dispatch(s, {"cmd": "safe_off", "safe_off": [],
-                                      "bench_map": {}, **bad})
-        self.assertTrue(resp["ok"])
-        resp, stop = er._dispatch(s, {"cmd": "shutdown", **bad})
+    # -- a frame without its document: only exec is refused --------------------
+    def test_a_missing_document_blocks_only_exec_ops(self):
+        """exec_ops runs only on the document sent with it — never on an earlier
+        frame's; safe_off, ping and shutdown proceed (recovery safe-off is the
+        last line of defense and must never be blocked by a missing document)."""
+        s = self._session()                   # an earlier frame's document is held
+        for bad in ({}, {"procedure_json": "not a document"}):
+            resp, stop = er._dispatch(s, {"cmd": "exec_ops", "ops": [_meas_v("PSU1")],
+                                          "bench_map": _BENCH, **bad})
+            self.assertEqual((resp["ok"], resp["kind"]), (False, "NoProcedure"))
+            self.assertEqual(self.calls, [])  # nothing opened
+            resp, stop = er._dispatch(s, {"cmd": "ping", **bad})
+            self.assertTrue(resp.get("pong"))
+            resp, stop = er._dispatch(s, {"cmd": "safe_off", "safe_off": [],
+                                          "bench_map": {}, **bad})
+            self.assertTrue(resp["ok"])
+            self.assertIs(s.procedure_json, _PROC)   # kept, for the teardown
+        resp, stop = er._dispatch(s, {"cmd": "shutdown"})
         self.assertTrue(stop)
+
+    # -- the document each frame carries is the one used: no per-path latch ----
+    def test_each_frame_s_document_wins_and_the_last_one_feeds_the_teardown(self):
+        """An edit between two frames is seen: the second batch's document, not
+        a copy latched from the first, is what the shutdown sweep resolves the
+        held PSU's DECLARED channels from (``_safe_off_all_held``)."""
+        s = er._Session()
+        s.lifecycle = reg.get_lifecycle()
+        s.bundle_loaded = True
+        one = {"equipment": [{"id": "PSU1", "type": "psu", "channels": [1]}]}
+        three = {"equipment": [{"id": "PSU1", "type": "psu", "channels": [1, 2, 3]}]}
+        for doc in (one, three):
+            resp, _ = er._dispatch(s, {"cmd": "exec_ops", "ops": [_meas_v("PSU1")],
+                                       "bench_map": _BENCH, "procedure_json": doc})
+            self.assertTrue(resp["ok"] and not resp["aborted"], resp)
+        resp, _ = er._dispatch(s, {"cmd": "ping"})   # a frame without one keeps it
+        self.assertIs(s.procedure_json, three)
+        er._dispatch(s, {"cmd": "shutdown"})
+        psu_offs = sorted(c[3]["channel"] for c in self.calls
+                          if c[1] == "PSU1" and c[3].get("on") is False)
+        self.assertEqual(psu_offs, [1, 2, 3])
 
     def test_exec_ops_without_procedure_document_errors(self):
         s = er._Session()
@@ -358,7 +369,7 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
 
     def _session(self, batch_result):
         pp = self._pp()
-        s = pp.RemoteSession(_proc_file(self), Path("/nonexistent"))
+        s = pp.RemoteSession(Path("/nonexistent"))
         # mock the daemon; tolerate the streaming/verdict kwargs exec_ops now
         # forwards (on_progress, and the run state rides inside `frame`).
         s._request = lambda frame, timeout=None, on_progress=None: batch_result
@@ -385,7 +396,7 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
 
     def test_no_venv_marks_session_dead(self):
         pp = self._pp()
-        s = pp.RemoteSession(_proc_file(self), Path("/nonexistent"))   # real transport, no venv
+        s = pp.RemoteSession(Path("/nonexistent"))   # real transport, no venv
         out = s.exec_ops([{"node_path": "a", "op": {
             "op": "psu.measure_voltage", "device": "PSU1"}}], {"PSU1": {"visa": "X"}})
         self.assertFalse(out["ok"])
@@ -396,7 +407,7 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
         # dead == True must GUARANTEE the proc is gone, so recovery never opens a
         # 2nd process on a device the old daemon still holds.
         pp = self._pp()
-        s = pp.RemoteSession(_proc_file(self), Path("/x"))
+        s = pp.RemoteSession(Path("/x"))
 
         class _FP:
             def __init__(self): self.killed = False
@@ -411,11 +422,10 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
         self.assertTrue(fp.killed)               # proc terminated as part of dead
         self.assertEqual(out["kind"], "SessionDead")
 
-    # -- frames carry the document PATH, never the document itself -------------
-    def test_frames_carry_procedure_path_never_procedure_json(self):
+    # -- frames carry the document itself, never a path ------------------------
+    def test_frames_carry_the_document_never_a_path(self):
         pp = self._pp()
-        path = _proc_file(self)
-        s = pp.RemoteSession(path, Path("/nonexistent"))
+        s = pp.RemoteSession(Path("/nonexistent"))
 
         class _In:
             lines: list = []
@@ -431,15 +441,16 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
             def wait(self, timeout=None): return 0
         s._proc = _FP()
         s.exec_ops([{"node_path": "a", "op": _meas_v("PSU1")["op"]}],
-                   {"PSU1": {"visa": "X"}})
-        s.safe_off([{"device": "PSU1", "etype": "psu", "channels": [1]}], {})
+                   {"PSU1": {"visa": "X"}}, procedure_json=_PROC)
+        s.safe_off([{"device": "PSU1", "etype": "psu", "channels": [1]}], {},
+                   procedure_json=_PROC)
         s.shutdown()
         frames = [json.loads(line) for line in _In.lines]
         self.assertEqual([f["cmd"] for f in frames],
                          ["exec_ops", "safe_off", "shutdown"])
+        self.assertEqual([f.get("procedure_json") for f in frames], [_PROC, _PROC, None])
         for f in frames:
-            self.assertNotIn("procedure_json", f)
-            self.assertEqual(f["procedure_path"], str(Path(path).resolve()))
+            self.assertNotIn("procedure_path", f)
 
 
 class RemoteSessionLiveTransportTests(unittest.TestCase):
@@ -451,7 +462,7 @@ class RemoteSessionLiveTransportTests(unittest.TestCase):
         from tests._qt_stub import ensure_workflow_editor_importable
         ensure_workflow_editor_importable()
         from procedo.studio.pack_ops import pack_parsers as pp
-        s = pp.RemoteSession(_proc_file(self), Path("/nonexistent"))
+        s = pp.RemoteSession(Path("/nonexistent"))
         runner = _RUNNER   # the llm/ daemon script (module-level, verified on import)
 
         def _start():               # use THIS interpreter (no project venv in test env)

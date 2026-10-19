@@ -17,6 +17,11 @@ not retried: a slow op would only cost the wait twice. Either loss reads as
 daemon is single-threaded. Each instance claims its venv for its pid
 (``venv_pool.engine_token`` names this app), so a delete in another window
 refuses while it runs, and a delete in this one stops it first (:func:`stop`).
+
+The RUN instance holds the instruments (:func:`run`). Its holder — the guided
+dialog or the bench session — alone ends it (``shutdown``, or ``kill`` then the
+recovery safe-off); the registry never restarts, replaces or stops a live one,
+and its claim is a bench holder's, which every Reinstall refuses.
 """
 from __future__ import annotations
 
@@ -29,6 +34,7 @@ from typing import Any, Optional
 from procedo.core import display_snapshot, temp_root
 
 from . import pack_parsers
+from .bench_client import BenchSessionClient
 
 _LOST = ("SessionDead", "SessionTimeout")
 
@@ -40,12 +46,14 @@ class _Slot:
         self.lock = threading.Lock()
         self.key: Optional[tuple] = None
         self.session: Optional[pack_parsers.RemoteSession] = None
+        self.generation = 0   # bumped by every stop(), which works without the lock
 
 
 _slots: dict[tuple[str, str], _Slot] = {}
 _slots_lock = threading.Lock()
 _closed = False  # set by stop_all: the app is going, nothing starts again
 _CLOSING = {"ok": False, "kind": "ParserUnavailable", "error": "app is closing"}
+_STOPPED = {"ok": False, "kind": "ParserUnavailable", "error": "the project's engine was stopped"}
 
 
 def tools_op(project_root: Path, spec: dict[str, Any], timeout: float) -> dict[str, Any]:
@@ -62,18 +70,44 @@ def _op(role: str, project_root: Path, spec: dict[str, Any], timeout: float) -> 
     with slot.lock:
         if _closed:
             return dict(_CLOSING)
+        generation = slot.generation
         if slot.session is None or slot.session.dead or slot.key != key:
-            _replace(slot, key, role, project_root)
-        warm = slot.session.alive
-        result = slot.session.engine_op(timeout=timeout, **spec)
+            if not _replaced(slot, generation, key, role, project_root):
+                return dict(_STOPPED)
+        session = slot.session
+        warm = session.alive
+        result = session.engine_op(timeout=timeout, **spec)
         if _closed:
             return dict(_CLOSING)
-        if result.get("kind") == "SessionDead" and warm:
-            _replace(slot, key, role, project_root)
+        if result.get("kind") == "SessionDead" and warm and slot.generation == generation:
+            if not _replaced(slot, generation, key, role, project_root):
+                return dict(_STOPPED)
             result = slot.session.engine_op(timeout=timeout, **spec)
     if result.get("kind") in _LOST:
         return {**result, "kind": "ParserUnavailable"}
     return result
+
+
+def run(project_root: Path) -> Optional[BenchSessionClient]:
+    """Take the project's RUN slot for a holder: a fresh instance, started by its
+    first frame; None while the slot's last instance is live (another holder's)."""
+    session, taken = _take_run(Path(project_root))
+    return session if taken else None
+
+
+def run_for_recovery(project_root: Path) -> tuple[BenchSessionClient, bool]:
+    """The RUN instance a recovery safe-off drives, and whether it took it (a fresh
+    one it must end) rather than found a holder's live one (left to that holder)."""
+    return _take_run(Path(project_root))
+
+
+def _take_run(project_root: Path) -> tuple[BenchSessionClient, bool]:
+    slot = _slot("run", project_root)
+    with slot.lock:
+        if slot.session is not None and not slot.session.ended:
+            return slot.session, False
+        slot.session = BenchSessionClient(project_root)
+        return slot.session, True
 
 
 def _slot(role: str, project_root: Path) -> _Slot:
@@ -86,7 +120,19 @@ def _replace(slot: _Slot, key: tuple, role: str, project_root: Path) -> None:
     """A fresh instance in ``slot``; the one it replaces exits (a dead one only loses its folder)."""
     if slot.session is not None:
         _retire(slot.session)
-    slot.key, slot.session = key, pack_parsers.RemoteSession(None, project_root, role=role)
+    slot.key, slot.session = key, pack_parsers.RemoteSession(project_root, role=role)
+
+
+def _replaced(slot: _Slot, generation: int, key: tuple, role: str, project_root: Path) -> bool:
+    """:func:`_replace`, unless a :func:`stop` landed meanwhile (it takes no lock):
+    then the instance just made is retired again and the op answers stopped."""
+    _replace(slot, key, role, project_root)
+    if slot.generation == generation:
+        return True
+    session, slot.session, slot.key = slot.session, None, None
+    if session is not None:
+        _retire(session)
+    return False
 
 
 def _retire(session: pack_parsers.RemoteSession) -> None:
@@ -99,32 +145,55 @@ def _retire(session: pack_parsers.RemoteSession) -> None:
         shutil.rmtree(session.screenshot_dir, ignore_errors=True)
 
 
-def stop(*, venv_folder: Optional[Path] = None, project_root: Optional[Path] = None) -> None:
+def stop(*, venv_folder: Optional[Path] = None, project_root: Optional[Path] = None,
+         wait: bool = False) -> None:
     """End this app's instances so something can go: the ones whose interpreter lives
     in ``venv_folder`` (it is about to be deleted), or the ones of ``project_root``
     (it closed, or its bundle changed). The next op starts afresh wherever its
-    venv then is. Instances of other projects are left running."""
+    venv then is. Instances of other projects, and every RUN, are left running.
+    Never waits on a slot's lock (the GUI thread calls it): an instance is closed
+    as :func:`stop_all` does, and an op in flight under it ends ``SessionDead``,
+    not retried. A project's instances close on a thread, so a wedged one never
+    holds the caller up; a venv's close before this returns, as a delete follows,
+    and so does a project's with ``wait`` (a bundle install may evict its venv next)."""
+    ended: list = []
     folder = None if venv_folder is None else os.path.normcase(os.path.abspath(venv_folder)) + os.sep
     project = None if project_root is None else os.path.normcase(os.path.abspath(project_root))
-    for (_role, name), slot in list(_slots.items()):
+    for (role, name), slot in list(_slots.items()):
         key = slot.key
+        if role == "run":
+            continue
         if name == project or (
             folder and key and os.path.normcase(os.path.abspath(key[1])).startswith(folder)
         ):
-            with slot.lock:
-                if slot.session is not None:
-                    _retire(slot.session)
-                    slot.key = slot.session = None
+            slot.generation += 1
+            session, slot.session, slot.key = slot.session, None, None
+            if session is not None:
+                ended.append(session)
+    if venv_folder is not None or wait:
+        _close(ended)
+    elif ended:
+        threading.Thread(target=_close, args=(ended,), daemon=True).start()
+
+
+def _close(sessions: list) -> None:
+    for session in sessions:
+        session.close()
+        shutil.rmtree(session.screenshot_dir, ignore_errors=True)
 
 
 def stop_all() -> None:
-    """End every instance for good: none starts again, so a worker caught mid-frame
-    gets "app is closing" instead of a respawn racing the root's removal. Closed
-    without the slot's lock, which that worker holds. ``temp_root`` runs it before
-    removing its root: Windows cannot delete a running process's working folder."""
+    """End every TOOLS instance for good: none starts again, so a worker caught
+    mid-frame gets "app is closing" instead of a respawn racing the root's removal.
+    Closed without the slot's lock, which that worker holds. ``temp_root`` runs it
+    before removing its root: Windows cannot delete a running process's working
+    folder. A RUN is its holder's to end, before this (closeEvent ends the bench
+    session) or after (atexit); a recovery may still take one; stdin EOF is the backstop."""
     global _closed
     _closed = True
-    for slot in list(_slots.values()):
+    for (role, _name), slot in list(_slots.items()):
+        if role == "run":
+            continue
         session, slot.session, slot.key = slot.session, None, None
         if session is not None:
             session.close()

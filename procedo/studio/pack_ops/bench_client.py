@@ -1,6 +1,7 @@
-"""Bench-session client channel (S3): the host side of the run-handle frames.
+"""The RUN instance's channel: the host side of the instrument and run-handle frames.
 
-Thin subclass of :class:`~procedo.studio.pack_ops.pack_parsers.RemoteSession`
+:func:`.engine.run` hands one per project to its holder — the guided dialog or the
+bench session. Thin subclass of :class:`~procedo.studio.pack_ops.pack_parsers.RemoteSession`
 adding ``acquire_run`` / ``plan_only`` (dry-run reconcile) / ``run_test`` /
 ``cancel_run`` / ``release_run``.
 ``end_session()`` IS the inherited ``shutdown()`` — deliberately no new frame.
@@ -38,8 +39,8 @@ _STREAM_KINDS = frozenset({"output", "prompt", "ack", "reject", "progress"})
 class BenchSessionClient(RemoteSession):
     """One persistent bench-holder channel speaking the S3 run-handle frames."""
 
-    def __init__(self, procedure_path: Path | str, project_root: Path) -> None:
-        super().__init__(procedure_path, project_root)
+    def __init__(self, project_root: Path) -> None:
+        super().__init__(project_root, role="run")
         self._write_lock = threading.Lock()   # prompt_response vs in-run cancel
         self._in_run = False
 
@@ -121,8 +122,7 @@ class BenchSessionClient(RemoteSession):
     def _post(self, frame: dict[str, Any]) -> None:
         """Write one frame into the in-flight run_test exchange (no response
         read here — the run loop consumes everything the daemon emits)."""
-        payload = {**frame, "_bundle_dir": self._bundle_dir,
-                   "procedure_path": self._procedure_path}
+        payload = {**frame, "_bundle_dir": self._bundle_dir}
         with self._write_lock:
             self._proc.stdin.write(json.dumps(payload) + "\n")
             self._proc.stdin.flush()

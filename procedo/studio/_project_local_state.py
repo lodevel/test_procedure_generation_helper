@@ -69,14 +69,21 @@ def venv(project_root: Path) -> Optional[ProjectVenv]:
     return ProjectVenv(Path(python), Path(project_root) / "bundle")
 
 
-def claim_engine(project_root: Path, pid: int) -> Optional[Path]:
-    """Claim this project's venv for an engine process (its pid), so a Reinstall or an
-    eviction in any window refuses while it runs. Returns the folder claimed."""
-    return venv_pool.claim_child(project_root, pid, venv_pool.engine_token())
+def _engine_token(role: str) -> str:
+    """RUN holds instruments, so its claim is a bench holder's, which every Reinstall
+    refuses; a TOOLS claim names this app, whose own Reinstall stops it first."""
+    return venv_pool.BENCH if role == "run" else venv_pool.engine_token()
 
 
-def release_engine(folder: Optional[Path], pid: int) -> None:
-    venv_pool.release(folder, pid, venv_pool.engine_token())
+def claim_engine(project_root: Path, pid: int, role: str) -> Optional[Path]:
+    """Claim this project's venv for an engine process (its pid), so an eviction in any
+    window, and a Reinstall as :func:`_engine_token` says, refuses while it runs.
+    Returns the folder claimed."""
+    return venv_pool.claim_child(project_root, pid, _engine_token(role))
+
+
+def release_engine(folder: Optional[Path], pid: int, role: str) -> None:
+    venv_pool.release(folder, pid, _engine_token(role))
 
 
 def why_no_venv(project_root: Path) -> str:

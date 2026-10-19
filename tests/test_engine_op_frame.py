@@ -86,7 +86,7 @@ def _in_process(spec: dict) -> dict:
 @pytest.fixture(scope="module")
 def live_session():
     """A RemoteSession over the REAL daemon script, on this interpreter (no project venv)."""
-    sess = pp.RemoteSession(Path(__file__), Path("/nonexistent"))
+    sess = pp.RemoteSession(Path("/nonexistent"))
 
     def _start():
         sess._bundle_dir = None
@@ -121,18 +121,16 @@ def test_the_daemon_result_op_answers_what_the_op_table_answers(live_session):
     assert live == _in_process({"op": "build_manual_result", **fields})
 
 
-def test_the_op_judges_the_frame_document_never_the_path_nor_the_latch(tmp_path):
-    on_disk = tmp_path / "procedure.json"
-    on_disk.write_text(json.dumps(_document("if_else")), encoding="utf-8")
+def test_the_op_judges_its_frame_document_and_never_changes_the_sessions():
     session = er._Session()
-    latched = session.procedure_json = {"latched": True}
+    held = session.procedure_json = {"held": True}
     sent = _document("linear")
     req = {"cmd": "op", "op": "build_manual_run", "procedure_json": sent,
-           "procedure_path": str(on_disk), "measurements": {}, "controls": {}}
+           "measurements": {}, "controls": {}}
     response, stop = er._dispatch(session, req)
     assert not stop
     assert response == engine_ops.run({"op": "build_manual_run", "procedure_json": sent})
-    assert session.procedure_json is latched and session.procedures == {}
+    assert session.procedure_json is held
 
 
 def test_a_bundle_that_will_not_load_degrades_the_op_but_refuses_instruments(monkeypatch):
@@ -171,7 +169,7 @@ def test_error_kinds_keep_the_exception_table(monkeypatch):
 
 
 def test_engine_op_sends_one_op_frame_with_the_document(monkeypatch, tmp_path):
-    sess = pp.RemoteSession(tmp_path / "procedure.json", tmp_path)
+    sess = pp.RemoteSession(tmp_path)
     seen = {}
     monkeypatch.setattr(sess, "_request", lambda frame, timeout, on_progress=None:
                         seen.update(frame=frame, timeout=timeout) or {"ok": True})

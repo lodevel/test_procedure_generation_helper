@@ -276,7 +276,6 @@ def test_safe_off_does_not_refuse_merely_because_the_venv_moved(
 
     result = pack_parsers.safe_off_remote(
         [{"device": "PSU1", "etype": "psu", "channels": [1]}],
-        project / "tests" / "t1" / "procedure.json",
         {"PSU1": {"visa": "TCPIP0::10.0.0.5::INSTR"}},
         project,
     )
@@ -301,6 +300,6 @@ def test_safe_off_still_refuses_when_there_really_is_no_venv(
 
     monkeypatch.setattr(pack_parsers.subprocess, "Popen", never)
 
-    result = pack_parsers.safe_off_remote([], project / "p.json", {}, project)
+    result = pack_parsers.safe_off_remote([], {}, project)
 
     assert result["ok"] is False and result["kind"] == "ParserUnavailable"

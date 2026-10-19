@@ -132,16 +132,6 @@ def _code(kind: str) -> str:
     return code
 
 
-def _proc_file(case: unittest.TestCase) -> Path:
-    """tmp procedure.json for the path-based client."""
-    td = tempfile.TemporaryDirectory()
-    case.addCleanup(td.cleanup)
-    path = Path(td.name) / "procedure.json"
-    path.write_text(json.dumps({"equipment": [{"id": "PSU1", "type": "psu"}]}),
-                    encoding="utf-8")
-    return path
-
-
 # ---------------------------------------------------------------------------
 # Test doubles.
 # ---------------------------------------------------------------------------
@@ -2106,7 +2096,7 @@ class BenchClientLiveTests(unittest.TestCase):
         from tests._qt_stub import ensure_workflow_editor_importable
         ensure_workflow_editor_importable()
         from procedo.studio.pack_ops import bench_client as bc
-        c = bc.BenchSessionClient(_proc_file(self), Path("/nonexistent"))
+        c = bc.BenchSessionClient(Path("/nonexistent"))
 
         def _start():            # THIS interpreter (no project venv in tests)
             c._bundle_dir = None

@@ -31,7 +31,7 @@ def temp_dir(tmp_path, monkeypatch):
 
 
 def _session(tmp_path, daemon: str | None = None) -> pack_parsers.RemoteSession:
-    sess = pack_parsers.RemoteSession(tmp_path / "procedure.json", tmp_path)
+    sess = pack_parsers.RemoteSession(tmp_path)
     assert sess.screenshot_dir.parent == temp_root.root()
     if daemon is not None:  # stands in for _start: a live daemon, cwd in the shots dir
         sess._proc = subprocess.Popen(
@@ -67,7 +67,7 @@ def test_safe_off_remote_leaves_no_screenshot_dir(temp_dir, tmp_path, monkeypatc
         raise pack_parsers.ParserUnavailable("no venv")
 
     monkeypatch.setattr(pack_parsers, "_resolve_project_python", no_venv)
-    res = pack_parsers.safe_off_remote([], tmp_path / "p.json", {}, tmp_path)
+    res = pack_parsers.safe_off_remote([], {}, tmp_path)
     assert res["kind"] == "ParserUnavailable"
     assert list(temp_root.root().iterdir()) == []
 

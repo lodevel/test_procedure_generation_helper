@@ -43,7 +43,7 @@ class _Proc:
 
 
 def _session(tmp_path, proc):
-    sess = pp.RemoteSession(tmp_path / "procedure.json", tmp_path)
+    sess = pp.RemoteSession(tmp_path)
     sess._proc = proc
     return sess
 

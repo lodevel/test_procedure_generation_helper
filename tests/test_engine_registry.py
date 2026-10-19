@@ -45,6 +45,7 @@ def project(tmp_path, monkeypatch):
     venv = _project_local_state.ProjectVenv(Path(sys.executable), root / "bundle")
     monkeypatch.setattr(pack_parsers, "_resolve_project_python", lambda _root: venv)
     monkeypatch.setattr(engine, "_slots", {})
+    monkeypatch.setattr(engine, "_closed", False)   # an earlier test's exit hook closed it
     yield root
     for slot in engine._slots.values():
         if slot.session is not None:
@@ -128,7 +129,7 @@ def test_the_exit_hook_lets_the_process_leave_on_its_own_and_no_orphan(project, 
     assert _available(project)["ok"]
     proc = _session(project)._proc
     tree = _tree(proc)
-    engine._stop_all()
+    engine.stop_all()
     assert proc.poll() == 0
     _gone, alive = pytest.importorskip("psutil").wait_procs(tree, timeout=10)
     assert alive == []
@@ -137,9 +138,9 @@ def test_the_exit_hook_lets_the_process_leave_on_its_own_and_no_orphan(project, 
 def test_stop_ends_the_instances_running_out_of_a_venv_and_only_those(project, spawns, tmp_path):
     assert _available(project)["ok"]
     proc = _session(project)._proc
-    engine.stop(tmp_path / "another_venv")
+    engine.stop(venv_folder=tmp_path / "another_venv")
     assert proc.poll() is None
-    engine.stop(Path(sys.executable).parent.parent)   # the venv this test's interpreter is in
+    engine.stop(venv_folder=Path(sys.executable).parent.parent)   # the venv this test's interpreter is in
     assert proc.poll() is not None
     assert _session(project) is None
     assert _available(project)["ok"] and len(spawns) == 2
@@ -151,7 +152,7 @@ def test_stop_waits_for_the_op_in_flight(project, spawns):
     slot = next(iter(engine._slots.values()))
     done = threading.Event()
     with slot.lock:
-        t = threading.Thread(target=lambda: (engine.stop(Path(sys.executable).parent.parent),
+        t = threading.Thread(target=lambda: (engine.stop(venv_folder=Path(sys.executable).parent.parent),
                                              done.set()))
         t.start()
         assert not done.wait(0.5) and slot.session.alive
@@ -163,7 +164,7 @@ def test_a_dead_instance_is_not_restarted_to_be_stopped(project, spawns):
     proc = _session(project)._proc
     proc.kill()
     proc.wait(timeout=10)
-    engine.stop(Path(sys.executable).parent.parent)
+    engine.stop(venv_folder=Path(sys.executable).parent.parent)
     assert len(spawns) == 1
 
 
@@ -186,7 +187,7 @@ def test_a_tools_instance_claims_its_venv_for_its_pid_until_it_ends(project, spa
     assert _available(project)["ok"] and _available(project)["ok"]
     pid = _session(project)._proc.pid
     assert seen == [("claim", pid)]
-    engine._stop_all()
+    engine.stop_all()
     assert seen == [("claim", pid), ("release", pid)]
 
 
@@ -470,7 +471,96 @@ def test_the_process_works_and_leaves_nothing_outside_the_temp_root(temp_dir, pr
     assert Path(kwargs["cwd"]).parent == root
     assert kwargs["env"]["TEMP"] == kwargs["env"]["TMP"] == str(root)
     proc = _session(project)._proc
-    engine._stop_all()             # the exit hook, before the temp root goes
+    engine.stop_all()             # the exit hook, before the temp root goes
     assert proc.poll() is not None
     temp_root.remove()
     assert list(temp_dir.iterdir()) == []
+
+
+# --- the lifecycle hooks (slice 2b) -----------------------------------------
+
+
+def _other_project(tmp_path: Path) -> Path:
+    root = tmp_path / "other"
+    (root / "bundle").mkdir(parents=True)
+    (root / "bundle" / "bundle.json").write_text("{}", encoding="utf-8")
+    return root
+
+
+def test_stopping_a_project_ends_its_process_only_and_the_next_op_starts_afresh(
+    project, spawns, tmp_path
+):
+    other = _other_project(tmp_path)
+    assert _available(project)["ok"] and _available(other)["ok"]
+    mine, theirs = _session(project)._proc, _session(other)._proc
+    engine.stop(project_root=project)
+    assert mine.wait(timeout=10) is not None
+    assert theirs.poll() is None
+    assert _available(project)["ok"]
+    assert len(spawns) == 3
+
+
+def test_switching_project_stops_the_old_ones_process(project, spawns, tmp_path):
+    from procedo.studio.core.project_manager import ProjectManager
+
+    other = _other_project(tmp_path)
+    (project / "tests").mkdir()
+    (other / "tests").mkdir()
+    manager = ProjectManager()
+    assert manager.set_project_root(project)
+    assert _available(project)["ok"]
+    proc = _session(project)._proc
+    assert manager.set_project_root(project)       # the same project again: nothing stops
+    assert proc.poll() is None
+    assert manager.set_project_root(other)
+    assert proc.wait(timeout=10) is not None
+
+
+def test_a_bundle_change_in_studio_stops_the_projects_process(project, spawns):
+    from types import SimpleNamespace
+
+    from procedo.studio.controllers import project_controller
+
+    assert _available(project)["ok"]
+    proc = _session(project)._proc
+    window = SimpleNamespace(
+        project_manager=SimpleNamespace(project_root=project),
+        _update_project_rules_indicators=lambda: None,
+        _handle_config_change=lambda: None,
+    )
+    project_controller.on_bundle_change_debounced(window)
+    assert proc.wait(timeout=10) is not None
+
+
+def test_the_temp_roots_removal_stops_the_processes_first(temp_dir, project, spawns):
+    """aboutToQuit calls ``remove`` too: the engine must already be gone, or Windows
+    refuses to delete its working folder."""
+    assert _available(project)["ok"]
+    proc = _session(project)._proc
+    temp_root.remove()
+    assert proc.poll() is not None
+    assert list(temp_dir.iterdir()) == []
+
+
+def test_after_the_exit_hook_nothing_starts_again(project, spawns):
+    """A worker caught mid-frame at exit must not respawn into the root being removed."""
+    assert _available(project)["ok"]
+    engine.stop_all()
+    assert _session_or_none(project) is None
+    answer = _available(project)
+    assert (answer["ok"], answer["kind"]) == (False, "ParserUnavailable")
+    assert len(spawns) == 1
+
+
+def _session_or_none(root: Path):
+    slot = engine._slots.get(("tools", os.path.normcase(os.path.abspath(root))))
+    return None if slot is None else slot.session
+
+
+def test_stop_locks_only_the_slots_it_ends(project, spawns, tmp_path):
+    other = _other_project(tmp_path)
+    assert _available(other)["ok"]
+    theirs = engine._slots[("tools", os.path.normcase(os.path.abspath(other)))]
+    with theirs.lock:                         # busy with a frame
+        engine.stop(project_root=project)     # would hang if it locked every slot
+    assert theirs.session is not None

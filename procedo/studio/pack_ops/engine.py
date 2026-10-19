@@ -7,7 +7,7 @@ fresh Python per call (docs/plans/engine_process.md). An instance starts on firs
 use and is replaced when it died or its key moved: the role, the interpreter or
 the bundle (``display_snapshot.bundle_key``). Bench and Studio are separate OS
 processes, so they never share one. An instance exits when its stdin closes,
-however this process ends.
+however this process ends, and ``stop_all`` ends them ahead of the temp root's removal.
 
 A TOOLS instance holds nothing. When a warm one (already running before the
 frame) dies under a frame, the op is retried once in a fresh one; a fresh one
@@ -20,14 +20,13 @@ refuses while it runs, and a delete in this one stops it first (:func:`stop`).
 """
 from __future__ import annotations
 
-import atexit
 import os
 import shutil
 import threading
 from pathlib import Path
 from typing import Any, Optional
 
-from procedo.core import display_snapshot
+from procedo.core import display_snapshot, temp_root
 
 from . import pack_parsers
 
@@ -45,6 +44,8 @@ class _Slot:
 
 _slots: dict[tuple[str, str], _Slot] = {}
 _slots_lock = threading.Lock()
+_closed = False  # set by stop_all: the app is going, nothing starts again
+_CLOSING = {"ok": False, "kind": "ParserUnavailable", "error": "app is closing"}
 
 
 def tools_op(project_root: Path, spec: dict[str, Any], timeout: float) -> dict[str, Any]:
@@ -59,10 +60,14 @@ def _op(role: str, project_root: Path, spec: dict[str, Any], timeout: float) -> 
     key = (role, str(venv.python), display_snapshot.bundle_key(project_root))
     slot = _slot(role, project_root)
     with slot.lock:
+        if _closed:
+            return dict(_CLOSING)
         if slot.session is None or slot.session.dead or slot.key != key:
             _replace(slot, key, role, project_root)
         warm = slot.session.alive
         result = slot.session.engine_op(timeout=timeout, **spec)
+        if _closed:
+            return dict(_CLOSING)
         if result.get("kind") == "SessionDead" and warm:
             _replace(slot, key, role, project_root)
             result = slot.session.engine_op(timeout=timeout, **spec)
@@ -94,24 +99,36 @@ def _retire(session: pack_parsers.RemoteSession) -> None:
         shutil.rmtree(session.screenshot_dir, ignore_errors=True)
 
 
-def stop(venv_folder: Path) -> None:
-    """End this app's instances whose interpreter lives in ``venv_folder``, so the
-    folder can be deleted; the next op starts afresh wherever its venv then is."""
-    folder = os.path.normcase(os.path.abspath(venv_folder)) + os.sep
+def stop(*, venv_folder: Optional[Path] = None, project_root: Optional[Path] = None) -> None:
+    """End this app's instances so something can go: the ones whose interpreter lives
+    in ``venv_folder`` (it is about to be deleted), or the ones of ``project_root``
+    (it closed, or its bundle changed). The next op starts afresh wherever its
+    venv then is. Instances of other projects are left running."""
+    folder = None if venv_folder is None else os.path.normcase(os.path.abspath(venv_folder)) + os.sep
+    project = None if project_root is None else os.path.normcase(os.path.abspath(project_root))
+    for (_role, name), slot in list(_slots.items()):
+        key = slot.key
+        if name == project or (
+            folder and key and os.path.normcase(os.path.abspath(key[1])).startswith(folder)
+        ):
+            with slot.lock:
+                if slot.session is not None:
+                    _retire(slot.session)
+                    slot.key = slot.session = None
+
+
+def stop_all() -> None:
+    """End every instance for good: none starts again, so a worker caught mid-frame
+    gets "app is closing" instead of a respawn racing the root's removal. Closed
+    without the slot's lock, which that worker holds. ``temp_root`` runs it before
+    removing its root: Windows cannot delete a running process's working folder."""
+    global _closed
+    _closed = True
     for slot in list(_slots.values()):
-        with slot.lock:
-            if slot.key and os.path.normcase(os.path.abspath(slot.key[1])).startswith(folder):
-                _retire(slot.session)
-                slot.key = slot.session = None
+        session, slot.session, slot.key = slot.session, None, None
+        if session is not None:
+            session.close()
 
 
-def _stop_all() -> None:
-    """End every instance at exit, before ``temp_root`` removes their folders:
-    Windows cannot delete a running process's working folder."""
-    for slot in list(_slots.values()):
-        if slot.session is not None:
-            slot.session.close()
-
-
-# Registered after temp_root's (pack_parsers imports it), so it runs first.
-atexit.register(_stop_all)
+# On every exit path (aboutToQuit and atexit alike), ahead of the removal itself.
+temp_root.before_remove(stop_all)

@@ -82,6 +82,10 @@ class ProjectManager:
         Returns True if path is a valid project root.
         """
         if self.is_valid_project_root(path):
+            if self.project_root is not None and self.project_root != path:
+                from procedo.studio.pack_ops import engine
+
+                engine.stop(project_root=self.project_root)  # the project switched away
             self.project_root = path
             self._equipment_patterns_cache = None
             return True

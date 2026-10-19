@@ -28,6 +28,7 @@ from procedo.core import app_settings, config_manager, display_snapshot
 from procedo.core.new_project_dialog import NewProjectDialog
 
 from .. import _project_local_state
+from ..pack_ops import engine
 
 if TYPE_CHECKING:
     from ..main_window import StudioWorkspace
@@ -308,6 +309,9 @@ def on_bundle_change_debounced(mw) -> None:
     TaskConfigManager (the reload-callback chain rebuilds task
     buttons / gating / validator rows) and regate the parser
     buttons via _handle_config_change."""
+    root = getattr(mw.project_manager, "project_root", None)
+    if root is not None:
+        engine.stop(project_root=root)  # a TOOLS of the old bundle would sit idle
     mw._update_project_rules_indicators()
     mw._handle_config_change()
 

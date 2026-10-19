@@ -237,6 +237,17 @@ def test_construction_smoke_disabled_backend(make_window):
     assert w._bundle_signature is None
 
 
+def test_a_health_probes_verdict_lands_on_the_ui_thread(make_window):
+    w = make_window()
+    ran = []
+    w._on_health_probe_result = lambda sm, alive: ran.append((sm, alive, threading.current_thread()))
+    worker = threading.Thread(target=lambda: w._health_verdict(("sm", True)))
+    worker.start()
+    worker.join(5)
+    _settle(lambda: ran)
+    assert ran == [("sm", True, threading.main_thread())]
+
+
 # =========================================================================
 # 2. menu / action wiring
 # =========================================================================

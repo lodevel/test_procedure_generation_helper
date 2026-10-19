@@ -12,10 +12,11 @@ import threading
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QMenuBar, QMessageBox, QFileDialog, QDialog,
 )
-from PySide6.QtCore import Qt, Signal, Slot, QFileSystemWatcher, QTimer
+from PySide6.QtCore import Qt, QFileSystemWatcher, QTimer
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 
 from procedo.core import library_dialog
+from procedo.core.off_gui import answer_to
 from procedo.core.config_manager_dialog import ProjectConfigDialog, TemplateManagerDialog
 from procedo.core.install_helper_dialog import InstallPackageDialog
 from procedo.core.project_model import ProjectModel
@@ -65,13 +66,6 @@ class StudioWorkspace(QWidget):
     - ``menu_bar``, for the window that hosts it to show
     """
     
-    # Thread-safe UI marshal: a daemon (health probe / recover) emits a
-    # callable here and Qt queues the slot onto THIS object's (UI) thread.
-    # QTimer.singleShot(0, fn) from a non-Qt daemon thread creates the timer
-    # in the CALLING thread, so the callback can be lost; a signal/slot is
-    # the canonical cross-thread marshal (AutoConnection -> QueuedConnection).
-    _ui_call = Signal(object)
-    
     def __init__(
         self,
         parent=None,
@@ -82,9 +76,12 @@ class StudioWorkspace(QWidget):
         llm_profile: Optional[str] = None,
     ):
         super().__init__(parent)
-        # Cross-thread UI marshal: queue daemon-posted callables onto the UI
-        # thread (AutoConnection -> QueuedConnection from a worker thread).
-        self._ui_call.connect(self._run_ui_call)
+        # Daemons (health probe / recover / compact) answer through these relays and never
+        # hold this window: it may be deleted while they run, and then their answers are
+        # dropped (procedo.core.off_gui).
+        self._health_verdict = answer_to(self._on_health_verdict)
+        self._recovered = answer_to(self._on_recovered)
+        self._compacted = answer_to(self._on_compacted)
         log.debug("StudioWorkspace.__init__ starting")
 
         # Store CLI arguments
@@ -1022,7 +1019,7 @@ class StudioWorkspace(QWidget):
         is_alive does a process poll AND a synchronous ~2s /health GET, so
         it must NEVER run on the UI thread (it would freeze the Qt event
         loop every 5s tick). Instead we spawn a daemon that probes is_alive
-        and marshals the verdict back to the UI thread via _post_to_ui. One
+        and answers the verdict to the UI thread (_health_verdict). One
         probe at a time (gated by _health_probe_inflight) so ticks never
         stack daemons while a slow /health is still outstanding.
         """
@@ -1034,6 +1031,7 @@ class StudioWorkspace(QWidget):
         if getattr(self, '_health_probe_inflight', False):
             return
         self._health_probe_inflight = True
+        verdict = self._health_verdict
 
         def _probe():
             try:
@@ -1041,7 +1039,7 @@ class StudioWorkspace(QWidget):
             except Exception:
                 log.debug('server health probe failed', exc_info=True)
                 alive = False
-            self._post_to_ui(lambda: self._on_health_probe_result(sm, alive))
+            verdict((sm, alive))
 
         try:
             threading.Thread(target=_probe, daemon=True).start()
@@ -1054,7 +1052,7 @@ class StudioWorkspace(QWidget):
     def _on_health_probe_result(self, sm, alive):
         """UI-thread continuation of one health probe.
 
-        Runs on the UI thread (marshalled by _post_to_ui), so every read/write
+        Runs on the UI thread (answered through _health_verdict), so every read/write
         of the recovery state (_server_recovering / _server_recovery_attempts /
         _last_server_alive) and the manager-identity guard happen on ONE thread.
         The manager swap (_init_llm_backend) is also UI-thread, so they
@@ -1090,29 +1088,19 @@ class StudioWorkspace(QWidget):
         log.warning('OpenCode server detected down; auto-recovering...')
         self.footer.show_message('OpenCode server down — recovering…', 4000)
         try:
-            threading.Thread(target=lambda: self._recover(sm), daemon=True).start()
+            threading.Thread(target=_recover, args=(sm, self._recovered),
+                             daemon=True).start()
         except Exception:
             # Thread.start() raised after the in-flight flag was set —
             # clear it so auto-recovery is not permanently disabled.
             self._server_recovering = False
             log.debug('server auto-recovery thread spawn failed', exc_info=True)
 
-    def _recover(self, sm):
-        """Daemon body: relaunch the server, then probe the result — both
-        OFF the UI thread. ensure_running() is a blocking relaunch and is_alive
-        is a ~2s HTTP probe, so neither may touch the UI thread. The verdict is
-        marshalled back to _on_recover_done on the UI thread, which owns ALL
-        recovery-state mutation and the manager-identity guard."""
-        try:
-            sm.ensure_running()
-        except Exception:
-            log.debug('server auto-recovery failed', exc_info=True)
-        try:
-            ok = sm.is_alive  # post-relaunch verdict, OFF the UI thread
-        except Exception:
-            log.debug('post-recovery health probe failed', exc_info=True)
-            ok = False
-        self._post_to_ui(lambda: self._on_recover_done(sm, ok))
+    def _on_health_verdict(self, verdict):
+        self._on_health_probe_result(*verdict)
+
+    def _on_recovered(self, verdict):
+        self._on_recover_done(*verdict)
 
     def _on_recover_done(self, sm, ok):
         """UI-thread continuation of one recovery attempt — the SINGLE place
@@ -1137,23 +1125,6 @@ class StudioWorkspace(QWidget):
             self._server_recovery_attempts = 0
         self._last_server_alive = ok
         self._refresh_server_indicator(ok)
-
-    @Slot(object)
-    def _run_ui_call(self, fn):
-        """UI-thread slot for the _ui_call signal: just invoke the marshalled
-        callable. Runs on this QObject's (the UI) thread because the signal
-        was emitted from another thread (queued connection)."""
-        fn()
-
-    def _post_to_ui(self, fn):
-        """Marshal a callable onto the UI thread via the _ui_call signal: the
-        canonical thread-safe cross-thread dispatch. The off-thread
-        probe/recover daemons have NO Qt event loop, so QTimer.singleShot(0, fn)
-        from them would create the timer in the daemon thread and the callback
-        could be lost (probe/recover would wedge forever). Emitting a signal is
-        thread-safe and Qt queues the slot onto the receiver's (UI) thread.
-        Isolated as a seam so tests can run continuations inline."""
-        self._ui_call.emit(fn)
 
     def _refresh_server_indicator(self, alive=None):
         """Paint the header's OpenCode pill: the model while the server runs,
@@ -1277,19 +1248,7 @@ class StudioWorkspace(QWidget):
         self.dock.chat_panel.add_message("system", "Compacting session…")
         self.footer.show_message("Compacting session…", 3000)
 
-        def _done(ok):
-            if ok:
-                self.dock.chat_panel.add_system_message(
-                    "🗜️ Session compacted — context will shrink on the next reply.", tone="success")
-            else:
-                self.dock.chat_panel.add_system_message(
-                    "Compaction is unavailable for this backend (or the request failed).", tone="warning")
-            # Re-render the readout from the latest known total (best-effort;
-            # the real reduction lands with the next turn's reported total).
-            try:
-                self.dock.chat_panel._update_context_label()
-            except Exception:
-                log.exception("context-label refresh after compact failed")
+        compacted = self._compacted
 
         def _compact():
             ok = False
@@ -1297,12 +1256,24 @@ class StudioWorkspace(QWidget):
                 ok = bool(backend.compact())
             except Exception:
                 log.exception("session compact failed")
-            # Marshal the UI feedback back onto the UI thread via the
-            # thread-safe _ui_call signal (this runs on a daemon with no Qt
-            # event loop, so QTimer.singleShot from here could be lost).
-            self._post_to_ui(lambda: _done(ok))
+            compacted(ok)  # the UI feedback runs on the UI thread (this is a daemon)
 
         threading.Thread(target=_compact, daemon=True).start()
+
+    def _on_compacted(self, ok):
+        """UI-thread end of one compaction."""
+        if ok:
+            self.dock.chat_panel.add_system_message(
+                "🗜️ Session compacted — context will shrink on the next reply.", tone="success")
+        else:
+            self.dock.chat_panel.add_system_message(
+                "Compaction is unavailable for this backend (or the request failed).", tone="warning")
+        # Re-render the readout from the latest known total (best-effort;
+        # the real reduction lands with the next turn's reported total).
+        try:
+            self.dock.chat_panel._update_context_label()
+        except Exception:
+            log.exception("context-label refresh after compact failed")
 
     def _on_new_project(self):
         """Handle new project creation (body in controllers/project_controller.py)."""
@@ -1618,3 +1589,21 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self.workspace.confirm_close(event)
+
+
+def _recover(sm, done):
+    """Daemon body: relaunch the server, then probe the result — both
+    OFF the UI thread. ensure_running() is a blocking relaunch and is_alive
+    is a ~2s HTTP probe, so neither may touch the UI thread. The verdict is
+    answered through ``done`` to _on_recover_done on the UI thread, which owns ALL
+    recovery-state mutation and the manager-identity guard."""
+    try:
+        sm.ensure_running()
+    except Exception:
+        log.debug('server auto-recovery failed', exc_info=True)
+    try:
+        ok = sm.is_alive  # post-relaunch verdict, OFF the UI thread
+    except Exception:
+        log.debug('post-recovery health probe failed', exc_info=True)
+        ok = False
+    done((sm, ok))

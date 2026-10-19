@@ -2,20 +2,23 @@
 
 Each engine op is a round trip to the project's TOOLS instance (:mod:`.engine`): ~3 ms warm,
 but up to its deadline when the instance is busy, starting or wedged. :func:`call` runs it on a
-daemon thread and hands the answer back on the GUI thread through a queued signal
-(``QTimer.singleShot`` from a worker thread never fires). :func:`wait` is the same for a caller
-that needs the result before it returns (the wizards' authoring API is synchronous).
+daemon thread and hands the answer back on the GUI thread through a :mod:`procedo.core.off_gui`
+relay (``QTimer.singleShot`` from a worker thread never fires). :func:`wait` is the same for a
+caller that needs the result before it returns (the wizards' authoring API is synchronous).
 
 Without a project the wheel runs in this process, and importing it installs a signal handler,
 which fails off the main thread: those calls run at once, on the GUI thread.
 """
 from __future__ import annotations
 
+import itertools
 import threading
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from PySide6.QtCore import QCoreApplication, QEventLoop, QObject, Signal, Slot
+from PySide6.QtCore import QCoreApplication, QEventLoop, QObject
+
+from procedo.core.off_gui import answer_to
 
 #: The name of the threads that run engine calls.
 THREAD = "engine-call"
@@ -38,42 +41,44 @@ def _run(fn: Callable[[], Any]) -> Answer:
     return lambda: result
 
 
-class _Relay(QObject):
-    """Lives on the GUI thread: a worker's emit is queued and delivered there."""
-
-    answered = Signal(object)
+class _Inbox(QObject):
+    """Where each call's answer lands, on the GUI thread: its ``done`` waits here, so the
+    worker holds only the call and the inbox's relay."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.answered.connect(self._deliver)
+        self._done: dict[int, Callable[[Answer], None]] = {}
+        self._tickets = itertools.count()
+        self.send = answer_to(self._deliver)
 
-    @Slot(object)
-    def _deliver(self, delivery) -> None:
-        on_done, answer = delivery
-        on_done(answer)
+    def expect(self, done: Callable[[Answer], None]) -> int:
+        ticket = next(self._tickets)
+        self._done[ticket] = done
+        return ticket
+
+    def _deliver(self, answer) -> None:
+        ticket, result = answer
+        self._done.pop(ticket)(result)
 
 
-_relay: Optional[_Relay] = None
+_inbox: Optional[_Inbox] = None
 _busy: set = set()
 
 
-def _gui_relay() -> _Relay:
-    """The relay, on the application's (GUI) thread whichever thread asks first."""
-    global _relay
-    if _relay is None:
-        relay = _Relay()
-        app = QCoreApplication.instance()
-        if app is not None:
-            relay.moveToThread(app.thread())
-        _relay = relay
-    return _relay
+def _the_inbox() -> _Inbox:
+    """Made by the first :func:`call`, so on the GUI thread whichever thread imported this
+    module first (a lazy import may run on a worker)."""
+    global _inbox
+    if _inbox is None:
+        _inbox = _Inbox()
+    return _inbox
 
 
 def call(project_root: Optional[Path], fn: Callable[[], Any], on_done: Callable[[Answer], None],
          *, button=None) -> None:
     """Run ``fn()`` (an engine call for ``project_root``, its inputs already read) off the GUI
     thread, then ``on_done(answer)`` on it. While it runs ``button`` is disabled and another
-    call for it is ignored."""
+    call for it is ignored. Call it on the GUI thread."""
     if button is not None:
         if button in _busy:
             return
@@ -92,8 +97,9 @@ def call(project_root: Optional[Path], fn: Callable[[], Any], on_done: Callable[
     if project_root is None:
         done(_run(fn))
         return
-    relay = _gui_relay()
-    threading.Thread(target=lambda: relay.answered.emit((done, _run(fn))), name=THREAD,
+    inbox = _the_inbox()
+    ticket, send = inbox.expect(done), inbox.send
+    threading.Thread(target=lambda: send((ticket, _run(fn))), name=THREAD,
                      daemon=True).start()
 
 

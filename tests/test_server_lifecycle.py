@@ -693,54 +693,31 @@ def _fake_window(sm):
 def _run_tick_sync(w):
     """Drive one _on_server_health_tick to completion SYNCHRONOUSLY.
 
-    The tick is now fully off-thread: it spawns a daemon that probes
-    ``is_alive`` and marshals the verdict back to the UI thread via
-    ``_post_to_ui`` (a thread-safe ``_ui_call`` signal emit in production —
-    NOT QTimer.singleShot, which is lost when emitted from a non-Qt daemon
-    thread). To observe the whole
+    The tick is fully off-thread: it spawns a daemon that probes ``is_alive``
+    and answers the verdict to the UI thread through a ``procedo.core.off_gui``
+    relay (``_health_verdict``; NOT QTimer.singleShot, which is lost when
+    emitted from a non-Qt daemon thread). To observe the whole
     probe -> result -> recover -> done chain in one call we (a) run every
-    spawned thread body inline on ``.start()`` and (b) run every ``_post_to_ui``
-    callback inline. The bound methods resolve off ``w`` (a SimpleNamespace), so
-    we install an inline ``_post_to_ui`` on ``w`` itself."""
+    spawned thread body inline on ``.start()`` and (b) deliver every answer
+    inline. The bound methods resolve off ``w`` (a SimpleNamespace), so we
+    install the inline answer channels and UI-thread continuations on it."""
     from procedo.studio.main_window import StudioWorkspace
 
-    def _inline_thread(target, daemon=False):
+    def _inline_thread(target, args=(), daemon=False):
         t = MagicMock()
-        t.start.side_effect = target  # run the probe/recover body on .start()
+        t.start.side_effect = lambda: target(*args)  # run the probe/recover body on .start()
         return t
 
-    def _inline_post_to_ui(fn):
-        fn()  # run the UI-thread continuation immediately (no event loop)
-
-    w._post_to_ui = _inline_post_to_ui
-    # Bind the UI-thread continuations as methods on the SimpleNamespace so the
-    # inline _post_to_ui callbacks (which call self._on_*) resolve them.
+    # The UI-thread continuations, bound on the SimpleNamespace, and the answer
+    # channels delivering to them at once (no event loop).
     w._on_health_probe_result = lambda sm, alive: StudioWorkspace._on_health_probe_result(w, sm, alive)
-    w._recover = lambda sm: StudioWorkspace._recover(w, sm)
     w._on_recover_done = lambda sm, ok: StudioWorkspace._on_recover_done(w, sm, ok)
+    w._health_verdict = lambda verdict: StudioWorkspace._on_health_verdict(w, verdict)
+    w._recovered = lambda verdict: StudioWorkspace._on_recovered(w, verdict)
 
     with patch("procedo.studio.main_window.threading.Thread",
                side_effect=_inline_thread):
         StudioWorkspace._on_server_health_tick(w)
-
-
-def test_post_to_ui_uses_signal_not_singleshot():
-    # The dispatch primitive: _post_to_ui must marshal via the _ui_call SIGNAL
-    # (thread-safe, queued to the UI thread), NOT QTimer.singleShot — which,
-    # called from a non-Qt daemon thread, creates the timer in the calling
-    # thread and the callback can be lost (probe/recover would wedge forever).
-    import types
-    from procedo.studio.main_window import StudioWorkspace
-
-    w = types.SimpleNamespace()
-    w._ui_call = MagicMock()  # stand-in for the bound Signal
-    payload = object()
-    with patch("PySide6.QtCore.QTimer") as qtimer:
-        StudioWorkspace._post_to_ui(w, payload)
-    # Marshalled by emitting the signal with the exact callable...
-    w._ui_call.emit.assert_called_once_with(payload)
-    # ...and NOT by the lost-from-daemon QTimer.singleShot path.
-    qtimer.singleShot.assert_not_called()
 
 
 def test_auto_recovery_gives_up_after_three_failures():
@@ -907,8 +884,9 @@ def _fake_dialog():
     self._models_probe_in_flight = False
     self._start_server_generation = 0
     self._closed = False
-    # _post_to_ui is not reached on the spawn-failure paths under test.
-    self._post_to_ui = MagicMock()
+    # The probes' answer channels: not reached on the spawn-failure paths under test.
+    self._models_answer = MagicMock()
+    self._start_probe_answer = MagicMock()
     return self
 
 

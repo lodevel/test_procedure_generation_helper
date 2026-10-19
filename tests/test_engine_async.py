@@ -376,22 +376,37 @@ def test_a_refresh_landing_after_a_test_switch_leaves_the_new_tests_editor_alone
 
 # --- delivery ---------------------------------------------------------------------------------
 
-def test_answers_reach_the_gui_thread_even_when_the_first_call_came_from_another_thread(
-        qapp, monkeypatch, tmp_path):
-    from procedo.studio.pack_ops import engine_async
-    monkeypatch.setattr(engine_async, "_relay", None)
-    answered = []
+_IMPORTED_ON_A_WORKER = """
+import os, sys, threading, time
+from pathlib import Path
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+importer = threading.Thread(target=lambda: __import__("procedo.studio.pack_ops.engine_async"))
+importer.start()
+importer.join()
+from PySide6.QtCore import QCoreApplication
+app = QCoreApplication([])
+from procedo.studio.pack_ops import engine_async
+got = []
+engine_async.call(Path("."), lambda: 7,
+                  lambda a: got.append((a(), threading.current_thread() is threading.main_thread())))
+end = time.monotonic() + 10
+while not got and time.monotonic() < end:
+    app.processEvents()
+    time.sleep(0.005)
+print(got)
+"""
 
-    def first_call():
-        engine_async.call(tmp_path, lambda: 1, lambda a: answered.append(threading.get_ident()))
 
-    caller = threading.Thread(target=first_call)
-    caller.start()
-    caller.join()
-    engine_async.call(tmp_path, lambda: 2, lambda a: answered.append(threading.get_ident()))
-    _pump(lambda: len(answered) == 2)
-
-    assert answered == [threading.main_thread().ident] * 2
+def test_answers_reach_the_gui_thread_when_a_worker_imported_the_module_first():
+    """A lazy import may run on a worker (artifact_manager, MCP threads): the module's first
+    import must not tie the answers to that thread."""
+    import os
+    import subprocess
+    import sys
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(p for p in sys.path if p))
+    out = subprocess.run([sys.executable, "-c", _IMPORTED_ON_A_WORKER], capture_output=True,
+                         text=True, timeout=60, env=env).stdout
+    assert out.strip().splitlines()[-1] == "[(7, True)]"
 
 
 def test_an_answer_for_a_button_destroyed_meanwhile_still_lands(qapp, tmp_path):

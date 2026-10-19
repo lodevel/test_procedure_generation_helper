@@ -13,8 +13,9 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QWidget, QLineEdit, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QPushButton, QLabel, QMessageBox,
 )
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import Qt
 from procedo.core import app_identity, ui_kit
+from procedo.core.off_gui import answer_to
 from procedo.core.page_nav import PagedArea, field_row, heading, page_form
 
 from ..core.task_config import TaskConfigManager
@@ -349,15 +350,6 @@ class SettingsDialog(QDialog):
     (:func:`get_settings_path`), the Validator page in the open project's config.
     """
 
-    # Thread-safe UI marshal: a worker daemon (the model-list fetch, the
-    # Start-server liveness probe) emits a callable here and Qt queues the slot
-    # onto THIS dialog's (UI) thread. QTimer.singleShot(0, fn) from a non-Qt
-    # daemon thread creates the timer in the CALLING thread, so the callback can
-    # be lost (the probe-in-flight flag would stay set forever and the note
-    # would stick at "Querying server…"); a signal/slot is the canonical
-    # cross-thread marshal (AutoConnection -> QueuedConnection).
-    _ui_call = Signal(object)
-
     def __init__(
         self,
         task_config_manager: TaskConfigManager,
@@ -366,9 +358,11 @@ class SettingsDialog(QDialog):
         server_manager=None,
     ):
         super().__init__(parent)
-        # Cross-thread UI marshal: queue daemon-posted callables onto the UI
-        # thread (AutoConnection -> QueuedConnection from a worker thread).
-        self._ui_call.connect(self._run_ui_call)
+        # Workers (the model-list fetch, the Start-server liveness probe) answer through
+        # these relays and never hold this dialog: it may be deleted while they run, and
+        # then their answers are dropped (procedo.core.off_gui).
+        self._models_answer = answer_to(self._on_models_answer)
+        self._start_probe_answer = answer_to(self._on_start_probe_answer)
         self.setWindowTitle("Settings")
         self.setMinimumSize(700, 600)  # every page scrolls when shorter than its fields
         self.resize(780, 760)
@@ -403,21 +397,6 @@ class SettingsDialog(QDialog):
         # now owns only LLM backend + validator-loop settings.
         self._setup_ui()
         self._load_values()
-
-    @Slot(object)
-    def _run_ui_call(self, fn):
-        """UI-thread slot for the _ui_call signal: invoke the marshalled
-        callable. Runs on this dialog's (the UI) thread because the signal was
-        emitted from a worker thread (queued connection)."""
-        fn()
-
-    def _post_to_ui(self, fn):
-        """Marshal a callable onto the UI thread via the _ui_call signal: the
-        canonical thread-safe cross-thread dispatch. A worker daemon has NO Qt
-        event loop, so QTimer.singleShot(0, fn) from it would create the timer
-        in the daemon thread and the callback could be lost. Emitting a signal
-        is thread-safe and Qt queues the slot onto the UI thread."""
-        self._ui_call.emit(fn)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -682,16 +661,17 @@ class SettingsDialog(QDialog):
 
         import threading
 
+        answer = self._models_answer
+
         def _worker():
             try:
                 models = fetch_opencode_models(url)
             except Exception:
                 models = []
-            # Marshal the widget mutation back to the UI thread via the
-            # thread-safe signal (QTimer.singleShot from this daemon would be
-            # lost — a lost callback leaves _models_probe_in_flight=True forever
+            # The widget mutation runs on the UI thread (QTimer.singleShot from this
+            # daemon would be lost — _models_probe_in_flight would stay True forever
             # and the note stuck at "Querying server…").
-            self._post_to_ui(lambda: self._apply_opencode_models(models, preserve))
+            answer((models, preserve))
 
         try:
             threading.Thread(target=_worker, daemon=True).start()
@@ -701,6 +681,9 @@ class SettingsDialog(QDialog):
             self._models_probe_in_flight = False
             self.opencode_models_note.setText(
                 "Could not query the server — try Refresh again.")
+
+    def _on_models_answer(self, answer):
+        self._apply_opencode_models(*answer)
 
     def _apply_opencode_models(self, models, preserve):
         """Apply a fetched model list to the picker (UI thread only)."""
@@ -788,7 +771,7 @@ class SettingsDialog(QDialog):
         # Poll liveness for up to ~startup timeout; refresh + re-enable on the UI
         # thread when it answers (or give up with a clear note). is_alive is a
         # blocking 2s HTTP /health GET, so each tick runs it on a daemon thread
-        # and the verdict is MARSHALLED back to the UI thread via _post_to_ui —
+        # and the verdict is answered to the UI thread (_start_probe_answer) —
         # the probe never mutates dialog state cross-thread, and the modal dialog
         # never freezes. _start_poll_done latches the terminal state so a late
         # probe result can still flip us to success after a timeout note (no
@@ -823,18 +806,18 @@ class SettingsDialog(QDialog):
             if self._start_probe_in_flight:
                 return
             self._start_probe_in_flight = True
+            answer = self._start_probe_answer
 
             def _probe():
                 # Off the UI thread (blocking ~2s /health). The verdict is
-                # marshalled back via the thread-safe signal; the daemon mutates
+                # posted back to the UI thread; the daemon mutates
                 # NO dialog state directly (a lost QTimer.singleShot here would
                 # wedge _start_probe_in_flight=True forever).
                 try:
                     alive = sm.is_alive
                 except Exception:
                     alive = False
-                self._post_to_ui(
-                    lambda: self._on_start_probe_result(alive, generation))
+                answer((alive, generation))
 
             try:
                 threading.Thread(target=_probe, daemon=True).start()
@@ -868,6 +851,11 @@ class SettingsDialog(QDialog):
         self._on_start_probe_result = _on_start_probe_result
         timer.timeout.connect(_tick)
         timer.start()
+
+    def _on_start_probe_answer(self, answer):
+        """One Start-server probe's ``(alive, generation)``: the newest click's handler
+        drops a stale generation."""
+        self._on_start_probe_result(*answer)
 
     def done(self, result):
         """Cancel the Start-server poll on ANY dialog close (OK or Cancel).

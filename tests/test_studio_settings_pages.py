@@ -185,3 +185,24 @@ def test_nothing_overlaps_or_is_cut_at_the_minimum_size(qapp, no_network, projec
     for button in (dlg.save_btn, dlg.cancel_btn):
         assert button.visibleRegion().boundingRect().height() == button.height()
     dlg.reject()
+
+
+def test_a_dialog_deleted_while_its_model_probe_runs_is_never_touched(qapp, monkeypatch):
+    """The probe's worker posts its answer, never emits on the dialog: deleting the dialog
+    while the probe runs drops the answer instead of crashing the worker."""
+    import shiboken6
+    import threading
+
+    gate, errors = threading.Event(), []
+    monkeypatch.setattr(threading, "excepthook", errors.append)
+    monkeypatch.setattr(settings_dialog, "fetch_opencode_models",
+                        lambda url: gate.wait(5) and [])
+    dlg = SettingsDialog(None)
+    assert dlg._models_probe_in_flight
+    shiboken6.delete(dlg)
+    gate.set()
+    end = time.monotonic() + 0.3
+    while time.monotonic() < end:
+        qapp.processEvents()
+        time.sleep(0.005)
+    assert errors == []

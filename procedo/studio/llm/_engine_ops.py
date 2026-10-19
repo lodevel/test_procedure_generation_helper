@@ -38,9 +38,17 @@ Ops:
                       "controls", "operator_verdicts"})
   build_manual_result → {"ok": true, "result": {...results.json schema...}}
                         (input: the same fields)
+  display_snapshot → {"ok": true, "wheel": {module, file, version},
+                      "tests": [{folder, mtime_ns, size, text_newer,
+                                 data: {meta, steps, expected, equipment},
+                                 errors: {key: why}}]}
+                     (input: {"project", "tests": null | [folder, ...]}; the
+                      bundle is the frame's ``_bundle_dir``)
 """
 from __future__ import annotations
 
+import importlib
+import json
 import traceback
 from dataclasses import asdict
 from pathlib import Path
@@ -308,6 +316,171 @@ def _op_build_manual_result(spec: dict) -> dict:
     return {"ok": True, "result": result}
 
 
+# The four DISPLAY domains snapshotted for the app. The validate_* twins
+# stay in-process (on-demand banner, not on the paint path).
+_DISPLAY_KEYS = ("meta", "steps", "expected", "equipment")
+
+
+def _load_extractor_decls(bundle_dir: Path) -> dict:
+    """Return the bundle's ``defaults.json:extractors`` block ({} when
+    missing/malformed) — the same declaration pack_extractors uses."""
+    defaults = bundle_dir / "defaults.json"
+    try:
+        doc = json.loads(defaults.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    extractors = doc.get("extractors")
+    return extractors if isinstance(extractors, dict) else {}
+
+
+def _resolve_extractors(bundle_dir: Path) -> tuple[dict, dict, dict]:
+    """Resolve the display extractors exactly the way the bundle declares
+    them (``{module, function}`` per key), importing INSIDE this (project)
+    venv. Returns ``(callables, errors, wheel_info)``; a missing or
+    unimportable key lands in ``errors``, never raises."""
+    decls = _load_extractor_decls(bundle_dir)
+    fns: dict = {}
+    errors: dict = {}
+    wheel_info: dict = {"module": "", "file": "", "version": ""}
+    for key in _DISPLAY_KEYS:
+        entry = decls.get(key)
+        if not isinstance(entry, dict):
+            errors[key] = f"bundle declares no {key!r} extractor"
+            continue
+        module_name = entry.get("module")
+        function_name = entry.get("function")
+        if not isinstance(module_name, str) or not isinstance(function_name, str):
+            errors[key] = f"extractor {key!r} lacks module/function strings"
+            continue
+        try:
+            mod = importlib.import_module(module_name)
+        except Exception as exc:  # noqa: BLE001 — import errors of any shape
+            errors[key] = f"module {module_name} not importable: {exc}"
+            continue
+        fn = mod
+        for part in function_name.split("."):
+            fn = getattr(fn, part, None)
+            if fn is None:
+                break
+        if not callable(fn):
+            errors[key] = f"{module_name}.{function_name} is not callable"
+            continue
+        fns[key] = fn
+        if not wheel_info["module"]:
+            wheel_info["module"] = module_name
+            wheel_info["file"] = getattr(mod, "__file__", "") or ""
+            wheel_info["version"] = _wheel_version(module_name)
+    return fns, errors, wheel_info
+
+
+def _wheel_version(module_name: str) -> str:
+    """Best-effort distribution version of the wheel providing
+    ``module_name`` (its top-level package)."""
+    top = module_name.split(".")[0]
+    try:
+        from importlib import metadata
+
+        return metadata.version(top)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _meta_payload(meta) -> dict:
+    """ProcedureMeta -> plain dict carrying EVERY wheel field PLUS the
+    wheel-computed ``display_name`` (a property, so asdict misses it)."""
+    try:
+        d = dict(asdict(meta))
+    except TypeError:
+        d = {k: v for k, v in vars(meta).items() if not k.startswith("_")}
+    display_name = getattr(meta, "display_name", "")
+    d["display_name"] = display_name if isinstance(display_name, str) else ""
+    return d
+
+
+def _items_payload(items) -> list:
+    """list[dataclass] -> list[dict] (asdict recurses media/channels)."""
+    return [asdict(item) for item in items]
+
+
+def _text_newer(procedure_json: Path) -> bool:
+    """Same mtime compare as pack_extractors.canonical_text_is_newer,
+    computed in the sweep so the LIST can show the stale badge."""
+    text_path = procedure_json.parent / "procedure_text.md"
+    try:
+        text_mtime = text_path.stat().st_mtime
+        json_mtime = procedure_json.stat().st_mtime
+    except OSError:
+        return False
+    return text_mtime > json_mtime
+
+
+def _extract_test(folder: str, proc_path: Path, fns: dict, resolve_errors: dict) -> dict:
+    """Extract one test. Per-key failures become error markers."""
+    entry: dict = {"folder": folder, "data": {}, "errors": dict(resolve_errors)}
+    # Stat BEFORE reading: if the file is rewritten mid-read, the entry
+    # carries the OLD mtime, so the app's freshness check (current stat
+    # vs entry mtime) fails safe into the in-process fallback.
+    try:
+        _st = proc_path.stat()
+        entry["mtime_ns"] = _st.st_mtime_ns
+        entry["size"] = _st.st_size
+    except OSError as exc:
+        entry["mtime_ns"] = 0
+        for key in _DISPLAY_KEYS:
+            entry["errors"][key] = f"cannot stat {proc_path.name}: {exc}"
+        entry["text_newer"] = False
+        return entry
+    entry["text_newer"] = _text_newer(proc_path)
+    try:
+        doc = json.loads(proc_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        for key in _DISPLAY_KEYS:
+            entry["errors"][key] = f"cannot read {proc_path.name}: {exc}"
+        return entry
+    for key, fn in fns.items():
+        try:
+            if key == "meta":
+                entry["data"][key] = _meta_payload(fn(doc))
+            else:
+                entry["data"][key] = _items_payload(fn(doc))
+        except Exception as exc:  # noqa: BLE001 — one bad test/key must not kill the sweep
+            entry["errors"][key] = f"{type(exc).__name__}: {exc}"
+    return entry
+
+
+def _op_display_snapshot(spec: dict) -> dict:
+    """The main window's display data for the tests of ``spec["project"]``
+    (``spec["tests"]``: null = every test folder), extracted by the bundle's
+    PINNED wheel with the extractors ``defaults.json`` declares. The pack
+    registry is the daemon's, loaded from the frame's ``_bundle_dir``.
+    Per-test / per-key failures never fail the sweep: the key is absent from
+    ``data`` and explained in ``errors``."""
+    project_root = Path(spec["project"])
+    bundle_dir = Path(spec.get("_bundle_dir") or (project_root / "bundle"))
+    requested = spec.get("tests")
+
+    fns, resolve_errors, wheel_info = _resolve_extractors(bundle_dir)
+
+    tests_dir = project_root / "tests"
+    if requested is None:
+        try:
+            folders = sorted(d.name for d in tests_dir.iterdir() if d.is_dir())
+        except OSError as exc:
+            return {"ok": False, "kind": "Other", "error": f"cannot list {tests_dir}: {exc}"}
+    else:
+        folders = [f for f in requested if isinstance(f, str)]
+
+    out = []
+    for folder in folders:
+        proc_path = tests_dir / folder / "procedure.json"
+        if not proc_path.exists():
+            # Deleted/never-compiled test: omit it — the store drops
+            # requested-but-absent folders from the snapshot.
+            continue
+        out.append(_extract_test(folder, proc_path, fns, resolve_errors))
+    return {"ok": True, "wheel": wheel_info, "tests": out}
+
+
 _OPS = {
     "is_available": _op_is_available,
     "parse_text": _op_parse_text,
@@ -323,6 +496,7 @@ _OPS = {
     "reconstruct": _op_reconstruct,
     "build_manual_run": _op_build_manual_run,
     "build_manual_result": _op_build_manual_result,
+    "display_snapshot": _op_display_snapshot,
 }
 
 

@@ -7,7 +7,6 @@ Usage:
 
 Options:
     --project-root <path>       Path to project root (contains tests/ and/or config/)
-    --rules-root <path>         Path to rules folder (optional)
     --test-name <name>          Name of test folder to open
     --test-dir <path>           Direct path to test folder (overrides --test-name)
     --llm-backend <backend>     LLM backend: opencode|none
@@ -66,11 +65,6 @@ def parse_args() -> argparse.Namespace:
         "--project-root",
         type=Path,
         help="Path to project root (contains tests/ and/or config/)"
-    )
-    parser.add_argument(
-        "--rules-root",
-        type=Path,
-        help="Path to rules folder containing *.md files"
     )
     parser.add_argument(
         "--test-name",
@@ -153,7 +147,6 @@ def main() -> int:
     log.info("Creating MainWindow...")
     window = MainWindow(
         project_root=args.project_root,
-        rules_root=args.rules_root,
         test_name=args.test_name,
         test_dir=args.test_dir,
         llm_backend=args.llm_backend,

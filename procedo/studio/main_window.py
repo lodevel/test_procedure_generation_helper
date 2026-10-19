@@ -76,7 +76,6 @@ class StudioWorkspace(QWidget):
         self,
         parent=None,
         project_root: Optional[Path] = None,
-        rules_root: Optional[Path] = None,
         test_name: Optional[str] = None,
         test_dir: Optional[Path] = None,
         llm_backend: Optional[str] = None,
@@ -90,7 +89,6 @@ class StudioWorkspace(QWidget):
 
         # Store CLI arguments
         self._cli_project_root = project_root
-        self._cli_rules_root = rules_root
         self._cli_test_name = test_name
         self._cli_test_dir = test_dir
         self._cli_llm_backend = llm_backend
@@ -105,12 +103,6 @@ class StudioWorkspace(QWidget):
         # Initialize managers
         log.debug("Initializing managers...")
         self.project_manager = ProjectManager()
-        # Make the CLI override sticky on the project manager so every
-        # subsequent detect_rules_root() call (test-open, project-open
-        # from menu) honors it instead of falling back to the project-
-        # relative auto-detect.
-        if rules_root is not None:
-            self.project_manager.cli_rules_root_override = rules_root
         self.artifact_manager: Optional[ArtifactManager] = None
         self.session_state: Optional[SessionState] = None
         # self.chat_history: Optional[ChatHistoryManager] = None
@@ -235,10 +227,8 @@ class StudioWorkspace(QWidget):
                 self.workspace_widget._load_test_list()
                 self.workspace_widget.new_test_btn.setEnabled(True)
 
-                # Detect rules. Honor the CLI override when one was passed
-                # in; otherwise fall through to the project-relative
-                # auto-detection inside detect_rules_root.
-                self.project_manager.detect_rules_root(self._cli_rules_root)
+                # The project's rules (its active bundle's)
+                self.project_manager.detect_rules_root()
                 self._update_project_rules_indicators()
                 # Task #39: arm the config + bundle watchers for the
                 # CLI-supplied project (the main-app launch path).

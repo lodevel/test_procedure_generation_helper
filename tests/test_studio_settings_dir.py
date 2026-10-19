@@ -65,7 +65,7 @@ def test_the_settings_live_in_studio_s_folder():
 
 def _args() -> argparse.Namespace:
     return argparse.Namespace(
-        debug=False, log_file=None, project_root=None, rules_root=None, test_name=None,
+        debug=False, log_file=None, project_root=None, test_name=None,
         test_dir=None, llm_backend=None, llm_profile=None,
     )
 

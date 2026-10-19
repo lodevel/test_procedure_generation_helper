@@ -125,7 +125,6 @@ Command-line options (see `procedo/studio/__main__.py`):
 | Option | Meaning |
 |--------|---------|
 | `--project-root PATH` | Project root (contains `tests/` and/or `config/`) |
-| `--rules-root PATH`   | Folder of rule `*.md` files (usually the active bundle's `rules/`) |
 | `--test-name NAME`    | Open a test folder by name under `tests/` |
 | `--test-dir PATH`     | Direct path to a test folder (overrides `--test-name`) |
 | `--llm-backend {opencode,external,none}` | Backend hint (see note below) |
@@ -155,7 +154,8 @@ Procedo Bench launches this editor for you — via the **Test** menu
 menu ("Edit in Procedo Studio"). `src/procedo/bench/main_window.py::_launch_workflow_editor`
 formats a configured command template (its `{python}` placeholder defaults to the
 GUI's `sys.executable`), launches it via `subprocess.Popen`, and appends
-`--project-root`, `--rules-root` (the active bundle's `rules/`), and `--test-name`.
+`--project-root` and `--test-name`; Studio reads the rules of each project it opens
+from that project's active bundle (`bundle/rules/`).
 No `PYTHONPATH` injection: `procedo.studio` is installed editable in the GUI venv
 (ADR 0003). The editor path and command
 template are set on Procedo Bench's **Settings → Procedo Studio** page.

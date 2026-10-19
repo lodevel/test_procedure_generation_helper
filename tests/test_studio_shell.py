@@ -142,6 +142,34 @@ def test_footer_names_project_rules_bundle_validator(opened):
     assert w.validator_label.text() == "Validator: off · 5 attempts"
 
 
+def _bundled(root, name):
+    """*root* (a ``_make_project``) with a complete bundle holding one rule doc."""
+    (root / "bundle" / "defaults.json").write_text("{}", encoding="utf-8")
+    (root / "bundle" / "rules").mkdir()
+    (root / "bundle" / "rules" / "rule.md").write_text(f"# rule of {name}\n", encoding="utf-8")
+    return root
+
+
+def test_launched_on_a_project_then_opening_others_follows_each_ones_bundle(make_window, tmp_path):
+    a = _bundled(_make_project(tmp_path / "a"), "a")
+    b = _bundled(_make_project(tmp_path / "b"), "b")
+    bare = _make_project(tmp_path / "bare", with_bundle=False)
+    in_bundle = f"Rules: {(a / 'bundle' / 'rules').relative_to(a)} · 1 doc"
+    w = make_window(project_root=a)  # how Bench launches Studio on a project
+    w._process_cli_arguments()
+    assert w.rules_link.text() == in_bundle
+    assert str(a / "bundle" / "rules") in w.rules_link.toolTip()
+
+    _open_project(w, b)  # File > Open Project
+    assert w.rules_link.text() == in_bundle
+    assert str(b / "bundle" / "rules") in w.rules_link.toolTip()
+    assert "rule of b" in w.project_manager.get_rules_content()
+
+    _open_project(w, bare)
+    assert w.rules_link.text() == "Rules: none"
+    assert w.project_manager.get_rules_content() is None
+
+
 def test_footer_links_open_a_project_and_pick_the_rules(make_window, monkeypatch):
     w = make_window()
     opened = []

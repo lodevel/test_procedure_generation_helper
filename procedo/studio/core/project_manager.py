@@ -23,7 +23,7 @@ class RulesState(Enum):
     """State of rules loading."""
     NOT_CHECKED = auto()
     LOADED = auto()
-    NONE = auto()  # User chose to continue without rules
+    NONE = auto()  # The open project has no rules
 
 
 @dataclass
@@ -73,13 +73,9 @@ class ProjectManager:
     rules_root: Optional[Path] = None
     rules_state: RulesState = RulesState.NOT_CHECKED
 
-    # Sticky CLI override. When set, every detect_rules_root() call
-    # honors it before falling back to project-relative auto-detection.
-    # Without this, the various post-launch detect calls (test-open,
-    # project-open from menu, etc.) would silently re-fall back to the
-    # default project-relative path, even when the launching GUI passed
-    # an explicit --rules-root.
-    cli_rules_root_override: Optional[Path] = None
+    # The rules folder the user picked for the open project (the footer's
+    # Rules link); forgotten when another project opens.
+    _picked_rules_root: Optional[Path] = field(default=None, repr=False)
 
     # Cached rules content
     _rules_content: Optional[str] = field(default=None, repr=False)
@@ -93,6 +89,8 @@ class ProjectManager:
         Returns True if path is a valid project root.
         """
         if self.is_valid_project_root(path):
+            if self.project_root != path:
+                self._picked_rules_root = None  # a picked rules folder is that project's
             if self.project_root is not None and self.project_root != path:
                 from procedo.studio.pack_ops import engine
 
@@ -249,76 +247,35 @@ class ProjectManager:
         
         return [TestFolderInfo.of(item) for item in sorted(tests_dir.iterdir()) if item.is_dir()]
     
-    def detect_rules_root(self, cli_rules_root: Optional[Path] = None) -> bool:
-        """
-        Detect rules root following fallback order:
+    def detect_rules_root(self) -> bool:
+        """Load the open project's rules: the folder the user picked for it, else its
+        active bundle's rules (``bundle_registry.active_rules_dir``, as Bench resolves
+        them), else none, never what the previous project had. True when rules loaded."""
+        from procedo.core import bundle_registry
 
-        1. CLI --rules-root if provided (this call's arg, OR the sticky
-           override set via :attr:`cli_rules_root_override` at startup)
-        2. <project_root>/config/rules/ (spec default)
-        3. <project_root>/../rules/ (sibling folder)
-        4. Return False to indicate user prompt needed
+        location = self._picked_rules_root
+        if location is None and self.project_root is not None:
+            location = bundle_registry.active_rules_dir(self.project_root)
+        if location is not None and not self._is_valid_rules_root(location):
+            location = None
+        self._use_rules(location)
+        log.info("Rules: %s", location or "none")
+        return location is not None
 
-        Returns True if rules were found, False if user needs to choose.
-        """
-        import logging
-        log = logging.getLogger(__name__)
+    def set_rules_root(self, path: Path) -> bool:
+        """Use the rules folder the user picked, for the open project. False (nothing
+        changes) when it holds no rule docs."""
+        if not self._is_valid_rules_root(path):
+            return False
+        self._picked_rules_root = path
+        self._use_rules(path)
+        return True
 
-        # Prefer the explicit per-call arg; fall back to the sticky
-        # override so post-launch detect calls (test-open, project-open
-        # from menu) don't silently revert to project-relative paths.
-        effective_cli = cli_rules_root if cli_rules_root is not None else self.cli_rules_root_override
-
-        # 1. CLI argument
-        if effective_cli is not None:
-            if self._is_valid_rules_root(effective_cli):
-                self.rules_root = effective_cli
-                self.rules_state = RulesState.LOADED
-                self._load_rules()
-                log.info(f"Rules loaded from CLI arg: {effective_cli}")
-                return True
-            else:
-                log.warning(f"CLI rules root invalid: {effective_cli}")
-        
-        # 2-3. Fallback locations (never <project_root>/rules: a project has no root rules/)
-        if self.project_root is not None:
-            fallback_locations = [
-                self.project_root / "config" / "rules",  # Spec default
-                self.project_root.parent / "rules",       # Sibling folder
-            ]
-            
-            for location in fallback_locations:
-                if self._is_valid_rules_root(location):
-                    self.rules_root = location
-                    self.rules_state = RulesState.LOADED
-                    self._load_rules()
-                    log.info(f"Rules auto-detected: {location}")
-                    return True
-        
-        # 4. Not found - user prompt needed
-        log.warning("Rules not found in any fallback location")
-        return False
-    
-    def set_rules_root(self, path: Optional[Path]) -> bool:
-        """
-        Set rules root from user selection.
-        
-        Pass None to indicate "Continue without rules".
-        """
-        if path is None:
-            self.rules_root = None
-            self.rules_state = RulesState.NONE
-            self._rules_content = None
-            self._rules_files = []
-            return True
-        
-        if self._is_valid_rules_root(path):
-            self.rules_root = path
-            self.rules_state = RulesState.LOADED
-            self._load_rules()
-            return True
-        
-        return False
+    def _use_rules(self, path: Optional[Path]) -> None:
+        """Load the rule docs of *path*; None: no rules."""
+        self.rules_root = path
+        self.rules_state = RulesState.LOADED if path is not None else RulesState.NONE
+        self._load_rules()
     
     def _is_valid_rules_root(self, path: Path) -> bool:
         """Check if path contains any markdown files."""

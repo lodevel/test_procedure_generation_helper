@@ -112,12 +112,12 @@ own exceptions):
 During ``main(ctx)`` the daemon's CWD is the run's results dir (restored
 after, ladder paths included) so RELATIVE artifact writes — generated scope
 ops emit relative screenshot filenames — land beside results.json, matching
-the legacy subprocess path.  Outside ``run_test`` the CWD stays the parent's
-choice (guided-manual screenshot tmp dir): the exec_ops harvesting contract
-is unchanged.
+the legacy subprocess path.  An ``exec_ops`` frame runs the same way in its ``work_dir``
+(the guided run's own folder, which the host harvests): one switch for both, :func:`in_work_dir`.
 """
 from __future__ import annotations
 
+import contextlib
 import itertools
 import json
 import os
@@ -883,6 +883,21 @@ def _ladder(d: dict, session, run: _Run, res, escaped, rdir: Path):
     return {"ok": True, "result": summary}, False
 
 
+@contextlib.contextmanager
+def in_work_dir(path):
+    """The block runs with the CWD at ``path``, then goes back whatever it raised."""
+    if not path or not os.path.isdir(path):   # no fallback: the frame's op never runs
+        raise NotADirectoryError(f"work_dir does not exist: {path}" if path
+                                 else "exec_ops frame has no work_dir")
+    saved = os.getcwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            os.chdir(saved)
+
+
 def _cmd_run_test(d: dict, session, req: dict):
     """Run one generated test inside the holder.  Returns ``(response, stop)``."""
     st = _state(session)
@@ -943,28 +958,18 @@ def _cmd_run_test(d: dict, session, req: dict):
     ctx.switch_off_on_stop = bool(req.get("switch_off_on_stop", True))
     out = _FrameStdout(d)
     saved_stdout = sys.stdout
-    saved_cwd = os.getcwd()
     sys.stdout = out
     ctx.install()                     # route test_helpers.prompt() to frames
     res, escaped = None, None
     try:
-        if rdir.is_dir():
-            # Generated scope ops write RELATIVE artifact filenames (e.g.
-            # save_screenshot) — run with CWD at the results dir so they
-            # land beside results.json, exactly like the legacy subprocess
-            # path whose CWD was the results dir.  The daemon is
-            # single-threaded with one run at a time; the prior CWD (the
-            # guided-manual screenshot tmp dir) is restored below so the
-            # exec_ops harvesting contract is unchanged.
-            os.chdir(rdir)
-        res = mod.main(ctx=ctx)
+        # Generated scope ops write RELATIVE artifact filenames (e.g.
+        # save_screenshot): they land beside results.json, like the legacy
+        # subprocess path whose CWD was the results dir.
+        with in_work_dir(rdir):
+            res = mod.main(ctx=ctx)
     except BaseException as exc:  # noqa: BLE001 — backstop: same as res.error
         escaped = exc
     finally:
-        try:
-            os.chdir(saved_cwd)       # restored even on the ladder paths
-        except OSError:
-            pass
         ctx.restore()
         sys.stdout = saved_stdout
         out.close()

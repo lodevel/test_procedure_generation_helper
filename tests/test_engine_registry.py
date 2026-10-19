@@ -13,7 +13,6 @@ import io
 import json
 import os
 import queue
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -50,7 +49,6 @@ def project(tmp_path, monkeypatch):
     for slot in engine._slots.values():
         if slot.session is not None:
             slot.session.kill()
-            shutil.rmtree(slot.session.screenshot_dir, ignore_errors=True)
 
 
 @pytest.fixture
@@ -229,7 +227,6 @@ def test_close_kills_a_process_that_ignores_stdin_eof(project):
     started = time.monotonic()
     sess.close(grace=0.5)
     assert sess._proc.poll() is not None and time.monotonic() - started < 10
-    shutil.rmtree(sess.screenshot_dir, ignore_errors=True)
 
 
 # --- the roles ----------------------------------------------------------------
@@ -479,8 +476,7 @@ def test_the_process_works_and_leaves_nothing_outside_the_temp_root(temp_dir, pr
     assert _available(project)["ok"]
     _argv, kwargs = spawns[0]
     root = temp_root.root()
-    assert Path(kwargs["cwd"]).parent == root
-    assert kwargs["env"]["TEMP"] == kwargs["env"]["TMP"] == str(root)
+    assert kwargs["cwd"] == kwargs["env"]["TEMP"] == kwargs["env"]["TMP"] == str(root)
     proc = _session(project)._proc
     engine.stop_all()             # the exit hook, before the temp root goes
     assert proc.poll() is not None

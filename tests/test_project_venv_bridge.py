@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from procedo.core import project_local_state, venv_pool
+from procedo.core import project_local_state, temp_root, venv_pool
 from procedo.studio import _project_local_state
 from procedo.studio.core import odb_inspect
 from procedo.studio.pack_ops import pack_parsers
@@ -45,16 +45,6 @@ def venvs_root():
     """The sandboxed ENVIRONMENT pool root, which is a different place: one folder
     per bundle, beside the per-project folders rather than inside one."""
     return project_local_state.venvs_root()
-
-
-@pytest.fixture
-def screenshot_dir(tmp_path, monkeypatch):
-    """``RemoteSession.__init__`` mkdtemps a ``tpg_shots_*`` dir for the daemon's
-    relative writes. Pin it inside ``tmp_path`` so a test can name it."""
-    shots = tmp_path / "tpg_shots"
-    shots.mkdir()
-    monkeypatch.setattr(pack_parsers.tempfile, "mkdtemp", lambda *a, **k: str(shots))
-    return shots
 
 
 def _project(tmp_path: Path) -> Path:
@@ -137,7 +127,7 @@ def test_the_bundle_dir_is_the_projects_even_though_the_venv_is_elsewhere(venvs_
 
 
 def test_every_op_frame_carries_the_projects_bundle_dir(
-    venvs_root, screenshot_dir, tmp_path, monkeypatch
+    venvs_root, tmp_path, monkeypatch
 ):
     """An op goes to the project's TOOLS engine: the machine-local interpreter runs
     the daemon by path with ``--role tools``, and the frame names the bundle."""
@@ -257,7 +247,7 @@ class _FakeDaemon:
 
 
 def test_safe_off_does_not_refuse_merely_because_the_venv_moved(
-    venvs_root, screenshot_dir, tmp_path, monkeypatch
+    venvs_root, tmp_path, monkeypatch
 ):
     """``bench_session._recovery_safe_off`` reaches exactly this. Before the fix it
     answered ``{"ok": False, "kind": "ParserUnavailable"}`` for every project on the
@@ -286,11 +276,11 @@ def test_safe_off_does_not_refuse_merely_because_the_venv_moved(
     assert daemons[0].argv[1].endswith("_execute_op_subprocess.py")
     assert daemons[0].frames[0]["cmd"] == "safe_off"
     assert daemons[0].frames[0]["_bundle_dir"] == str(project / "bundle")
-    assert cwds == [str(screenshot_dir)]  # the daemon's relative writes are sandboxed
+    assert cwds == [str(temp_root.root())]  # the daemon's relative writes stay in app temp
 
 
 def test_safe_off_still_refuses_when_there_really_is_no_venv(
-    venvs_root, screenshot_dir, tmp_path, monkeypatch
+    venvs_root, tmp_path, monkeypatch
 ):
     """The other half — the pin above is sensitive to exactly the thing that broke."""
     project = _project(tmp_path)  # no interpreter anywhere

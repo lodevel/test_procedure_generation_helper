@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -280,7 +281,8 @@ class DaemonRunnerTests(unittest.TestCase):
         three = {"equipment": [{"id": "PSU1", "type": "psu", "channels": [1, 2, 3]}]}
         for doc in (one, three):
             resp, _ = er._dispatch(s, {"cmd": "exec_ops", "ops": [_meas_v("PSU1")],
-                                       "bench_map": _BENCH, "procedure_json": doc})
+                                       "bench_map": _BENCH, "procedure_json": doc,
+                                       "work_dir": os.getcwd()})
             self.assertTrue(resp["ok"] and not resp["aborted"], resp)
         resp, _ = er._dispatch(s, {"cmd": "ping"})   # a frame without one keeps it
         self.assertIs(s.procedure_json, three)
@@ -381,7 +383,8 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
             "results": [{"node_path": "", "ok": True, "has_value": True,
                          "value": 3.3, "unit": "V", "ref": 7}],
             "log": ["x"]})
-        out = s.exec_op({"op": "psu.measure_voltage", "device": "PSU1"}, {"visa": "MOCK"})
+        out = s.exec_op({"op": "psu.measure_voltage", "device": "PSU1"}, {"visa": "MOCK"},
+                        work_dir=Path("run"))
         self.assertEqual(out, {"ok": True, "has_value": True, "value": 3.3,
                                "unit": "V", "ref": 7, "log": ["x"]})
 
@@ -390,7 +393,8 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
             "ok": True, "aborted": True,
             "results": [{"node_path": "", "ok": False, "error": "boom"}],
             "log": []})
-        out = s.exec_op({"op": "psu.set_voltage", "device": "PSU1"}, {"visa": "MOCK"})
+        out = s.exec_op({"op": "psu.set_voltage", "device": "PSU1"}, {"visa": "MOCK"},
+                        work_dir=Path("run"))
         self.assertFalse(out["ok"])
         self.assertEqual(out["error"], "boom")
 
@@ -398,7 +402,8 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
         pp = self._pp()
         s = pp.RemoteSession(Path("/nonexistent"))   # real transport, no venv
         out = s.exec_ops([{"node_path": "a", "op": {
-            "op": "psu.measure_voltage", "device": "PSU1"}}], {"PSU1": {"visa": "X"}})
+            "op": "psu.measure_voltage", "device": "PSU1"}}], {"PSU1": {"visa": "X"}},
+            work_dir=Path("run"))
         self.assertFalse(out["ok"])
         self.assertIn(out["kind"], ("ParserUnavailable", "SessionDead"))
         self.assertTrue(s.dead)
@@ -441,14 +446,19 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
             def wait(self, timeout=None): return 0
         s._proc = _FP()
         s.exec_ops([{"node_path": "a", "op": _meas_v("PSU1")["op"]}],
-                   {"PSU1": {"visa": "X"}}, procedure_json=_PROC)
+                   {"PSU1": {"visa": "X"}}, procedure_json=_PROC, work_dir=Path("run"))
+        s.exec_op(_meas_v("PSU1")["op"], {"visa": "X"}, procedure_json=_PROC,
+                  work_dir=Path("run"))
         s.safe_off([{"device": "PSU1", "etype": "psu", "channels": [1]}], {},
                    procedure_json=_PROC)
         s.shutdown()
         frames = [json.loads(line) for line in _In.lines]
         self.assertEqual([f["cmd"] for f in frames],
-                         ["exec_ops", "safe_off", "shutdown"])
-        self.assertEqual([f.get("procedure_json") for f in frames], [_PROC, _PROC, None])
+                         ["exec_ops", "exec_ops", "safe_off", "shutdown"])
+        self.assertEqual([f.get("procedure_json") for f in frames],
+                         [_PROC, _PROC, _PROC, None])
+        # ⚡ and batch frames name the guided run's folder: the daemon works in it
+        self.assertEqual([f.get("work_dir") for f in frames[:2]], ["run", "run"])
         for f in frames:
             self.assertNotIn("procedure_path", f)
 

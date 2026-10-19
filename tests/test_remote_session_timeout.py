@@ -71,5 +71,5 @@ def test_a_batch_waits_one_op_budget_per_frame_however_long_it_is(tmp_path, monk
     seen = {}
     sess = _session(tmp_path, _Proc([]))
     monkeypatch.setattr(sess, "_request", lambda frame, timeout, on_progress=None: seen.update(t=timeout) or {"ok": True})
-    sess.exec_ops(OPS * 10, {})
+    sess.exec_ops(OPS * 10, {}, work_dir=tmp_path)
     assert seen["t"] == pp._TIMEOUT_REMOTE_EXEC      # not 45 + 5 x 30

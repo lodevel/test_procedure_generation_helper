@@ -1,10 +1,8 @@
-"""The editor's temp users leave nothing in %TEMP%: the guided run's screenshot dir goes
-when its session shuts down (after the host harvested it), and a code check makes no
-file at all."""
+"""The editor's temp users leave nothing in %TEMP%: an engine process makes no folder of its
+own (it works in the app's temp root; the guided run owns the folder its screenshots land in),
+and a code check makes no file at all."""
 from __future__ import annotations
 
-import subprocess
-import sys
 import tempfile
 
 import pytest
@@ -12,9 +10,6 @@ import pytest
 from procedo.core import temp_root
 from procedo.studio.core.validators import CodeValidator
 from procedo.studio.pack_ops import pack_parsers
-
-# A daemon that answers one frame, then exits: what ``shutdown`` talks to.
-_ONE_FRAME = "import sys; sys.stdin.readline(); print('{\"ok\": true, \"log\": []}', flush=True)"
 
 
 @pytest.fixture
@@ -30,39 +25,14 @@ def temp_dir(tmp_path, monkeypatch):
     temp_root.remove()
 
 
-def _session(tmp_path, daemon: str | None = None) -> pack_parsers.RemoteSession:
-    sess = pack_parsers.RemoteSession(tmp_path)
-    assert sess.screenshot_dir.parent == temp_root.root()
-    if daemon is not None:  # stands in for _start: a live daemon, cwd in the shots dir
-        sess._proc = subprocess.Popen(
-            [sys.executable, "-c", daemon], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True, cwd=str(sess.screenshot_dir))
-    return sess
+def test_an_engine_process_makes_no_folder_of_its_own(temp_dir, tmp_path):
+    """Its working folder is the temp root itself (test_project_venv_bridge pins the
+    cwd), so even a killed instance leaves nothing behind."""
+    pack_parsers.RemoteSession(tmp_path).kill()
+    assert list(temp_root.root().iterdir()) == []
 
 
-def test_shutdown_removes_the_screenshot_dir(temp_dir, tmp_path):
-    sess = _session(tmp_path, _ONE_FRAME)
-    (sess.screenshot_dir / "scope.png").write_bytes(b"png")
-    assert sess.shutdown()["ok"] is True
-    assert not sess.screenshot_dir.exists()
-
-
-def test_shutdown_of_a_session_that_never_started_removes_it_too(temp_dir, tmp_path):
-    sess = _session(tmp_path)
-    sess.shutdown()
-    assert not sess.screenshot_dir.exists()
-
-
-def test_a_killed_session_keeps_its_screenshots_for_finish_and_save(temp_dir, tmp_path):
-    """A session lost mid-run is killed before the operator's Finish & Save harvests
-    its screenshots; the temp root removes them at exit."""
-    sess = _session(tmp_path, "import time; time.sleep(60)")
-    (sess.screenshot_dir / "scope.png").write_bytes(b"png")
-    sess.kill()
-    assert (sess.screenshot_dir / "scope.png").is_file()
-
-
-def test_safe_off_remote_leaves_no_screenshot_dir(temp_dir, tmp_path, monkeypatch):
+def test_safe_off_remote_leaves_nothing_in_the_temp_root(temp_dir, tmp_path, monkeypatch):
     def no_venv(_root):
         raise pack_parsers.ParserUnavailable("no venv")
 

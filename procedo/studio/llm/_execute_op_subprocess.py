@@ -55,7 +55,7 @@ corrupt a frame.  Tracebacks travel inside the response JSON, never printed.
     {"cmd": "op", "op": "<name>", "procedure_json"?: {...}, ...}   # the op's
      spec (_engine_ops.py); answered with the op's result; never changes the
      session's document, never opens a device
-    {"cmd": "exec_ops", "_bundle_dir": "<abs>", "procedure_json": {...},
+    {"cmd": "exec_ops", "_bundle_dir": "<abs>", "procedure_json": {...}, "work_dir"?: "<abs>",
      "ops": [{"node_path": str, "op": {...}}, ...],
      "bench_map": {device: {"visa"|"port"..., "session_policy": "..."}},
      "measurements"?: {node_path: value}, "controls"?: {node_path: decision},
@@ -1198,14 +1198,14 @@ def _dispatch(session: _Session, req: dict):
         _load_bundle(session, req)
         err = _take_document(session, req)
         if err and cmd == "exec_ops":
-            # Only exec is gated on the document. safe_off/shutdown/ping
-            # proceed with the last one received or {} — a recovery safe-off
-            # must never be blocked (its targets carry explicit channels).
+            # Only exec is gated on the document. safe_off/shutdown/ping proceed with the last
+            # one received or {} — a recovery safe-off must never be blocked (explicit channels).
             return err, False
         if cmd == "ping":
             return {"ok": True, "pong": True}, False
-        if cmd == "exec_ops":
-            return _cmd_exec_ops(session, req), False
+        if cmd == "exec_ops":       # in the frame's work_dir: relative writes land there
+            with _bench().in_work_dir(req.get("work_dir")):
+                return _cmd_exec_ops(session, req), False
         if cmd == "raw":
             return _cmd_raw(session, req), False
         if cmd == "safe_off":

@@ -26,7 +26,6 @@ and its claim is a bench holder's, which every Reinstall refuses.
 from __future__ import annotations
 
 import os
-import shutil
 import threading
 from pathlib import Path
 from typing import Any, Optional
@@ -117,7 +116,7 @@ def _slot(role: str, project_root: Path) -> _Slot:
 
 
 def _replace(slot: _Slot, key: tuple, role: str, project_root: Path) -> None:
-    """A fresh instance in ``slot``; the one it replaces exits (a dead one only loses its folder)."""
+    """A fresh instance in ``slot``; the one it replaces exits."""
     if slot.session is not None:
         _retire(slot.session)
     slot.key, slot.session = key, pack_parsers.RemoteSession(project_root, role=role)
@@ -136,13 +135,12 @@ def _replaced(slot: _Slot, generation: int, key: tuple, role: str, project_root:
 
 
 def _retire(session: pack_parsers.RemoteSession) -> None:
-    """End an instance and drop its folder; one that already died is not started
-    again just to be told to stop (``shutdown`` would lazily restart it)."""
+    """End an instance; one that already died is not started again just to be told
+    to stop (``shutdown`` would lazily restart it)."""
     if session.alive:
         session.shutdown()
     else:
         session.kill()
-        shutil.rmtree(session.screenshot_dir, ignore_errors=True)
 
 
 def stop(*, venv_folder: Optional[Path] = None, project_root: Optional[Path] = None,
@@ -179,7 +177,6 @@ def stop(*, venv_folder: Optional[Path] = None, project_root: Optional[Path] = N
 def _close(sessions: list) -> None:
     for session in sessions:
         session.close()
-        shutil.rmtree(session.screenshot_dir, ignore_errors=True)
 
 
 def stop_all() -> None:

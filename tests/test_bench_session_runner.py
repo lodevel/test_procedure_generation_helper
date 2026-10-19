@@ -1480,24 +1480,75 @@ class RunTestTests(_BenchBase):
                           .read_text(encoding="utf-8"))
         self.assertEqual([e["file"] for e in data["evidence"]], ["shot.png"])
 
-    def test_exec_ops_relative_write_stays_in_daemon_cwd(self):
-        # Guided-manual screenshot harvesting contract (UNCHANGED by F-H5):
-        # outside run_test the daemon CWD is the parent's choice (the
-        # RemoteSession screenshot tmp dir) — an exec_ops relative write
-        # lands THERE, never in a results dir.
+    def test_exec_ops_relative_write_lands_in_the_frames_work_dir(self):
+        # The guided run's screenshots: an exec_ops frame names the run's own
+        # folder; the daemon runs the batch there (the same switch run_test
+        # makes into its results dir) and goes back after — a relative write
+        # never lands in the daemon's own CWD.
         er._build_device = lambda bench, etype, lifecycle, log: _ShotFake(
             etype, bench.get("_dev", "?"), self.calls)
+        home, run_dir = Path(self.tmp.name) / "home", Path(self.tmp.name) / "run"
+        home.mkdir()
+        run_dir.mkdir()
         cwd0 = os.getcwd()
-        os.chdir(self.tmp.name)           # stand-in for the daemon tmp CWD
+        os.chdir(home)                    # stand-in for the daemon's own CWD
         self.addCleanup(os.chdir, cwd0)
         s = self._session()
-        s.procedure_json = {"equipment": [{"id": "SCOPE1", "type": "scope"}]}
-        r = er._cmd_exec_ops(s, {"ops": [{"node_path": "s", "op": {
-            "op": "scope.screenshot", "device": "SCOPE1",
-            "filename": "guided_shot.png"}}],
+        r, stop = self._dispatch(s, {
+            "cmd": "exec_ops", "work_dir": str(run_dir),
+            "procedure_json": {"equipment": [{"id": "SCOPE1", "type": "scope"}]},
+            "ops": [{"node_path": "s", "op": {
+                "op": "scope.screenshot", "device": "SCOPE1",
+                "filename": "guided_shot.png"}}],
             "bench_map": {"SCOPE1": {"visa": _ADDR_B, "_dev": "GUIDED"}}})
+        self.assertFalse(stop)
         self.assertFalse(r["aborted"], r)
-        self.assertTrue((Path(self.tmp.name) / "guided_shot.png").exists())
+        self.assertEqual(os.listdir(run_dir), ["guided_shot.png"])
+        self.assertEqual(os.listdir(home), [])
+        self.assertTrue(os.path.samefile(os.getcwd(), home))
+
+    def test_exec_ops_without_its_work_dir_is_refused_and_runs_nothing(self):
+        # No fallback: a batch whose frame names no work_dir, or a folder that
+        # is gone, is answered with an error and no op runs (no device opened,
+        # nothing written, the daemon's CWD untouched).
+        er._build_device = lambda bench, etype, lifecycle, log: _ShotFake(
+            etype, bench.get("_dev", "?"), self.calls)
+        home = Path(self.tmp.name) / "home"
+        home.mkdir()
+        cwd0 = os.getcwd()
+        os.chdir(home)
+        self.addCleanup(os.chdir, cwd0)
+        s = self._session()
+        gone = str(home / "gone")
+        for missing, why in (({}, "exec_ops frame has no work_dir"),
+                             ({"work_dir": None}, "exec_ops frame has no work_dir"),
+                             ({"work_dir": gone}, f"work_dir does not exist: {gone}")):
+            r, stop = self._dispatch(s, {
+                "cmd": "exec_ops", **missing,
+                "procedure_json": {"equipment": [{"id": "SCOPE1", "type": "scope"}]},
+                "ops": [{"node_path": "s", "op": {
+                    "op": "scope.screenshot", "device": "SCOPE1",
+                    "filename": "guided_shot.png"}}],
+                "bench_map": {"SCOPE1": {"visa": _ADDR_B, "_dev": "GUIDED"}}})
+            self.assertFalse(stop)
+            self.assertFalse(r["ok"], (missing, r))
+            self.assertIn(why, r["error"])
+            self.assertEqual(self.calls, [])
+            self.assertEqual(os.listdir(home), [])
+            self.assertTrue(os.path.samefile(os.getcwd(), home))
+
+    def test_in_work_dir_goes_back_when_the_block_raises(self):
+        home, run_dir = Path(self.tmp.name) / "home", Path(self.tmp.name) / "run"
+        home.mkdir()
+        run_dir.mkdir()
+        cwd0 = os.getcwd()
+        os.chdir(home)
+        self.addCleanup(os.chdir, cwd0)
+        with self.assertRaises(RuntimeError):
+            with bsr.in_work_dir(run_dir):
+                self.assertTrue(os.path.samefile(os.getcwd(), run_dir))
+                raise RuntimeError("the op raised")
+        self.assertTrue(os.path.samefile(os.getcwd(), home))
 
     def test_escaped_exception_backstop_same_as_error(self):
         s = self._session()

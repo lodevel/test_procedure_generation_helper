@@ -22,9 +22,7 @@ import functools
 import json
 import logging
 import os
-import shutil
 import subprocess
-import tempfile
 import threading
 from collections import deque
 from dataclasses import dataclass, field, fields
@@ -528,16 +526,6 @@ class RemoteSession:
         self._dead = False
         self._bundle_dir: Optional[str] = None
         self._claim: Optional[tuple[Optional[Path], int]] = None   # (venv folder, pid) claimed
-        # The daemon runs with cwd here so a relative file write (e.g. a scope
-        # screenshot saved by ``save_screenshot(filename=...)``) lands in a known
-        # temp dir, not the GUI's cwd; the host harvests these into the result dir
-        # on Finish & Save, before close's shutdown() removes it (kill() keeps it).
-        self._screenshot_dir = Path(tempfile.mkdtemp(prefix="tpg_shots_", dir=temp_root.root()))
-
-    @property
-    def screenshot_dir(self) -> Path:
-        """Temp dir the daemon writes relative files (scope screenshots) into."""
-        return self._screenshot_dir
 
     # -- lifecycle ---------------------------------------------------------
     def _start(self) -> None:
@@ -545,12 +533,13 @@ class RemoteSession:
         self._bundle_dir = str(venv.bundle_dir)
         # Daemon stayed in llm/ when pack_parsers moved to pack_ops/ (29e5f66).
         runner = Path(__file__).resolve().parent.parent / "llm" / "_execute_op_subprocess.py"
-        temp = str(temp_root.root())         # the child's temp files go with this app's
+        # The child's temp files go with this app's, and so does a relative write of a
+        # frame without a working folder (an exec_ops frame names the run's own).
+        temp = str(temp_root.root())
         self._proc = subprocess.Popen(
             [str(venv.python), str(runner), "--role", self._role],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, bufsize=1,
-            cwd=str(self._screenshot_dir),   # relative file writes (screenshots) land here
+            text=True, bufsize=1, cwd=temp,
             env={**os.environ, "TEMP": temp, "TMP": temp},
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
@@ -671,9 +660,12 @@ class RemoteSession:
                  measurements: Optional[dict] = None,
                  controls: Optional[dict] = None,
                  operator_verdicts: Optional[dict] = None,
-                 procedure_json: Optional[dict] = None) -> dict[str, Any]:
+                 procedure_json: Optional[dict] = None,
+                 *, work_dir: Path) -> dict[str, Any]:
         """Run a contiguous batch of ``procedure_json`` (the holder's document; the
         daemon refuses a batch without one); per_session devices stay HELD afterward.
+        The daemon runs it in ``work_dir`` (the guided run's folder), so a relative
+        file write (a scope screenshot) lands there.
 
         ``on_progress`` (optional): invoked on the CALLING thread with each
         per-op ``{"kind": "progress", "node_path", "ok", "verdict", "i",
@@ -685,7 +677,8 @@ class RemoteSession:
         executes and materializes the live ``verdict`` via the same
         ``build_manual_run`` the caller uses at batch end (so they agree)."""
         frame: dict[str, Any] = {"cmd": "exec_ops", "ops": ops, "bench_map": bench_map,
-                                 "procedure_json": procedure_json}
+                                 "procedure_json": procedure_json,
+                                 "work_dir": str(work_dir)}
         for key, state in (("measurements", measurements), ("controls", controls),
                            ("operator_verdicts", operator_verdicts)):
             if state is not None:
@@ -696,12 +689,13 @@ class RemoteSession:
 
     def exec_op(self, target_op: dict[str, Any], bench: dict[str, Any],
                 timeout: Optional[int] = None,
-                procedure_json: Optional[dict] = None) -> dict[str, Any]:
+                procedure_json: Optional[dict] = None,
+                *, work_dir: Path) -> dict[str, Any]:
         """⚡ single op — batch of one, unwrapped to the flat shape the dialog
         consumes: ``{"ok", "has_value", "value", "unit", "ref", "log"}``."""
         device = target_op.get("device")
-        res = self.exec_ops([{"node_path": "", "op": target_op}],
-                            {device: bench}, timeout, procedure_json=procedure_json)
+        res = self.exec_ops([{"node_path": "", "op": target_op}], {device: bench}, timeout,
+                            procedure_json=procedure_json, work_dir=work_dir)
         if not res.get("ok"):
             return res
         r0 = (res.get("results") or [{}])[0]
@@ -753,7 +747,7 @@ class RemoteSession:
         return self._request({"cmd": "ping"}, timeout)
 
     def shutdown(self, timeout: Optional[int] = None) -> dict[str, Any]:
-        """Safe-off all held + close (unlock) + exit, drop the screenshot dir; idempotent."""
+        """Safe-off all held + close (unlock) + exit; idempotent."""
         res = {"ok": True, "log": []}
         if self._proc is not None and not self._dead:
             res = self._request({"cmd": "shutdown"}, timeout or (_TIMEOUT_REMOTE_EXEC + 30))
@@ -763,7 +757,6 @@ class RemoteSession:
                 self._terminate()
         self._dead = True
         self._release_claim()
-        shutil.rmtree(self._screenshot_dir, ignore_errors=True)
         return res
 
     def kill(self) -> None:

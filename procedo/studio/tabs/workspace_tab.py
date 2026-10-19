@@ -25,6 +25,7 @@ from .base_tab import BaseTab
 from .. import launch_env
 from ..core import test_folder_ops, test_sync
 from ..core.artifact_manager import ArtifactManager
+from ..core.project_manager import TestFolderInfo
 
 #: The header's legend of the row letters.
 LEGEND = "T text · J JSON · C code"
@@ -60,6 +61,10 @@ def _show_state(item: QListWidgetItem, info, stale: tuple[str, ...], badges: boo
     present = [letter for letter, _name, state in states if state != "missing"]
     marks = f"[{'/'.join(present)}]" if present else "[empty]"
     item.setText(f"{'⚠️ ' if stale else ''}{info.name}  {marks}")
+
+
+def _uses_badges() -> bool:
+    return ui_indicators.uses_badges(os.environ.get(launch_env.APP_INDICATORS))
 
 
 def _padded(widget, left: int, top: int, right: int, bottom: int) -> QVBoxLayout:
@@ -128,7 +133,7 @@ class WorkspaceTab(BaseTab):
         top = scroll.value()
         self.test_list.clear()
         folders = self.project_manager.enumerate_test_folders()
-        badges = ui_indicators.uses_badges(os.environ.get(launch_env.APP_INDICATORS))
+        badges = _uses_badges()
         for info in folders:
             item = QListWidgetItem()
             item.setData(Qt.UserRole, info.path)
@@ -357,6 +362,19 @@ class WorkspaceTab(BaseTab):
                 "It may already exist or the path is invalid."
             )
     
+    def refresh_opened_test(self):
+        """Re-read the open test's row only: saving or acknowledging it changes no other test.
+        The whole list when that row or its folder is not there."""
+        path = self._current_opened_test
+        if path is not None and path.is_dir():
+            for i in range(self.test_list.count()):
+                item = self.test_list.item(i)
+                if item.data(Qt.UserRole) == path:
+                    _show_state(item, TestFolderInfo.of(path), self._stale_artifacts(path),
+                                _uses_badges())
+                    return
+        self.refresh()
+
     def refresh(self):
         """Refresh the test list."""
         if self.project_manager.project_root:

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from .fileio import atomic_write_text
+from .session_state import read_sync_baseline
 from .sync_utils import normalize_for_hash
 from .test_id import force_json_id, force_text_id_line, sanitize_test_id
 
@@ -85,8 +86,10 @@ class ArtifactManager:
     PROCEDURE_TEXT_NAME = "procedure_text.md"
     SESSION_FILE_NAME = ".llm_session.json"
     _exclusion_patterns: list[re.Pattern[str]] = field(default_factory=list, repr=False)
-    #: Called on the GUI thread once a save's refreshed media were written (the views show them).
-    on_media_refreshed: Optional[Callable[[], None]] = field(default=None, repr=False)
+    #: Called on the GUI thread once a save's refreshed media were written, with the JSON as it
+    #: was saved: True when the open test's controller holds this test's sync baseline (and took
+    #: the refresh into it); otherwise the session file is re-baselined here.
+    on_media_refreshed: Optional[Callable[[str], bool]] = field(default=None, repr=False)
     
     def set_test_dir(self, test_dir: Path) -> None:
         """Set the test directory and update file paths."""
@@ -149,6 +152,9 @@ class ArtifactManager:
         artifact.content = self._enforce_folder_id(artifact_type, artifact.content)
 
         atomic_write_text(artifact.file_path, artifact.content)
+        from . import test_sync                  # imports this module: not at module level
+        test_sync.remember_written(self.test_dir, artifact.file_path.name, artifact.content,
+                                   self._exclusion_patterns)
         artifact.mark_clean()
         artifact.mark_needs_resync()  # Mark for resync so LLM sees manual changes
         artifact.last_modified = datetime.now()
@@ -197,10 +203,16 @@ class ArtifactManager:
                 return
             if refreshed == saved or artifact.content != saved or artifact.original_content != saved:
                 return
+            from . import test_sync                  # imports this module: not at module level
+            patterns = self._exclusion_patterns
+            acknowledged = (read_sync_baseline(self.test_dir) is not None
+                            and not test_sync.is_out_of_sync(self.test_dir, patterns))
             atomic_write_text(artifact.file_path, refreshed)
+            test_sync.remember_written(self.test_dir, artifact.file_path.name, refreshed, patterns)
             artifact.content = artifact.original_content = refreshed
-            if self.on_media_refreshed is not None:
-                self.on_media_refreshed()
+            held = self.on_media_refreshed is not None and self.on_media_refreshed(saved)
+            if acknowledged and not held:            # derived data must not un-sync a coherent test
+                test_sync.mark_in_sync(self.test_dir, patterns)
 
         engine_async.call(root, lambda: pack_parsers.refresh_media(doc, root), done)
 
@@ -348,13 +360,12 @@ class ArtifactManager:
         must never flip a user-acknowledged in-sync state. Idempotent
         for already-correct ids, no-op for test.py.
         """
-        hashes: dict[str, str] = {}
-        for name, artifact in self._sync_tracked_mapping().items():
-            if artifact.content:
-                hashes[name] = enforced_sync_hash(
-                    self.test_dir, name, artifact.content, self._exclusion_patterns
-                )
-        return hashes
+        return {name: self.sync_hash(name, artifact.content)
+                for name, artifact in self._sync_tracked_mapping().items() if artifact.content}
+
+    def sync_hash(self, name: str, content: str) -> str:
+        """The sync hash of ``content`` as this test's tracked file ``name``."""
+        return enforced_sync_hash(self.test_dir, name, content, self._exclusion_patterns)
 
     def check_external_changes(self, stored_hashes: dict[str, str]) -> list[str]:
         """Compare current on-disk content against stored hashes.

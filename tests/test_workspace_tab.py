@@ -194,3 +194,31 @@ def test_context_menu_rename_and_delete(tab, monkeypatch, text, handler):
     _choose(monkeypatch, text)
     _menu_on(tab, "Gamma")
     assert calls == [tab.tmp / "Gamma"]
+
+
+def test_refresh_opened_test_rereads_only_the_open_row(tab, monkeypatch):
+    """A save or an acknowledgment changes the open test alone: its row is re-read from disk,
+    the others are not listed again."""
+    rows = _load(tab, monkeypatch, "badges")
+    beta = tab.tmp / "Beta"
+    beta.mkdir()
+    for name in ("procedure_text.md", "procedure.json"):
+        (beta / name).write_text("x", encoding="utf-8")
+    tab.set_opened_test(beta)
+    listed = []
+    tab.pm.enumerate_test_folders = lambda: listed.append(1) or _folders(tab.tmp)
+    monkeypatch.setattr(workspace_tab.test_sync, "stale_artifacts",
+                        lambda path, _patterns: ("procedure_text.md",) if path == beta else ())
+    tab.refresh_opened_test()
+    assert listed == []
+    assert rows["Beta"].data(BADGES_ROLE) == [("T", "warning"), ("J", "success"), ("C", "missing")]
+    assert rows["Alpha"].data(BADGES_ROLE) == [("T", "success"), ("J", "warning"), ("C", "success")]
+
+
+def test_refresh_opened_test_lists_again_without_its_folder(tab, monkeypatch):
+    _load(tab, monkeypatch, "badges")
+    tab.set_opened_test(tab.tmp / "Gamma")  # listed, but its folder is gone
+    listed = []
+    tab.pm.enumerate_test_folders = lambda: listed.append(1) or _folders(tab.tmp)
+    tab.refresh_opened_test()
+    assert listed == [1]

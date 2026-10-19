@@ -83,7 +83,7 @@ class DocumentController:
         if result == QMessageBox.Yes:
             self.mark_in_sync()
             self.update_sync_indicator()
-            mw.workspace_widget.refresh()
+            mw.workspace_widget.refresh_opened_test()
             mw.footer.show_message("Artifacts marked as in sync", 2000)
 
     def mark_in_sync(self):
@@ -131,7 +131,7 @@ class DocumentController:
         if clicked == mark_sync_btn:
             self.mark_in_sync()
             self.update_sync_indicator()
-            mw.workspace_widget.refresh()
+            mw.workspace_widget.refresh_opened_test()
             return False
         elif clicked == go_back_btn:
             return True  # User wants to go back and review
@@ -237,7 +237,7 @@ class DocumentController:
 
         # Initialize managers for this test
         am = mw.artifact_manager = ArtifactManager()
-        am.on_media_refreshed = lambda: self._show_refreshed_json(am)
+        am.on_media_refreshed = lambda saved: self._on_media_refreshed(am, saved)
         mw.artifact_manager.set_test_dir(path)
         mw.artifact_manager.load_all()  # Load existing files from disk
         mw.artifact_manager.set_exclusion_patterns(
@@ -379,20 +379,29 @@ class DocumentController:
 
         mw._update_status_indicators()
         # Refresh workspace test list to update artifact indicators
-        mw.workspace_widget.refresh()
+        mw.workspace_widget.refresh_opened_test()
         mw.footer.show_message("Saved", 2000)
 
-    def _show_refreshed_json(self, am: ArtifactManager) -> None:
-        """A save's media refresh landed: the procedure.json editors show what is on disk (a
-        test closed since shows nothing of it)."""
+    def _on_media_refreshed(self, am: ArtifactManager, saved: str) -> bool:
+        """A save's media refresh landed. For the open test, which holds its own sync baseline:
+        the refreshed JSON is derived data, so when the JSON as saved was the acknowledged one the
+        baseline follows it, and the procedure.json editors show what is on disk. False for a
+        test closed since: its session file is the baseline (the artifact manager's)."""
         from ..widgets.editor_card import refresh_editor_after_save
-        if am is not self._mw.artifact_manager:
-            return
+        mw = self._mw
+        if am is not mw.artifact_manager:
+            return False
         content = am.get_content(ArtifactType.PROCEDURE_JSON)
-        for tab in self._mw._get_llm_tabs():
+        state, name = mw.session_state, ArtifactManager.PROCEDURE_JSON_NAME
+        if (state is not None and state.artifacts_in_sync
+                and state.artifact_hashes.get(name) == am.sync_hash(name, saved)):
+            state.artifact_hashes = {**state.artifact_hashes, name: am.sync_hash(name, content)}
+            state.save()
+        for tab in mw._get_llm_tabs():
             for card in tab.cards:
                 if card.kind is ArtifactType.PROCEDURE_JSON:
                     refresh_editor_after_save(card.editor, content)
+        return True
 
     def check_sync_hashes(self):
         """Compare current artifact content hashes against the last-acknowledged baseline.
@@ -448,7 +457,7 @@ class DocumentController:
         mw = self._mw
         self.check_sync_hashes()
         mw._update_status_indicators()
-        mw.workspace_widget.refresh()
+        mw.workspace_widget.refresh_opened_test()
 
     def on_save_all(self):
         """Save all dirty artifacts across all tabs.
@@ -484,7 +493,7 @@ class DocumentController:
         # Update indicators after save
         mw._update_status_indicators()
         # Refresh workspace test list to update artifact indicators
-        mw.workspace_widget.refresh()
+        mw.workspace_widget.refresh_opened_test()
         mw.footer.show_message("All saved", 2000)
 
     def check_unsaved_changes(self) -> bool:

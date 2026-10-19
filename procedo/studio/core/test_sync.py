@@ -11,10 +11,25 @@ an opened test always agree.
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 
 from .artifact_manager import ArtifactManager, enforced_sync_hash
 from .session_state import read_sync_baseline, write_sync_baseline
+
+
+#: path -> (stamp, sync hash), the stamp being the file's (mtime_ns, size, file id) and the
+#: patterns: the Tests list re-reads every test after each save, and a file whose stamp did not
+#: move is not read and hashed again.
+_hashes: dict[Path, tuple[tuple, str]] = {}
+#: Timestamps are coarse (a clock tick on NTFS, 2 s on FAT): a file read this soon after it
+#: changed may change again under the same stamp, so that read is not kept.
+_RACY_NS = 2_000_000_000
+
+
+def _stamp(path: Path, patterns: list[re.Pattern[str]]) -> tuple:
+    stat = path.stat()
+    return stat.st_mtime_ns, stat.st_size, stat.st_ino, tuple(patterns)
 
 
 def _disk_hash(test_dir: Path, name: str, patterns: list[re.Pattern[str]]) -> str | None:
@@ -22,7 +37,29 @@ def _disk_hash(test_dir: Path, name: str, patterns: list[re.Pattern[str]]) -> st
     path = test_dir / name
     if not path.exists():
         return None
-    return enforced_sync_hash(test_dir, name, path.read_text(encoding="utf-8"), patterns)
+    stamp = _stamp(path, patterns)
+    cached = _hashes.get(path)
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
+    digest = enforced_sync_hash(test_dir, name, path.read_text(encoding="utf-8"), patterns)
+    if time.time_ns() - stamp[0] > _RACY_NS:
+        _hashes[path] = (stamp, digest)
+    return digest
+
+
+def remember_written(test_dir: Path, name: str, content: str,
+                     patterns: list[re.Pattern[str]]) -> None:
+    """Studio just wrote ``content`` to ``test_dir / name`` (atomically: a new file id): its hash
+    is kept under the file's new stamp, so the Tests list does not read it back (the first read
+    of a fresh file waits for the virus scanner, ~15 ms). Not a text holding a CR: written then
+    read back, it changes."""
+    if "\r" in content:
+        return
+    path = test_dir / name
+    try:
+        _hashes[path] = (_stamp(path, patterns), enforced_sync_hash(test_dir, name, content, patterns))
+    except OSError:
+        pass  # gone already: the next read finds it so
 
 
 def stale_artifacts(test_dir: Path, patterns: list[re.Pattern[str]]) -> tuple[str, ...]:

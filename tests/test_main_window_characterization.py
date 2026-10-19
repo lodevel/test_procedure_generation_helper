@@ -621,6 +621,121 @@ def test_parse_and_generate_marks_in_sync(make_window, monkeypatch, tmp_path, ta
     assert not w.workspace_widget._stale_artifacts(t1)
 
 
+def test_the_media_refresh_of_an_open_test_keeps_it_in_sync(make_window, monkeypatch, tmp_path):
+    # The save's media refresh rewrites procedure.json once the engine answers: derived data,
+    # so the open test's acknowledged baseline follows it. Else the next Ctrl+S un-syncs the
+    # test, and switching tests writes the stale baseline over the session file.
+    from procedo.studio.pack_ops import pack_parsers
+    root = _make_project(tmp_path / "proj", tests=("t1", "t2"))
+    t1 = root / "tests" / "t1"
+    w = make_window()
+    _open_project(w, root)
+    w.open_test(t1)
+    monkeypatch.setattr(pack_parsers, "refresh_media",
+                        lambda doc, root=None: {**doc, "steps": [{"n": 1, "media": ["P4"]}]})
+    from procedo.studio.core import test_sync
+    disk_marks = []  # the open test's baseline is its controller's alone
+    monkeypatch.setattr(test_sync, "mark_in_sync", lambda *a: disk_marks.append(a))
+    w.text_json_tab._write_parse_and_generate(
+        json.dumps({"id": "t1", "steps": [{"n": 1}]}, indent=2), "def main():\n    return 1\n")
+    _settle(lambda: "P4" in (t1 / "procedure.json").read_text(encoding="utf-8"))
+    _settle()
+    assert disk_marks == []
+
+    assert w.session_state.artifact_hashes == w.artifact_manager.compute_hashes()
+    w._on_save()                                                  # Ctrl+S, nothing edited
+    assert w.session_state.artifacts_in_sync is True
+    assert not w.workspace_widget._stale_artifacts(t1)
+    w.open_test(root / "tests" / "t2")                            # the switch saves t1's session
+    assert not w.workspace_widget._stale_artifacts(t1)
+
+
+def test_an_edited_json_is_not_acknowledged_by_its_own_refresh(make_window, monkeypatch, tmp_path):
+    # Only the JSON as acknowledged gives way to its refresh: an answer landing at once (no
+    # project: the engine runs in this process) must not take the user's edit into the baseline.
+    from procedo.studio.core import ArtifactType
+    from procedo.studio.pack_ops import pack_parsers
+    root = _make_project(tmp_path / "proj")
+    w = make_window()
+    _open_project(w, root)
+    w.open_test(root / "tests" / "t1")
+    assert w.session_state.artifacts_in_sync is True
+    monkeypatch.setattr(engine_async, "call",
+                        lambda project_root, fn, on_done, **k: on_done(engine_async._run(fn)))
+    monkeypatch.setattr(pack_parsers, "refresh_media",
+                        lambda doc, root=None: {**doc, "steps": [{"n": 2, "media": ["P4"]}]})
+    card = next(c for c in w.text_json_tab.cards if c.kind is ArtifactType.PROCEDURE_JSON)
+    card.editor.setPlainText(json.dumps({"id": "t1", "steps": [{"n": 2}]}, indent=2))
+    assert card.save()
+    assert w.session_state.artifacts_in_sync is False
+
+
+def test_the_refresh_of_an_out_of_sync_test_leaves_its_baseline(make_window, monkeypatch, tmp_path):
+    # Out of sync, the JSON's refresh is no acknowledgment: the baseline stays as it was.
+    from procedo.studio.core import ArtifactType
+    from procedo.studio.pack_ops import pack_parsers
+    root = _make_project(tmp_path / "proj")
+    w = make_window()
+    _open_project(w, root)
+    w.open_test(root / "tests" / "t1")
+    w.text_only_tab.text_editor.setPlainText("# t1\n\nEdited body.\n")
+    w._on_save()
+    assert w.session_state.artifacts_in_sync is False
+    baseline = dict(w.session_state.artifact_hashes)
+    monkeypatch.setattr(engine_async, "call",
+                        lambda project_root, fn, on_done, **k: on_done(engine_async._run(fn)))
+    monkeypatch.setattr(pack_parsers, "refresh_media",
+                        lambda doc, root=None: {**doc, "steps": [{"n": 1, "media": ["P4"]}]})
+    card = next(c for c in w.text_json_tab.cards if c.kind is ArtifactType.PROCEDURE_JSON)
+    assert card.save()                                            # the JSON as acknowledged
+    assert "P4" in (root / "tests" / "t1" / "procedure.json").read_text(encoding="utf-8")
+    assert w.session_state.artifact_hashes == baseline
+
+
+def test_a_save_rereads_the_open_tests_row_only(make_window, tmp_path):
+    # 44 tests listed and hashed again on every save froze Parse + Generate for 300 ms.
+    root = _make_project(tmp_path / "proj", tests=("t1", "t2"))
+    w = make_window()
+    _open_project(w, root)
+    w.open_test(root / "tests" / "t1")
+    listed = []
+    real = w.project_manager.enumerate_test_folders
+    w.project_manager.enumerate_test_folders = lambda: listed.append(1) or real()
+    w.text_only_tab.text_editor.setPlainText("# t1\n\nEdited body.\n")
+    w._on_save()
+    w._document_controller.on_tab_artifact_saved()
+    assert listed == []
+    rows = w.workspace_widget.test_list
+    tips = {rows.item(i).text(): rows.item(i).toolTip() for i in range(rows.count())}
+    assert "Text: out of sync" in next(tip for text, tip in tips.items() if "t1" in text)
+
+
+def test_a_media_refresh_landing_after_the_switch_rebaselines_the_session_file(
+        make_window, monkeypatch, tmp_path):
+    # The test closed before the engine answered: its session file is the baseline, so the
+    # artifact manager re-takes it there (the controller only holds the open test's).
+    from procedo.studio.pack_ops import pack_parsers
+    root = _make_project(tmp_path / "proj", tests=("t1", "t2"))
+    t1 = root / "tests" / "t1"
+    w = make_window()
+    _open_project(w, root)
+    w.open_test(t1)
+    answers = []
+    monkeypatch.setattr(engine_async, "call", lambda project_root, fn, on_done, **k: answers.append(
+        lambda: on_done(engine_async._run(fn))))
+    monkeypatch.setattr(pack_parsers, "refresh_media",
+                        lambda doc, root=None: {**doc, "steps": [{"n": 1, "media": ["P4"]}]})
+    w.text_json_tab._write_parse_and_generate(
+        json.dumps({"id": "t1", "steps": [{"n": 1}]}, indent=2), "def main():\n    return 1\n")
+    w.open_test(root / "tests" / "t2")
+    [land] = answers
+    land()
+
+    assert "P4" in (t1 / "procedure.json").read_text(encoding="utf-8")
+    assert not w.workspace_widget._stale_artifacts(t1)
+    assert w.session_state.artifacts_in_sync is True              # t2's own state untouched
+
+
 def test_parse_and_generate_with_nothing_changed_opens_no_review(make_window, monkeypatch, tmp_path):
     # The diff compares lines (a final newline on one side only is no change),
     # so output identical to the files on disk is no change at all: no proposal

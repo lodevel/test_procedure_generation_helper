@@ -34,7 +34,18 @@ class TestFolderInfo:
     has_json: bool = False
     has_code: bool = False
     has_text: bool = False
-    
+
+    @classmethod
+    def of(cls, folder: Path) -> "TestFolderInfo":
+        """The test folder ``folder`` as it is on disk now."""
+        return cls(
+            path=folder,
+            name=folder.name,
+            has_json=(folder / "procedure.json").exists(),
+            has_code=(folder / "test.py").exists(),
+            has_text=(folder / "procedure_text.md").exists(),
+        )
+
     @property
     def artifact_state(self) -> str:
         """Get a description of artifact state."""
@@ -236,22 +247,7 @@ class ProjectManager:
         if tests_dir is None:
             return []
         
-        folders = []
-        
-        for item in sorted(tests_dir.iterdir()):
-            if not item.is_dir():
-                continue
-            
-            info = TestFolderInfo(
-                path=item,
-                name=item.name,
-                has_json=(item / "procedure.json").exists(),
-                has_code=(item / "test.py").exists(),
-                has_text=(item / "procedure_text.md").exists(),
-            )
-            folders.append(info)
-        
-        return folders
+        return [TestFolderInfo.of(item) for item in sorted(tests_dir.iterdir()) if item.is_dir()]
     
     def detect_rules_root(self, cli_rules_root: Optional[Path] = None) -> bool:
         """

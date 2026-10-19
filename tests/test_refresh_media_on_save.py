@@ -86,3 +86,37 @@ def test_refresh_media_in_process_is_the_catalogue(tmp_path):
     out = pack_parsers.refresh_media(doc)
     assert out is doc
     assert [m["caption"] for m in doc["steps"][0]["media"]] == ["P4 pin 1"]
+
+
+def _saved_over_a_baseline(tmp_path, *, acknowledged):
+    from procedo.studio.core import test_sync
+    manager = _manager(tmp_path)
+    test_dir = tmp_path / "GPO"
+    text = json.dumps(_HAND, indent=2)
+    (test_dir / "procedure.json").write_text(text, encoding="utf-8")
+    if acknowledged:
+        test_sync.mark_in_sync(test_dir, [])
+    else:
+        (test_dir / "test.py").write_text("x = 1\n", encoding="utf-8")
+        test_sync.mark_in_sync(test_dir, [])
+        (test_dir / "test.py").write_text("x = 2\n", encoding="utf-8")   # edited since: out of sync
+    manager.set_content(ArtifactType.PROCEDURE_JSON, text)
+    manager.save_artifact(ArtifactType.PROCEDURE_JSON)                 # the refresh rewrites the media
+    assert "P4 pin 1" in (test_dir / "procedure.json").read_text(encoding="utf-8")
+    return test_sync.is_out_of_sync(test_dir, [])
+
+
+def test_the_refresh_write_keeps_a_coherent_test_in_sync(tmp_path):
+    assert _saved_over_a_baseline(tmp_path, acknowledged=True) is False
+
+
+def test_the_refresh_write_does_not_acknowledge_an_out_of_sync_test(tmp_path):
+    assert _saved_over_a_baseline(tmp_path, acknowledged=False) is True
+
+
+def test_the_refresh_write_gives_a_never_acknowledged_test_no_baseline(tmp_path):
+    manager = _manager(tmp_path)
+    manager.set_content(ArtifactType.PROCEDURE_JSON, json.dumps(_HAND, indent=2))
+    manager.save_artifact(ArtifactType.PROCEDURE_JSON)               # the refresh rewrites the media
+    assert "P4 pin 1" in (tmp_path / "GPO" / "procedure.json").read_text(encoding="utf-8")
+    assert not (tmp_path / "GPO" / ".llm_session.json").exists()

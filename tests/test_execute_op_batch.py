@@ -15,6 +15,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -357,6 +358,26 @@ class ProtocolLoopTests(unittest.TestCase):
         self.assertTrue(objs[3]["ok"])                                # shutdown
         # a stray write to fd-1 must NOT have corrupted any frame (all parsed)
         self.assertEqual(len(objs), 4)
+
+    def test_shutdown_exits_promptly_when_the_bundle_cannot_load(self):
+        """A shutdown never waits on the packs: with a bundle whose pack import
+        fails, both roles answer ok and exit at once while stdin stays open
+        (Bench would otherwise wait 5 s, then kill a live python.exe)."""
+        bundle = tempfile.TemporaryDirectory()
+        self.addCleanup(bundle.cleanup)
+        Path(bundle.name, "defaults.json").write_text(json.dumps(
+            {"pack_dispatch": {"namespace_to_module": {"x": "no_such_pack_xyz"}}}))
+        for role in ("run", "tools"):
+            proc = subprocess.Popen([sys.executable, str(_RUNNER), "--role", role],
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, text=True)
+            self.addCleanup(proc.stdout.close)
+            self.addCleanup(proc.stdin.close)
+            self.addCleanup(proc.kill)
+            proc.stdin.write(json.dumps({"cmd": "shutdown", "_bundle_dir": bundle.name}) + "\n")
+            proc.stdin.flush()
+            self.assertTrue(json.loads(proc.stdout.readline())["ok"], role)
+            self.assertEqual(proc.wait(timeout=2), 0, role)
 
 
 class RemoteSessionUnwrapTests(unittest.TestCase):

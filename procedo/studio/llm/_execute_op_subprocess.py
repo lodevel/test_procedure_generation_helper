@@ -1175,10 +1175,12 @@ def _dispatch(session: _Session, req: dict):
     try:
         if cmd == "op":
             return _sib("_engine_ops").run(req, lambda r: _load_bundle(session, r)), False
+        if cmd == "shutdown":       # never waits on the packs: a failed load must not keep us alive
+            return _cmd_shutdown(session, req), True
         _load_bundle(session, req)
         err = _take_document(session, req)
         if err and cmd == "exec_ops":
-            # Only exec is gated on the document. safe_off/shutdown/ping proceed with the last
+            # Only exec is gated on the document. safe_off/ping proceed with the last
             # one received or {} — a recovery safe-off must never be blocked (explicit channels).
             return err, False
         if cmd == "ping":
@@ -1190,8 +1192,6 @@ def _dispatch(session: _Session, req: dict):
             return _cmd_raw(session, req), False
         if cmd == "safe_off":
             return _cmd_safe_off(session, req), False
-        if cmd == "shutdown":
-            return _cmd_shutdown(session, req), True
         if cmd in _BENCH_CMDS:
             return _bench().handle(globals(), session, req)
         return {"ok": False, "kind": "Protocol",

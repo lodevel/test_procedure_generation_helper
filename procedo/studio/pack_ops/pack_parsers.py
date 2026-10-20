@@ -509,12 +509,10 @@ class RemoteSession:
     reason the daemon exists; its holder (the guided dialog or the bench session)
     ends it with ``shutdown``, or on a wedge ``kill`` + :func:`safe_off_remote`.
 
-    Thread-safe: a lock serialises requests (one in-flight at a time, matching
-    the daemon's single-threaded loop).  Requests NEVER raise — they return
-    ``{"ok": False, "kind": "SessionDead"|"SessionTimeout"|"ParserUnavailable",
-    "error": ..., "stderr": [...]}`` so the holder can trigger recovery (fresh
-    safe-off) and surface "session lost".  ``_bundle_dir`` is injected per
-    frame; the document travels in the frame itself (``procedure_json``).
+    Thread-safe: a lock serialises requests (the daemon's loop is single-threaded),
+    ``_post`` every write. Requests NEVER raise: ``{"ok": False, "kind": "SessionDead"|
+    "SessionTimeout"|"ParserUnavailable", "error", "stderr"}`` lets the holder recover
+    (fresh safe-off). ``_bundle_dir`` rides each frame, the document too (``procedure_json``).
     """
 
     def __init__(self, project_root: Path, role: str = "run") -> None:
@@ -523,6 +521,7 @@ class RemoteSession:
         self._proc: Optional[subprocess.Popen] = None
         self._stderr_tail: deque = deque(maxlen=80)
         self._lock = threading.Lock()
+        self._write_lock = threading.Lock()   # one frame at a time on stdin: see _post
         self._dead = False
         self._bundle_dir: Optional[str] = None
         self._claim: Optional[tuple[Optional[Path], int]] = None   # (venv folder, pid) claimed
@@ -550,6 +549,12 @@ class RemoteSession:
         self._stderr_tail.clear()
         threading.Thread(target=self._drain_stderr, args=(self._proc,),
                          daemon=True).start()
+
+    def _post(self, frame: dict[str, Any]) -> None:
+        """Write one frame, reading nothing back: the one stdin writer (no two frames interleave)."""
+        with self._write_lock:
+            self._proc.stdin.write(json.dumps({**frame, "_bundle_dir": self._bundle_dir}) + "\n")
+            self._proc.stdin.flush()
 
     def _drain_stderr(self, proc: subprocess.Popen) -> None:
         try:
@@ -604,17 +609,13 @@ class RemoteSession:
                 return self._dead_resp("ParserUnavailable", str(exc))
             except Exception as exc:  # noqa: BLE001
                 return self._dead_resp("SessionDead", f"failed to start daemon: {exc}")
-            frame = {**frame, "_bundle_dir": self._bundle_dir}
             try:
-                self._proc.stdin.write(json.dumps(frame) + "\n")
-                self._proc.stdin.flush()
+                self._post(frame)
             except (BrokenPipeError, OSError, ValueError) as exc:
                 return self._dead_resp("SessionDead", f"write failed: {exc}")
 
-            # Read until the final result frame. The daemon may stream
-            # ``{"kind": "progress", ...}`` frames first (per-op, for live cursor
-            # advance); the timeout is per-frame, so a long batch with steady
-            # progress never wedges. ``on_progress`` runs on THIS (worker) thread.
+            # Read to the final frame past per-op ``progress`` frames; the timeout is per frame,
+            # so a long batch with steady progress never wedges. ``on_progress`` runs on THIS thread.
             done = -1                                 # index of the last op the daemon finished
             while True:
                 box: dict = {}
@@ -641,11 +642,8 @@ class RemoteSession:
                     return self._dead_resp("SessionDead", f"corrupt frame: {exc}")
                 if isinstance(msg, dict) and msg.get("kind") == "progress":
                     done = msg.get("i", done)
-                    # The daemon streams a progress frame per op for EVERY
-                    # exec_ops batch — always consume them (read past to the
-                    # final result), whether or not a callback wants them, else a
-                    # caller with no on_progress would get a progress frame as its
-                    # result (e.g. the ⚡ single-op exec).
+                    # Always consumed (every exec_ops batch streams them), callback or not: else a
+                    # caller with no on_progress would get one as its result (the ⚡ single-op exec).
                     if on_progress is not None:
                         try:
                             on_progress(msg)
@@ -657,9 +655,7 @@ class RemoteSession:
     # -- API ---------------------------------------------------------------
     def exec_ops(self, ops: list[dict[str, Any]], bench_map: dict[str, Any],
                  timeout: Optional[int] = None, on_progress=None,
-                 measurements: Optional[dict] = None,
-                 controls: Optional[dict] = None,
-                 operator_verdicts: Optional[dict] = None,
+                 inputs: Optional[dict] = None,
                  procedure_json: Optional[dict] = None,
                  *, work_dir: Path) -> dict[str, Any]:
         """Run a contiguous batch of ``procedure_json`` (the holder's document; the
@@ -672,17 +668,14 @@ class RemoteSession:
         "total"}`` frame the daemon streams, so the caller can advance a live
         cursor and paint the PASS/FAIL as the reading lands.
 
-        ``measurements``/``controls``/``operator_verdicts`` (optional): the run
-        state known BEFORE this batch. The daemon folds in each reading as it
-        executes and materializes the live ``verdict`` via the same
-        ``build_manual_run`` the caller uses at batch end (so they agree)."""
+        ``inputs`` (optional): the run's inputs known BEFORE this batch
+        (``measurements``, ``controls``, ``operator_verdicts``), as every engine
+        call takes them. The daemon folds in each reading as it executes and
+        materializes the live ``verdict`` via the same ``build_manual_run`` the
+        caller uses at batch end (so they agree)."""
         frame: dict[str, Any] = {"cmd": "exec_ops", "ops": ops, "bench_map": bench_map,
                                  "procedure_json": procedure_json,
-                                 "work_dir": str(work_dir)}
-        for key, state in (("measurements", measurements), ("controls", controls),
-                           ("operator_verdicts", operator_verdicts)):
-            if state is not None:
-                frame[key] = state
+                                 "work_dir": str(work_dir), **(inputs or {})}
         # The deadline is per frame and the daemon streams one progress frame
         # per op, so one op's budget bounds the wait however long the batch.
         return self._request(frame, timeout or _TIMEOUT_REMOTE_EXEC, on_progress=on_progress)
@@ -1295,7 +1288,8 @@ class _ReconstructReport:
 class ManualStep:
     """One step in a guided-manual run — a mirror of the wheel's ``StepDescriptor``
     (a CI test asserts field-name parity) plus what the build_manual_run op adds
-    (a Wait's delay). Built only via :meth:`from_dict`, which ignores unknown keys."""
+    (a Wait's delay, what the Values panel shows). Built only via :meth:`from_dict`,
+    which ignores unknown keys."""
 
     node_path: str = ""
     n: int = 0
@@ -1318,13 +1312,17 @@ class ManualStep:
     resolved_op: Optional[dict] = field(default=None, compare=False)
     wait_s: Optional[float] = None  # a Wait's delay, read by the engine (the op adds it)
     wait_refused: str = ""          # or why the engine refused its value (test.py's message)
+    value_text: str = ""            # its {N}'s value as shown, with its unit ("" = none yet)
+    value_note: str = ""            # why a Bind has none (the engine's words)
+    names: tuple[dict, ...] = field(default=(), compare=False)  # its loop turns' ${…}: {name, value, origin}
 
     @classmethod
     def from_dict(cls, d: dict) -> "ManualStep":
         known = {f.name for f in fields(cls)}
         data = {k: v for k, v in d.items() if k in known}
-        if isinstance(data.get("media"), list):  # JSON/asdict give a list; freeze it
-            data["media"] = tuple(data["media"])
+        for key in ("media", "names"):  # JSON/asdict give a list; freeze it
+            if isinstance(data.get(key), list):
+                data[key] = tuple(data[key])
         return cls(**data)
 
 
@@ -1333,13 +1331,15 @@ class ManualRunResult:
     """Editor-facing guided-manual run plan: the ``build_manual_run`` engine op's result.
     ``steps`` is the on-path plan the operator walks; ``skipped`` holds off-path bindings
     (retained as ``SKIP``); ``aborted`` is set when an ``@ABORT`` truncated the plan;
-    ``channels``: each instrument's declared power channels (its safe-off's)."""
+    ``channels``: each instrument's declared power channels (its safe-off's);
+    ``constants``: the procedure's own names (@LET, @ALLOC, @TABLE), read-only in a run."""
 
     test_name: str = ""
     steps: tuple[ManualStep, ...] = ()       # on-path plan
     skipped: tuple[ManualStep, ...] = ()     # off-path bindings (retained as SKIP)
     aborted: bool = False
     channels: dict = field(default_factory=dict)  # device -> its declared channels, the engine's
+    constants: tuple[dict, ...] = ()         # {name, value, origin}, the engine's
 
     @classmethod
     def from_dict(cls, d: dict) -> "ManualRunResult":
@@ -1350,6 +1350,7 @@ class ManualRunResult:
             skipped=tuple(ManualStep.from_dict(s) for s in d.get("skipped", [])),
             aborted=bool(d.get("aborted", False)),
             channels=dict(d.get("channels") or {}),
+            constants=tuple(d.get("constants") or ()),
         )
 
 

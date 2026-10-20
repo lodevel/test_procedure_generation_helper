@@ -1647,11 +1647,33 @@ class RunTestTests(_BenchBase):
         rejects = [f for f in self.proto.frames if f.get("kind") == "reject"]
         self.assertTrue(any(f.get("cmd") == "exec_ops" for f in rejects))
 
-    def test_idle_cancel_is_typed_and_idle_prompt_response_unanswered(self):
+    def test_a_cancel_before_its_run_runs_no_op_only_the_stop_ladder(self):
+        """A Stop while acquiring: the host posts the cancel before run_test (read
+        outside a run: no answer, the run is flagged). run_test then runs no op of
+        the test (its setup would reset instruments) — only the stop's ladder,
+        which switches off the outputs an earlier keep-state test left ON."""
+        s = self._session()
+        rid = self._acquired(s, keep_state=True)
+        resp, _ = self._run(s, rid, self._module(_code("quick")), [_answer("3.3"), self._hold()])
+        self.assertEqual(resp["result"]["overall"], "PASS")
+        self.assertFalse(self._offs())                # keep-state: PSU1 stays ON
+        self._dispatch(s, {"cmd": "release_run", "run_id": rid})
+        rid = self._acquired(s, keep_state=True)
+        resp, stop = self._dispatch(s, {"cmd": "cancel_run", "run_id": rid})
+        self.assertIsNone(resp)
+        self.assertFalse(stop)
+        before = len(self.calls)
+        resp, stop = self._run(s, rid, self._module(_code("quick")), [self._hold()])
+        self.assertFalse(stop)
+        self.assertTrue(resp["result"]["aborted"], resp)
+        self.assertIn("ack", self.proto.kinds())      # the stop is acknowledged
+        ran = self.calls[before:]
+        self.assertTrue(ran and all(c[2] == "output" and c[3].get("on") is False for c in ran), ran)
+
+    def test_idle_cancel_and_idle_prompt_response_unanswered(self):
         s = self._session()
         resp, _ = self._dispatch(s, {"cmd": "cancel_run", "run_id": "nope"})
-        self.assertFalse(resp["ok"])
-        self.assertEqual(resp["kind"], "UnknownRun")
+        self.assertIsNone(resp)
         resp, _ = self._dispatch(s, {"cmd": "prompt_response", "id": 9,
                                      "text": "x"})
         self.assertIsNone(resp)
@@ -2236,6 +2258,35 @@ class BenchClientLiveTests(unittest.TestCase):
         c._start = _start
         self.addCleanup(c.kill)
         return c
+
+    def test_a_stop_never_waits_on_the_channel(self):
+        """The stop button's cancel is posted: a request or a run_test holding the
+        channel (its lock) never holds the GUI thread."""
+        import io
+        from types import SimpleNamespace
+
+        from tests._qt_stub import ensure_workflow_editor_importable
+        ensure_workflow_editor_importable()
+        from procedo.studio.pack_ops import bench_client as bc
+        c = bc.BenchSessionClient(Path("/nonexistent"))
+        c._proc, c._bundle_dir = SimpleNamespace(stdin=io.StringIO()), "B"
+        held, done, answer = threading.Event(), threading.Event(), {}
+
+        def hold():              # an exchange in flight on another thread
+            with c._lock:
+                held.set()
+                done.wait(10)
+
+        threading.Thread(target=hold, daemon=True).start()
+        held.wait(5)
+        stop = threading.Thread(target=lambda: answer.update(c.cancel_run("run-1")), daemon=True)
+        stop.start()
+        stop.join(2)
+        done.set()
+        self.assertFalse(stop.is_alive(), "the stop waited on the channel's lock")
+        self.assertEqual(answer, {"ok": True, "run_id": "run-1", "posted": True})
+        self.assertEqual(json.loads(c._proc.stdin.getvalue()),
+                         {"cmd": "cancel_run", "run_id": "run-1", "_bundle_dir": "B"})
 
     def test_end_session_is_shutdown(self):
         from tests._qt_stub import ensure_workflow_editor_importable

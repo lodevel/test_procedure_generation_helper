@@ -796,32 +796,15 @@ def _require_procedure(session: _Session):
     return None
 
 
-def _int_keyed(d) -> dict:
-    """Restore integer measurement-ref keys lost crossing the JSON boundary
-    (JSON object keys are always strings; the wheel keys ``measurements`` by the
-    integer ``{N}`` ref). A non-integer key passes through untouched."""
-    if not isinstance(d, dict):
-        return {}
-    out: dict = {}
-    for k, v in d.items():
-        try:
-            out[int(k)] = v
-        except (TypeError, ValueError):
-            out[k] = v
-    return out
-
-
-def _live_verdict(procedure_json, measurements, controls, operator_verdicts,
-                  node_path: str) -> str:
+def _live_verdict(procedure_json, inputs: dict, node_path: str) -> str:
     """``PASS|FAIL|SKIP|''`` for the step at ``node_path``, materialized from the
-    measurements known SO FAR via the SAME ``build_manual_run`` the GUI calls at
-    batch end — so a streamed live verdict can never diverge from the
+    run's ``inputs`` known SO FAR via the SAME ``build_manual_run`` the GUI calls
+    at batch end — so a streamed live verdict can never diverge from the
     authoritative one. Best-effort: any failure yields ``''`` (a live verdict
     must never break the batch)."""
     try:
         from rules_packager_base.rules.v2_0_2.parser import build_manual_run
-        run = build_manual_run(
-            procedure_json, measurements, controls, operator_verdicts)
+        run = build_manual_run(procedure_json, **inputs)
         for s in list(getattr(run, "steps", []) or []):
             if getattr(s, "node_path", "") == node_path:
                 return getattr(s, "verdict", "") or ""
@@ -841,9 +824,8 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
     # earlier batches) seed the accumulator; each reading this batch produces is
     # folded in as it executes, then materialized into the progress frame so a
     # PASS/FAIL lands the instant the op completes — not at batch end.
-    acc_meas = dict(req.get("measurements") or {})      # node_path keys, as the controls'
-    controls = req.get("controls") or {}
-    operator_verdicts = _int_keyed(req.get("operator_verdicts") or {})
+    inputs = _sib("_engine_ops").run_inputs(req)
+    acc_meas = inputs["measurements"] = dict(inputs["measurements"])   # node_path keys, as the controls'
     log_mark = len(session.res.log)
     results: list = []
     failed = False
@@ -898,8 +880,7 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
         verdict = ""
         if last.get("ok") and last.get("has_value") and last.get("ref") is not None:
             acc_meas[node_path] = last.get("value")
-            verdict = _live_verdict(procedure_json, acc_meas, controls,
-                                    operator_verdicts, node_path)
+            verdict = _live_verdict(procedure_json, inputs, node_path)
         # Stream a per-op progress frame so the GUI advances the cursor live AND
         # paints the verdict on the fly, instead of jumping (and badging the
         # whole segment at once) when the batch returns.

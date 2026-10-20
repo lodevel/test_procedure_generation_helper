@@ -267,7 +267,7 @@ class BuildManualRunOpTests(unittest.TestCase):
 
 class ManualStepSchemaParityTests(unittest.TestCase):
     """``ManualStep`` mirrors the wheel's ``StepDescriptor`` field-for-field, plus
-    the Wait fields the build_manual_run op adds. Catches drift: if the wheel
+    the Wait and Values-panel fields the build_manual_run op adds. Catches drift: if the wheel
     adds/renames a field, this fails so the GUI view is updated deliberately
     rather than silently dropping it in ``from_dict``."""
 
@@ -276,7 +276,7 @@ class ManualStepSchemaParityTests(unittest.TestCase):
         from rules_packager_base.rules.v2_0_2.parser.manual_run import StepDescriptor
         self.assertEqual(
             {f.name for f in fields(pp.ManualStep)},
-            {f.name for f in fields(StepDescriptor)} | {"wait_s", "wait_refused"},
+            {f.name for f in fields(StepDescriptor)} | {"wait_s", "wait_refused", "value_text", "value_note", "names"},
         )
 
 

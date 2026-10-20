@@ -242,7 +242,7 @@ def test_tools_refuses_every_instrument_and_bench_frame(cmd):
 
 
 @pytest.mark.parametrize("op", ["export_rows", "refresh_media", "parse_text", "validate",
-                                "display_snapshot"])
+                                "display_snapshot", "extract"])
 def test_run_refuses_every_op_but_its_own(op):
     assert engine_ops.refusal("run", {"cmd": "op", "op": op})["kind"] == "Protocol"
 
@@ -687,3 +687,24 @@ def test_a_stop_landing_while_an_instance_is_replaced_leaves_none_running(projec
     answer = _available(project)
     assert (answer["ok"], answer["kind"]) == (False, "ParserUnavailable")
     assert spawns == [] and _session(project) is None
+
+
+# --- the extract op ------------------------------------------------------------
+
+
+def test_extract_runs_what_the_bundle_declares_and_explains_the_rest(tmp_path):
+    """Each document's keys by the extractors ``defaults.json`` declares; an undeclared
+    key is explained in that result's ``errors``; a document of the wrong shape is
+    a validator's finding, never a failed op."""
+    pytest.importorskip("rules_packager_base.rules.v2_0_2.extractors")
+    (tmp_path / "bundle").mkdir()
+    (tmp_path / "bundle" / "defaults.json").write_text(json.dumps({"extractors": {
+        key: {"module": "rules_packager_base.rules.v2_0_2.extractors", "function": function}
+        for key, function in (("meta", "extract_meta"), ("steps_validate", "validate_steps"))}}), encoding="utf-8")
+    out = engine_ops.run({"op": "extract", "project": str(tmp_path), "keys": ["meta", "steps_validate", "equipment"],
+                          "procedures": [{"id": "T1", "title": "Title"}, ["not", "an", "object"]]})
+    assert out["ok"] is True and len(out["results"]) == 2
+    first, second = out["results"]
+    assert first["data"]["meta"]["display_name"] == "Title (T1)"
+    assert set(first["errors"]) == set(second["errors"]) == {"equipment"}  # the bundle declares none
+    assert "PROC_NOT_OBJECT" in {finding["code"] for finding in second["data"]["steps_validate"]}

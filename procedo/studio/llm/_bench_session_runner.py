@@ -87,8 +87,9 @@ Bench-session frames (requests ride the daemon's NDJSON protocol)
     Verdicts are read host-side from results.json.
 
   {"cmd": "cancel_run", "run_id"} -> sets the flag ``ctx.cancelled()`` reads (at step
-    boundaries / _sleep slices / prompt waits, never in the test's cleanup); in-run it is
-    acknowledged with an "ack" frame, idle it gets a normal response.
+    boundaries / _sleep slices / prompt waits, never in the test's cleanup). Posted, never
+    answered: in-run an "ack" frame; read outside a run it flags the run, whose run_test
+    then runs no op of the test, only the stop's safe-off ladder.
 
   {"cmd": "prompt_response", "id", "text"} -> resolves the pending prompt;
     with none outstanding it is dropped, never answered (the host posts it).
@@ -798,19 +799,6 @@ def _cmd_release_run(d: dict, session, req: dict) -> dict:
     return {"ok": True, "run_id": rid}
 
 
-def _cmd_cancel_run(d: dict, session, req: dict) -> dict:
-    """Idle-path cancel (a cancel arriving DURING run_test is consumed from
-    the queue by the in-run waits and acknowledged with an "ack" frame)."""
-    del d
-    st = _state(session)
-    run = st.runs.get(req.get("run_id"))
-    if run is None:
-        return {"ok": False, "kind": "UnknownRun",
-                "error": f"unknown run_id {req.get('run_id')!r}"}
-    run.cancelled = True
-    return {"ok": True, "run_id": run.run_id, "cancelled": True}
-
-
 _MOD_SEQ = itertools.count(1)
 
 
@@ -913,6 +901,10 @@ def _cmd_run_test(d: dict, session, req: dict):
         return identity_refusal(st, flagged).resp, False
     results_dir = req.get("results_dir") or run.results_dir or "."
     rdir = Path(results_dir)
+    if run.cancelled:
+        # Stopped before it started: no op of the test (its setup resets instruments), the ladder only.
+        _emit(d, {"kind": "ack", "cmd": "cancel_run", "ok": True, "run_id": run.run_id})
+        return _ladder(d, session, run, types.SimpleNamespace(aborted=True, overall="ABORTED"), None, rdir)
     try:
         from rules_packager_base.execution_context import ExecutionContext
         mod = _import_test(req.get("module_path") or "")
@@ -987,8 +979,11 @@ def handle(d: dict, session, req: dict):
         return resp, bool(resp.get("session_ended"))
     if cmd == "release_run":
         return _cmd_release_run(d, session, req), False
-    if cmd == "cancel_run":
-        return _cmd_cancel_run(d, session, req), False
+    if cmd == "cancel_run":    # read outside a run (see the frame doc): flags it, never answered
+        run = _state(session).runs.get(req.get("run_id"))
+        if run is not None:
+            run.cancelled = True
+        return None, False
     if cmd == "prompt_response":   # late (Bench's "" after a Stop): posted, so never answered
         print(f"late prompt_response dropped (id {req.get('id')!r})", file=sys.stderr)
         return None, False

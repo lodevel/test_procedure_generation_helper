@@ -17,15 +17,15 @@ Transport discipline (plan S3):
   the ``output`` / ``prompt`` frames the daemon streams.  A wedged run is
   ended by the operator (``cancel_run``, or kill+recovery if the daemon is
   truly wedged), never by a transport timer.
-* ``prompt_response`` and an in-run ``cancel_run`` are written from WITHIN
-  the in-flight ``run_test`` exchange; one dedicated write lock serialises
-  those two writers (the GUI stop button vs. the run loop's prompt answer).
+* ``prompt_response`` and ``cancel_run`` are POSTED, never answered: the
+  stop button never waits on the channel (a request would wait for the run in
+  flight); the base class's write lock keeps every writer's frame whole.
 """
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
-import threading
 from typing import Any, Optional
 
 from .pack_parsers import RemoteSession, _TIMEOUT_REMOTE_EXEC
@@ -41,8 +41,10 @@ class BenchSessionClient(RemoteSession):
 
     def __init__(self, project_root: Path) -> None:
         super().__init__(project_root, role="run")
-        self._write_lock = threading.Lock()   # prompt_response vs in-run cancel
-        self._in_run = False
+        # The run_test in flight, as a Stop's deadline judges it (read on the GUI thread):
+        self.in_run_since: Optional[float] = None  # monotonic start of the run_test in flight
+        self.prompting = False     # ... and waits on the operator's answer
+        self.acked_at: Optional[float] = None  # ... and when the daemon acknowledged a cancel ("ack")
 
     # ``end_session`` IS shutdown (safe-off all held + close/unlock + exit).
     end_session = RemoteSession.shutdown
@@ -102,30 +104,17 @@ class BenchSessionClient(RemoteSession):
         return self._request({"cmd": "release_run", "run_id": run_id},
                              timeout or _TIMEOUT_REMOTE_EXEC)
 
-    def cancel_run(self, run_id: str,
-                   timeout: Optional[int] = None) -> dict[str, Any]:
-        """Request an operator stop.  While a ``run_test`` is in flight the
-        frame is POSTED into that exchange (the daemon acknowledges with an
-        in-stream "ack" frame and the run returns aborted); idle it is a
-        normal request/response."""
-        if self._in_run:
-            try:
-                self._post({"cmd": "cancel_run", "run_id": run_id})
-                return {"ok": True, "run_id": run_id, "posted": True}
-            except Exception as exc:  # noqa: BLE001 — dead pipe: report, don't raise
-                return {"ok": False, "kind": "SessionDead",
-                        "error": f"cancel write failed: {exc}"}
-        return self._request({"cmd": "cancel_run", "run_id": run_id},
-                             timeout or _TIMEOUT_REMOTE_EXEC)
-
-    # -- in-flight writer ----------------------------------------------------
-    def _post(self, frame: dict[str, Any]) -> None:
-        """Write one frame into the in-flight run_test exchange (no response
-        read here — the run loop consumes everything the daemon emits)."""
-        payload = {**frame, "_bundle_dir": self._bundle_dir}
-        with self._write_lock:
-            self._proc.stdin.write(json.dumps(payload) + "\n")
-            self._proc.stdin.flush()
+    def cancel_run(self, run_id: str) -> dict[str, Any]:
+        """Request an operator stop, never waiting: the frame is POSTED. Read
+        during the run it names, the daemon acknowledges it in-stream ("ack")
+        and the run returns aborted; read outside it (its run_test frame comes
+        next, or the run ended first) it flags the run, unanswered — a run
+        still to come aborts at once."""
+        try:
+            self._post({"cmd": "cancel_run", "run_id": run_id})
+        except Exception as exc:  # noqa: BLE001 — no daemon or a dead pipe: report, don't raise
+            return {"ok": False, "kind": "SessionDead", "error": f"cancel write failed: {exc}"}
+        return {"ok": True, "run_id": run_id, "posted": True}
 
     # -- the long exchange ---------------------------------------------------
     def run_test(self, run_id: str, module_path: str | Path,
@@ -172,7 +161,7 @@ class BenchSessionClient(RemoteSession):
             except Exception as exc:  # noqa: BLE001 — ParserUnavailable included
                 return self._dead_resp("SessionDead",
                                        f"failed to start daemon: {exc}")
-            self._in_run = True
+            self.in_run_since, self.acked_at = time.monotonic(), None
             try:
                 try:
                     self._post(frame)
@@ -207,6 +196,7 @@ class BenchSessionClient(RemoteSession):
                                 pass
                     elif kind == "prompt":
                         answer = ""
+                        self.prompting = True
                         if on_prompt is not None:
                             try:
                                 answer = str(on_prompt(msg.get("text", "")))
@@ -218,6 +208,9 @@ class BenchSessionClient(RemoteSession):
                         except (BrokenPipeError, OSError, ValueError) as exc:
                             return self._dead_resp("SessionDead",
                                                    f"write failed: {exc}")
-                    # "ack" / "reject" / "progress": informational — consumed.
+                        self.prompting = False
+                    elif kind == "ack" and msg.get("cmd") == "cancel_run" and self.acked_at is None:
+                        self.acked_at = time.monotonic()
+                    # "reject" / "progress": informational — consumed.
             finally:
-                self._in_run = False
+                self.in_run_since, self.prompting = None, False

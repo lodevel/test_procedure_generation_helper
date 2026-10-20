@@ -66,6 +66,12 @@ corrupt a frame.  Tracebacks travel inside the response JSON, never printed.
      "subtype": str, "text": "<one raw command line>", "bench_map": {device: {...}}}
     {"cmd": "shutdown"}        # safe-off all held + close (unlock) + exit
     {"cmd": "ping"}            # liveness probe
+    {"cmd": "call", "procedure_json": {...}, "work_dir": "<abs>", "node_path": str,
+     "measurements", "controls", "operator_verdicts"}   # a guided Call row's function
+     (manual_run.make_call): one functions worker (``once``) in the run's folder,
+     its functions snapshot there; streams {"kind": "progress", "node_path"}
+     while it waits (the host's per-frame deadline), stopped within 1 s by
+    {"cmd": "cancel_call"}     # POSTED, never answered (a no-op with no call running)
   Bench-session frames (S3; full contract in _bench_session_runner.py):
     {"cmd": "acquire_run"|"release_run"|"run_test"|"cancel_run"|
      "prompt_response", ...}   # run handles over endpoint-keyed held devices
@@ -78,6 +84,8 @@ corrupt a frame.  Tracebacks travel inside the response JSON, never printed.
                 "unsafe": [str]?}     # unsafe = devices that could NOT power down
     safe_off : {"ok": true, "log": [str], "unsafe": [str]?}
     raw      : {"ok": true, "response": str, "log": [str]}   # "" reply for a write
+    call     : {"ok": true, "reading": {"args_hash", "outcome"}}   # the row's reading
+               or {"ok": false, "kind": "Stopped"|"NoCall"|"NoProcedure"|"NoWorkDir", "error"}
     shutdown : {"ok": true, "log": [str], "unsafe": [str]?}   (then exits)
     Every response carrying "unsafe" also carries "unsafe_targets":
     [{"device", "etype", "channels", "bench"}] — the unconfirmed-off memory
@@ -1190,6 +1198,10 @@ def _dispatch(session: _Session, req: dict):
                 return _cmd_exec_ops(session, req), False
         if cmd == "raw":
             return _cmd_raw(session, req), False
+        if cmd == "call":           # a guided Call row's function (the sibling _guided_call)
+            return _sib("_guided_call").cmd_call(globals(), req), False
+        if cmd == "cancel_call":    # posted: a call already over has nothing to stop
+            return None, False
         if cmd == "safe_off":
             return _cmd_safe_off(session, req), False
         if cmd in _BENCH_CMDS:

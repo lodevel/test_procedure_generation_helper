@@ -33,6 +33,9 @@ Ops:
   functions_check → {"ok": true, "problems": [str]}  (input: {"project"}):
                   each package the project's functions import and the
                   bundle venv lacks, one line each
+  function_signatures → {"ok": true, "functions": {name: str}}  (input:
+                  {"project"}): each project function's signature, declared
+                  units and first docstring line, read without running it
   section_ownership → {"ok": true, "ownership": {section: owner}}
   reconstruct   → {"ok": true, "success": bool, "text": str|null,
                    "json": dict|null, "findings": [{...}]}
@@ -41,7 +44,9 @@ Ops:
                       "skipped": [{...StepDescriptor...}]}
                      (input: {"procedure_json": {...}, "measurements",
                       "controls", "operator_verdicts"})
-                     (each Wait step adds ``wait_s`` or ``wait_refused``;
+                     (a Call row: ``outputs`` [{ref, unit, value_text, note,
+                      verdict, check}], ``call`` while it is to be made;
+                      each Wait step adds ``wait_s`` or ``wait_refused``;
                       each step what the Values panel shows: ``value_text``,
                       ``value_note``, ``names`` [{name, var, value, origin}];
                       + "channels": {device: [declared power channels]},
@@ -294,6 +299,15 @@ def _op_functions_check(spec: dict) -> dict:
     return {"ok": True, "problems": problems}
 
 
+def _op_function_signatures(spec: dict) -> dict:
+    """What a Call step's tooltip says of each of ``spec["project"]``'s functions; no function
+    file is imported."""
+    from rules_packager_base.rules.v2_0_2.parser import function_catalog
+
+    texts = function_catalog.signature_texts(Path(spec["project"]) / function_catalog.FUNCTIONS)
+    return {"ok": True, "functions": texts}
+
+
 def _bundle_label(spec: dict) -> str:
     """``<id> <version>`` of the frame's bundle, as a message names it; "" when its
     bundle.json cannot say."""
@@ -461,7 +475,8 @@ def _shown_steps(session, run, readings: dict) -> list:
     """The plan's step payloads with what the Values panel shows of each:
     ``value_text`` (a reading in its criterion's unit, as the report shows a
     measured value; a Bind as its row says it), ``value_note`` (why a Bind has
-    none) and ``names`` (its loop turns' ``${…}``)."""
+    none) and ``names`` (its loop turns' ``${…}``); a Call row's own
+    ``outputs`` say each of its readings (its reading is the call's outcome)."""
     from rules_packager_base.test_helpers import entry_refs, value_text
 
     units: dict = {}
@@ -472,7 +487,7 @@ def _shown_steps(session, run, readings: dict) -> list:
     out = []
     for step in run.steps:
         text, note = session.binds.get(step.node_path, ("", ""))
-        if readings.get(step.node_path) is not None:
+        if step.op != "call" and readings.get(step.node_path) is not None:
             text = value_text(readings[step.node_path], units.get(step.ref, ""))
         out.append({**_step_payload(step), "value_text": text, "value_note": note,
                     "names": session.names.get(step.node_path, [])})
@@ -888,6 +903,7 @@ _OPS = {
     "generate_code": _op_generate_code,
     "validate": _op_validate,
     "functions_check": _op_functions_check,
+    "function_signatures": _op_function_signatures,
     "section_ownership": _op_section_ownership,
     "reconstruct": _op_reconstruct,
     "build_manual_run": _op_build_manual_run,

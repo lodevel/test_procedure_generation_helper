@@ -21,11 +21,15 @@ class StepRow:
     text: str
     #: The code block for the step (a ``StepBlock``), None when test.py has none.
     block: object | None
+    #: A Call step's function as its tooltip shows it (signature, declared units, doc line).
+    hint: str = ""
 
 
-def step_rows(json_steps: list, blocks_by_n: dict, procedure_text: str) -> list[StepRow]:
+def step_rows(json_steps: list, blocks_by_n: dict, procedure_text: str,
+              call_hints: dict | None = None) -> list[StepRow]:
     """One row per numbered JSON step: its text from procedure_text.md (op-call JSON steps carry
-    no ``text``), else the step's own ``text``, else its op; its code block when there is one."""
+    no ``text``), else the step's own ``text``, else its op; its code block when there is one; a
+    Call step's function from ``call_hints`` (Call name -> text) when it is there."""
     from ..pack_ops.pack_parsers import step_texts_from_canonical
     canonical = step_texts_from_canonical(procedure_text or "")
     rows = []
@@ -34,7 +38,9 @@ def step_rows(json_steps: list, blocks_by_n: dict, procedure_text: str) -> list[
             continue
         n = step["n"]
         text = canonical.get(n) or step.get("text", "") or f"(no text — op={step.get('op', '?')})"
-        rows.append(StepRow(n, text, blocks_by_n.get(n)))
+        function = step.get("function") if step.get("op") == "call" else None
+        hint = (call_hints or {}).get(function, "") if isinstance(function, str) else ""
+        rows.append(StepRow(n, text, blocks_by_n.get(n), hint))
     return rows
 
 
@@ -95,8 +101,9 @@ class StepListCard(QFrame):
                 item.setForeground(2, missing)
             lines = (f"Code lines {row.block.start_line}-{row.block.end_line}" if row.block
                      else "(no code block — regenerate test.py)")
+            tip = f"{row.text}\n\n{row.hint}\n\n{lines}" if row.hint else f"{row.text}\n\n{lines}"
             for column in range(3):
-                item.setToolTip(column, f"{row.text}\n\n{lines}")
+                item.setToolTip(column, tip)
             self.tree.addTopLevelItem(item)
         self.tree.setColumnWidth(0, 22)
         self.tree.setColumnWidth(1, self.tree.fontMetrics().horizontalAdvance("000") + 8)

@@ -3,7 +3,7 @@
 :func:`.engine.run` hands one per project to its holder — the guided dialog or the
 bench session. Thin subclass of :class:`~procedo.studio.pack_ops.pack_parsers.RemoteSession`
 adding ``acquire_run`` / ``plan_only`` (dry-run reconcile) / ``run_test`` /
-``cancel_run`` / ``release_run``.
+``cancel_run`` / ``release_run``, and a guided run's ``call_function`` / ``cancel_call``.
 ``end_session()`` IS the inherited ``shutdown()`` — deliberately no new frame.
 
 Transport discipline (plan S3):
@@ -24,6 +24,7 @@ Transport discipline (plan S3):
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -36,6 +37,10 @@ from .pack_parsers import RemoteSession, _TIMEOUT_REMOTE_EXEC
 _STREAM_KINDS = frozenset({"output", "prompt", "ack", "reject", "progress"})
 
 
+class _CallNotSent(Exception):
+    """A guided Call stopped before its frame went out: nothing ran."""
+
+
 class BenchSessionClient(RemoteSession):
     """One persistent bench-holder channel speaking the S3 run-handle frames."""
 
@@ -45,6 +50,8 @@ class BenchSessionClient(RemoteSession):
         self.in_run_since: Optional[float] = None  # monotonic start of the run_test in flight
         self.prompting = False     # ... and waits on the operator's answer
         self.acked_at: Optional[float] = None  # ... and when the daemon acknowledged a cancel ("ack")
+        self._gate = threading.Lock()  # a Call's frame and its Stop go out in the order they happen
+        self._call_stop: Optional[threading.Event] = None  # the Stop of the Call being sent
 
     # ``end_session`` IS shutdown (safe-off all held + close/unlock + exit).
     end_session = RemoteSession.shutdown
@@ -68,6 +75,15 @@ class BenchSessionClient(RemoteSession):
                     "SessionDead",
                     f"daemon died between exchanges (exit={rc})")
         return super()._request(frame, timeout, on_progress)
+
+    def _post(self, frame: dict[str, Any]) -> None:
+        """Every frame through one gate: a Call whose Stop is already set is never written, so
+        a Stop is never lost — set before the frame, the frame does not go; after it, its
+        ``cancel_call`` follows it."""
+        with self._gate:
+            if frame.get("cmd") == "call" and self._call_stop is not None and self._call_stop.is_set():
+                raise _CallNotSent
+            super()._post(frame)
 
     # -- control frames (short timeouts, inherited transport) ---------------
     def acquire_run(self, claims: list[dict[str, Any]], *,
@@ -115,6 +131,34 @@ class BenchSessionClient(RemoteSession):
         except Exception as exc:  # noqa: BLE001 — no daemon or a dead pipe: report, don't raise
             return {"ok": False, "kind": "SessionDead", "error": f"cancel write failed: {exc}"}
         return {"ok": True, "run_id": run_id, "posted": True}
+
+    # -- a guided run's Call (its function in the engine's own worker) ------
+    def call_function(self, node_path: str, inputs: dict, procedure_json: dict, *, work_dir: Path,
+                      stop: threading.Event, timeout: Optional[int] = None) -> dict[str, Any]:
+        """Make the guided run's Call at ``node_path`` (the run's ``inputs``): the daemon runs it in
+        a one-call functions worker in ``work_dir`` (the run's folder, its functions snapshot
+        there). ``{"ok": true, "reading"}`` — the row's reading — or a typed failure: ``Stopped``
+        when ``stop`` (the run's Stop, set before :meth:`cancel_call`) was set before the frame
+        went out, or the daemon ended the function on it. The daemon streams a progress frame each
+        half second while the function runs, so the per-frame deadline bounds a silent daemon,
+        never a long function."""
+        self._call_stop = stop
+        try:
+            return self._request({"cmd": "call", "node_path": node_path, "procedure_json": procedure_json,
+                                  "work_dir": str(work_dir), **inputs}, timeout or _TIMEOUT_REMOTE_EXEC)
+        except _CallNotSent:
+            return {"ok": False, "kind": "Stopped", "error": "the call was stopped before it started"}
+        finally:
+            self._call_stop = None
+
+    def cancel_call(self) -> None:
+        """Stop the call in flight (its worker killed within a second; it answers ``Stopped``).
+        POSTED, never answered: it never waits on the channel the call holds. The caller sets
+        the call's ``stop`` first (see :meth:`_post`)."""
+        try:
+            self._post({"cmd": "cancel_call"})
+        except Exception:  # noqa: BLE001 — no daemon or a dead pipe: no call to stop
+            pass
 
     # -- the long exchange ---------------------------------------------------
     def run_test(self, run_id: str, module_path: str | Path,

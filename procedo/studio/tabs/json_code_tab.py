@@ -10,6 +10,7 @@ Actions support bidirectional transformation.
 
 import logging
 import json
+from pathlib import Path
 from typing import Any
 from PySide6.QtWidgets import QVBoxLayout, QSplitter
 from PySide6.QtCore import Qt
@@ -72,6 +73,9 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         # code-side StepBlock (if any) so click jumps can position the code
         # editor. Repopulated by _update_step_markers on every re-render.
         self._code_blocks_by_n: dict[int, Any] = {}
+        # The project's functions as a Call step's tooltip shows them (by Call name).
+        self._call_hints: dict[str, str] = {}
+        self._hints_asked: tuple = (0, None)   # (request number, project root) of the answer awaited
 
         self.json_card = self.add_card(EditorCard(
             self, ArtifactType.PROCEDURE_JSON, "procedure.json", wrap=False))
@@ -469,7 +473,7 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
                 self._code_blocks_by_n[block.step_number] = block
 
         rows = step_rows(json_steps, self._code_blocks_by_n,
-                         self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT))
+                         self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT), self._call_hints)
         with_code = sum(1 for row in rows if row.block)
         total = len(json_steps)
         pill = (("success", f"{total} = {with_code}") if with_code == total
@@ -481,6 +485,31 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         super().load_content()
         if self.artifact_manager:
             self._update_step_markers()
+            self._fetch_call_hints()
+
+    def _fetch_call_hints(self) -> None:
+        """Asks the project's engine for its functions' signatures, off the GUI thread, each
+        time the tab loads (a function file may have changed); the steps re-show with them."""
+        from ..pack_ops import call_hints
+        root = getattr(self.project_manager, "project_root", None)
+        asked = self._hints_asked = (self._hints_asked[0] + 1, root)
+        if root is None or not (Path(root) / "functions").is_dir():
+            self._call_hints = {}
+            return
+        engine_async.call(root, lambda: call_hints.function_signatures(Path(root)),
+                          lambda answer: self._show_call_hints(asked, answer))
+
+    def _show_call_hints(self, asked: tuple, answer) -> None:
+        """The signatures asked as ``asked``; a late answer (asked again since, another project)
+        is dropped, and so is one for a tab already closed."""
+        root = getattr(self.project_manager, "project_root", None)
+        if asked != self._hints_asked or asked[1] != root:
+            return
+        self._call_hints = answer()
+        try:
+            self._update_step_markers()
+        except RuntimeError:  # the window closed meanwhile: its widgets are gone
+            pass
 
     def on_activated(self):
         """Called when tab becomes active."""

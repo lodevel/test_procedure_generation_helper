@@ -1306,20 +1306,21 @@ class ManualStep:
     control_deciding: bool = False  # blocks forward skip/jump until answered
     iteration: int = 0
     index: int = 0
-    # op with per-iteration substitution applied (mirrors StepDescriptor.resolved_op);
-    # excluded from eq/hash so a dict field keeps the frozen step hashable.
+    # The dict fields (resolved_op: the op with this turn's substitutions, StepDescriptor's) stay out of eq/hash.
     resolved_op: Optional[dict] = field(default=None, compare=False)
     wait_s: Optional[float] = None  # a Wait's delay, read by the engine (the op adds it)
     wait_refused: str = ""          # or why the engine refused its value (test.py's message)
     value_text: str = ""            # its {N}'s value as shown, with its unit ("" = none yet)
     value_note: str = ""            # why a Bind has none (the engine's words)
+    outputs: tuple[dict, ...] = field(default=(), compare=False)  # a Call's: {ref, unit, value_text, note, verdict, check}
+    call: Optional[dict] = field(default=None, compare=False)  # a Call to make: {function, args, kwargs, timeout, args_hash}
     names: tuple[dict, ...] = field(default=(), compare=False)  # its loop turns' ${…}: {name, value, origin}
 
     @classmethod
     def from_dict(cls, d: dict) -> "ManualStep":
         known = {f.name for f in fields(cls)}
         data = {k: v for k, v in d.items() if k in known}
-        for key in ("media", "names"):  # JSON/asdict give a list; freeze it
+        for key in ("media", "names", "outputs"):  # JSON/asdict give a list; freeze it
             if isinstance(data.get(key), list):
                 data[key] = tuple(data[key])
         return cls(**data)

@@ -1,17 +1,13 @@
-"""End-to-end: a pack that ships authoring_skills/ gets bundled, then the skill
-is discovered in a project via the BUNDLED tier.
-
-Crosses the two repos: procedo.core.bundle_generator (build-side copy) +
-procedo.studio.authoring (consumer-side discovery). Pure tmp_path — no real
-build, no Qt.
+"""A skill the bundle build copied in is discovered in a project via the BUNDLED
+tier, plus the build-side discovery in procedo.core.bundle_generator. The copy
+itself is the build's (generate_all --add-folder), tested in the host.
+Pure tmp_path — no real build, no Qt.
 """
 import json
+import shutil
 
 from procedo.core.bundle_generator import (
     _dirs_with,
-    bundle_skills_for_registry,
-    copy_pack_skills,
-    copy_skill_dirs,
     discover_bundleable_skills,
     discover_bundleable_wizards,
     enabled_pack_roots,
@@ -44,10 +40,11 @@ def test_pack_skill_is_bundled_then_discovered_in_project(tmp_path):
     project = tmp_path / "proj"
     (project / "bundle").mkdir(parents=True)
 
-    # 3. THE BUNDLING PATH: copy the pack's skills into the project bundle
-    copied = copy_pack_skills([pack], project / "bundle")
-    assert [p.name for p in copied] == ["fake_skill"]
-    assert (project / "bundle" / "authoring_skills" / "fake_skill" / "SKILL.md").is_file()
+    # 3. the bundle build copies the skill folder into the bundle
+    shutil.copytree(
+        pack / "authoring_skills" / "fake_skill",
+        project / "bundle" / "authoring_skills" / "fake_skill",
+    )
 
     # 4. the consumer discovers it in the project via the BUNDLED tier
     skills = load_skills(project_root=project)
@@ -56,36 +53,6 @@ def test_pack_skill_is_bundled_then_discovered_in_project(tmp_path):
     assert match, f"fake_skill not discovered as bundled; got {[s.skill_id for s in skills]}"
     assert match[0].title == "Fake Bundled Skill"
     assert match[0].target == "dcdc"
-
-
-def test_bundle_skills_for_registry_is_the_build_seam(tmp_path):
-    # The build seam the dialog calls: registry → enabled packs → copy skills.
-    _pack_with_skill(tmp_path / "fake_pack")
-    reg = tmp_path / "drivers_registry.json"
-    reg.write_text(json.dumps({"packs": [
-        {"id": "p1", "enabled": True, "wheel": {"project_root": "fake_pack"}},
-    ]}), encoding="utf-8")
-    out = tmp_path / "bundle" / "myid" / "1.0.0"
-    copied = bundle_skills_for_registry(reg, out)
-    assert [p.name for p in copied] == ["fake_skill"]
-    assert (out / "authoring_skills" / "fake_skill" / "SKILL.md").is_file()
-
-
-def test_copy_is_noop_for_pack_without_skills(tmp_path):
-    (tmp_path / "plain_pack").mkdir()
-    assert copy_pack_skills([tmp_path / "plain_pack"], tmp_path / "out") == []
-    assert not (tmp_path / "out" / "authoring_skills").exists()
-
-
-def test_later_pack_wins_on_name_clash(tmp_path):
-    a = _pack_with_skill(tmp_path / "packA")
-    b = tmp_path / "packB" / "authoring_skills" / "fake_skill"
-    b.mkdir(parents=True)
-    (b / "SKILL.md").write_text("---\nname: From B\n---\nbody", encoding="utf-8")
-    out = tmp_path / "bundle"
-    copy_pack_skills([tmp_path / "packA", tmp_path / "packB"], out)
-    text = (out / "authoring_skills" / "fake_skill" / "SKILL.md").read_text(encoding="utf-8")
-    assert "From B" in text  # later pack overwrote
 
 
 def _local_skill(local_base, skill_id, name="L"):
@@ -134,16 +101,6 @@ def test_discover_local_overrides_pack_on_name_clash(tmp_path):
     assert by_id["dup"]["source"] == "local"   # standalone overrides pack-embedded
 
 
-def test_copy_skill_dirs_copies_selected_only(tmp_path):
-    a = _local_skill(tmp_path / "src", "a")
-    _local_skill(tmp_path / "src", "b")   # exists but not selected
-    out = tmp_path / "bundle"
-    copied = copy_skill_dirs([a], out)
-    assert [p.name for p in copied] == ["a"]
-    assert (out / "authoring_skills" / "a" / "SKILL.md").is_file()
-    assert not (out / "authoring_skills" / "b").exists()
-
-
 def test_enabled_pack_roots_resolves_only_enabled(tmp_path):
     (tmp_path / "fake_pack").mkdir()
     reg = tmp_path / "drivers_registry.json"
@@ -157,22 +114,6 @@ def test_enabled_pack_roots_resolves_only_enabled(tmp_path):
     # p1 + p3 resolve to the existing dir; p2 disabled; p4 missing dir dropped.
     assert all(r.name == "fake_pack" for r in roots)
     assert len(roots) == 2
-
-
-def test_copy_skill_dirs_honors_dest_subdir(tmp_path):
-    # The one copy serves skills, wizards AND tools via dest_subdir (P3).
-    wz = _local_skill(tmp_path / "src", "wz1")
-    out = tmp_path / "bundle"
-    copy_skill_dirs([wz], out, dest_subdir="authoring_wizards")
-    assert (out / "authoring_wizards" / "wz1" / "SKILL.md").is_file()
-    tl = tmp_path / "src" / "tl1"
-    tl.mkdir()
-    (tl / "tools.json").write_text('{"server":"s","tools":["t"]}', encoding="utf-8")
-    copy_skill_dirs([tl], out, dest_subdir="tools")
-    assert (out / "tools" / "tl1" / "tools.json").is_file()
-    # default subdir is still authoring_skills
-    copy_skill_dirs([wz], out)
-    assert (out / "authoring_skills" / "wz1" / "SKILL.md").is_file()
 
 
 def test_dirs_with_marker_selects_by_file(tmp_path):

@@ -146,10 +146,9 @@ When two skills share the same folder name, **project > local > bundled > built-
 ## Bundling for distribution
 
 A skill is plain files, so "bundling" is a folder copy — not a wheel. A pack
-ships an `authoring_skills/` subdir; when a bundle is built, each skill folder is
-copied into `<project>/bundle/authoring_skills/`. The mechanism is
-`procedo.core.bundle_generator.copy_pack_skills` /
-`bundle_skills_for_registry`, invoked by the Bundle Generator.
+ships an `authoring_skills/` subdir; the Bundle Generator lists it, and each
+skill you tick is copied into the bundle's `authoring_skills/` by the build
+(`generate_all.py --add-folder`), before the bundle's sha is computed.
 
 Hand drop-in (the local and project tiers) needs no build at all — just place the
 folder.

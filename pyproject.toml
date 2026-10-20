@@ -11,7 +11,7 @@ requires-python = ">=3.10,<3.14"
 # Mirrors requirements.txt. QScintilla stays commented there (optional syntax
 # highlighting) and is intentionally NOT a hard dependency here.
 dependencies = [
-    "PySide6>=6.5.0",
+    "PySide6==6.10.2",  # pinned with the host: the version every gate is tested with
     "requests>=2.28.0",
     "python-docx>=1.1.0",
     # authoring skill loader (frontmatter parsing)

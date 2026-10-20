@@ -78,3 +78,58 @@ def test_board_images_are_generated_only_when_the_sidecar_includes_them(
     full_report.export_full_report(tmp_path / "proj", [test_dir], tmp_path / "o.docx",
                                    sidecar=sidecar, template_path=tpl)
     assert len(calls) == int(include)
+
+
+def test_the_word_export_asks_the_engine_only_off_the_gui_thread(tmp_path, monkeypatch):
+    """File › Export › Word: rendered on a worker, so each test's meta and equipment are
+    the project engine's answers (Studio has no display snapshot) and the GUI thread
+    never asks the engine."""
+    import json
+    import threading
+    import time
+
+    from docx import Document
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    from procedo.core import report_export
+    from procedo.studio.dialogs.word_export_job import WordExportJob
+    from procedo.studio.llm import _engine_ops
+    from procedo.studio.pack_ops import engine
+
+    pytest.importorskip("rules_packager_base.rules.v2_0_2.extractors")
+    app = QApplication.instance() or QApplication([])
+    proj = tmp_path / "proj"
+    (proj / "bundle").mkdir(parents=True)
+    (proj / "bundle" / "defaults.json").write_text(json.dumps({"extractors": {
+        key: {"module": "rules_packager_base.rules.v2_0_2.extractors", "function": function}
+        for key, function in (("meta", "extract_meta"), ("equipment", "extract_equipment_requirements"))}}),
+        encoding="utf-8")
+    test_dir = proj / "tests" / "T1"
+    test_dir.mkdir(parents=True)
+    (test_dir / "procedure.json").write_text(json.dumps(
+        {"id": "T1", "equipment": [{"id": "PSU7", "type": "psu"}]}), encoding="utf-8")
+    tpl = tmp_path / "tpl.docx"
+    d = Document()
+    d.add_paragraph("{% for t in tests %}[{{ t.id }}|{% for e in t.equipment %}{{ e.id }}{% endfor %}]{% endfor %}")
+    d.save(str(tpl))
+    monkeypatch.setattr(report_export, "get_project_template", lambda **_kw: tpl)
+    asked = []
+
+    def tools_op(_root, spec, _timeout):  # the project's engine, answered here
+        asked.append((spec.get("op"), threading.current_thread() is threading.main_thread()))
+        if spec.get("op") != "extract":
+            return {"ok": False, "error": "not in this test"}
+        return json.loads(json.dumps(_engine_ops.run(json.loads(json.dumps(spec)))))
+
+    monkeypatch.setattr(engine, "tools_op", tools_op)
+    window, written = QWidget(), []
+    out = tmp_path / "o.docx"
+    WordExportJob(window, proj, [test_dir], out, report_export.create_default_sidecar(), written.append)
+    deadline = time.monotonic() + 20
+    while not written and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    assert written == [out]
+    assert ("extract", False) in asked and not [op for op, on_gui in asked if on_gui]
+    assert "[T1|PSU7]" in "\n".join(p.text for p in Document(str(out)).paragraphs)
+    window.deleteLater()

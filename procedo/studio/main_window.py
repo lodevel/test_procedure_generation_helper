@@ -12,7 +12,7 @@ import threading
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QMenuBar, QMessageBox, QFileDialog, QDialog,
 )
-from PySide6.QtCore import Qt, QFileSystemWatcher, QTimer
+from PySide6.QtCore import QFileSystemWatcher, QTimer
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 
 from procedo.core import library_dialog
@@ -20,7 +20,7 @@ from procedo.core.off_gui import answer_to
 from procedo.core.config_manager_dialog import ProjectConfigDialog, TemplateManagerDialog
 from procedo.core.install_helper_dialog import InstallPackageDialog
 from procedo.core.project_model import ProjectModel
-from procedo.core.report_export import create_default_sidecar, save_sidecar, sidecar_path_for
+from procedo.core.report_export import create_default_sidecar
 from procedo.core.scenario_dialog import ScenarioManagerDialog
 from procedo.core.word_export_dialog import WordExportDialog
 
@@ -740,8 +740,7 @@ class StudioWorkspace(QWidget):
         if not selected:
             QMessageBox.information(self, "Export to Word", "No tests selected.")
             return
-        from .core.full_report import (
-            export_full_report, has_active_bundle, FullReportError)
+        from .core.full_report import has_active_bundle
 
         if not has_active_bundle(root):
             if QMessageBox.question(
@@ -760,39 +759,11 @@ class StudioWorkspace(QWidget):
             return
         output_path = dlg.get_output_path()
         sidecar = dlg.get_sidecar()
-        from PySide6.QtWidgets import QApplication, QProgressDialog
-        prog = QProgressDialog("Generating board images...", "Cancel", 0, 0, self)
-        prog.setWindowModality(Qt.WindowModal)
-        prog.setMinimumDuration(0)
-
-        def _img_progress(done, total):
-            prog.setMaximum(max(total, 1))
-            prog.setValue(done)
-            QApplication.processEvents()
-            return not prog.wasCanceled()
-
-        try:
-            save_sidecar(sidecar_path_for(output_path), sidecar)
-            export_full_report(Path(root), [f.path for f in selected],
-                               output_path, sidecar=sidecar, progress=_img_progress)
-        except FullReportError as e:
-            QMessageBox.warning(self, "Export to Word", str(e))
-            return
-        except ImportError as e:
-            QMessageBox.warning(
-                self, "Word Export Unavailable",
-                "The full report needs the 'docxtpl' package in this "
-                f"environment.\n\n{e}")
-            return
-        except Exception as e:
-            log.exception("Full report export failed")
-            QMessageBox.critical(self, "Export Failed",
-                                 f"Could not generate the Word report:\n{e}")
-            return
-        finally:
-            prog.close()
-        self.footer.show_message(
-            f"Exported {len(selected)}-test report -> {output_path}", 5000)
+        from .dialogs.word_export_job import WordExportJob
+        self._word_export = WordExportJob(  # rendered on a worker: the GUI never asks the engine
+            self, Path(root), [f.path for f in selected], output_path, sidecar,
+            on_exported=lambda path: self.footer.show_message(
+                f"Exported {len(selected)}-test report -> {path}", 5000))
 
     def _export_word_single(self):
         """Quick dump of the open procedure as a plain .docx (used when no project)."""

@@ -12,11 +12,14 @@ the LAST GENERATED json for each test, not unsaved edits.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from procedo.core import bundle_registry, pack_extractors, report_export
 
 from . import odb_inspect
+
+log = logging.getLogger(__name__)
 
 
 class FullReportError(Exception):
@@ -72,10 +75,28 @@ def export_full_report(
 
     if report_export.images_included(sidecar):
         _generate_images(project_root, procedures, progress)
-
     report_export.render_report(
         Path(template_path), sidecar, procedures, project_root, Path(output_path))
     return Path(output_path)
+
+
+def export_outcome(project_root: Path, test_folders: list[Path], output_path: Path, *,
+                   sidecar: dict, progress=None) -> dict:
+    """:func:`export_full_report` as a worker runs it (each document's meta and equipment
+    are the project engine's answers, never asked on the GUI thread), with its sidecar
+    saved beside the report: ``{"path"}``, or why not as ``{"title", "text", "critical"}``."""
+    try:
+        report_export.save_sidecar(report_export.sidecar_path_for(output_path), sidecar)
+        return {"path": export_full_report(project_root, test_folders, output_path,
+                                           sidecar=sidecar, progress=progress)}
+    except FullReportError as e:
+        return {"title": "Export to Word", "text": str(e), "critical": False}
+    except ImportError as e:
+        return {"title": "Word Export Unavailable", "critical": False, "text":
+                f"The full report needs the 'docxtpl' package in this environment.\n\n{e}"}
+    except Exception as e:  # noqa: BLE001 — shown to the operator, never a dead worker
+        log.exception("Full report export failed")
+        return {"title": "Export Failed", "text": f"Could not generate the Word report:\n{e}", "critical": True}
 
 
 def _generate_images(project_root: Path, procedures: list, progress=None) -> None:

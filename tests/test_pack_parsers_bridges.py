@@ -253,10 +253,11 @@ class BuildManualRunOpTests(unittest.TestCase):
         with self.assertRaises(Exception):
             run.steps[0].verdict = "PASS"  # frozen
 
-    def test_int_keyed_helper(self) -> None:
-        self.assertEqual(engine_ops._int_keyed({"1": 4.0, "2": 2.0}), {1: 4.0, 2: 2.0})
-        self.assertEqual(engine_ops._int_keyed(None), {})
-        self.assertEqual(engine_ops._int_keyed({"x": 1}), {"x": 1})  # non-int left as-is
+    def test_run_inputs_read_operator_verdict_keys_back_as_readings(self) -> None:
+        verdicts = {"1": "PASS", "Vout": "FAIL", "Vrail[3]": "SKIP", "-1": "PASS"}
+        self.assertEqual(engine_ops.run_inputs({"operator_verdicts": verdicts})["operator_verdicts"],
+                         {1: "PASS", "Vout": "FAIL", "Vrail[3]": "SKIP", "-1": "PASS"})
+        self.assertEqual(engine_ops.run_inputs({})["operator_verdicts"], {})
 
     def test_a_document_that_is_not_an_object_is_an_error_result(self) -> None:
         for doc in (None, [1, 2]):

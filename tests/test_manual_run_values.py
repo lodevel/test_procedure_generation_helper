@@ -25,7 +25,7 @@ _wheel = pytest.mark.skipif(not _env.rules_packager_available(), reason=_env.WHE
 _ENGINE_SRC = Path(__file__).resolve().parents[2] / "rules_packager" / "src"
 
 _HEAD = ("# T\nDesc.\n\n## Meta\nformat_version: 2.0.1\nboard: B\n"
-         "rules_pack: rules_packager_base@2.4.0\n\n## Equipment\nDMM_GENERIC : dmm\n\n## Steps\n")
+         "rules_pack: rules_packager_base@2.5.0\n\n## Equipment\nDMM_GENERIC : dmm\n\n## Steps\n")
 _FOR = ("@LET BASE = 10\n@FOR j IN 0..1\n"
         "1. Operator: read DC voltage on P1 pin 1 as {BASE + j*3}.\n"
         "2. Operator: read DC voltage on P1 pin 2 as {BASE + j*3 + 1}.\n"
@@ -104,7 +104,7 @@ def test_the_display_data_changes_nothing_of_the_wheels_plan():
 _HOOKS = {
     "_expand_for": "(self, block, block_path, bindings, ctx, skip)",
     "_runtime_do": "(self, block, do_path, bindings, ctx, skip)",
-    "_concrete": "(self, raw, node_path, bindings, status='pending')",
+    "_concrete": "(self, raw, node_path, bindings, status='pending', texts=None)",
     "_compute": "(self, row, raw, bindings, ctx)",
     "_build_rules": "(self, measurements, notes)",
 }

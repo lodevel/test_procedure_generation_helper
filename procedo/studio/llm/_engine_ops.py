@@ -273,23 +273,6 @@ def _op_reconstruct(spec: dict) -> dict:
     }
 
 
-def _int_keyed(d) -> dict:
-    """Restore integer measurement-ref keys lost crossing the JSON boundary.
-
-    The wheel keys readings by ref: an int for ``{3}``, the name for ``{Vout}`` /
-    ``{Vrail[3]}``. JSON object keys are strings, so a dict sent over stdin arrives
-    string-keyed: a number becomes an int again, a name stays as it is."""
-    if not isinstance(d, dict):
-        return {}
-    out: dict = {}
-    for k, v in d.items():
-        try:
-            out[int(k)] = v
-        except (TypeError, ValueError):
-            out[k] = v
-    return out
-
-
 def _document(spec: dict):
     """The procedure document the spec carries (``procedure_json``), never read
     from disk: the caller sends what it shows.
@@ -308,9 +291,11 @@ def run_inputs(spec: dict) -> dict:
     """A guided run's inputs as the wheel takes them, from an op spec or an
     exec_ops frame: ``measurements`` and ``controls`` keyed by row node_path,
     ``operator_verdicts`` by ``{N}`` ref — every engine call of the run reads
-    them here."""
+    them here; JSON keeps a key as text, read back by the wheel's ref_key_from_json."""
+    from rules_packager_base.Result import ref_key_from_json
+
     return {"measurements": spec.get("measurements") or {}, "controls": spec.get("controls") or {},
-            "operator_verdicts": _int_keyed(spec.get("operator_verdicts") or {})}
+            "operator_verdicts": {ref_key_from_json(k): v for k, v in (spec.get("operator_verdicts") or {}).items()}}
 
 
 def _op_build_manual_run(spec: dict) -> dict:
@@ -389,9 +374,9 @@ def _shown_session():
             super()._runtime_do(block, do_path, bindings, ctx, skip)
             self.loops.pop()
 
-        def _concrete(self, raw, node_path, bindings, status="pending"):
+        def _concrete(self, raw, node_path, bindings, status="pending", texts=None):
             self.names[node_path] = _turn_names(self.loops, node_path, bindings)
-            return super()._concrete(raw, node_path, bindings, status)
+            return super()._concrete(raw, node_path, bindings, status, texts)
 
         def _compute(self, row, raw, bindings, ctx):
             said = len(row.text)

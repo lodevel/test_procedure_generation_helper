@@ -1297,7 +1297,7 @@ class ManualStep:
     text: str = ""
     is_binding: bool = False
     kind: str = ""
-    ref: Optional[int] = None
+    ref: Optional[int | str] = None  # {3} -> 3, {Vout} -> "Vout", {Vrail[3]} -> "Vrail[3]"
     quantity: str = ""
     target: str = ""
     expected_text: str = ""

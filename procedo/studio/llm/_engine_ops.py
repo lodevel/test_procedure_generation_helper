@@ -276,9 +276,9 @@ def _op_reconstruct(spec: dict) -> dict:
 def _int_keyed(d) -> dict:
     """Restore integer measurement-ref keys lost crossing the JSON boundary.
 
-    The wheel keys ``measurements`` by the integer ``{N}`` ref, but JSON object
-    keys are strings, so a dict sent over stdin arrives string-keyed. Convert
-    back to int, leaving any non-integer key untouched (defensive)."""
+    The wheel keys readings by ref: an int for ``{3}``, the name for ``{Vout}`` /
+    ``{Vrail[3]}``. JSON object keys are strings, so a dict sent over stdin arrives
+    string-keyed: a number becomes an int again, a name stays as it is."""
     if not isinstance(d, dict):
         return {}
     out: dict = {}

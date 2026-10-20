@@ -975,12 +975,10 @@ def validate(
     check_names: bool = True,
     project_root: Optional[Path] = None,
 ) -> "_ValidateReport":
-    """Run the full deterministic validation pipeline.
-
-    Returns a ``_ValidateReport`` duck-typed against the legacy
-    ProcedureTextRenderer.validate() shape. Raises :class:`ParserUnavailable`
-    if the wheel isn't importable.
-    """
+    """Run the full deterministic validation pipeline (with ``project_root``, in its engine,
+    the Call steps checked against its ``functions/`` too). Returns a ``_ValidateReport``
+    duck-typed against the legacy ProcedureTextRenderer.validate() shape; raises
+    :class:`ParserUnavailable` if the wheel isn't importable."""
     if project_root is None:
         return _inproc_validate(
             text=text,
@@ -990,7 +988,8 @@ def validate(
             check_names=check_names,
         )
 
-    spec: dict[str, Any] = {"op": "validate", "mode": mode, "check_names": check_names}
+    spec: dict[str, Any] = {"op": "validate", "mode": mode, "check_names": check_names,
+                            "project": str(project_root)}
     if text is not None:
         spec["text"] = text
     if json_obj is not None:

@@ -28,6 +28,11 @@ Ops:
   generate_code → {"ok": true, "code": str, "warnings": []}
   validate      → {"ok": true, "findings": [{code, message, severity, line,
                                               col, fix_hint, fixable_by}]}
+                  (with ``project``: the Call steps' warnings from its
+                   ``functions/`` too, read without running them)
+  functions_check → {"ok": true, "problems": [str]}  (input: {"project"}):
+                  each package the project's functions import and the
+                  bundle venv lacks, one line each
   section_ownership → {"ok": true, "ownership": {section: owner}}
   reconstruct   → {"ok": true, "success": bool, "text": str|null,
                    "json": dict|null, "findings": [{...}]}
@@ -66,10 +71,13 @@ from __future__ import annotations
 import functools
 import importlib
 import json
+import logging
 import re
 import traceback
 from dataclasses import asdict
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 
 def _finding_to_dict(f) -> dict:
@@ -250,7 +258,50 @@ def _op_validate(spec: dict) -> dict:
     if text is not None and original_text and check_names:
         findings.extend(wheel.check_name_fidelity(original_text, text))
 
+    if spec.get("project") and _has_call(parsed_json):
+        findings.extend(_call_findings(parsed_json, text, spec))
+
     return {"ok": True, "findings": [_finding_to_dict(f) for f in findings]}
+
+
+def _has_call(procedure_json) -> bool:
+    """A Call step anywhere in the document: JSON escapes the quotes of a text, so only an
+    ``op`` key reads ``"op": "call"``."""
+    return procedure_json is not None and '"op": "call"' in json.dumps(procedure_json)
+
+
+def _call_findings(procedure_json: dict, text, spec: dict) -> list:
+    """The Call steps' project warnings; none, logged, when the check fails (an older wheel
+    has none): it never costs the procedure its other findings."""
+    try:
+        from rules_packager_base.rules.v2_0_2.parser import function_catalog
+
+        return function_catalog.call_findings(
+            procedure_json, Path(spec["project"]) / function_catalog.FUNCTIONS, text=text,
+            bundle=_bundle_label(spec))
+    except Exception:  # noqa: BLE001 — a warning check, never the validation's failure
+        log.warning("the Call steps' functions check failed", exc_info=True)
+        return []
+
+
+def _op_functions_check(spec: dict) -> dict:
+    """Each package ``spec["project"]``'s functions import that this interpreter (the
+    bundle venv) lacks, one line each; no function file is imported."""
+    from rules_packager_base.rules.v2_0_2.parser import function_catalog
+
+    problems = function_catalog.import_problems(
+        Path(spec["project"]) / function_catalog.FUNCTIONS, _bundle_label(spec))
+    return {"ok": True, "problems": problems}
+
+
+def _bundle_label(spec: dict) -> str:
+    """``<id> <version>`` of the frame's bundle, as a message names it; "" when its
+    bundle.json cannot say."""
+    try:
+        meta = json.loads((_bundle_dir_of(spec) / "bundle.json").read_text(encoding="utf-8"))
+        return f"{meta['id']} {meta['version']}"
+    except (OSError, ValueError, KeyError, TypeError):
+        return ""
 
 
 def _op_section_ownership(spec: dict) -> dict:
@@ -836,6 +887,7 @@ _OPS = {
     "sync_meta": _op_sync_meta,
     "generate_code": _op_generate_code,
     "validate": _op_validate,
+    "functions_check": _op_functions_check,
     "section_ownership": _op_section_ownership,
     "reconstruct": _op_reconstruct,
     "build_manual_run": _op_build_manual_run,

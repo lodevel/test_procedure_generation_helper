@@ -28,9 +28,9 @@ from procedo.studio.dialogs.validator_error_dialog import ValidatorErrorDialog
 from procedo.studio.dock.skill_chat_dialog import SkillChatDialog
 from procedo.studio.dock.skill_chat_widget import SkillChatWidget
 from procedo.studio.llm.validator_dispatch import ValidationIssueView, ValidationOutcome
+from procedo.bench import board_viewer
 from procedo.bench.image_popup import ImagePopup
 from procedo.core import board_view, config_manager
-from procedo.studio.widgets import netlist_panel
 from procedo.studio.widgets.netlist_panel import NetlistPanel
 from procedo.studio.widgets.rule_selector import RuleSelectorDialog
 
@@ -321,10 +321,9 @@ def test_about_shows_the_studio_mark_its_name_and_version(qapp):
 def test_the_board_view_shows_at_the_boards_angle_and_its_popup_is_benchs(qapp, tmp_path, monkeypatch):
     config_manager.write_config_section(tmp_path / "config", "board_view", {"rotation": 90})
     panel = NetlistPanel()
-    panel._project_root = tmp_path
-    panel.set_hint("KC30_revC.tgz")
-    panel.show_image(QPixmap(200, 100), QPixmap(300, 100), "C42 pin 2")
-    shown = panel._viewer_label.pixmap()
+    panel._viewer.board, panel._viewer.subtitle = tmp_path, "KC30_revC.tgz"  # what load() sets
+    panel._viewer.show_image(QPixmap(200, 100), QPixmap(300, 100), "C42 pin 2")
+    shown = panel._viewer._picture.pixmap()
     assert shown.height() > shown.width()  # the board's 90°
 
     opened = []
@@ -335,12 +334,53 @@ def test_the_board_view_shows_at_the_boards_angle_and_its_popup_is_benchs(qapp, 
             next(b for b in self.findChildren(QPushButton) if b.text() == "⟳").click()
             return 0
 
-    monkeypatch.setattr(netlist_panel, "ImagePopup", _Popup)
-    panel._on_viewer_click(None)
+    monkeypatch.setattr(board_viewer, "ImagePopup", _Popup)
+    full_view = next(b for b in panel.findChildren(QPushButton) if b.text() == "Full view…")
+    assert full_view.isEnabled()
+    full_view.click()
     header = opened[0].findChild(ui_kit.HeaderBand)
     assert (header.title.text(), header.subtitle.text()) == ("C42 pin 2", "KC30_revC.tgz")
     assert opened[0].angle == 180 and board_view.rotation(tmp_path) == 180
     board_view.wait_saved()
-    shown = panel._viewer_label.pixmap()
+    shown = panel._viewer._picture.pixmap()
     assert shown.width() > shown.height()  # the viewer follows the popup's turn
+    panel.close()
+
+
+def test_a_row_picked_while_one_renders_renders_next_and_a_cached_one_shows_at_once(qapp, tmp_path,
+                                                                                    monkeypatch):
+    from procedo.studio.widgets import netlist_panel
+
+    started, cached = [], {}
+
+    class _Worker:  # a render that ends when the test says
+        def __init__(self, _root, refdes, pad):
+            self.done = self.finished = SimpleNamespace(connect=lambda _slot: None)
+            started.append((refdes, pad))
+
+        def start(self):
+            pass
+
+        def deleteLater(self):  # noqa: N802 — Qt's name
+            pass
+
+    monkeypatch.setattr(netlist_panel, "_RenderWorker", _Worker)
+    monkeypatch.setattr(netlist_panel, "_LIVE_WORKERS", set())
+    monkeypatch.setattr(netlist_panel.odb_inspect, "cached_image_paths",
+                        lambda _root, refdes, pin: cached.get((refdes, pin), (None, None)))
+    panel = NetlistPanel()
+    panel._project_root = tmp_path
+    panel._render("R1", "")
+    panel._render("R2", "1")  # picked while R1 renders: next, the latest winning
+    assert started == [("R1", None)] and panel._viewer._picture.text() == "Generating R2 pin 1…"
+    panel._on_rendered("", "", "R1", "")
+    assert started == [("R1", None), ("R2", "1")]
+    picture = tmp_path / "r3.png"
+    QPixmap(20, 10).save(str(picture))
+    cached[("R3", None)] = (picture, None)
+    panel._render("R4", "")  # picked while R2 renders ...
+    panel._render("R3", "")  # ... then a cached one: shown at once, R4 dropped
+    assert panel._viewer._caption.text() == "R3"
+    panel._on_rendered("", "", "R2", "1")
+    assert started == [("R1", None), ("R2", "1")]
     panel.close()

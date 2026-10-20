@@ -15,12 +15,12 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 from procedo.core import app_identity, ui_kit
+from procedo.core.board_netlist import read_hide_prefixes, write_hide_prefixes
 from procedo.core.off_gui import answer_to
 from procedo.core.page_nav import PagedArea, field_row, heading, page_form
 
 from ..core.task_config import TaskConfigManager
 from ..llm.server_manager import fetch_opencode_models
-from ..core.odb_inspect import load_hide_prefixes, save_hide_prefixes
 from ..core.fileio import atomic_write_text
 
 log = logging.getLogger(__name__)
@@ -1135,7 +1135,8 @@ class SettingsDialog(QDialog):
             )
             prefixes = [p.strip() for p in self.net_hide_prefixes.text().split(",")
                         if p.strip()]
-            save_hide_prefixes(self._project_root, prefixes)
+            if self._project_root is not None:
+                write_hide_prefixes(Path(self._project_root) / "config", prefixes)
         except Exception:
             log.exception("Failed to persist validator_loop settings")
 
@@ -1189,7 +1190,7 @@ class SettingsDialog(QDialog):
         self._load_validator_values()
         try:
             self.net_hide_prefixes.setText(
-                ", ".join(load_hide_prefixes(self._project_root)))
+                ", ".join(read_hide_prefixes(Path(self._project_root) / "config" if self._project_root else None)))
         except Exception:
             log.exception("Failed to load net_explorer.hide_prefixes")
 

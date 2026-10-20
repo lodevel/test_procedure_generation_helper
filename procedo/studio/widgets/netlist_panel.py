@@ -16,13 +16,14 @@ from PySide6.QtCore import Qt, Signal, QThread, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTabWidget,
-    QTreeWidget, QTreeWidgetItem, QLabel, QCheckBox, QScrollArea, QSplitter,
-    QApplication,
+    QTreeWidget, QCheckBox, QSplitter, QApplication,
 )
 
 from procedo.core import board_view, ui_kit
-from procedo.bench import theme
-from procedo.bench.image_popup import ImagePopup
+from procedo.core.board_netlist import filter_components, filter_nets, read_hide_prefixes
+from procedo.bench.board_viewer import (
+    ROLE_COPY, BoardImageWell, component_item, net_item, selected_target,
+)
 
 from ..board_source import find_odb_tgz
 from ..core import odb_inspect
@@ -31,51 +32,9 @@ from ..core import odb_inspect
 # destroy a running QThread. Connections to the panel auto-disconnect if it dies.
 _LIVE_WORKERS: set = set()
 
-_ROLE_REFDES = Qt.ItemDataRole.UserRole + 1     # render target refdes ("" = none)
-_ROLE_PAD = Qt.ItemDataRole.UserRole + 2        # render target pad ("" = whole part)
-_ROLE_COPY = Qt.ItemDataRole.UserRole + 3       # text copied to clipboard on dbl-click
 
-
-def _pin_name(pin) -> str:
-    return (pin.get("name") if isinstance(pin, dict) else str(pin)) or ""
-
-
-def _pin_net(pin) -> str:
-    return (pin.get("net") if isinstance(pin, dict) else "") or ""
-
-
-def filter_components(components: list, query: str) -> list:
-    q = (query or "").strip().lower()
-    if not q:
-        return list(components)
-    out = []
-    for c in components:
-        if q in (c.get("refdes", "") or "").lower():
-            out.append(c)
-            continue
-        for p in c.get("pins", []) or ():
-            if q in _pin_name(p).lower() or q in _pin_net(p).lower():
-                out.append(c)
-                break
-    return out
-
-
-def visible_nets(nets: list, query: str, hide_prefixes, show_hidden: bool) -> list:
-    q = (query or "").strip().lower()
-    out = []
-    for n in nets:
-        name = n.get("net", "") or ""
-        if not show_hidden and odb_inspect.is_hidden_net(name, hide_prefixes):
-            continue
-        if not q or q in name.lower():
-            out.append(n)
-            continue
-        for nd in n.get("nodes", []) or ():
-            if (q in (nd.get("refdes", "") or "").lower()
-                    or q in str(nd.get("pin", "") or "").lower()):
-                out.append(n)
-                break
-    return out
+def _caption(refdes: str, pad: str) -> str:
+    return refdes + (f" pin {pad}" if pad else "")
 
 
 class _LoadWorker(QThread):
@@ -128,10 +87,6 @@ class NetlistPanel(ui_kit.Card):
         self._hide_prefixes: list = ["Net"]
         self._project_root = None
         self._load_worker = None
-        self._cur_zoom: QPixmap | None = None
-        self._cur_wide: QPixmap | None = None
-        self._turned: QPixmap | None = None  # the viewer's picture at the board's angle, unscaled
-        self._cur_cap: str = ""
         self._rendering = False
         self._render_pending = None         # (refdes, pad) to render after current
         self._sel_timer = QTimer(self)
@@ -198,27 +153,20 @@ class NetlistPanel(ui_kit.Card):
         bl = QVBoxLayout(bottom)
         bl.setContentsMargins(0, 0, 0, 0)
         bl.setSpacing(6)
-        self._viewer_caption = ui_kit.monospace(ui_kit.note(wrap=False))
-        self._full_view = ui_kit.link("Full view…", lambda: self._on_viewer_click(None))
-        bl.addLayout(ui_kit.hbox(ui_kit.bold("Board image"), self._viewer_caption, None,
-                                 self._full_view))
-        self._viewer_scroll = QScrollArea()
-        self._viewer_scroll.setObjectName("boardImage")  # a framed, rounded well (app QSS)
-        self._viewer_scroll.setWidgetResizable(True)
-        self._viewer_label = QLabel("")
-        self._viewer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._viewer_label.setWordWrap(True)
-        self._viewer_label.setStyleSheet(f"color:{theme.muted_color()};")
-        self._viewer_label.mousePressEvent = self._on_viewer_click  # click -> full view
-        self._viewer_scroll.setWidget(self._viewer_label)
-        bl.addWidget(self._viewer_scroll, 1)
+        caption = ui_kit.monospace(ui_kit.note(wrap=False))
+        self._viewer = BoardImageWell(caption, fit_height=True)
+        self._viewer.setObjectName("boardImage")  # a framed, rounded well (app QSS)
+        full_view = ui_kit.link("Full view…", self._viewer.open_full_view)
+        full_view.setEnabled(False)
+        self._viewer.image_shown.connect(full_view.setEnabled)
+        bl.addLayout(ui_kit.hbox(ui_kit.bold("Board image"), caption, None, full_view))
+        bl.addWidget(self._viewer, 1)
         split.addWidget(bottom)
 
         split.setStretchFactor(0, 1)
         split.setStretchFactor(1, 1)
         split.setSizes([360, 320])
         self.body.addWidget(split, 1)
-        self._full_view.setEnabled(False)
 
     # -- data -----------------------------------------------------------------
 
@@ -230,7 +178,9 @@ class NetlistPanel(ui_kit.Card):
             board_view.forget(project_root)  # a project (re)loaded reads its angle again
         tgz = find_odb_tgz(project_root) if project_root is not None else None
         self.set_hint(tgz.name if tgz is not None else "")
-        self._hide_prefixes = odb_inspect.load_hide_prefixes(project_root)
+        self._viewer.board = project_root
+        self._viewer.subtitle = tgz.name if tgz is not None else ""
+        self._hide_prefixes = read_hide_prefixes(project_root / "config" if project_root is not None else None)
         self.set_status("Loading board…")
         worker = _LoadWorker(project_root)
         self._load_worker = worker
@@ -266,59 +216,21 @@ class NetlistPanel(ui_kit.Card):
     # -- populate / filter ----------------------------------------------------
 
     def _refilter(self, *_) -> None:
-        self._populate_components()
-        self._populate_nets()
+        cs = filter_components(self._components, self._search.text())
+        ns = filter_nets(self._nets, self._search.text(),
+                         self._hide_prefixes, self._show_hidden.isChecked())
+        for tree, make, rows in ((self._comp_tree, component_item, cs), (self._net_tree, net_item, ns)):
+            tree.clear()
+            tree.addTopLevelItems([make(row) for row in rows])
         if self._components or self._nets:
-            cs = filter_components(self._components, self._search.text())
-            ns = visible_nets(self._nets, self._search.text(),
-                              self._hide_prefixes, self._show_hidden.isChecked())
             parts = (f"{len(cs)} parts" if len(cs) == len(self._components)
                      else f"{len(cs)} of {len(self._components)} parts")
             self._status.setText(f"{parts} · {len(ns)} nets")
 
-    def _populate_components(self) -> None:
-        self._comp_tree.clear()
-        for c in filter_components(self._components, self._search.text()):
-            refdes = c.get("refdes", "")
-            side = c.get("side", "")
-            top = QTreeWidgetItem(
-                [f"{refdes}  ({side.lower()})" if side else refdes, ""])
-            top.setData(0, _ROLE_REFDES, refdes)
-            top.setData(0, _ROLE_PAD, "")
-            top.setData(0, _ROLE_COPY, refdes)
-            for p in c.get("pins", []) or ():
-                name, net = _pin_name(p), _pin_net(p)
-                child = QTreeWidgetItem([f"pin {name}", net])
-                child.setData(0, _ROLE_REFDES, refdes)
-                child.setData(0, _ROLE_PAD, name)
-                child.setData(0, _ROLE_COPY, f"{refdes}.{name}")
-                top.addChild(child)
-            self._comp_tree.addTopLevelItem(top)
-
-    def _populate_nets(self) -> None:
-        self._net_tree.clear()
-        nets = visible_nets(self._nets, self._search.text(),
-                            self._hide_prefixes, self._show_hidden.isChecked())
-        for n in nets:
-            net = n.get("net", "")
-            nodes = n.get("nodes", []) or ()
-            top = QTreeWidgetItem([net, f"{len(nodes)} pin(s)"])
-            top.setData(0, _ROLE_REFDES, "")        # a net name has no image
-            top.setData(0, _ROLE_PAD, "")
-            top.setData(0, _ROLE_COPY, net)
-            for nd in nodes:
-                rd, pin = nd.get("refdes", ""), str(nd.get("pin", ""))
-                child = QTreeWidgetItem([f"{rd} pin {pin}", ""])
-                child.setData(0, _ROLE_REFDES, rd)  # a node IS a pin -> renderable
-                child.setData(0, _ROLE_PAD, pin)
-                child.setData(0, _ROLE_COPY, f"{rd}.{pin}")
-                top.addChild(child)
-            self._net_tree.addTopLevelItem(top)
-
     def _on_double_click(self, item, _col=0) -> None:
         """Copy the row's identifier (refdes / refdes.pin / net) to the clipboard
         for easy paste into the procedure text."""
-        text = item.data(0, _ROLE_COPY)
+        text = item.data(0, ROLE_COPY)
         if text:
             QApplication.clipboard().setText(str(text))
             self.set_status(f"\U0001F4CB  Copied '{text}' to clipboard")
@@ -328,35 +240,26 @@ class NetlistPanel(ui_kit.Card):
     def _on_sel_changed(self, *_) -> None:
         self._sel_timer.start(250)                  # debounce
 
-    def _selection_target(self):
-        tree = self._tabs.currentWidget()
-        items = tree.selectedItems() if tree is not None else []
-        if not items:
-            return None
-        it = items[0]
-        refdes = it.data(0, _ROLE_REFDES) or ""
-        pad = it.data(0, _ROLE_PAD) or ""
-        return (refdes, pad) if refdes else None
-
     def _render_selection(self) -> None:
-        sel = self._selection_target()
-        if sel is None or self._project_root is None:
-            return
-        refdes, pad = sel
-        pin = pad or None
-        cap = refdes + (f" pin {pad}" if pad else "")
+        sel = selected_target(self._tabs.currentWidget())
+        if sel is not None and self._project_root is not None:
+            self._render(*sel)
+
+    def _render(self, refdes: str, pad: str) -> None:
+        """The location's picture: cached, else rendered off the UI thread — after the current
+        render, the latest asked winning."""
+        pin, cap = pad or None, _caption(refdes, pad)
         z, w = odb_inspect.cached_image_paths(self._project_root, refdes, pin)
         if z or w:
             self._render_pending = None
-            self.show_image(QPixmap(str(z)) if z else None,
-                            QPixmap(str(w)) if w else None, cap)
+            self._viewer.show_image(QPixmap(str(z)) if z else None,
+                                    QPixmap(str(w)) if w else None, cap)
             return
+        self._viewer.show_message(f"Generating {cap}…")
         if self._rendering:
             self._render_pending = (refdes, pad)    # latest wins
-            self.set_viewer_status(f"Generating {cap}…")
             return
         self._rendering = True
-        self.set_viewer_status(f"Generating {cap}…")
         worker = _RenderWorker(self._project_root, refdes, pin)
         _LIVE_WORKERS.add(worker)
         worker.done.connect(self._on_rendered)
@@ -366,84 +269,14 @@ class NetlistPanel(ui_kit.Card):
 
     def _on_rendered(self, z: str, w: str, refdes: str, pad: str) -> None:
         self._rendering = False
-        cap = refdes + (f" pin {pad}" if pad else "")
+        cap = _caption(refdes, pad)
         zpix = QPixmap(z) if z else None
         wpix = QPixmap(w) if w else None
         if (zpix is not None and not zpix.isNull()) or (wpix is not None and not wpix.isNull()):
-            self.show_image(zpix, wpix, cap)
+            self._viewer.show_image(zpix, wpix, cap)
         else:
-            self.set_viewer_status(f"Could not render {cap}.")
+            self._viewer.show_message(f"Could not render {cap}.")
         pend = self._render_pending
         self._render_pending = None
         if pend is not None and pend != (refdes, pad):
-            # re-select-driven render of the latest target
-            self._render_one(*pend)
-
-    def _render_one(self, refdes: str, pad: str) -> None:
-        pin = pad or None
-        cap = refdes + (f" pin {pad}" if pad else "")
-        z, w = odb_inspect.cached_image_paths(self._project_root, refdes, pin)
-        if z or w:
-            self.show_image(QPixmap(str(z)) if z else None,
-                            QPixmap(str(w)) if w else None, cap)
-            return
-        self._rendering = True
-        self.set_viewer_status(f"Generating {cap}…")
-        worker = _RenderWorker(self._project_root, refdes, pin)
-        _LIVE_WORKERS.add(worker)
-        worker.done.connect(self._on_rendered)
-        worker.finished.connect(lambda w=worker: _LIVE_WORKERS.discard(w))
-        worker.finished.connect(worker.deleteLater)
-        worker.start()
-
-    # -- viewer ---------------------------------------------------------------
-
-    def set_viewer_status(self, text: str) -> None:
-        self._cur_zoom = self._cur_wide = self._turned = None
-        self._viewer_caption.setText("")
-        self._viewer_label.setPixmap(QPixmap())
-        self._viewer_label.setText(text or "")
-        self._viewer_label.setCursor(Qt.CursorShape.ArrowCursor)
-        self._full_view.setEnabled(False)
-
-    def show_image(self, zpix, wpix, caption: str) -> None:
-        self._cur_zoom, self._cur_wide, self._cur_cap = zpix, wpix, caption
-        self._viewer_caption.setText(caption)
-        self._viewer_label.setText("")
-        if self._show_turned():
-            self._viewer_label.setCursor(Qt.CursorShape.PointingHandCursor)
-            self._full_view.setEnabled(True)
-        else:
-            self._viewer_label.setText("Image unavailable.")
-            self._viewer_label.setCursor(Qt.CursorShape.ArrowCursor)
-
-    def _on_viewer_click(self, event) -> None:
-        """Click the inline image → full wide+zoomed view (like the interactive
-        execution explorer)."""
-        if self._cur_zoom is not None or self._cur_wide is not None:
-            ImagePopup(self._cur_zoom or self._cur_wide, self._cur_wide, self._cur_cap,
-                       self._project_root, self.hint.text().removeprefix("· "), self).exec()
-            self._show_turned()  # turned in the popup: turned here too
-
-    def _show_turned(self) -> bool:
-        """Turn the viewer's picture (zoomed preferred) to the board's angle, once, and fit it;
-        False when there is none."""
-        self._turned = board_view.turned_view(self._cur_zoom, self._cur_wide, self._project_root)
-        if self._turned is not None:
-            self._render_scaled()
-        return self._turned is not None
-
-    def _render_scaled(self) -> None:
-        """The turned picture fitted into the image well (never enlarged)."""
-        pm = self._turned
-        well = self._viewer_scroll.viewport().size()
-        width = min(max(120, well.width() - 8), pm.width())
-        height = min(max(80, well.height() - 8), pm.height())
-        self._viewer_label.setPixmap(pm.scaled(
-            width, height, Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation))
-
-    def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
-        super().resizeEvent(event)
-        if self._turned is not None:
-            self._render_scaled()
+            self._render(*pend)  # the latest target asked while this one rendered

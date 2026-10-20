@@ -18,6 +18,8 @@ import threading
 from pathlib import Path
 from typing import Optional
 
+from procedo.core.app_settings import get_image_generator_settings
+
 from .. import _project_local_state
 from ..board_source import find_odb_tgz
 
@@ -155,59 +157,6 @@ def load_board(project_root: Optional[Path]) -> dict:
     return data
 
 
-def is_hidden_net(name: str, hide_prefixes) -> bool:
-    """True if *name* starts (case-insensitive) with any of *hide_prefixes*
-    (e.g. ``["Net"]`` to hide Altium autogen net names like ``NetD16_A``)."""
-    n = (name or "").lower()
-    return any(n.startswith((p or "").lower()) for p in (hide_prefixes or ()) if p)
-
-
-_DEFAULT_HIDE_PREFIXES = ["Net"]
-
-
-def load_hide_prefixes(project_root: Optional[Path]) -> list:
-    """Net-name prefixes to hide by default, from
-    ``<project>/config/config.json`` (``net_explorer.hide_prefixes``). Defaults
-    to ``["Net"]`` (Altium autogen) when unset / unreadable."""
-    if project_root is None:
-        return list(_DEFAULT_HIDE_PREFIXES)
-    cfg = Path(project_root) / "config" / "config.json"
-    try:
-        data = json.loads(cfg.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return list(_DEFAULT_HIDE_PREFIXES)
-    pref = (data.get("net_explorer") or {}).get("hide_prefixes")
-    if isinstance(pref, list):
-        return [str(p) for p in pref]
-    return list(_DEFAULT_HIDE_PREFIXES)
-
-
-def save_hide_prefixes(project_root: Optional[Path], prefixes: list) -> bool:
-    """Persist net-name hide prefixes to ``<project>/config/config.json``
-    (merging into the existing object). Returns True on success."""
-    if project_root is None:
-        return False
-    cfg = Path(project_root) / "config" / "config.json"
-    try:
-        data = json.loads(cfg.read_text(encoding="utf-8")) if cfg.exists() else {}
-    except (OSError, ValueError):
-        data = {}
-    if not isinstance(data, dict):
-        data = {}
-    ne = data.get("net_explorer")
-    if not isinstance(ne, dict):
-        ne = {}
-    ne["hide_prefixes"] = [str(p) for p in (prefixes or [])]
-    data["net_explorer"] = ne
-    try:
-        cfg.parent.mkdir(parents=True, exist_ok=True)
-        cfg.write_text(json.dumps(data, indent=2, ensure_ascii=False),
-                       encoding="utf-8")
-        return True
-    except OSError:
-        return False
-
-
 def cached_image_paths(project_root: Optional[Path], refdes: str,
                        pad: Optional[str]) -> tuple:
     """(zoomed, wide) cached PNG paths for a target in the project's MACHINE-LOCAL
@@ -226,39 +175,6 @@ def cached_image_paths(project_root: Optional[Path], refdes: str,
     return (z if z.exists() else None, w if w.exists() else None)
 
 
-# Image-generator render params. These defaults mirror the main GUI's
-# image-generator settings, so absent a project override the editor renders
-# byte-identical images into the shared cache. A project may override any of
-# these via <project>/config/config.json:image_generator (the planned
-# template / Project-Configuration field).
-_DEFAULT_RENDER = {
-    "img_size": 1024, "render_size": 4096, "max_workers": 0, "batch_size": 50,
-    "parallel_render": False, "parallel_export": True,
-    "window_mm_zoomed": 40.0, "cross_arm_mm_zoomed": 3.0, "cross_thickness_px_zoomed": 6,
-    "window_mm_wide": 200.0, "cross_arm_mm_wide": 6.0, "cross_thickness_px_wide": 12,
-}
-
-
-def load_render_params(project_root: Optional[Path]) -> dict:
-    """Image-generator render params for the project, from
-    ``<project>/config/config.json:image_generator``, falling back to the main
-    GUI defaults for any unset key."""
-    params = dict(_DEFAULT_RENDER)
-    if project_root is None:
-        return params
-    cfg = Path(project_root) / "config" / "config.json"
-    try:
-        data = json.loads(cfg.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return params
-    ig = data.get("image_generator")
-    if isinstance(ig, dict):
-        for k in params:
-            if k in ig:
-                params[k] = ig[k]
-    return params
-
-
 def render_target(project_root: Optional[Path], refdes: str,
                   pad: Optional[str]) -> tuple:
     """Render ONE component/pin board image into the SHARED machine-local media
@@ -274,7 +190,7 @@ def render_target(project_root: Optional[Path], refdes: str,
     cli = odb_cli_path()
     if tgz is None or cli is None or not refdes:
         return (None, None)
-    p = load_render_params(project_root)
+    p = get_image_generator_settings(project_root)
     cache = _project_local_state.media_cache(project_root)
     if cache is None:  # no project_id: nothing to render into
         return (None, None)

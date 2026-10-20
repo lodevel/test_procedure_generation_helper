@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from procedo.core import ui_kit
-from procedo.studio.core.odb_inspect import load_hide_prefixes
+from procedo.core.board_netlist import read_hide_prefixes
 from procedo.studio.dialogs import settings_dialog
 from procedo.studio.dialogs.settings_dialog import SettingsDialog, load_settings, save_settings
 from procedo.studio.llm import validator_loop_settings
@@ -122,7 +122,7 @@ def test_the_validator_page_saves_to_the_project_config(qapp, no_network, projec
     dlg._on_save()
     section = validator_loop_settings.load_settings(project)
     assert section["enabled"] is False and section["max_attempts"] == 5
-    assert load_hide_prefixes(project) == ["Net", "GND_"]
+    assert read_hide_prefixes(project / "config") == ["Net", "GND_"]
     assert "validator_loop" not in load_settings()  # the project's, never settings.json
 
     dlg = _open(qapp, project)

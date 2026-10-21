@@ -142,6 +142,9 @@ def main() -> int:
     from . import launch_env
     applied_theme = apply_app_theme(os.environ.get(launch_env.APP_THEME), app)
     log.debug("Applied application theme: %s", applied_theme)
+    # Every error and warning box gets a Copy button (title, text, details to the clipboard).
+    from procedo.core import error_copy
+    error_copy.install_error_copy(app)
 
     # Create and show main window
     log.info("Creating MainWindow...")

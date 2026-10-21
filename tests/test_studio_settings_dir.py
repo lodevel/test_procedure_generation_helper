@@ -8,7 +8,7 @@ import argparse
 import re
 from pathlib import Path
 
-from procedo.core import app_identity, app_identity_migration, temp_root
+from procedo.core import app_identity, app_identity_migration, error_copy, temp_root
 
 from procedo.studio import __main__ as studio_main
 from procedo.studio import main_window
@@ -112,6 +112,7 @@ def test_studio_start_migrates_before_anything_reads_its_settings(monkeypatch):
     monkeypatch.setattr(temp_root, "sweep", lambda: None)
     monkeypatch.setattr(studio_main, "MainWindow", _Window)
     monkeypatch.setattr(studio_main, "apply_app_theme", lambda name, app: name)
+    monkeypatch.setattr(error_copy, "install_error_copy", lambda app: True)  # the fake app filters nothing
     monkeypatch.setattr(app_identity_migration, "migrate", lambda: seen.append("migrate"))
     monkeypatch.setattr(
         settings_dialog, "get_settings_path", lambda: (seen.append("settings"), read())[1]

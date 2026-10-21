@@ -414,6 +414,16 @@ class EndpointRekeyTests(_BenchBase):
         self.assertEqual(self.calls, [])                  # nothing opened
         self.assertFalse(s.held)
 
+    def test_acquire_that_cannot_open_names_the_instrument_and_address(self):
+        def _unopenable(bench, etype, lifecycle, log):
+            raise OSError("VI_ERROR_RSRC_NFOUND")
+        er._build_device = _unopenable
+        s = self._session()
+        resp = self._acquire(s, [_claim("T-A", "PSU1", _ADDR_A)])
+        self.assertFalse(resp["ok"])
+        self.assertEqual(resp["error"],
+                         f"PSU1 at {_ADDR_A}: OSError: VI_ERROR_RSRC_NFOUND")
+
     def test_acquire_is_exclusive_until_release(self):
         s = self._session()
         r1 = self._acquire(s, [_claim("T-A", "PSU1")])

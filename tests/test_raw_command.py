@@ -152,6 +152,30 @@ class CmdRawTests(unittest.TestCase):
         self.assertEqual(ev["reset"], 0)   # open-NO-reset
         self.assertNotIn("FN1", s.held)    # per_step never enters held
 
+    def test_a_failed_command_names_the_port_and_baud(self):
+        s = self._session({"ctrl": {"driver_class": "Fake"}})
+        class Dev:
+            def connect(self): pass
+            def close(self): pass
+            def raw_command(self, t): raise TimeoutError("no reply prompt within 1.0 s")
+        er._build_device = lambda bench, ns, lc, log: Dev()
+        r = er._cmd_raw(s, {"device": "FN1", "etype": "ctrl", "subtype": "", "text": "help",
+                            "bench_map": {"FN1": {"port": "COM28", "baud": 115200,
+                                                  "session_policy": "per_step"}}})
+        error = "FN1 at COM28 (115200 baud): TimeoutError: no reply prompt within 1.0 s"
+        self.assertEqual(r["error"], error)
+        self.assertIn(f"raw FAILED: {error}", r["log"])
+
+    def test_a_failed_held_command_names_the_visa_resource(self):
+        s = self._session({"psu": {"driver_class": "PSU"}})
+        class Boom:
+            def query_raw(self, t): raise IOError("VI_ERROR_TMO")
+        s.held["PSU1"] = Boom()
+        r = er._cmd_raw(s, {"device": "PSU1", "etype": "psu", "subtype": "", "text": "X?",
+                            "bench_map": {"PSU1": {"visa": "ASRL3::INSTR",
+                                                   "session_policy": "per_session"}}})
+        self.assertEqual(r["error"], "PSU1 at ASRL3::INSTR: OSError: VI_ERROR_TMO")
+
     def test_empty_text_guarded(self):
         s = self._session({"psu": {"driver_class": "PSU"}})
         r = er._cmd_raw(s, {"device": "PSU1", "etype": "psu", "subtype": "",

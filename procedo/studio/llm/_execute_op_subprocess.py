@@ -524,6 +524,12 @@ def _safe_name(device: str) -> str:
     return _sn(device)
 
 
+def _instrument_error(device, bench, exc) -> str:
+    """``PSU1 at ASRL3::INSTR: <ExcType>: <message>`` — the engine's one formatter."""
+    from rules_packager_base.bench_endpoints import instrument_error
+    return instrument_error(str(device), bench, exc)
+
+
 def _ensure_held(session: _Session, bench_map: dict, device: str, etype: str,
                  probe_refuse: bool = True, identity_gate: bool = True) -> str:
     """Open a per_session device ONCE (no reset) into ``held`` + bind it in the
@@ -880,7 +886,7 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
                             log=session.res.log[log_mark:])
             failed = True
             results.append({"node_path": node_path, "ok": False,
-                            "error": f"{type(exc).__name__}: {exc}"})
+                            "error": _instrument_error(device, bench_map.get(device), exc)})
         # A reading that just landed changes this step's verdict (and only this
         # step's — an auto segment never spans an @IF barrier, so no later
         # node_path shifts). Fold it in and materialize the live PASS/FAIL.
@@ -1022,10 +1028,9 @@ def _cmd_raw(session: _Session, req: dict) -> dict:
         # power it down — only the GUI's _auto_energized path will.
         if policy == "per_session" and device in session.held:
             _close_held_device(session, device)
-        session.res.log.append(
-            f"raw {device} FAILED: {type(exc).__name__}: {exc}")
-        return {"ok": False, "kind": "ExecError",
-                "error": f"{type(exc).__name__}: {exc}",
+        error = _instrument_error(device, bench_map.get(device), exc)
+        session.res.log.append(f"raw FAILED: {error}")
+        return {"ok": False, "kind": "ExecError", "error": error,
                 "log": session.res.log[log_mark:]}
 
 
@@ -1072,7 +1077,8 @@ def _cmd_safe_off(session: _Session, req: dict) -> dict:
             # they land in ``unsafe`` (not just the log) so the host latches
             # UNSAFE, the pre-F-H6 dead-link contract — and in the
             # unconfirmed-off memory so later passes keep retrying them.
-            session.res.log.append(f"UNSAFE: safe-off open {device} FAILED: {exc}")
+            why = _instrument_error(device, bench_map.get(device), exc)
+            session.res.log.append(f"UNSAFE: safe-off open FAILED: {why}")
             unsafe.extend(f"{device} CH{ch}" for ch in (t.get("channels") or [1]))
             _record_unconfirmed(session, device, etype or "",
                                 t.get("channels") or [1], bench_map.get(device))

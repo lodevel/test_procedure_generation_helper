@@ -342,6 +342,42 @@ class DaemonRunnerTests(unittest.TestCase):
         self.assertEqual(len(self._devcalls("CTRL1", "close")), 1)    # finally closed it
         self.assertNotIn("CTRL1", s.held)
 
+    # -- an instrument's error names it with the address it was opened at ------
+    def test_a_failed_serial_op_names_the_port_and_baud(self):
+        def _no_reply(*a, **k):
+            raise TimeoutError("'writeAnalog DSC DAC#DSC0 1241': no reply prompt within 2.0 s")
+        orig = er._exec_op
+        er._exec_op = _no_reply
+        self.addCleanup(lambda: setattr(er, "_exec_op", orig))
+        bench = {"FNCORE_DSC": {"port": "COM28", "baud": 115200, "_dev": "FNCORE_DSC"}}
+        s = self._session({"equipment": [{"id": "FNCORE_DSC", "type": "controller"}]})
+        r = er._cmd_exec_ops(s, {"bench_map": bench, "ops": [{"node_path": "a", "op": {
+            "op": "fncore.write_analog", "device": "FNCORE_DSC"}}]})
+        self.assertEqual(r["results"][0]["error"],
+                         "FNCORE_DSC at COM28 (115200 baud): TimeoutError: "
+                         "'writeAnalog DSC DAC#DSC0 1241': no reply prompt within 2.0 s")
+
+    def test_a_failed_visa_op_names_the_resource(self):
+        calls = self.calls
+
+        class _Failing(_Fake):
+            def set_voltage(self, **kwargs):
+                raise TimeoutError("VI_ERROR_TMO")
+        er._build_device = lambda bench, etype, lifecycle, log: _Failing(etype, "PSU1", calls)
+        bench = {"PSU1": {"visa": "TCPIP0::10.0.0.5::INSTR", "timeout_ms": 5000}}
+        r = er._cmd_exec_ops(self._session(), {"ops": [_set_v("PSU1")], "bench_map": bench})
+        self.assertEqual(r["results"][0]["error"],
+                         "PSU1 at TCPIP0::10.0.0.5::INSTR: TimeoutError: VI_ERROR_TMO")
+
+    def test_a_failed_connect_names_the_address_once(self):
+        def _unopenable(bench, etype, lifecycle, log):
+            raise OSError("could not open port 'COM28': FileNotFoundError")
+        er._build_device = _unopenable
+        bench = {"PSU1": {"port": "COM28", "baud": 9600}}
+        r = er._cmd_exec_ops(self._session(), {"ops": [_set_v("PSU1")], "bench_map": bench})
+        self.assertEqual(r["results"][0]["error"], "PSU1 (9600 baud): OSError: "
+                         "could not open port 'COM28': FileNotFoundError")
+
 
 class ProtocolLoopTests(unittest.TestCase):
     """Drive the real daemon main()/_dispatch over a pipe (no packs needed)."""

@@ -735,8 +735,12 @@ def _cmd_acquire_run(d: dict, session, req: dict) -> dict:
                 except Exception as exc:  # noqa: BLE001 — rebuild failed
                     return _gone_ladder(d, session, spec.endpoint, exc)
                 # Lazy admission: open ONCE (no reset) under the ENDPOINT key.
-                d["_ensure_held"](session, {spec.endpoint: bench},
-                                  spec.endpoint, namespace)
+                try:
+                    d["_ensure_held"](session, {spec.endpoint: bench},
+                                      spec.endpoint, namespace)
+                except Exception as exc:  # noqa: BLE001 — cannot open: say where
+                    return {"ok": False, "kind": "ExecError", "error": d["_instrument_error"](
+                        spec.usages[0].claim.local_name, bench, exc)}
                 # Seam A (per-run timeout retargeting): AFTER _ensure_held —
                 # i.e. after check_held — so a sticky refusal raised above
                 # never retargets.  ``bench`` carries the run's max-merged

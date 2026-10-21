@@ -158,3 +158,22 @@ def test_fetch_and_extract_oversized_download_returns_none(monkeypatch, tmp_path
         )
         is None
     )
+
+
+def test_first_pdf_read_never_searches_path(monkeypatch, tmp_path):
+    """Importing pypdf looks ``jbig2dec`` up on PATH; a slow network folder there froze
+    Studio's window for ~21 s on the first datasheet read. The read never searches PATH."""
+    import shutil
+    import sys
+
+    for name in [n for n in sys.modules if n == "pypdf" or n.startswith("pypdf.")]:
+        monkeypatch.delitem(sys.modules, name)  # a first import, as in a fresh Studio
+    monkeypatch.setattr(pdf_text, "_pdf_reader", None)
+    looked_up = []
+    monkeypatch.setattr(shutil, "which", lambda cmd, *a, **k: looked_up.append(cmd))
+    pdf = tmp_path / "ds.pdf"
+    make_pdf(pdf)
+
+    assert "HELLO" in pdf_text.extract_pdf_text(pdf)
+    assert looked_up == []
+    assert shutil.which("x") is None and looked_up == ["x"]  # pdf_text restored the one it found

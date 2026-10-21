@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import io
 import logging
+import shutil
+import threading
 import urllib.request
 from pathlib import Path
 from typing import List, Optional
@@ -20,6 +22,33 @@ log = logging.getLogger(__name__)
 
 # Cap one document so a 200-page datasheet can't swamp the context window.
 DEFAULT_MAX_CHARS = 40_000
+
+_PYPDF_IMPORT = threading.Lock()
+_pdf_reader = None  # pypdf's PdfReader, once imported
+
+
+def _pdf_reader_class():
+    """pypdf's ``PdfReader``, or ``None`` when pypdf is not installed.
+
+    Importing pypdf looks ``jbig2dec`` up on PATH, and a slow network folder on PATH
+    stalls that lookup for many seconds (21 s measured), on Studio's GUI thread when the
+    context picker reads a datasheet. Text extraction never runs ``jbig2dec``, so that
+    lookup is answered "not found" without searching PATH.
+    """
+    global _pdf_reader
+    if _pdf_reader is None:
+        with _PYPDF_IMPORT:
+            which = shutil.which
+            shutil.which = lambda *_args, **_kwargs: None
+            try:
+                from pypdf import PdfReader
+            except ImportError:
+                log.warning("pypdf not installed; cannot decode PDFs")
+                return None
+            finally:
+                shutil.which = which
+            _pdf_reader = PdfReader
+    return _pdf_reader
 
 
 def _extract_from_reader(reader, max_chars: int) -> Optional[str]:
@@ -56,14 +85,12 @@ def extract_pdf_bytes(data: bytes, max_chars: int = DEFAULT_MAX_CHARS) -> Option
     means no pypdf, encrypted/malformed, or an image-only PDF with no text
     layer.
     """
-    try:
-        from pypdf import PdfReader
-    except ImportError:
-        log.warning("pypdf not installed; cannot decode PDF bytes")
+    reader_class = _pdf_reader_class()
+    if reader_class is None:
         return None
 
     try:
-        reader = PdfReader(io.BytesIO(data))
+        reader = reader_class(io.BytesIO(data))
     except Exception as exc:  # encrypted / malformed / not really a PDF
         log.info("could not open PDF bytes: %s", exc)
         return None
@@ -97,13 +124,11 @@ def extract_pdf_pages(path: Path) -> Optional[List[str]]:
     document. A page with no text layer yields ``""`` (kept, so indices stay aligned
     with the real page numbers).
     """
-    try:
-        from pypdf import PdfReader
-    except ImportError:
-        log.warning("pypdf not installed; cannot decode PDF pages")
+    reader_class = _pdf_reader_class()
+    if reader_class is None:
         return None
     try:
-        reader = PdfReader(str(path))
+        reader = reader_class(str(path))
     except Exception as exc:  # encrypted / malformed / not really a PDF
         log.info("could not open PDF %s: %s", path, exc)
         return None

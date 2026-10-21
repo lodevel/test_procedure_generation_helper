@@ -443,8 +443,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    # This server runs no programs, so it drops PATH: pypdf looks `jbig2dec` up on
-    # PATH when first imported (the first PDF read), and a slow network folder on the
-    # user's PATH stalled that read past the client's timeout.
-    os.environ["PATH"] = ""
     main()

@@ -521,7 +521,7 @@ class RemoteSession:
         self._proc: Optional[subprocess.Popen] = None
         self._stderr_tail: deque = deque(maxlen=80)
         self._lock = threading.Lock()
-        self._write_lock = threading.Lock()   # one frame at a time on stdin: see _post
+        self._write_lock = threading.RLock()  # one frame at a time on stdin, re-entrant: see _post
         self._dead = False
         self._bundle_dir: Optional[str] = None
         self._claim: Optional[tuple[Optional[Path], int]] = None   # (venv folder, pid) claimed

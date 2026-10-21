@@ -50,7 +50,6 @@ class BenchSessionClient(RemoteSession):
         self.in_run_since: Optional[float] = None  # monotonic start of the run_test in flight
         self.prompting = False     # ... and waits on the operator's answer
         self.acked_at: Optional[float] = None  # ... and when the daemon acknowledged a cancel ("ack")
-        self._gate = threading.Lock()  # a Call's frame and its Stop go out in the order they happen
         self._call_stop: Optional[threading.Event] = None  # the Stop of the Call being sent
 
     # ``end_session`` IS shutdown (safe-off all held + close/unlock + exit).
@@ -77,10 +76,11 @@ class BenchSessionClient(RemoteSession):
         return super()._request(frame, timeout, on_progress)
 
     def _post(self, frame: dict[str, Any]) -> None:
-        """Every frame through one gate: a Call whose Stop is already set is never written, so
-        a Stop is never lost — set before the frame, the frame does not go; after it, its
-        ``cancel_call`` follows it."""
-        with self._gate:
+        """Every frame under the base class's write lock (re-entered by its ``_post``), so a Call's
+        frame and its Stop go out in the order they happen: a Call whose Stop is already set is
+        never written, so a Stop is never lost — set before the frame, the frame does not go; after
+        it, its ``cancel_call`` follows it."""
+        with self._write_lock:
             if frame.get("cmd") == "call" and self._call_stop is not None and self._call_stop.is_set():
                 raise _CallNotSent
             super()._post(frame)

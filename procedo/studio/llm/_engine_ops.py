@@ -52,7 +52,8 @@ Ops:
                       + "channels": {device: [declared power channels]},
                       "constants": [{name, value, origin}])
   build_manual_result → {"ok": true, "result": {...results.json schema...}}
-                        (input: the same fields)
+                        (input: the same fields + "failures": {node_path:
+                         {"error", "then"}}, the bench ops never redone)
   manual_reading → {"ok": true, "value": any, "refusal": str}
                    (input: {"step": {kind, expected_text, resolved_op}, "text"})
   criterion_refs → {"ok": true, "refs": {key: [str]}}  (input: {"criteria": {key: criterion}})
@@ -512,7 +513,8 @@ def _op_build_manual_result(spec: dict) -> dict:
     procedure_json, err = _document(spec)
     if err:
         return err
-    result = _import_wheel().build_manual_result(procedure_json, **run_inputs(spec))
+    result = _import_wheel().build_manual_result(procedure_json, **run_inputs(spec),
+                                                 failures=spec.get("failures") or {})
     return {"ok": True, "result": result}
 
 

@@ -843,6 +843,7 @@ def _ladder(d: dict, session, run: _Run, res, escaped, rdir: Path):
     Returns ``(response, stop)``."""
     aborted = bool(getattr(res, "aborted", False))
     errored = escaped is not None or res is None or bool(getattr(res, "error", False))
+    by_procedure = bool(getattr(res, "aborted_by_procedure", False))   # @ABORT: a FAIL, unsafe as an error
     summary = {
         "run_id": run.run_id,
         "overall": str(getattr(res, "overall", "ERROR")),
@@ -852,16 +853,16 @@ def _ladder(d: dict, session, run: _Run, res, escaped, rdir: Path):
                            or (type(escaped).__name__ if escaped else "")),
         "exception_message": (getattr(res, "exception_message", "")
                               or (str(escaped) if escaped else "")),
+        "stopped": str(getattr(res, "stopped", "") or ""),
         "results_dir": str(rdir),
     }
-    if errored:
-        # Driver error / unexpected exception: safe-off ALL held power
-        # equipment, close, END the session — respond, then stop=True (the
-        # same exit path as shutdown; _teardown's latch keeps atexit a no-op).
+    if errored or by_procedure:
+        # Driver error / unexpected exception, or the procedure's @ABORT (an unsafe
+        # condition it detected): safe-off ALL held power equipment, close, END the
+        # session — respond, then stop=True (the same exit path as shutdown;
+        # _teardown's latch keeps atexit a no-op).
         if escaped is not None:
-            summary["traceback"] = "".join(
-                traceback.format_exception(type(escaped), escaped,
-                                           escaped.__traceback__))
+            summary["traceback"] = "".join(traceback.format_exception(escaped))
         unsafe = d["_teardown"](session)
         return d["_attach_unsafe"](
             session, {"ok": True, "result": summary, "session_ended": True},

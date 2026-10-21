@@ -18,10 +18,10 @@ imports PySide6, which the project venv does not have.
 """
 from __future__ import annotations
 
-import functools
 import json
 import logging
 import os
+import re
 import subprocess
 import threading
 from collections import deque
@@ -482,8 +482,7 @@ def bench_constant_names(etype: str, eid: str, project_root: Optional[Path] = No
     as ``<sanitized-upper eid>_<FIELD.upper()>``. Lets the GUI identify
     operator-editable bench constants from pack declarations instead of regex.
     Empty when the etype has no declared fields."""
-    import re as _re
-    prefix = _re.sub(r"\W", "_", str(eid)).upper()
+    prefix = re.sub(r"\W", "_", str(eid)).upper()
     return [f"{prefix}_{f['name'].upper()}" for f in bench_fields(project_root).get(etype, [])
             if isinstance(f, dict) and isinstance(f.get("name"), str)]
 
@@ -829,7 +828,6 @@ def _heading_name(line: str, known_sections: frozenset[str]) -> Optional[str]:
     display-only)."""
     global _HEADING_LINE_RE
     if _HEADING_LINE_RE is None:
-        import re
         _HEADING_LINE_RE = re.compile(r"^##(?!#)[ \t]*(\S.*?)[ \t]*$")
     m = _HEADING_LINE_RE.match(line)
     if m is None:
@@ -880,7 +878,6 @@ def equipment_types_in(
     universe when available (:func:`_section_scan_names`)."""
     global _EQUIP_LINE_RE
     if _EQUIP_LINE_RE is None:
-        import re
         _EQUIP_LINE_RE = re.compile(r"^[A-Z][A-Z0-9_]*\s*:\s*(\S+)")
     target, known = _section_scan_names(project_root)
     types: list[str] = []
@@ -1338,6 +1335,7 @@ class ManualRunResult:
     steps: tuple[ManualStep, ...] = ()       # on-path plan
     skipped: tuple[ManualStep, ...] = ()     # off-path bindings (retained as SKIP)
     aborted: bool = False
+    error: str = ""                          # a step's value refused: the run ended there (its message)
     channels: dict = field(default_factory=dict)  # device -> its declared channels, the engine's
     constants: tuple[dict, ...] = ()         # {name, value, origin}, the engine's
 
@@ -1349,6 +1347,7 @@ class ManualRunResult:
             steps=tuple(ManualStep.from_dict(s) for s in d.get("steps", [])),
             skipped=tuple(ManualStep.from_dict(s) for s in d.get("skipped", [])),
             aborted=bool(d.get("aborted", False)),
+            error=str(d.get("error") or ""),
             channels=dict(d.get("channels") or {}),
             constants=tuple(d.get("constants") or ()),
         )
@@ -1387,12 +1386,10 @@ def _format_finding(finding: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
-import re as _step_re
-
-_STEP_TEXTS_LINE_RE = _step_re.compile(r"^\s*(\d+)\.\s+(.+?)\s*$", _step_re.MULTILINE)
-_STEPS_SECTION_RE = _step_re.compile(
+_STEP_TEXTS_LINE_RE = re.compile(r"^\s*(\d+)\.\s+(.+?)\s*$", re.MULTILINE)
+_STEPS_SECTION_RE = re.compile(
     r"^##\s+Steps\s*$(.*?)(?=^##\s+|\Z)",
-    _step_re.MULTILINE | _step_re.DOTALL,
+    re.MULTILINE | re.DOTALL,
 )
 
 

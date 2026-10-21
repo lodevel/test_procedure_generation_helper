@@ -53,7 +53,8 @@ Ops:
                       "constants": [{name, value, origin}])
   build_manual_result → {"ok": true, "result": {...results.json schema...}}
                         (input: the same fields + "failures": {node_path:
-                         {"error", "then"}}, the bench ops never redone)
+                         {"error", "then"}}, the bench ops never redone,
+                         "operator_stop": stopped before its end)
   manual_reading → {"ok": true, "value": any, "refusal": str}
                    (input: {"step": {kind, expected_text, resolved_op}, "text"})
   criterion_refs → {"ok": true, "refs": {key: [str]}}  (input: {"criteria": {key: criterion}})
@@ -377,6 +378,7 @@ def _op_build_manual_run(spec: dict) -> dict:
         "steps": _shown_steps(session, run, inputs["measurements"]),
         "skipped": [_step_payload(s) for s in run.skipped],
         "aborted": run.aborted,
+        "error": run.error,
         "channels": _declared_channels(procedure_json),
         "constants": _procedure_names(session.macros),
     }
@@ -514,7 +516,8 @@ def _op_build_manual_result(spec: dict) -> dict:
     if err:
         return err
     result = _import_wheel().build_manual_result(procedure_json, **run_inputs(spec),
-                                                 failures=spec.get("failures") or {})
+                                                 failures=spec.get("failures") or {},
+                                                 operator_stop=bool(spec.get("operator_stop")))
     return {"ok": True, "result": result}
 
 

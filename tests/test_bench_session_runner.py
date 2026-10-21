@@ -137,7 +137,13 @@ PSU1 : psu channels=[{1, max_voltage=24.0 V, max_current=2.0 A}]
 ELOAD1 : eload channels=[{1, max_current=1.0 A}]
 """
 
-_TEXTS = {"quick": _TEXT_QUICK, "wait": _TEXT_WAIT, "shot": _TEXT_SHOT,
+# Same, then the procedure's @ABORT on a high reading (an unsafe condition it detected).
+_TEXT_ABORT = _TEXT_QUICK.replace(
+    "3. Operator: read DC voltage on TP VOUT with DMM1 as {1}.",
+    "3. Operator: read DC voltage on TP VOUT with DMM1 as {1}.\n@IF {1} > 5 V\n@ABORT\n@ENDIF",
+).replace("# BENCH-Q", "# BENCH-A")
+
+_TEXTS = {"quick": _TEXT_QUICK, "wait": _TEXT_WAIT, "shot": _TEXT_SHOT, "abort": _TEXT_ABORT,
           "manual": _TEXT_MANUAL,
           "manual_wait": _TEXT_MANUAL.replace(
               "\n\n## Equipment", "\n3. Wait 30 s.\n\n## Equipment")}
@@ -1369,6 +1375,22 @@ class RunTestTests(_BenchBase):
         self.assertFalse(s.held)
         # F-H5 guard: CWD restored even on the errored-ladder path
         self.assertEqual(os.getcwd(), cwd_before)
+
+    def test_the_procedures_abort_is_a_fail_safed_like_an_error_session_ends(self):
+        """@ABORT is a FAIL in the result (OpenHTF), but the bench treats the condition the
+        procedure detected as unsafe: every held output off, devices closed, session ended."""
+        s = self._session()
+        rid = self._acquired(s, keep_state=True)    # isolate the LADDER's off
+        resp, stop = self._run(s, rid, self._module(_code("abort")), [_answer("9"), self._hold()])
+        self.assertTrue(stop)
+        self.assertTrue(resp["ok"], resp)
+        self.assertTrue(resp["session_ended"])
+        self.assertEqual((resp["result"]["overall"], resp["result"]["error"], resp["result"]["aborted"]),
+                         ("FAIL", False, False))
+        self.assertEqual(resp["result"]["stopped"], "by @ABORT after step 3")
+        self.assertTrue(self._offs())
+        self.assertEqual(len(self._devcalls("PHYS", "close")), 1)
+        self.assertFalse(s.held)
 
     def test_import_failure_ends_session_via_ladder(self):
         # F-H3a: a test file that cannot even import mid-session is an

@@ -36,7 +36,7 @@ er = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(er)
 
 _HEAD = ("# T\nDesc.\n\n## Meta\nformat_version: 2.0.1\nboard: B\n"
-         "rules_pack: rules_packager_base@2.10.0\n\n## Equipment\nDMM_GENERIC : dmm\n\n## Steps\n")
+         "rules_pack: rules_packager_base@2.11.0\n\n## Equipment\nDMM_GENERIC : dmm\n\n## Steps\n")
 
 # Procedures copied from the engine's own tests (rules/v2_0_2/tests): a linear
 # read pair with an operator judgement, an @IF/@ELSE branch on a reading
@@ -131,6 +131,20 @@ def test_the_result_op_makes_each_bench_op_never_redone_an_outcome_detail():
     assert result["outcome_details"] == [{"code": "BENCH_OP_FAILED", "description": "PSU1 at COM3: OSError: no reply",
                                           "step": 4, "then": "continued"}]
     assert result["overall"] == "ERROR"
+
+
+def test_the_run_op_says_a_refused_value_ended_the_run():
+    doc, _ = pp.parse_text(_HEAD + "@LET T = MAX\n1. Wait ${T} s.\n")
+    assert engine_ops.run({"op": "build_manual_run", "procedure_json": doc})["error"] == \
+        "ValueError: not a number: 'MAX'"
+    assert engine_ops.run({"op": "build_manual_run", "procedure_json": _document("linear")})["error"] == ""
+
+
+def test_the_result_op_makes_an_operator_stop_aborted():
+    doc = _document("if_else")
+    result = _in_process({"op": "build_manual_result", "procedure_json": doc, **_inputs(doc),
+                          "operator_stop": True})["result"]
+    assert (result["overall"], result["aborted"]) == ("ABORTED", True)
 
 
 def test_the_op_judges_its_frame_document_and_never_changes_the_sessions():

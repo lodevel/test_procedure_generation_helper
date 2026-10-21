@@ -1370,7 +1370,9 @@ class StudioWorkspace(QWidget):
                 "Open or create a project first.")
             return
         origin = ProjectModel.get_active_config_from_path(root)
-        dlg = ProjectConfigDialog(self, project_path=root, project_config_origin=origin)
+        dlg = ProjectConfigDialog.for_project(self, project_path=root, project_config_origin=origin)
+        if dlg is None:
+            return
         dlg.exec()
         # Config / bundle may have changed -> refresh gating + rules. Runs on
         # Cancel too (task #39): the dialog can import a bundle live before

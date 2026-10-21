@@ -504,14 +504,15 @@ class TabContext:
         self._update_optimization_state(request)
         log.debug(f"TabContext {self.tab_id}: Optimization state confirmed after successful delivery")
     
-    def set_selected_rules(self, rule_filenames: list[str]):
-        """Update selected rules for this tab and persist via TaskConfigManager.
+    def set_selected_rules(self, rule_filenames: list[str]) -> bool:
+        """Update selected rules for this tab and persist via TaskConfigManager; False when
+        the save failed (the selection still applies now).
 
         Phase 1 keeps the UI tab-level: the same list propagates to every
         task in the tab. Per-task selection lands in Phase 4's editor.
         """
         self.task_config_manager.set_selected_rules_for_tab(self.tab_id, rule_filenames)
-        self.task_config_manager.save_config()
+        saved = self.task_config_manager.save_config()
 
         # Clear rules checksum so the next LLM request resends rules.
         self._rules_checksum = None
@@ -520,6 +521,7 @@ class TabContext:
             f"TabContext {self.tab_id}: rules updated to {len(rule_filenames)} selected, "
             "checksum cleared"
         )
+        return saved
     
     def _selected_rule_docs(self) -> list[RuleDoc]:
         """The selected rule documents on disk, bundle rules first (missing ones logged)."""

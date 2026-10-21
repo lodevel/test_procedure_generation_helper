@@ -1119,26 +1119,23 @@ class SettingsDialog(QDialog):
 
     def _save_validator_values(self) -> None:
         """Persist the Validator tab's values into the project's
-        ``validator_loop`` config section. No-op without a project."""
+        ``validator_loop`` config section. No-op without a project; raises when the
+        project's config cannot be read or written (the caller says so)."""
         if self._project_root is None:
             return
-        try:
-            from ..llm.validator_loop_settings import save_setting
-            save_setting(
-                self._project_root, "enabled",
-                bool(self.validator_enabled.isChecked()),
-            )
-            save_setting(
-                self._project_root,
-                "max_attempts",
-                int(self.validator_max_attempts.value()),
-            )
-            prefixes = [p.strip() for p in self.net_hide_prefixes.text().split(",")
-                        if p.strip()]
-            if self._project_root is not None:
-                write_hide_prefixes(Path(self._project_root) / "config", prefixes)
-        except Exception:
-            log.exception("Failed to persist validator_loop settings")
+        from ..llm.validator_loop_settings import save_setting
+        save_setting(
+            self._project_root, "enabled",
+            bool(self.validator_enabled.isChecked()),
+        )
+        save_setting(
+            self._project_root,
+            "max_attempts",
+            int(self.validator_max_attempts.value()),
+        )
+        prefixes = [p.strip() for p in self.net_hide_prefixes.text().split(",")
+                    if p.strip()]
+        write_hide_prefixes(Path(self._project_root) / "config", prefixes)
 
     def _load_values(self):
         """Load values from settings.
@@ -1202,9 +1199,6 @@ class SettingsDialog(QDialog):
         moved to ``_WorkflowsTab`` in the parent app's Project
         Configuration dialog (Phase 4).
         """
-        # Validator tab — persist into project's validator_loop section.
-        self._save_validator_values()
-
         # Save LLM backend settings to settings.json
         self._settings = {
             "llm_backend": self.backend_combo.currentText(),
@@ -1230,9 +1224,16 @@ class SettingsDialog(QDialog):
         
         try:
             save_settings(self._settings)
-            self.accept()
-        except Exception as e:
+        except Exception as e:  # the dialog stays open, its values kept: the user can retry
             QMessageBox.critical(self, "Save Failed", str(e))
+            return
+        try:  # Validator tab — the project's validator_loop section, said apart when it fails
+            self._save_validator_values()
+        except Exception as e:  # a project config unreachable or damaged: never replaced
+            QMessageBox.critical(self, "Project Settings Not Saved",
+                                 "The application settings were saved; the project's Validator "
+                                 f"settings were not:\n\n{e}")
+        self.accept()
 
     
     def get_settings(self) -> dict:

@@ -40,6 +40,8 @@ from PySide6.QtWidgets import (  # noqa: E402
 )
 
 import procedo.studio.main_window as mw_mod  # noqa: E402
+from procedo.studio.core import artifact_manager as am_mod  # noqa: E402
+from procedo.studio.core.artifact_manager import ArtifactType  # noqa: E402
 from procedo.studio.pack_ops import engine_async  # noqa: E402
 from procedo.core import app_settings  # noqa: E402
 from procedo.studio.llm.backend_factory import BACKEND_TYPE_NONE  # noqa: E402
@@ -457,7 +459,53 @@ def test_open_recent_menu_and_missing_dir(make_window, mbox, monkeypatch,
     assert [a.text() for a in w._open_recent_menu.actions()] == recents
 
     w._on_open_recent(str(tmp_path / "gone"))
+    _settle(lambda: mbox.warning)
     assert [t for t, _ in mbox.warning] == ["Project Not Found"]
+    assert w.project_manager.project_root is None
+
+
+def test_open_recent_on_a_dead_share_asks_off_the_gui_thread(make_window, mbox, monkeypatch,
+                                                              tmp_path):
+    # A recent project on a share that is down: its folder is looked for off the GUI thread
+    # (~20 s there), then the user is told it does not exist or cannot be reached.
+    w = make_window()
+    asked_on: list[str] = []
+
+    def unreachable(self):
+        asked_on.append(threading.current_thread().name)
+        raise OSError("[WinError 53] The network path was not found")
+    monkeypatch.setattr(Path, "is_dir", unreachable)
+    w._on_open_recent(r"\\nas\gone\proj")
+    _settle(lambda: mbox.warning)
+    monkeypatch.undo()
+    assert asked_on and asked_on[0] != threading.main_thread().name
+    assert mbox.warning == [("Project Not Found", "The project folder does not exist or "
+                             "cannot be reached:\n\\\\nas\\gone\\proj")]
+    assert w.project_manager.project_root is None
+
+
+def test_an_open_after_a_recent_drops_the_recents_answer(make_window, mbox, monkeypatch,
+                                                         tmp_path):
+    root = _make_project(tmp_path / "proj")
+    w = make_window()
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: "")
+    w._on_open_recent(str(root))
+    assert w.footer.note.full.startswith("Looking for")
+    w._on_open_project()  # opened another way (cancelled here): the recent no longer opens
+    assert w.footer.note.full == ""
+    _settle(lambda: not any(t.name == "recent-project-check" for t in threading.enumerate()))
+    QApplication.processEvents()
+    assert w.project_manager.project_root is None
+
+
+def test_open_recent_opens_only_the_last_one_asked(make_window, mbox, tmp_path):
+    root = _make_project(tmp_path / "proj")
+    w = make_window()
+    w._on_open_recent(str(root))
+    w._on_open_recent(str(tmp_path / "gone"))  # asked after: the first answer is dropped
+    _settle(lambda: mbox.warning and not any(t.name == "recent-project-check"
+                                             for t in threading.enumerate()))
+    QApplication.processEvents()
     assert w.project_manager.project_root is None
 
 
@@ -1091,6 +1139,47 @@ def test_close_event_cancel_keeps_window_clean_accepts(make_window, mbox,
     assert "Not saved yet." in \
         (t1 / "procedure_text.md").read_text(encoding="utf-8")
     assert (t1 / ".llm_session.json").exists()
+
+
+def _edited_test_on_a_dead_share(make_window, monkeypatch, tmp_path):
+    """A window with t1 open and its text edited, whose saves now fail (the share went away)."""
+    root = _make_project(tmp_path / "proj")
+    w = make_window()
+    _open_project(w, root)
+    w.open_test(root / "tests" / "t1")
+    w.text_only_tab.text_editor.setPlainText("# t1\n\nNot saved yet.\n")
+
+    def unreachable(path, text):
+        raise OSError(f"[WinError 53] The network path was not found: '{path}'")
+    monkeypatch.setattr(am_mod, "atomic_write_text", unreachable)
+    shown: list[str] = []
+    monkeypatch.setattr(w.footer, "show_message", lambda text, *a: shown.append(text))
+    return w, shown
+
+
+def test_close_whose_save_fails_says_why_and_stays_open(make_window, mbox, monkeypatch, tmp_path):
+    # Close -> Save with the share down: the error is shown and the close is cancelled, the
+    # edits still in the window, never closed with them lost.
+    w, _ = _edited_test_on_a_dead_share(make_window, monkeypatch, tmp_path)
+    mbox.question_answer = QMessageBox.StandardButton.Save
+    assert not w.window().close()
+    assert [t for t, _ in mbox.critical] == ["Save Failed"]
+    assert "network path was not found" in mbox.critical[0][1]
+    assert w.artifact_manager.is_dirty(ArtifactType.PROCEDURE_TEXT)
+
+
+def test_save_all_that_fails_says_why_never_saved(make_window, mbox, monkeypatch, tmp_path):
+    w, shown = _edited_test_on_a_dead_share(make_window, monkeypatch, tmp_path)
+    w._on_save_all()
+    assert [t for t, _ in mbox.critical] == ["Save Failed"]
+    assert "All saved" not in shown
+
+
+def test_ctrl_s_that_fails_never_says_saved(make_window, mbox, monkeypatch, tmp_path):
+    w, shown = _edited_test_on_a_dead_share(make_window, monkeypatch, tmp_path)
+    w._on_save()
+    assert [t for t, _ in mbox.critical] == ["Save Failed"]
+    assert "Saved" not in shown
 
 
 def test_open_other_test_with_unsaved_changes_cancel_aborts(make_window,

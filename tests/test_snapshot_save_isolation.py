@@ -352,6 +352,43 @@ def test_writer_unregister_reverts_to_direct_write(tmp_path, stub_pack_workflows
     }, "with writer cleared, save must write directly to config.json"
 
 
+def test_a_config_that_cannot_be_read_is_not_overwritten(tmp_path, stub_pack_workflows):
+    """config.json damaged (or unreachable) after the load: the save fails and writes nothing,
+    rather than replacing the file with the workflows section alone."""
+    root = _project_root(tmp_path)
+    cfg = _write_project_config(root, {"project_id": "p"})
+    mgr = TaskConfigManager(_shared_fallback(tmp_path), project_root=root)
+    cfg.write_text('{"project_id": "p", "runs": ', encoding="utf-8")
+
+    mgr.set_chat_config("text_only", ChatConfig(enabled=True, system_prompt="x"))
+    assert not mgr.save_config()
+    assert "config.json" in mgr.save_error
+    assert cfg.read_text(encoding="utf-8") == '{"project_id": "p", "runs": '
+
+
+def test_a_config_unreadable_when_loaded_is_never_saved_over(tmp_path, stub_pack_workflows):
+    """config.json unreadable when the project was loaded (a share down), readable again
+    at the save: the empty snapshot the load made must not replace the project's workflows."""
+    root = _project_root(tmp_path)
+    cfg = _write_project_config(root, {"workflows": {"text_only": {"chat_config": {
+        "enabled": True, "system_prompt": "the project's"}}}})
+    good = cfg.read_text(encoding="utf-8")
+    cfg.write_text('{"workflows": ', encoding="utf-8")
+    mgr = TaskConfigManager(_shared_fallback(tmp_path), project_root=root)
+    cfg.write_text(good, encoding="utf-8")
+
+    mgr.set_chat_config("json_code", ChatConfig(enabled=False, system_prompt=None))
+    assert not mgr.save_config()
+    assert "reopen the project" in mgr.save_error
+    assert cfg.read_text(encoding="utf-8") == good
+
+    mgr.reload(root)  # read again: saves go through
+    mgr.set_chat_config("json_code", ChatConfig(enabled=False, system_prompt=None))
+    assert mgr.save_config()
+    assert _read_project_config(root)["workflows"]["text_only"]["chat_config"]["system_prompt"] \
+        == "the project's"
+
+
 # ---------------------------------------------------------------------------
 # Lifecycle: reset_to_defaults + delete_task drop snapshot entries
 # ---------------------------------------------------------------------------

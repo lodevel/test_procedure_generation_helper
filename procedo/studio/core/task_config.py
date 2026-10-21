@@ -47,6 +47,8 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Callable, Dict, List, Optional, Union
 
+from procedo.core import config_manager
+
 from .. import launch_env
 from ..llm.backend_base import LLMTask
 from .fileio import atomic_write_text
@@ -252,7 +254,7 @@ class TaskConfigManager:
         # workflow-editor saves through one path. Unregistered today;
         # direct write is the legacy fallback.
         self._workflows_writer: Optional[Callable[[Dict[str, Any]], bool]] = None
-
+        self._load_error = self.save_error = ""  # why the project load / the last save failed
         self._load_config()
         log.info(
             "TaskConfigManager initialized (project_root=%s, fallback=%s, active=%s)",
@@ -329,13 +331,13 @@ class TaskConfigManager:
                     self._pack_task_dicts_by_tab[tab_id] = index
 
             project_workflows: Dict[str, Any] = {}
-            project_path = self._project_config_path()
-            if project_path and project_path.exists():
-                full = _safe_read_json(project_path)
-                if isinstance(full, dict):
-                    candidate = full.get("workflows")
-                    if isinstance(candidate, dict):
-                        project_workflows = candidate
+            try:  # unreadable now: a save of the (empty) snapshot is refused (_load_error)
+                full = config_manager.load_unified_config(self._project_root / "config")
+                self._load_error, candidate = "", full.get("workflows")
+            except (OSError, ValueError) as exc:  # logged by the save it refuses
+                self._load_error, candidate = str(exc), None
+            if isinstance(candidate, dict):
+                project_workflows = candidate
 
             # Snapshot the project's verbatim workflows section BEFORE merging.
             # This is the only thing save_config() writes — pack defaults
@@ -793,6 +795,9 @@ class TaskConfigManager:
         write (Codex H1.D).
         """
         if self._project_root is not None:
+            if self._load_error:  # a save would replace the workflows it could not read
+                raise OSError(f"the project's config could not be read when it was opened "
+                              f"({self._load_error}); reopen the project")
             payload = deepcopy(self._project_workflow_snapshot)
             if self._workflows_writer is not None:
                 ok = bool(self._workflows_writer(payload))
@@ -804,17 +809,9 @@ class TaskConfigManager:
             if target is None:
                 log.error("No save target — project_root set but path resolution failed")
                 return
-            target.parent.mkdir(parents=True, exist_ok=True)
-            log.warning(
-                "Direct project-mode save (no single-writer registered). "
-                "Phase 4 wires register_workflows_writer to close Codex H1; "
-                "concurrent ProjectConfigDialog commits could race."
-            )
-            full = _safe_read_json(target) if target.exists() else {}
-            if not isinstance(full, dict):
-                full = {}
-            full["workflows"] = payload
-            atomic_write_text(target, json.dumps(full, indent=2, ensure_ascii=False))
+            log.warning("Direct project-mode save (no single-writer): commits could race (H1).")
+            # Raises, writing nothing, when config.json cannot be read: its other sections stay.
+            config_manager.write_config_section(target.parent, "workflows", payload)
             return
 
         # Legacy single-file mode: write merged workflows as the file root.
@@ -824,13 +821,15 @@ class TaskConfigManager:
         atomic_write_text(self._fallback_path, json.dumps(self._build_workflows_section(), indent=2, ensure_ascii=False))
 
     def save_config(self) -> bool:
-        """Thread-safe atomic save to the active sink."""
+        """Thread-safe atomic save to the active sink; False when it failed (``save_error``)."""
+        self.save_error = ""
         try:
             with self._lock:
                 self._save_config_internal()
             return True
         except Exception as e:
             log.error("Failed to save config: %s", e, exc_info=True)
+            self.save_error = str(e)
             return False
 
     # ------------------------------------------------------------------

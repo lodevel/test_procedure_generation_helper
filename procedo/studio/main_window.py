@@ -1307,8 +1307,8 @@ class StudioWorkspace(QWidget):
         self._document_controller.on_tab_artifact_saved()
 
     def _on_save_all(self):
-        """Save all dirty artifacts across all tabs."""
-        self._document_controller.on_save_all()
+        """Save all dirty artifacts across all tabs; False when a write failed."""
+        return self._document_controller.on_save_all()
 
     def _check_unsaved_changes(self) -> bool:
         """True when the user cancelled the unsaved-changes prompt."""

@@ -102,13 +102,17 @@ class DockWidget(QWidget):
             view=shell.VIEWS[self.main_window.view_stack.currentIndex()][0],
         )
         accepted = dialog.exec()
-        if accepted:
-            selected_rules = dialog.get_selected_rules()
-            tab_context.set_selected_rules(selected_rules)
+        selected_rules = dialog.get_selected_rules()
+        saved = bool(accepted) and tab_context.set_selected_rules(selected_rules)
         # The selector saves each tick, even when cancelled, and may have added a document:
         # the footer and this picker count again.
         shell.refresh_footer(self.main_window)
-        if accepted:
+        if accepted and not saved:
+            QMessageBox.warning(
+                self, "Rules Not Saved",
+                "The rule selection applies now but was not saved:\n\n"
+                + self.main_window.task_config_manager.save_error)
+        elif saved:
             QMessageBox.information(
                 self,
                 "Rules Updated",

@@ -129,8 +129,13 @@ class RuleSelectorDialog(QDialog):
         """A tick: saved at once, through the task-config single-writer contract (it
         propagates to every task in the tab)."""
         self.task_config_manager.set_selected_rules_for_tab(self.tab_id, self.get_selected_rules())
-        self.task_config_manager.save_config()
         self._update_count()
+        self._save()
+
+    def _save(self) -> None:
+        """Save the selection; when it could not be (a share down), the footer says why."""
+        if not self.task_config_manager.save_config():
+            self.count_label.setText(f"Not saved: {self.task_config_manager.save_error}")
 
     def _update_count(self) -> None:
         checked = self.rules.checked()
@@ -152,8 +157,8 @@ class RuleSelectorDialog(QDialog):
             QMessageBox.warning(self, "Add document", str(exc))
             return
         self.task_config_manager.add_rule_to_selections(doc.key)
-        self.task_config_manager.save_config()
         self._fill()
+        self._save()
         size, limit = doc.path.stat().st_size, warn_above(doc.path)
         if size > limit:
             QMessageBox.warning(

@@ -17,9 +17,9 @@ the read/write helpers. Both:
     treats the section as part of "everything else" and preserves it
     across config-apply cycles per the post-apply-preserves contract.
 
-Errors are logged but never raised — a transient I/O glitch must not
-block the operator from continuing to work; the toggle state simply
-falls back to the in-memory checkbox value.
+A read error reads as no settings (the defaults); a save that cannot read or write the
+project's ``config.json`` raises, and its caller tells the user — it never replaces a
+config it could not read.
 
 **Concurrency contract.** Single-writer per project. Writes use an
 atomic temp-file + rename so a crash mid-write never leaves
@@ -31,12 +31,11 @@ their next ``switch_context``).
 """
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
 
-from ..core.fileio import atomic_write_text
+from procedo.core import config_manager
 
 log = logging.getLogger(__name__)
 
@@ -85,55 +84,18 @@ def load_settings(project_root: Path) -> dict[str, Any]:
     is unreadable, or the section is absent — callers fall back to
     in-process defaults in any of those cases.
     """
-    config_path = project_root / "config" / "config.json"
-    if not config_path.exists():
-        return {}
-    try:
-        data = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        log.exception("Could not read validator_loop settings from %s", config_path)
-        return {}
-    section = data.get(SECTION_NAME, {})
+    section = config_manager.read_config_section(project_root / "config", SECTION_NAME)
     return section if isinstance(section, dict) else {}
 
 
 def save_setting(project_root: Path, key: str, value: Any) -> None:
-    """Merge a single ``key=value`` into the ``validator_loop`` section.
-
-    Preserves all other sections of the config — the chat panel must
-    never clobber ``test_order``, ``parsers``, etc. by writing only its
-    own slice. Same preserve-and-overlay contract as
-    ``config_manager.write_config_section``.
-
-    Uses an atomic temp-file + rename so a crash mid-write leaves the
-    previous ``config.json`` intact (vs. ``write_text`` which would
-    truncate the file before writing the new contents).
-    """
+    """Merge a single ``key=value`` into the ``validator_loop`` section, every other section
+    kept (an atomic write). Raises, writing nothing, when the project's ``config.json``
+    cannot be read or written: the caller tells the user."""
     config_dir = project_root / "config"
-    config_path = config_dir / "config.json"
-    config_dir.mkdir(parents=True, exist_ok=True)
-
-    data = {}
-    if config_path.exists():
-        try:
-            data = json.loads(config_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            log.warning(
-                "config.json at %s is unreadable; rewriting with %s only",
-                config_path, SECTION_NAME,
-            )
-            data = {}
-
-    section = data.get(SECTION_NAME, {})
-    if not isinstance(section, dict):
-        section = {}
-    section[key] = value
-    data[SECTION_NAME] = section
-
-    serialized = json.dumps(data, indent=2, ensure_ascii=False)
-    try:
-        atomic_write_text(config_path, serialized)
-    except OSError:
-        log.exception("Could not write validator_loop settings to %s", config_path)
+    data = config_manager.load_unified_config(config_dir)
+    section = data.get(SECTION_NAME)
+    data[SECTION_NAME] = {**section, key: value} if isinstance(section, dict) else {key: value}
+    config_manager.write_unified_config(config_dir, data)
 
 

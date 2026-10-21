@@ -400,10 +400,10 @@ class BaseTab(QWidget):
         """Save all artifacts managed by this tab (sync + save + reset dirty).
 
         This is the correct entry point for saving from outside the tab
-        (e.g. Ctrl+S, Save All): each editor card writes its artifact.
+        (e.g. Ctrl+S, Save All): each editor card writes its artifact. True when every card
+        saved (a card that failed said why).
         """
-        for card in self.cards:
-            card.save()
+        return all([card.save() for card in self.cards])  # a list: every card tries
 
     # ------------------------------------------------------------------
     # Shared by the LLM views: the chat's task line, a procedure.json proposal

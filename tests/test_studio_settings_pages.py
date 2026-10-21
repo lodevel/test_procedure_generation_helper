@@ -132,6 +132,23 @@ def test_the_validator_page_saves_to_the_project_config(qapp, no_network, projec
     dlg.reject()
 
 
+def test_a_project_config_that_cannot_be_saved_is_said_and_the_app_settings_still_save(
+        qapp, no_network, project, monkeypatch):
+    errors: list[tuple[str, str]] = []
+    monkeypatch.setattr(settings_dialog.QMessageBox, "critical",
+                        lambda parent, title, text: errors.append((title, text)))
+    dlg = _open(qapp, project)
+    (project / "config" / "config.json").write_text('{"project_id": ', encoding="utf-8")
+    dlg.validator_enabled.setChecked(False)
+    dlg.request_timeout.setValue(277.0)
+    dlg._on_save()
+    assert [title for title, _ in errors] == ["Project Settings Not Saved"]
+    assert "config.json" in errors[0][1]
+    assert load_settings()["common_llm"]["request_timeout"] == 277.0  # the app's part saved
+    assert dlg.result() == dlg.DialogCode.Accepted
+    assert (project / "config" / "config.json").read_text(encoding="utf-8") == '{"project_id": '
+
+
 def test_without_a_project_the_validator_page_is_disabled_and_says_why(qapp, no_network):
     dlg = _open(qapp)
     for widget in (dlg.validator_enabled, dlg.validator_max_attempts, dlg.net_hide_prefixes):

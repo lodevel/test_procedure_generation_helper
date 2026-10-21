@@ -252,7 +252,7 @@ def test_the_rule_selector_counts_the_ticked_rules_and_saves_each_tick(qapp, tmp
     tcm = SimpleNamespace(
         get_all_tasks_for_tab=lambda tab: [SimpleNamespace(selected_rules=["a.md", "c.md"])],
         set_selected_rules_for_tab=lambda tab, rules: saved.append((tab, rules)),
-        save_config=lambda: None)
+        save_config=lambda: True)
     for name in ("a.md", "b.md", "c.md"):
         (tmp_path / name).write_text("x" * 1500, encoding="utf-8")
     pm = SimpleNamespace(project_root=None, get_rule_docs=lambda: [

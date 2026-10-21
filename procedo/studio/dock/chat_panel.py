@@ -393,7 +393,10 @@ class ChatPanel(QWidget):
         if project_root is None:
             return
         from ..llm.validator_loop_settings import save_setting
-        save_setting(project_root, "auto_correct", bool(checked))
+        try:
+            save_setting(project_root, "auto_correct", bool(checked))
+        except Exception as exc:  # noqa: BLE001 — said in the chat; the box keeps its state
+            self.add_system_message(f"Auto-correct not saved: {exc}", tone="danger")
 
     def _load_validator_loop_for_context(self, tab_context) -> None:
         """Read the persisted ``validator_loop`` section from the active

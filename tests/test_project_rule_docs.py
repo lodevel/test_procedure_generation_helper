@@ -403,6 +403,17 @@ def test_adding_a_small_document_does_not_warn_and_a_refusal_is_shown(qapp, tmp_
     assert (root / "config" / "project_rules" / "board.md").read_text(encoding="utf-8") == "mine"
 
 
+def test_a_tick_that_cannot_be_saved_says_so_in_the_footer(qapp, tmp_path):
+    root = _project(tmp_path)
+    tcm = _tcm(root, {"text_json": ["01_a.md"]})
+    dlg = _dialog(root, _pm(root), tcm)
+    (root / "config" / "config.json").write_text('{"project_id": ', encoding="utf-8")  # damaged
+    dlg.rules._boxes["02_b.md"].setChecked(True)
+    assert dlg.count_label.text().startswith("Not saved: ")
+    assert "config.json" in dlg.count_label.text()  # why
+    assert (root / "config" / "config.json").read_text(encoding="utf-8") == '{"project_id": '
+
+
 def test_open_folder_that_cannot_be_created_says_so(qapp, tmp_path, monkeypatch):
     root = _project(tmp_path)
     (root / "config" / "project_rules").write_text("a file in the way", encoding="utf-8")

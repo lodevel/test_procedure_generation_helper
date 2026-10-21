@@ -22,10 +22,12 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
-from procedo.core import app_settings, config_manager, display_snapshot
+from procedo.core import app_settings, display_snapshot
 from procedo.core.new_project_dialog import NewProjectDialog
+from procedo.core.off_gui import run_off_gui
 
 from .. import _project_local_state
 from ..pack_ops import engine
@@ -36,14 +38,18 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-class ProjectController:
-    """Project new/open/recents flows for the Studio workspace."""
+class ProjectController(QObject):
+    """Project new/open/recents flows for the Studio workspace (a QObject: a worker's answer
+    lands on its slots)."""
 
     def __init__(self, window: StudioWorkspace) -> None:
+        super().__init__(window)
         self._mw = window
+        self._recent_asked: Optional[str] = None
 
     def on_new_project(self):
         """Handle new project creation."""
+        self._forget_recent()
         mw = self._mw
         # Shared, bundle-backed New Project — the SAME dialog the main app
         # uses: creates dirs + venv + bundle ref + starter test, so
@@ -52,20 +58,8 @@ class ProjectController:
         if dialog.exec() != QDialog.Accepted:
             return
 
+        # The dialog seeded the template and wrote the identity (apply_project_settings).
         project_path = Path(dialog.project_location) / dialog.project_name
-
-        selected_cfg = dialog.selected_config
-        if selected_cfg:
-            config_manager.seed_project_from_config(selected_cfg, project_path)
-            config_manager.set_last_used_config(selected_cfg)
-
-        config_name = getattr(dialog, "config_name", "") or dialog.project_name
-        if config_name:
-            config_dir = project_path / "config"
-            config_dir.mkdir(parents=True, exist_ok=True)
-            origin = config_manager.read_config_section(config_dir, "origin")
-            origin["config_name"] = config_name
-            config_manager.write_config_section(config_dir, "origin", origin)
 
         # Point the editor's navigation model at the freshly-created project.
         mw.project_manager.set_project_root(project_path)
@@ -133,21 +127,40 @@ class ProjectController:
                 lambda checked=False, p=path_str: mw._on_open_recent(p)
             )
 
+    def _forget_recent(self) -> None:
+        """A recent still being looked for no longer opens; its footer line goes."""
+        if self._recent_asked is not None:
+            self._recent_asked = None
+            self._mw.footer.show_message("")
+
     def on_open_recent(self, path_str):
-        """Open a project from the recent list."""
+        """Open a project from the recent list. Its folder is looked for off the GUI thread
+        (on a share that is down that takes ~20 s); only the last one asked for opens."""
+        self._recent_asked = path_str
+        self._mw.footer.show_message(f"Looking for {path_str}…")
+        run_off_gui(lambda: (path_str, _folder_there(path_str)), self._on_recent_checked,
+                    name="recent-project-check")
+
+    def _on_recent_checked(self, answer) -> None:
+        path_str, there = answer
+        if path_str != self._recent_asked:
+            return  # another recent was asked for since
+        self._recent_asked = None
         mw = self._mw
-        path = Path(path_str)
-        if not path.is_dir():
+        mw.footer.show_message("")
+        if not there:
             QMessageBox.warning(
                 mw, "Project Not Found",
-                f"The project folder no longer exists:\n{path_str}")
+                f"The project folder does not exist or cannot be reached:\n{path_str}")
             return
+        path = Path(path_str)
         if mw.project_manager.set_project_root(path):
             app_settings.add_recent_project(str(path))
             mw._refresh_after_open()
 
     def on_open_project(self):
         """Handle open project action."""
+        self._forget_recent()
         mw = self._mw
         path = QFileDialog.getExistingDirectory(
             mw,
@@ -193,6 +206,14 @@ class ProjectController:
                     "Selected folder does not appear to be a valid project root.\n\n"
                     "A valid project should contain a 'tests/' or 'config/' folder."
                 )
+
+
+def _folder_there(path_str: str) -> bool:
+    """*path_str* is a folder; False too when it cannot be reached (a share that is down)."""
+    try:
+        return Path(path_str).is_dir()
+    except OSError:
+        return False
 
 
 # --- task-#39 watcher / config-change funnel -------------------------------

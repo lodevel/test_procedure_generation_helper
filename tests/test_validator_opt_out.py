@@ -132,6 +132,16 @@ def test_save_setting_persists_enabled_flag(tmp_path):
     assert is_enabled(root) is False
 
 
+def test_save_setting_refuses_a_config_it_cannot_read(tmp_path):
+    # A damaged (or unreachable) config.json is never rewritten with this section alone.
+    root = _project(tmp_path)
+    cfg = root / "config" / "config.json"
+    cfg.write_text('{"test_order": {"order": ["t1"]}, ', encoding="utf-8")
+    with pytest.raises(ValueError):
+        save_setting(root, "enabled", False)
+    assert cfg.read_text(encoding="utf-8") == '{"test_order": {"order": ["t1"]}, '
+
+
 # ---------------------------------------------------------------------------
 # Auto-correct preference key is distinct from master enable
 # ---------------------------------------------------------------------------

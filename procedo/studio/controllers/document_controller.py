@@ -366,13 +366,7 @@ class DocumentController:
         if not mw.artifact_manager:
             return
 
-        current_tab = mw.view_stack.currentWidget()
-
-        if hasattr(current_tab, 'save_all_artifacts'):
-            current_tab.save_all_artifacts()
-        else:
-            # Fallback for tabs without editors
-            mw.artifact_manager.save_all()
+        saved = mw.view_stack.currentWidget().save_all_artifacts()  # a failed card said why
 
         # Check if JSON/Code pair coherence is broken
         self.check_sync_hashes()
@@ -380,7 +374,8 @@ class DocumentController:
         mw._update_status_indicators()
         # Refresh workspace test list to update artifact indicators
         mw.workspace_widget.refresh_opened_test()
-        mw.footer.show_message("Saved", 2000)
+        if saved:
+            mw.footer.show_message("Saved", 2000)
 
     def _on_media_refreshed(self, am: ArtifactManager, saved: str) -> bool:
         """A save's media refresh landed. For the open test, which holds its own sync baseline:
@@ -459,8 +454,9 @@ class DocumentController:
         mw._update_status_indicators()
         mw.workspace_widget.refresh_opened_test()
 
-    def on_save_all(self):
-        """Save all dirty artifacts across all tabs.
+    def on_save_all(self) -> bool:
+        """Save all dirty artifacts across all tabs; False when a write failed (the error is
+        shown, what was not written stays modified).
 
         Syncs only the current tab's editors (to avoid stale content from
         inactive tabs overwriting shared artifacts), then saves all dirty
@@ -469,7 +465,7 @@ class DocumentController:
         """
         mw = self._mw
         if not mw.artifact_manager:
-            return
+            return True
 
         # Sync only the current tab — inactive tabs may hold stale content
         # for shared artifacts like procedure.json
@@ -477,24 +473,25 @@ class DocumentController:
         if hasattr(current_tab, 'sync_editors_to_artifacts'):
             current_tab.sync_editors_to_artifacts()
 
-        # Save all dirty artifacts via artifact manager (single source of truth)
-        mw.artifact_manager.save_all()
-
-        # Reload all views so editors + Saved pills reflect the saved state
-        for i in range(mw.view_stack.count()):
-            mw.view_stack.widget(i).load_content()
-
-        if mw.session_state:
-            mw.session_state.save()
-
-        # Check if artifacts changed from the acknowledged baseline
-        self.check_sync_hashes()
-
-        # Update indicators after save
-        mw._update_status_indicators()
-        # Refresh workspace test list to update artifact indicators
-        mw.workspace_widget.refresh_opened_test()
+        try:
+            # Save all dirty artifacts via artifact manager (single source of truth)
+            mw.artifact_manager.save_all()
+            if mw.session_state:
+                mw.session_state.save()
+            # Check if artifacts changed from the acknowledged baseline
+            self.check_sync_hashes()
+        except Exception as exc:  # noqa: BLE001 — told to the user (a share gone, a full disk)
+            QMessageBox.critical(mw, "Save Failed", str(exc))
+            return False
+        finally:
+            # Reload all views so editors + Saved pills reflect what was saved
+            for i in range(mw.view_stack.count()):
+                mw.view_stack.widget(i).load_content()
+            mw._update_status_indicators()
+            # Refresh workspace test list to update artifact indicators
+            mw.workspace_widget.refresh_opened_test()
         mw.footer.show_message("All saved", 2000)
+        return True
 
     def check_unsaved_changes(self) -> bool:
         """Check for unsaved changes and prompt user.
@@ -538,8 +535,7 @@ class DocumentController:
         )
 
         if result == QMessageBox.Save:
-            mw._on_save_all()
-            return False
+            return not mw._on_save_all()  # a failed save cancels: the edits stay in the window
         elif result == QMessageBox.Cancel:
             return True  # User cancelled
         else:

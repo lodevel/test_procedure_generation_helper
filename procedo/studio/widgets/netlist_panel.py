@@ -93,6 +93,7 @@ class NetlistPanel(ui_kit.Card):
         self._sel_timer.setSingleShot(True)
         self._sel_timer.timeout.connect(self._render_selection)
         self._build_ui()
+        self._board_read = self.loading.hold("Loading board\u2026")  # the title row's cue
         self.set_board([], [])
 
     # -- UI -------------------------------------------------------------------
@@ -181,7 +182,8 @@ class NetlistPanel(ui_kit.Card):
         self._viewer.board = project_root
         self._viewer.subtitle = tgz.name if tgz is not None else ""
         self._hide_prefixes = read_hide_prefixes(project_root / "config" if project_root is not None else None)
-        self.set_status("Loading board…")
+        self.set_status("")
+        self._board_read.set(True)
         worker = _LoadWorker(project_root)
         self._load_worker = worker
         _LIVE_WORKERS.add(worker)
@@ -194,6 +196,7 @@ class NetlistPanel(ui_kit.Card):
         # An earlier project/startup load may finish after the current one.
         if self.sender() is not self._load_worker:
             return
+        self._board_read.set(False)
         comps = data.get("components", []) if isinstance(data, dict) else []
         nets = data.get("nets", []) if isinstance(data, dict) else []
         if comps or nets:

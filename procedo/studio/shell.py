@@ -184,8 +184,9 @@ def _footer(ws: StudioWorkspace) -> ui_kit.StatusLine:
     ws.rules_link = ui_kit.link("Rules: none", ws._on_rules_indicator_clicked)
     ws.bundle_label = QLabel("Bundle: none")
     ws.validator_label = QLabel()
+    ws.loading = ui_kit.LoadingCue()  # background work no card shows (a save's media refresh, …)
     ws.footer = ui_kit.StatusLine([ws.project_link, ws.rules_link, ws.bundle_label],
-                                  [ws.validator_label])
+                                  [ws.loading, ws.validator_label])
     return ws.footer
 
 

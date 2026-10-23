@@ -238,6 +238,7 @@ class DocumentController:
         # Initialize managers for this test
         am = mw.artifact_manager = ArtifactManager()
         am.on_media_refreshed = lambda saved: self._on_media_refreshed(am, saved)
+        am.media_cue = mw.loading
         mw.artifact_manager.set_test_dir(path)
         mw.artifact_manager.load_all()  # Load existing files from disk
         mw.artifact_manager.set_exclusion_patterns(

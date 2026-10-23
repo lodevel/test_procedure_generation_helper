@@ -209,7 +209,8 @@ class CodeEditor(QPlainTextEdit):
 
 class EditorCard(QFrame):
     """One artifact's editor in a white card: its file name, the Saved / ● Modified pill and its
-    Save in the header row (``add_to_header``: more left of Save), the editor under it."""
+    Save in the header row (``add_to_header``: more left of Save; :attr:`loading` while an engine
+    call that will change it runs), the editor under it."""
 
     #: The editor's text changed (typing, a proposal applied, a sync) — not a load.
     changed = Signal()
@@ -238,6 +239,8 @@ class EditorCard(QFrame):
             self._head.addWidget(widget, 0, Qt.AlignmentFlag.AlignVCenter)
         self._head.addStretch(1)
         self._head.addWidget(self.save_button)
+        self.loading = ui_kit.LoadingCue()
+        self.add_to_header(self.loading)
         self.editor = CodeEditor(wrap=wrap)
         self.editor.setPlaceholderText(placeholder)
         self.editor.textChanged.connect(self._on_edited)

@@ -413,11 +413,73 @@ def test_an_answer_for_a_button_destroyed_meanwhile_still_lands(qapp, tmp_path):
     import shiboken6
     from PySide6.QtWidgets import QPushButton
     from procedo.studio.pack_ops import engine_async
-    button, go, answered = QPushButton("Sync"), threading.Event(), []
+    from procedo.core.ui_kit import LoadingCue
+    button, cue, go, answered = QPushButton("Sync"), LoadingCue(), threading.Event(), []
 
-    engine_async.call(tmp_path, lambda: go.wait(5), answered.append, button=button)
-    shiboken6.delete(button)  # the window closed while the call ran
+    engine_async.call(tmp_path, lambda: go.wait(5), answered.append, button=button, cue=cue)
+    shiboken6.delete(button)  # the button's card closed while the call ran; the cue lives on
     go.set()
     _pump(lambda: answered)
 
-    assert answered[0]() is True and not engine_async.busy(button)
+    assert answered[0]() is True and not engine_async.busy(button) and not cue.active
+
+
+# --- the loading cue where the answer will show (owner 2026-10-23) --------------------------
+
+_CUES = {  # caller -> (the view's attribute holding the cue's owner, its card or the window, label)
+    "parse": ("text_json_tab", "json_card", "Parsing…"),
+    "render": ("text_json_tab", "text_card", "Rendering…"),
+    "code": ("json_code_tab", "code_card", "Generating code…"),
+    "renumber_steps": ("text_json_tab", "text_card", "Renumbering steps…"),
+    "sync_equipment": ("text_json_tab", "text_card", "Syncing equipment…"),
+    "sync_meta": ("text_json_tab", "text_card", "Syncing meta…"),
+    "parse_generate": ("text_only_tab", "text_card", "Parsing…"),
+    "reconstruct": ("text_only_tab", "text_card", "Preparing the proposal…"),
+    "save": (None, None, "Refreshing media…"),
+}
+_OPS = {"parse": "parse_text", "render": "render_text", "code": "generate_code", "parse_generate": "parse_text",
+        "reconstruct": "reconstruct", "save": "refresh_media"}
+
+
+@pytest.mark.parametrize("name", sorted(_CUES))
+def test_each_engine_call_says_it_runs_where_its_answer_will_show(opened, monkeypatch, real_reconstruct, name):
+    w = opened
+    tools = _Tools(gated=(_OPS.get(name, name),))
+    monkeypatch.setattr(engine, "tools_op", tools)
+    start, landed = _case(w, name)
+    view, card, label = _CUES[name]
+    cue = getattr(getattr(w, view), card).loading if view else w.loading  # the save's: the footer's
+
+    start()
+    assert tools.entered.wait(5)
+    assert cue.active and cue.label.text() == label
+    tools.release()
+    _pump(landed)
+    _pump(lambda: not cue.active)
+
+
+def test_a_failed_engine_call_takes_its_cue_away(qapp, tmp_path):
+    from procedo.core.ui_kit import LoadingCue
+    from procedo.studio.pack_ops import engine_async
+    cue, answered = LoadingCue(), []
+
+    def broken():
+        raise RuntimeError("engine down")
+
+    engine_async.call(tmp_path, broken, answered.append, cue=cue, cue_label="Parsing…")
+    assert cue.active
+    _pump(lambda: answered)
+    assert not cue.active
+    with pytest.raises(RuntimeError, match="engine down"):
+        answered[0]()
+
+
+def test_a_session_compaction_shows_in_the_footer_until_it_answers(opened, monkeypatch):
+    w = opened
+    go = threading.Event()
+    tab = SimpleNamespace(tab_context=SimpleNamespace(backend=SimpleNamespace(compact=lambda: go.wait(5))))
+    monkeypatch.setattr(w.view_stack, "currentWidget", lambda: tab)
+    w._on_compact_session()
+    assert w.loading.active and w.loading.label.text() == "Compacting session…"
+    go.set()
+    _pump(lambda: not w.loading.active)

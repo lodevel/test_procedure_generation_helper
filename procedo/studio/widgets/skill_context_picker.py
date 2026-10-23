@@ -133,6 +133,7 @@ class SkillContextPicker(ui_kit.Card):
         self._readout_timer.setInterval(150)
         self._readout_timer.timeout.connect(self._update_readout)
         self._readout_generation = 0
+        self._sizing = self.loading.hold("Sizing the context\u2026")  # the title row's cue
         self._readout_ready.connect(self._show_readout)
 
         self._update_readout()
@@ -199,7 +200,7 @@ class SkillContextPicker(ui_kit.Card):
     def _update_readout(self) -> None:
         """Each tab's ticked count ("Rules 2") now, and the readout once a worker thread has
         sized the selection: materializing it can load the board (an ODB CLI run, ~0.5 s and
-        more), which must not freeze the window. "loading…" until then; only the latest
+        more), which must not freeze the window. The card's cue until then; only the latest
         sizing is shown."""
         selections = self.selections()
         for i, (source, keys) in enumerate(selections):
@@ -208,9 +209,11 @@ class SkillContextPicker(ui_kit.Card):
         self._readout_generation += 1
         generation = self._readout_generation
         if not count:
+            self._sizing.set(False)
             self._readout.setText("Context: 0 items · ~0 tokens (est.)")
             return
-        self._readout.setText(f"Context: {count} items · loading…")
+        self._readout.setText(f"Context: {count} items")
+        self._sizing.set(True)
 
         def size() -> None:
             try:
@@ -228,6 +231,7 @@ class SkillContextPicker(ui_kit.Card):
 
     def _show_readout(self, generation: int, text: str) -> None:
         if generation == self._readout_generation:
+            self._sizing.set(False)
             self._readout.setText(text)
 
     def _iter_tabs(self):

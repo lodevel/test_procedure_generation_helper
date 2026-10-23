@@ -329,7 +329,7 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         engine_async.call(
             project_root, lambda: pack_parsers.generate_code(procedure, project_root),
             lambda answer: self._quick_code_done(sent, procedure, answer),
-            button=self.quick_code_btn)
+            button=self.quick_code_btn, cue=self.code_card.loading, cue_label="Generating code\u2026")
 
     def _quick_code_done(self, sent: str, procedure: dict, answer) -> None:
         from ..pack_ops import pack_parsers
@@ -497,7 +497,8 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
             self._call_hints = {}
             return
         engine_async.call(root, lambda: call_hints.function_signatures(Path(root)),
-                          lambda answer: self._show_call_hints(asked, answer))
+                          lambda answer: self._show_call_hints(asked, answer),
+                          cue=self.main_window.loading, cue_label="Reading function signatures\u2026")
 
     def _show_call_hints(self, asked: tuple, answer) -> None:
         """The signatures asked as ``asked``; a late answer (asked again since, another project)

@@ -157,8 +157,8 @@ def _wait(qapp, done, seconds=3.0):
 
 
 def test_sizing_a_slow_default_item_does_not_freeze_the_window(chat, qapp):
-    """The board behind the part numbers takes ~0.5 s to load: the readout says loading…
-    and sizes it on a worker thread; the window keeps running."""
+    """The board behind the part numbers takes ~0.5 s to load: the context card's cue says it
+    is sizing, on a worker thread; the window keeps running."""
     make, _sent = chat
 
     def slow():
@@ -169,5 +169,22 @@ def test_sizing_a_slow_default_item_does_not_freeze_the_window(chat, qapp):
     start = time.perf_counter()
     widget._picker._update_readout()
     assert time.perf_counter() - start < 0.1
-    assert widget._picker._readout.text() == "Context: 1 items · loading…"
+    assert widget._picker._readout.text() == "Context: 1 items"
+    assert widget._picker.loading.active and widget._picker.loading.label.text() == "Sizing the context…"
     assert _wait(qapp, lambda: "tokens (est.)" in widget._picker._readout.text())
+    assert not widget._picker.loading.active
+
+
+def test_the_conversation_says_working_while_the_skill_runs(chat):
+    """Owner 2026-10-23: a request in flight shows — the Conversation card's cue follows the
+    chat's busy state (sent, answered or stopped)."""
+    from procedo.core.ui_kit import LoadingCue
+
+    make, _sent = chat
+    widget = make(_skill())
+    [cue] = [c for c in widget.findChildren(LoadingCue) if not widget._picker.isAncestorOf(c)]
+    widget._set_busy(True)
+    assert cue.active and cue.label.text() == "Working…"
+    widget._set_busy(True)  # said twice: still one load
+    widget._set_busy(False)
+    assert not cue.active

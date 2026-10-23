@@ -243,6 +243,7 @@ class SkillChatWidget(QWidget):
         )
         conversation = ui_kit.Card("Conversation")
         conversation.body.addWidget(self._transcript)
+        self.busy_changed.connect(conversation.loading.hold("Working\u2026").set)
         cards = ui_kit.hbox()
         cards.setSpacing(12)
         cards.addWidget(conversation, 1)

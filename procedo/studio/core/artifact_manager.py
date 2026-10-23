@@ -90,6 +90,8 @@ class ArtifactManager:
     #: was saved: True when the open test's controller holds this test's sync baseline (and took
     #: the refresh into it); otherwise the session file is re-baselined here.
     on_media_refreshed: Optional[Callable[[str], bool]] = field(default=None, repr=False)
+    #: The window's loading cue (a ``LoadingCue``) while a save's media refresh runs; None: none.
+    media_cue: Any = field(default=None, repr=False)
     
     def set_test_dir(self, test_dir: Path) -> None:
         """Set the test directory and update file paths."""
@@ -214,7 +216,8 @@ class ArtifactManager:
             if acknowledged and not held:            # derived data must not un-sync a coherent test
                 test_sync.mark_in_sync(self.test_dir, patterns)
 
-        engine_async.call(root, lambda: pack_parsers.refresh_media(doc, root), done)
+        engine_async.call(root, lambda: pack_parsers.refresh_media(doc, root), done,
+                          cue=self.media_cue, cue_label="Refreshing media\u2026")
 
     def save_all(self) -> list[ArtifactType]:
         """Save all dirty artifacts. Returns list of saved artifact types."""

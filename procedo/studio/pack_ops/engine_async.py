@@ -74,24 +74,35 @@ def _the_inbox() -> _Inbox:
     return _inbox
 
 
+def _settle(widget_call: Callable[..., Any], *args: Any) -> None:
+    """A call's widget put back, unless the window closed meanwhile and took it along."""
+    try:
+        widget_call(*args)
+    except RuntimeError:  # the C++ widget is gone
+        pass
+
+
 def call(project_root: Optional[Path], fn: Callable[[], Any], on_done: Callable[[Answer], None],
-         *, button=None) -> None:
+         *, button=None, cue=None, cue_label: str = "") -> None:
     """Run ``fn()`` (an engine call for ``project_root``, its inputs already read) off the GUI
     thread, then ``on_done(answer)`` on it. While it runs ``button`` is disabled and another
-    call for it is ignored. Call it on the GUI thread."""
+    call for it is ignored, and ``cue`` (a :class:`procedo.core.ui_kit.LoadingCue`, where the
+    answer will show) says ``cue_label`` — once the call has taken a moment: a warm engine
+    answers before it shows. Call it on the GUI thread."""
     if button is not None:
         if button in _busy:
             return
         _busy.add(button)
         button.setEnabled(False)
+    if cue is not None:
+        cue.start(cue_label or None)
 
     def done(answer: Answer) -> None:
+        _busy.discard(button)
         if button is not None:
-            _busy.discard(button)
-            try:
-                button.setEnabled(True)
-            except RuntimeError:  # the window closed meanwhile: its button is gone
-                pass
+            _settle(button.setEnabled, True)
+        if cue is not None:
+            _settle(cue.done)
         on_done(answer)
 
     if project_root is None:

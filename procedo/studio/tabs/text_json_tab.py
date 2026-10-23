@@ -160,7 +160,8 @@ class TextJsonTab(TextActionsMixin, LLMTabMixin, BaseTab):
         project_root = getattr(self.project_manager, "project_root", None)
         engine_async.call(
             project_root, lambda: pack_parsers.parse_text(text, project_root=project_root),
-            lambda answer: self._quick_parse_done(sent, answer), button=self.quick_parse_btn)
+            lambda answer: self._quick_parse_done(sent, answer), button=self.quick_parse_btn,
+            cue=self.json_card.loading, cue_label="Parsing\u2026")
 
     def _quick_parse_done(self, sent: str, answer) -> None:
         from ..pack_ops import pack_parsers
@@ -229,7 +230,8 @@ class TextJsonTab(TextActionsMixin, LLMTabMixin, BaseTab):
         project_root = getattr(self.project_manager, "project_root", None)
         engine_async.call(
             project_root, lambda: pack_parsers.render_text(procedure, project_root=project_root),
-            lambda answer: self._quick_render_done(sent, answer), button=self.quick_render_btn)
+            lambda answer: self._quick_render_done(sent, answer), button=self.quick_render_btn,
+            cue=self.text_card.loading, cue_label="Rendering\u2026")
 
     def _quick_render_done(self, sent: str, answer) -> None:
         from ..pack_ops import pack_parsers

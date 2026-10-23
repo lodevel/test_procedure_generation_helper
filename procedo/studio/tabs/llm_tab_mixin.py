@@ -567,7 +567,8 @@ class LLMTabMixin:
         self.main_window.dock.chat_panel.set_llm_active(True, cancellable=False)
         self.status_message.emit("Checking the proposal…")
         engine_async.call(getattr(self.tab_context.project_manager, "project_root", None), check,
-                          lambda answer: self._on_validator_answer(token, answer))
+                          lambda answer: self._on_validator_answer(token, answer),
+                          cue=self.main_window.loading, cue_label="Checking the proposal\u2026")
 
     def _claim_validator_check(self, token) -> bool:
         """True when *token*'s check is the one still awaited (it no longer is, the chat unlocks);

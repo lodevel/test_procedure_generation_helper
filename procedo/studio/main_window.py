@@ -1217,7 +1217,7 @@ class StudioWorkspace(QWidget):
             return
         backend = tab_context.backend
         self.dock.chat_panel.add_message("system", "Compacting session…")
-        self.footer.show_message("Compacting session…", 3000)
+        self.loading.start("Compacting session…")
 
         compacted = self._compacted
 
@@ -1233,6 +1233,7 @@ class StudioWorkspace(QWidget):
 
     def _on_compacted(self, ok):
         """UI-thread end of one compaction."""
+        self.loading.done()
         if ok:
             self.dock.chat_panel.add_system_message(
                 "🗜️ Session compacted — context will shrink on the next reply.", tone="success")

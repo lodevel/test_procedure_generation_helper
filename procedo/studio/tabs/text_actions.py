@@ -159,7 +159,7 @@ class TextActionsMixin:
             project_root,
             lambda: pack_parsers.sync_equipment_from_steps(original, project_root=project_root),
             lambda answer: self._sync_equipment_done(original, answer),
-            button=self.sync_equipment_btn)
+            button=self.sync_equipment_btn, cue=self.text_card.loading, cue_label="Syncing equipment\u2026")
 
     def _sync_equipment_done(self, original: str, answer) -> None:
         from ..pack_ops import pack_parsers
@@ -217,7 +217,8 @@ class TextActionsMixin:
         project_root = getattr(self.project_manager, "project_root", None)
         engine_async.call(
             project_root, lambda: pack_parsers.sync_meta_text(original, project_root=project_root),
-            lambda answer: self._sync_meta_done(original, answer), button=self.sync_meta_btn)
+            lambda answer: self._sync_meta_done(original, answer), button=self.sync_meta_btn,
+            cue=self.text_card.loading, cue_label="Syncing meta\u2026")
 
     def _sync_meta_done(self, original: str, answer) -> None:
         from ..pack_ops import pack_parsers
@@ -261,7 +262,8 @@ class TextActionsMixin:
         engine_async.call(
             project_root,
             lambda: pack_parsers.renumber_steps_text(original, project_root=project_root),
-            lambda answer: self._renumber_done(original, answer), button=self.renumber_steps_btn)
+            lambda answer: self._renumber_done(original, answer), button=self.renumber_steps_btn,
+            cue=self.text_card.loading, cue_label="Renumbering steps\u2026")
 
     def _renumber_done(self, original: str, answer) -> None:
         from ..pack_ops import pack_parsers
@@ -312,7 +314,7 @@ class TextActionsMixin:
         engine_async.call(
             project_root, lambda: pack_parsers.parse_text(text, project_root=project_root),
             lambda answer: self._parse_and_generate_parsed(sent, answer),
-            button=self.parse_and_generate_btn)
+            button=self.parse_and_generate_btn, cue=self.text_card.loading, cue_label="Parsing\u2026")
 
     def _parse_and_generate_abort(self, reason: str) -> None:
         self.main_window.dock.chat_panel.add_system_message(reason, tone="danger")
@@ -349,7 +351,7 @@ class TextActionsMixin:
         engine_async.call(
             project_root, lambda: pack_parsers.generate_code(procedure, project_root=project_root),
             lambda answer: self._parse_and_generate_generated(sent, procedure, answer),
-            button=self.parse_and_generate_btn)
+            button=self.parse_and_generate_btn, cue=self.text_card.loading, cue_label="Generating code\u2026")
 
     def _parse_and_generate_generated(self, sent: str, procedure: dict, answer) -> None:
         """JSON → code (strict) answered: offer both files as one card."""
@@ -510,7 +512,8 @@ class TextActionsMixin:
             project_root,
             lambda: reconstructed_or_error(content_str, current_content,
                                            task_override=override, project_root=project_root),
-            lambda answer: self._offer_reconstructed(current_content, test, answer))
+            lambda answer: self._offer_reconstructed(current_content, test, answer),
+            cue=self.text_card.loading, cue_label="Preparing the proposal\u2026")
 
     def _offer_reconstructed(self, current_content: str, test, answer) -> None:
         """The reconstruction answered: offer it as a card for the text it was made from."""

@@ -93,8 +93,9 @@ def test_latest_board_load_wins_even_when_older_worker_finishes_last(qapp, tmp_p
         panel.load(old_root)
         _until(qapp, old_started.is_set)
         panel.load(new_root)
+        assert panel.loading.active and panel.loading.label.text() == "Loading board…"
         _until(qapp, lambda: bool(panel._components))
-        assert panel._components == _board("U_NEW")["components"]
+        assert panel._components == _board("U_NEW")["components"] and not panel.loading.active
         release_old.set()
         _until(qapp, lambda: not _LIVE_WORKERS)
         assert panel._project_root == new_root

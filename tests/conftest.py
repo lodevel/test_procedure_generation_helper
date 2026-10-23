@@ -47,22 +47,21 @@ def _populate_pack_registry() -> None:
 def pytest_configure(config):
     config.addinivalue_line("markers", "integration: requires real LLM backend")
     config.pluginmanager.register(temp_guard)
+    _register_per_user_sandbox(config)
     _populate_pack_registry()
 
 
-@pytest.fixture(autouse=True)
-def _per_user_sandbox(monkeypatch, tmp_path):  # a name no test module reuses
-    """The per-user folders, QSettings and environment are this test's — the host's one
-    sandbox (``procedo.core.testing``); none without the host, where this repo's CI
+def _register_per_user_sandbox(config):
+    """The per-user folders, QSettings and environment are each test's — the host's one
+    sandbox plugin (``procedo.core.testing``); none without the host, where this repo's CI
     runs its host-free gate (``tests/test_size_budgets.py``)."""
     try:
-        from procedo.core.testing import sandbox
+        from procedo.core import testing
     except ModuleNotFoundError as exc:
         if exc.name not in ("procedo", "procedo.core"):  # a broken sandbox must stop the run, not skip it
             raise
-        yield
         return
-    yield from sandbox(monkeypatch, tmp_path)
+    testing.register_plugin(config)
 
 @pytest.fixture
 def sample_llm_request_minimal():

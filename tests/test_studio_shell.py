@@ -13,6 +13,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QStatusBar
 
 import procedo.studio.main_window as mw_mod
+from procedo.studio.controllers import AssistantController, ProjectController
 from procedo.studio import shell
 
 from .test_main_window_characterization import (
@@ -78,7 +79,7 @@ def test_clicking_the_sync_pill_acknowledges(opened, mbox):
 
 def test_the_opencode_pill_menu_restarts_the_server_and_opens_llm_settings(make_window, monkeypatch):
     calls = []
-    monkeypatch.setattr(mw_mod.StudioWorkspace, "_on_restart_backend", lambda self: calls.append("restart"))
+    monkeypatch.setattr(AssistantController, "on_restart_backend", lambda self: calls.append("restart"))
     monkeypatch.setattr(mw_mod.StudioWorkspace, "_on_settings", lambda self: calls.append("settings"))
     w = make_window()
     menu = w.server_pill.menu()
@@ -189,9 +190,9 @@ def test_launched_on_a_project_then_opening_others_follows_each_ones_bundle(make
 
 
 def test_footer_links_open_a_project_and_pick_the_rules(make_window, monkeypatch):
-    w = make_window()
     opened = []
-    monkeypatch.setattr(w, "_on_open_project", lambda: opened.append(True))
+    monkeypatch.setattr(ProjectController, "on_open_project", lambda self: opened.append(True))
+    w = make_window()
     asked = []
     monkeypatch.setattr(QFileDialog, "getExistingDirectory",
                         staticmethod(lambda parent, title, *a: asked.append(title) or ""))

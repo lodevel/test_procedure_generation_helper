@@ -4,16 +4,16 @@ Owns the project lifecycle: the new/open/recent project flows plus the
 task-#39 live-refresh plumbing (config.json + bundle watchers, the
 edge-triggered change detectors, the debounced reload funnel and the
 ``handle_config_change`` hot-reload funnel). Method bodies were moved
-verbatim from ``main_window.StudioWorkspace`` (``self`` -> ``mw``);
-the workspace keeps thin delegating methods for every name its tests and
-Qt connections pin.
+verbatim from ``main_window.StudioWorkspace`` (``self`` -> ``mw``); the
+workspace's menus, footer link and watcher signals connect straight to
+them.
 
 The watcher/funnel slice is deliberately MODULE-LEVEL functions over
 the passed window (not ``ProjectController`` methods):
-``tests/test_bundle_hot_reload.py`` lifts the corresponding StudioWorkspace
-delegates UNBOUND onto a bare ``_WatcherHarness`` carrying only the
-watcher state, so these bodies must late-bind through the object they
-are handed and never through a stored controller attribute.
+``tests/test_bundle_hot_reload.py`` drives them on a bare
+``_WatcherHarness`` carrying only the watcher state, so these bodies
+must bind late through the object they are handed and never through a
+stored controller attribute.
 """
 
 from __future__ import annotations
@@ -82,7 +82,7 @@ class ProjectController(QObject):
         mw.text_json_tab.refresh_parser_button()
         mw.text_only_tab.refresh_parser_button()
         mw.json_code_tab.refresh_code_parser_button()
-        mw._watch_project_config()
+        watch_project_config(mw)
 
         # Show the Workspace column if hidden
         mw.toggle_workspace_action.setChecked(True)
@@ -107,7 +107,7 @@ class ProjectController(QObject):
         mw.text_json_tab.refresh_parser_button()
         mw.text_only_tab.refresh_parser_button()
         mw.json_code_tab.refresh_code_parser_button()
-        mw._watch_project_config()
+        watch_project_config(mw)
         mw.toggle_workspace_action.setChecked(True)
         mw._llm_server.restart_for_project()
 
@@ -124,7 +124,7 @@ class ProjectController(QObject):
         for path_str in recent:
             action = mw._open_recent_menu.addAction(path_str)
             action.triggered.connect(
-                lambda checked=False, p=path_str: mw._on_open_recent(p)
+                lambda checked=False, p=path_str: self.on_open_recent(p)
             )
 
     def _forget_recent(self) -> None:
@@ -156,7 +156,7 @@ class ProjectController(QObject):
         path = Path(path_str)
         if mw.project_manager.set_project_root(path):
             app_settings.add_recent_project(str(path))
-            mw._refresh_after_open()
+            self.refresh_after_open()
 
     def on_open_project(self):
         """Handle open project action."""
@@ -176,7 +176,7 @@ class ProjectController(QObject):
         # Try to set as project root
         if mw.project_manager.set_project_root(project_path):
             app_settings.add_recent_project(str(project_path))
-            mw._refresh_after_open()
+            self.refresh_after_open()
         else:
             # Maybe user selected a test folder directly?
             detected_root = mw.project_manager.detect_project_from_test_folder(project_path)
@@ -194,7 +194,7 @@ class ProjectController(QObject):
                 mw.text_json_tab.refresh_parser_button()
                 mw.text_only_tab.refresh_parser_button()
                 mw.json_code_tab.refresh_code_parser_button()
-                mw._watch_project_config()
+                watch_project_config(mw)
 
                 # Show the Workspace column
                 mw.toggle_workspace_action.setChecked(True)
@@ -217,9 +217,9 @@ def _folder_there(path_str: str) -> bool:
 
 
 # --- task-#39 watcher / config-change funnel -------------------------------
-# Module-level on purpose: StudioWorkspace's thin delegates for these names are
-# lifted unbound onto tests' _WatcherHarness (see module docstring), so the
-# bodies bind late through ``mw`` and keep no controller state.
+# Module-level on purpose: tests drive these on a bare _WatcherHarness (see the
+# module docstring), so the bodies bind late through ``mw`` and keep no
+# controller state.
 
 
 def watch_project_config(mw) -> None:
@@ -253,9 +253,9 @@ def watch_project_config(mw) -> None:
     # Task #39: arm the bundle-dir watches and seed the change
     # detectors so the first event compares against a baseline
     # instead of always firing.
-    mw._watch_project_bundle()
-    mw._bundle_signature_changed()
-    mw._bundle_stamp_changed()
+    watch_project_bundle(mw)
+    bundle_signature_changed(mw)
+    bundle_stamp_changed(mw)
 
 
 def watch_project_bundle(mw) -> None:
@@ -329,12 +329,12 @@ def on_bundle_change_debounced(mw) -> None:
     reload/reopen — refresh the rules indicators, reload
     TaskConfigManager (the reload-callback chain rebuilds task
     buttons / gating / validator rows) and regate the parser
-    buttons via _handle_config_change."""
+    buttons via handle_config_change."""
     root = getattr(mw.project_manager, "project_root", None)
     if root is not None:
         engine.stop(project_root=root)  # a TOOLS of the old bundle would sit idle
     mw._update_project_rules_indicators()
-    mw._handle_config_change()
+    handle_config_change(mw)
 
 
 def on_config_file_changed(mw, path: str) -> None:
@@ -351,7 +351,7 @@ def on_config_file_changed(mw, path: str) -> None:
     ``rebuild_validator_buttons`` on every tab (registered in
     Phase 2/3).
     """
-    mw._handle_config_change()
+    handle_config_change(mw)
     p = Path(path)
     if p.exists() and str(p) not in mw._config_watcher.files():
         mw._config_watcher.addPath(str(p))
@@ -369,14 +369,14 @@ def on_config_dir_changed(mw, path: str) -> None:
     moved, fire the debounced bundle reload."""
     p = Path(path)
     if p in (mw._watched_bundle_dir, mw._watched_project_root):
-        mw._watch_project_bundle()
-        if mw._bundle_signature_changed():
+        watch_project_bundle(mw)
+        if bundle_signature_changed(mw):
             mw._bundle_change_timer.start()
         return
     # Belt-and-braces (task #39): the install stamp lands in
     # config/ as the last step of an import — a changed stamp is a
     # bundle change even when the bundle-dir events were missed.
-    if mw._bundle_stamp_changed():
+    if bundle_stamp_changed(mw):
         mw._bundle_change_timer.start()
     if mw._watched_config_path is None:
         return
@@ -386,7 +386,7 @@ def on_config_dir_changed(mw, path: str) -> None:
     if (mw._watched_config_path.exists()
             and file_str not in mw._config_watcher.files()):
         mw._config_watcher.addPath(file_str)
-        mw._handle_config_change()
+        handle_config_change(mw)
 
 
 def handle_config_change(mw) -> None:

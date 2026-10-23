@@ -40,6 +40,9 @@ from PySide6.QtWidgets import (  # noqa: E402
 )
 
 import procedo.studio.main_window as mw_mod  # noqa: E402
+from procedo.studio.controllers import (  # noqa: E402
+    DocumentController, ExportController, ProjectController, project_controller,
+)
 from procedo.studio.core import artifact_manager as am_mod  # noqa: E402
 from procedo.studio.core.artifact_manager import ArtifactType  # noqa: E402
 from procedo.studio.pack_ops import engine_async  # noqa: E402
@@ -165,10 +168,10 @@ def _settle(until=None, timeout=10):
 
 
 def _open_project(w, root: Path) -> None:
-    """Arrange-only project open (the same calls _on_open_project makes
+    """Arrange-only project open (the same calls on_open_project makes
     after the directory picker), without any dialog."""
     assert w.project_manager.set_project_root(root)
-    w._refresh_after_open()
+    w._project_controller.refresh_after_open()
 
 
 def _menus(w):
@@ -318,26 +321,26 @@ def test_menu_shortcuts(make_window):
     }
 
 
-# (menu, entry, StudioWorkspace handler) for every handler-backed menu entry.
+# (menu, entry, handler owner, handler) for every handler-backed menu entry.
 _MENU_HANDLERS = [
-    ("&File", "&New Project…", "_on_new_project"),
-    ("&File", "&Open Project…", "_on_open_project"),
-    ("&File", "&Save Text", "_on_save"),
-    ("&File", "Save &All", "_on_save_all"),
-    ("&File", "Procedure to &Markdown…", "_on_export_markdown"),
-    ("&File", "Procedure to &Word…", "_on_export_word"),
-    ("&File", "Se&ttings…", "_on_settings"),
-    ("&Edit", "&Find…", "_on_find"),
-    ("&Edit", "&Replace…", "_on_replace"),
-    ("&Edit", "Mark Artifacts In &Sync", "_on_sync_indicator_clicked"),
-    ("&Project", "Project &Configuration…", "_on_project_configuration"),
-    ("&Project", "&Template Manager…", "_on_template_manager"),
-    ("&Project", "&Scenarios…", "_on_scenarios"),
-    ("&Packages", "Bundle &Library…", "_on_bundle_library"),
-    ("&Packages", "&Install Package…", "_on_install_package"),
-    ("&Help", "&DSL Syntax Reference", "_on_syntax_reference"),
-    ("&Help", "Word Export &Keywords…", "_on_export_keywords"),
-    ("&Help", "&About", "_on_about"),
+    ("&File", "&New Project…", ProjectController, "on_new_project"),
+    ("&File", "&Open Project…", ProjectController, "on_open_project"),
+    ("&File", "&Save Text", DocumentController, "on_save"),
+    ("&File", "Save &All", DocumentController, "on_save_all"),
+    ("&File", "Procedure to &Markdown…", ExportController, "on_export_markdown"),
+    ("&File", "Procedure to &Word…", ExportController, "on_export_word"),
+    ("&File", "Se&ttings…", mw_mod.StudioWorkspace, "_on_settings"),
+    ("&Edit", "&Find…", mw_mod.StudioWorkspace, "_on_find"),
+    ("&Edit", "&Replace…", mw_mod.StudioWorkspace, "_on_replace"),
+    ("&Edit", "Mark Artifacts In &Sync", DocumentController, "on_sync_indicator_clicked"),
+    ("&Project", "Project &Configuration…", mw_mod.StudioWorkspace, "_on_project_configuration"),
+    ("&Project", "&Template Manager…", mw_mod.StudioWorkspace, "_on_template_manager"),
+    ("&Project", "&Scenarios…", mw_mod.StudioWorkspace, "_on_scenarios"),
+    ("&Packages", "Bundle &Library…", mw_mod.StudioWorkspace, "_on_bundle_library"),
+    ("&Packages", "&Install Package…", mw_mod.StudioWorkspace, "_on_install_package"),
+    ("&Help", "&DSL Syntax Reference", mw_mod.StudioWorkspace, "_on_syntax_reference"),
+    ("&Help", "Word Export &Keywords…", mw_mod.StudioWorkspace, "_on_export_keywords"),
+    ("&Help", "&About", mw_mod.StudioWorkspace, "_on_about"),
 ]
 
 
@@ -345,15 +348,15 @@ def test_every_menu_entry_triggers_its_handler(make_window, monkeypatch):
     # The moved entries (Project menu, Bundle Library) and every other one
     # still reach their handler when triggered from their new place.
     calls = []
-    for _, _, name in _MENU_HANDLERS:
-        monkeypatch.setattr(mw_mod.StudioWorkspace, name,
+    for _, _, owner, name in _MENU_HANDLERS:
+        monkeypatch.setattr(owner, name,
                             lambda self, *a, _name=name: calls.append(_name))
     w = make_window()
     entries = _menus(w)  # keeps action refs alive for the whole test
     by_title = {t: m for t, _, m in entries}
-    for title, text, _ in _MENU_HANDLERS:
+    for title, text, _, _ in _MENU_HANDLERS:
         _find_action(by_title[title], text).trigger()
-    assert calls == [name for _, _, name in _MENU_HANDLERS]
+    assert calls == [name for _, _, _, name in _MENU_HANDLERS]
 
 
 # =========================================================================
@@ -384,7 +387,7 @@ def test_host_slots_guard_missing_project(make_window, mbox):
 
 def test_open_project_dialog_happy_path(make_window, mbox, monkeypatch,
                                         tmp_path):
-    # Pins the whole _on_open_project -> _refresh_after_open wiring: root
+    # Pins the whole on_open_project -> refresh_after_open wiring: root
     # set, shared recents noted, test list loaded + New Test enabled,
     # footer updated (the project by name, "Rules: none" when the project
     # has no rules), and the task-#39 watcher set armed (config.json file,
@@ -395,7 +398,7 @@ def test_open_project_dialog_happy_path(make_window, mbox, monkeypatch,
                         staticmethod(lambda *a, **k: str(root)))
     w = make_window()
 
-    w._on_open_project()
+    w._project_controller.on_open_project()
 
     assert w.project_manager.project_root == root
     assert w._noted_recents == [str(root)]
@@ -414,7 +417,7 @@ def test_open_project_dialog_happy_path(make_window, mbox, monkeypatch,
     assert {root, root / "config", root / "bundle"} <= watched_dirs
     # Baselines seeded so the FIRST watcher event compares, never fires.
     assert w._bundle_signature is not None
-    assert w._bundle_signature_changed() is False
+    assert project_controller.bundle_signature_changed(w) is False
     # Opening a project does NOT load any test: tabs stay disabled.
     assert not w.view_column.isEnabled()
     assert mbox.warning == []
@@ -431,7 +434,7 @@ def test_open_project_dialog_invalid_folder_warns(make_window, mbox,
                         staticmethod(lambda *a, **k: str(bogus)))
     w = make_window()
 
-    w._on_open_project()
+    w._project_controller.on_open_project()
 
     assert w.project_manager.project_root is None
     assert w._noted_recents == []
@@ -449,16 +452,16 @@ def test_open_recent_menu_and_missing_dir(make_window, mbox, monkeypatch,
     monkeypatch.setattr(app_settings, "load_app_settings",
                         lambda: {"recent_projects": list(recents)})
 
-    w._rebuild_open_recent_menu()
+    w._project_controller.rebuild_open_recent_menu()
     acts = w._open_recent_menu.actions()
     assert [a.text() for a in acts] == ["No recent projects"]
     assert not acts[0].isEnabled()
 
     recents[:] = [str(tmp_path / "gone"), str(tmp_path / "also_gone")]
-    w._rebuild_open_recent_menu()
+    w._project_controller.rebuild_open_recent_menu()
     assert [a.text() for a in w._open_recent_menu.actions()] == recents
 
-    w._on_open_recent(str(tmp_path / "gone"))
+    w._project_controller.on_open_recent(str(tmp_path / "gone"))
     _settle(lambda: mbox.warning)
     assert [t for t, _ in mbox.warning] == ["Project Not Found"]
     assert w.project_manager.project_root is None
@@ -475,7 +478,7 @@ def test_open_recent_on_a_dead_share_asks_off_the_gui_thread(make_window, mbox, 
         asked_on.append(threading.current_thread().name)
         raise OSError("[WinError 53] The network path was not found")
     monkeypatch.setattr(Path, "is_dir", unreachable)
-    w._on_open_recent(r"\\nas\gone\proj")
+    w._project_controller.on_open_recent(r"\\nas\gone\proj")
     _settle(lambda: mbox.warning)
     monkeypatch.undo()
     assert asked_on and asked_on[0] != threading.main_thread().name
@@ -489,9 +492,9 @@ def test_an_open_after_a_recent_drops_the_recents_answer(make_window, mbox, monk
     root = _make_project(tmp_path / "proj")
     w = make_window()
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: "")
-    w._on_open_recent(str(root))
+    w._project_controller.on_open_recent(str(root))
     assert w.footer.note.full.startswith("Looking for")
-    w._on_open_project()  # opened another way (cancelled here): the recent no longer opens
+    w._project_controller.on_open_project()  # opened another way (cancelled here): the recent no longer opens
     assert w.footer.note.full == ""
     _settle(lambda: not any(t.name == "recent-project-check" for t in threading.enumerate()))
     QApplication.processEvents()
@@ -501,8 +504,8 @@ def test_an_open_after_a_recent_drops_the_recents_answer(make_window, mbox, monk
 def test_open_recent_opens_only_the_last_one_asked(make_window, mbox, tmp_path):
     root = _make_project(tmp_path / "proj")
     w = make_window()
-    w._on_open_recent(str(root))
-    w._on_open_recent(str(tmp_path / "gone"))  # asked after: the first answer is dropped
+    w._project_controller.on_open_recent(str(root))
+    w._project_controller.on_open_recent(str(tmp_path / "gone"))  # asked after: the first answer is dropped
     _settle(lambda: mbox.warning and not any(t.name == "recent-project-check"
                                              for t in threading.enumerate()))
     QApplication.processEvents()
@@ -514,7 +517,7 @@ def test_open_recent_opens_only_the_last_one_asked(make_window, mbox, tmp_path):
 # =========================================================================
 
 def test_open_test_loads_tabs_and_seeds_session(make_window, tmp_path):
-    # Pins _on_test_opened end to end: managers rebuilt for the folder,
+    # Pins on_test_opened end to end: managers rebuilt for the folder,
     # editors filled from disk (editor.toPlainText IS the live content
     # source afterwards), views + Assistant enabled, header pills ✓ for
     # every non-empty artifact, FIRST open lands on the Text tab, and the
@@ -524,7 +527,7 @@ def test_open_test_loads_tabs_and_seeds_session(make_window, tmp_path):
     _open_project(w, root)
     t1 = root / "tests" / "t1"
 
-    w.open_test(t1)  # public API -> _on_test_opened
+    w.open_test(t1)  # public API -> on_test_opened
 
     assert w.artifact_manager.test_dir == t1
     assert w.session_state._file_path == t1 / ".llm_session.json"
@@ -591,7 +594,7 @@ def test_reopen_after_external_edit_flips_sync_state(make_window, tmp_path):
 # =========================================================================
 
 def test_save_enforces_folder_id_without_flipping_sync(make_window, tmp_path):
-    # Pins task #41 end to end at the _on_save choke-point: a hand-authored
+    # Pins task #41 end to end at the on_save choke-point: a hand-authored
     # id that differs from the folder is rewritten to the folder name ON
     # SAVE (folder is the single source of truth), the correction is
     # mirrored back into the editor buffer, and — because sync hashes are
@@ -607,7 +610,7 @@ def test_save_enforces_folder_id_without_flipping_sync(make_window, tmp_path):
     assert w.view_stack.currentWidget() is w.text_only_tab
     assert w.session_state.artifacts_in_sync is True
 
-    w._on_save()  # current tab = Text -> saves procedure_text.md only
+    w._document_controller.on_save()  # current tab = Text -> saves procedure_text.md only
 
     disk = (t1 / "procedure_text.md").read_text(encoding="utf-8")
     assert disk.startswith("# t1\n")
@@ -634,7 +637,7 @@ def test_real_edit_save_flips_out_of_sync(make_window, tmp_path):
 
     w.text_only_tab.text_editor.setPlainText(
         "# t1\n\nBody of t1.\n\nNew paragraph.\n")
-    w._on_save()
+    w._document_controller.on_save()
 
     assert "New paragraph." in \
         (t1 / "procedure_text.md").read_text(encoding="utf-8")
@@ -656,7 +659,7 @@ def test_parse_and_generate_marks_in_sync(make_window, monkeypatch, tmp_path, ta
     _open_project(w, root)
     w.open_test(t1)
     w.text_only_tab.text_editor.setPlainText("# t1\n\nEdited body.\n")
-    w._on_save()
+    w._document_controller.on_save()
     assert w.session_state.artifacts_in_sync is False
 
     monkeypatch.setattr(pack_parsers, "parse_text",
@@ -702,7 +705,7 @@ def test_the_media_refresh_of_an_open_test_keeps_it_in_sync(make_window, monkeyp
     assert disk_marks == []
 
     assert w.session_state.artifact_hashes == w.artifact_manager.compute_hashes()
-    w._on_save()                                                  # Ctrl+S, nothing edited
+    w._document_controller.on_save()                                                  # Ctrl+S, nothing edited
     assert w.session_state.artifacts_in_sync is True
     assert not w.workspace_widget._stale_artifacts(t1)
     w.open_test(root / "tests" / "t2")                            # the switch saves t1's session
@@ -738,7 +741,7 @@ def test_the_refresh_of_an_out_of_sync_test_leaves_its_baseline(make_window, mon
     _open_project(w, root)
     w.open_test(root / "tests" / "t1")
     w.text_only_tab.text_editor.setPlainText("# t1\n\nEdited body.\n")
-    w._on_save()
+    w._document_controller.on_save()
     assert w.session_state.artifacts_in_sync is False
     baseline = dict(w.session_state.artifact_hashes)
     monkeypatch.setattr(engine_async, "call",
@@ -761,7 +764,7 @@ def test_a_save_rereads_the_open_tests_row_only(make_window, tmp_path):
     real = w.project_manager.enumerate_test_folders
     w.project_manager.enumerate_test_folders = lambda: listed.append(1) or real()
     w.text_only_tab.text_editor.setPlainText("# t1\n\nEdited body.\n")
-    w._on_save()
+    w._document_controller.on_save()
     w._document_controller.on_tab_artifact_saved()
     assert listed == []
     rows = w.workspace_widget.test_list
@@ -820,7 +823,7 @@ def test_parse_and_generate_with_nothing_changed_opens_no_review(make_window, mo
 
 
 def test_sync_indicator_acknowledge_flow(make_window, mbox, tmp_path):
-    # Pins _on_sync_indicator_clicked: out-of-sync + user answers Yes ->
+    # Pins on_sync_indicator_clicked: out-of-sync + user answers Yes ->
     # in-sync restored, hashes re-baselined to current content, session
     # persisted, indicator back to ✅. Answering No changes nothing. When
     # already in sync the click is informational only.
@@ -830,16 +833,16 @@ def test_sync_indicator_acknowledge_flow(make_window, mbox, tmp_path):
     _open_project(w, root)
     w.open_test(t1)
     w.text_only_tab.text_editor.setPlainText("# t1\n\nEdited body.\n")
-    w._on_save()
+    w._document_controller.on_save()
     assert w.session_state.artifacts_in_sync is False
     old_baseline = dict(w.session_state.artifact_hashes)
 
     mbox.question_answer = QMessageBox.StandardButton.No
-    w._on_sync_indicator_clicked()
+    w._document_controller.on_sync_indicator_clicked()
     assert w.session_state.artifacts_in_sync is False
 
     mbox.question_answer = QMessageBox.StandardButton.Yes
-    w._on_sync_indicator_clicked()
+    w._document_controller.on_sync_indicator_clicked()
 
     assert [t for t, _ in mbox.question] == ["Acknowledge Sync"] * 2
     assert w.session_state.artifacts_in_sync is True
@@ -849,7 +852,7 @@ def test_sync_indicator_acknowledge_flow(make_window, mbox, tmp_path):
         (t1 / ".llm_session.json").read_text(encoding="utf-8"))
     assert on_disk["artifacts_in_sync"] is True
 
-    w._on_sync_indicator_clicked()  # already in sync -> info box only
+    w._document_controller.on_sync_indicator_clicked()  # already in sync -> info box only
     assert [t for t, _ in mbox.information] == ["Artifacts In Sync"]
 
 
@@ -859,7 +862,7 @@ def test_sync_indicator_acknowledge_flow(make_window, mbox, tmp_path):
 
 def test_tab_change_syncs_previous_tab_and_switches_context(make_window,
                                                             tmp_path):
-    # Pins _on_tab_changed: ONLY the previously-active tab is synced to
+    # Pins on_tab_changed: ONLY the previously-active tab is synced to
     # artifacts + deactivated (inactive tabs may hold stale shared-artifact
     # content), the new tab is activated, the dock panels switch to the new
     # tab's TabContext, and the Save action label follows the tab.
@@ -918,10 +921,10 @@ def test_current_procedure_text_prefers_active_then_text_json(make_window,
     w.text_json_tab.text_editor.setPlainText("TEXT-JSON buffer")
 
     w.switch_to_tab("traceability")
-    assert w._current_procedure_text() == "TEXT-JSON buffer"
+    assert w._export_controller._current_procedure_text() == "TEXT-JSON buffer"
 
     w.switch_to_tab("text_only")
-    assert w._current_procedure_text() == "TEXT-ONLY buffer"
+    assert w._export_controller._current_procedure_text() == "TEXT-ONLY buffer"
 
 
 # =========================================================================
@@ -930,48 +933,48 @@ def test_current_procedure_text_prefers_active_then_text_json(make_window,
 
 def test_bundle_signature_and_stamp_change_detectors(make_window, tmp_path):
     # Pins the two task-#39 change detectors as edge-triggered latches:
-    # baselined at _watch_project_config time (so the first probe is
+    # baselined at watch_project_config time (so the first probe is
     # False), True exactly once after the watched artifact moves, then
     # False again.
     root = _make_project(tmp_path / "proj")
     w = make_window()
     _open_project(w, root)
 
-    assert w._bundle_signature_changed() is False
+    assert project_controller.bundle_signature_changed(w) is False
     bundle_json = root / "bundle" / "bundle.json"
     os.utime(bundle_json, (1_700_000_000, 1_700_000_123))
-    assert w._bundle_signature_changed() is True
-    assert w._bundle_signature_changed() is False
+    assert project_controller.bundle_signature_changed(w) is True
+    assert project_controller.bundle_signature_changed(w) is False
 
-    assert w._bundle_stamp_changed() is False
+    assert project_controller.bundle_stamp_changed(w) is False
     # The stamp moved out of the project with the venv it describes (share slice 1).
     from procedo.studio import _project_local_state
 
     stamp = _project_local_state.install_record(root)
     stamp.parent.mkdir(parents=True, exist_ok=True)
     stamp.write_text("{}", encoding="utf-8")
-    assert w._bundle_stamp_changed() is True
-    assert w._bundle_stamp_changed() is False
+    assert project_controller.bundle_stamp_changed(w) is True
+    assert project_controller.bundle_stamp_changed(w) is False
 
 
-def test_dir_events_start_debounce_and_funnel_refreshes(make_window,
+def test_dir_events_start_debounce_and_funnel_refreshes(make_window, monkeypatch,
                                                         tmp_path):
     # Pins the watcher-event -> debounce -> reload funnel: a project-root
     # dir event with a moved bundle signature starts the 300ms single-shot
     # debounce timer (and re-arms the bundle watches); a config-dir event
     # with a new install stamp starts it too (belt-and-braces); an event
     # with NO change starts nothing. The debounced slot funnels into
-    # _update_project_rules_indicators + _handle_config_change.
+    # _update_project_rules_indicators + handle_config_change.
     root = _make_project(tmp_path / "proj")
     w = make_window()
     _open_project(w, root)
 
     # no change -> no debounce
-    w._on_config_dir_changed(str(root))
+    project_controller.on_config_dir_changed(w, str(root))
     assert not w._bundle_change_timer.isActive()
 
     os.utime(root / "bundle" / "bundle.json", (1_700_000_000, 1_700_000_456))
-    w._on_config_dir_changed(str(root))
+    project_controller.on_config_dir_changed(w, str(root))
     assert w._bundle_change_timer.isActive()
     w._bundle_change_timer.stop()
 
@@ -980,19 +983,20 @@ def test_dir_events_start_debounce_and_funnel_refreshes(make_window,
     stamp = _project_local_state.install_record(root)
     stamp.parent.mkdir(parents=True, exist_ok=True)
     stamp.write_text("{}", encoding="utf-8")
-    w._on_config_dir_changed(str(root / "config"))
+    project_controller.on_config_dir_changed(w, str(root / "config"))
     assert w._bundle_change_timer.isActive()
     w._bundle_change_timer.stop()
 
     called = []
     w._update_project_rules_indicators = lambda: called.append("rules")
-    w._handle_config_change = lambda: called.append("config")
-    w._on_bundle_change_debounced()
+    monkeypatch.setattr(project_controller, "handle_config_change",
+                        lambda mw: called.append("config"))
+    project_controller.on_bundle_change_debounced(w)
     assert called == ["rules", "config"]
 
 
 def test_handle_config_change_funnel(make_window, monkeypatch, tmp_path):
-    # Pins _handle_config_change as THE single hot-reload funnel: regates
+    # Pins handle_config_change as THE single hot-reload funnel: regates
     # all three parser buttons, reloads TaskConfigManager with the project
     # root, refreshes the chat panel's validator UI for the current tab's
     # context — and NEVER lets a reload error escape (the watcher must not
@@ -1011,7 +1015,7 @@ def test_handle_config_change_funnel(make_window, monkeypatch, tmp_path):
     monkeypatch.setattr(w.dock.chat_panel, "_refresh_validator_ui_for_context",
                         lambda ctx: calls.append(("validator_ui", ctx)))
 
-    w._handle_config_change()
+    project_controller.handle_config_change(w)
 
     assert calls == [
         "tj", "to", "jc", ("reload", root),
@@ -1021,7 +1025,7 @@ def test_handle_config_change_funnel(make_window, monkeypatch, tmp_path):
     def _boom(r):
         raise RuntimeError("broken config.json")
     monkeypatch.setattr(w.task_config_manager, "reload", _boom)
-    w._handle_config_change()  # must not raise
+    project_controller.handle_config_change(w)  # must not raise
 
 
 # =========================================================================
@@ -1083,31 +1087,31 @@ def test_settings_dialog_accept_and_cancel_wiring(make_window, monkeypatch,
 # =========================================================================
 
 def test_check_unsaved_changes_prompt_paths(make_window, mbox, tmp_path):
-    # Pins _check_unsaved_changes: clean -> no prompt; dirty (live editor
+    # Pins check_unsaved_changes: clean -> no prompt; dirty (live editor
     # content synced from the CURRENT tab only) -> Save|Discard|Cancel
     # question naming the dirty file; Cancel returns True (abort), Discard
     # returns False leaving disk untouched, Save returns False after
-    # writing via _on_save_all.
+    # writing via on_save_all.
     root = _make_project(tmp_path / "proj")
     t1 = root / "tests" / "t1"
     w = make_window()
     _open_project(w, root)
     w.open_test(t1)
 
-    assert w._check_unsaved_changes() is False
+    assert w._document_controller.check_unsaved_changes() is False
     assert mbox.question == []
 
     w.text_only_tab.text_editor.setPlainText("# t1\n\nDirty body.\n")
 
     mbox.question_answer = QMessageBox.StandardButton.Cancel
-    assert w._check_unsaved_changes() is True
+    assert w._document_controller.check_unsaved_changes() is True
     mbox.question_answer = QMessageBox.StandardButton.Discard
-    assert w._check_unsaved_changes() is False
+    assert w._document_controller.check_unsaved_changes() is False
     assert "Dirty body." not in \
         (t1 / "procedure_text.md").read_text(encoding="utf-8")
 
     mbox.question_answer = QMessageBox.StandardButton.Save
-    assert w._check_unsaved_changes() is False
+    assert w._document_controller.check_unsaved_changes() is False
     assert "Dirty body." in \
         (t1 / "procedure_text.md").read_text(encoding="utf-8")
 
@@ -1170,21 +1174,21 @@ def test_close_whose_save_fails_says_why_and_stays_open(make_window, mbox, monke
 
 def test_save_all_that_fails_says_why_never_saved(make_window, mbox, monkeypatch, tmp_path):
     w, shown = _edited_test_on_a_dead_share(make_window, monkeypatch, tmp_path)
-    w._on_save_all()
+    w._document_controller.on_save_all()
     assert [t for t, _ in mbox.critical] == ["Save Failed"]
     assert "All saved" not in shown
 
 
 def test_ctrl_s_that_fails_never_says_saved(make_window, mbox, monkeypatch, tmp_path):
     w, shown = _edited_test_on_a_dead_share(make_window, monkeypatch, tmp_path)
-    w._on_save()
+    w._document_controller.on_save()
     assert [t for t, _ in mbox.critical] == ["Save Failed"]
     assert "Saved" not in shown
 
 
 def test_open_other_test_with_unsaved_changes_cancel_aborts(make_window,
                                                             mbox, tmp_path):
-    # Pins the switch-away guard in _on_test_opened: Cancel on the unsaved
+    # Pins the switch-away guard in on_test_opened: Cancel on the unsaved
     # prompt keeps the ORIGINAL test loaded (managers untouched); the
     # workspace signal is effectively rolled back.
     root = _make_project(tmp_path / "proj", tests=("t1", "t2"))
@@ -1207,18 +1211,18 @@ def test_open_other_test_with_unsaved_changes_cancel_aborts(make_window,
 # =========================================================================
 
 def test_test_deleted_clears_loaded_state(make_window, tmp_path):
-    # Pins _on_test_deleted for the CURRENTLY-open test: managers dropped,
+    # Pins on_test_deleted for the CURRENTLY-open test: managers dropped,
     # all five editors cleared, views+Assistant disabled, header reset.
     # NOTE (suspected staleness, pinned by absence): the tab CONTEXTS keep
     # their references to the dead ArtifactManager/SessionState — only the
-    # next _on_test_opened rewires them.
+    # next on_test_opened rewires them.
     root = _make_project(tmp_path / "proj", tests=("t1", "t2"))
     w = make_window()
     _open_project(w, root)
     w.open_test(root / "tests" / "t1")
     ctx_am = w.text_only_tab.tab_context.artifact_manager
 
-    w._on_test_deleted(root / "tests" / "t1")
+    w._document_controller.on_test_deleted(root / "tests" / "t1")
 
     assert w.artifact_manager is None
     assert w.session_state is None
@@ -1235,6 +1239,6 @@ def test_test_deleted_clears_loaded_state(make_window, tmp_path):
 
     # Deleting a NON-open test is a status-line-only event.
     w.open_test(root / "tests" / "t2")
-    w._on_test_deleted(root / "tests" / "t1")
+    w._document_controller.on_test_deleted(root / "tests" / "t1")
     assert w.artifact_manager is not None
     assert w.header.title.text() == "t2"

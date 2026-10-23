@@ -17,29 +17,30 @@ def setup_menu_bar(ws) -> None:
     """Fill ``ws.menu_bar`` (the hosting window shows it)."""
     bar = ws.menu_bar
     ws._open_recent_menu = QMenu("Open &Recent", ws)
-    ws._open_recent_menu.aboutToShow.connect(ws._rebuild_open_recent_menu)
+    ws._open_recent_menu.aboutToShow.connect(ws._project_controller.rebuild_open_recent_menu)
     ws.export_menu = _fill(QMenu("&Export", ws), [  # the header's Export too
-        _action(ws, "Procedure to &Markdown…", ws._on_export_markdown,
+        _action(ws, "Procedure to &Markdown…", ws._export_controller.on_export_markdown,
                 tip="Export the current procedure as a Markdown (.md) document."),
-        _action(ws, "Procedure to &Word…", ws._on_export_word,
+        _action(ws, "Procedure to &Word…", ws._export_controller.on_export_word,
                 tip="Export the current procedure as a Word (.docx) document."),
     ])
     ws.export_menu.setToolTip("Export the current procedure to Markdown or Word.")
     # Relabelled for the current view ("&Save Text", ...) by the document controller.
-    ws.save_action = _action(ws, "&Save", ws._on_save, QKeySequence.Save)
-    ws.mark_sync_action = _action(ws, "Mark Artifacts In &Sync", ws._on_sync_indicator_clicked,
+    ws.save_action = _action(ws, "&Save", ws._document_controller.on_save, QKeySequence.Save)
+    ws.mark_sync_action = _action(ws, "Mark Artifacts In &Sync",
+                                  ws._document_controller.on_sync_indicator_clicked,
                                   tip="Acknowledge that procedure.json and test.py are coherent")
     # Checkable column toggles; shell.build_frame wires them to the columns.
     ws.toggle_workspace_action = _action(ws, "Show &Workspace", None, "Ctrl+Shift+E", checked=True)
     ws.toggle_dock_action = _action(ws, "Show &Assistant", None, "Ctrl+Shift+A", checked=True)
 
     _fill(bar.addMenu("&File"), [
-        _action(ws, "&New Project…", ws._on_new_project, "Ctrl+N"),
-        _action(ws, "&Open Project…", ws._on_open_project, QKeySequence.Open),
+        _action(ws, "&New Project…", ws._project_controller.on_new_project, "Ctrl+N"),
+        _action(ws, "&Open Project…", ws._project_controller.on_open_project, QKeySequence.Open),
         ws._open_recent_menu,
         None,
         ws.save_action,
-        _action(ws, "Save &All", ws._on_save_all, "Ctrl+Shift+S"),
+        _action(ws, "Save &All", ws._document_controller.on_save_all, "Ctrl+Shift+S"),
         ws.export_menu,
         None,
         _action(ws, "Se&ttings…", ws._on_settings, "Ctrl+,"),

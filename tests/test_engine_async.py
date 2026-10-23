@@ -479,7 +479,7 @@ def test_a_session_compaction_shows_in_the_footer_until_it_answers(opened, monke
     go = threading.Event()
     tab = SimpleNamespace(tab_context=SimpleNamespace(backend=SimpleNamespace(compact=lambda: go.wait(5))))
     monkeypatch.setattr(w.view_stack, "currentWidget", lambda: tab)
-    w._on_compact_session()
+    w._assistant_controller.on_compact_session()
     assert w.loading.active and w.loading.label.text() == "Compacting session…"
     go.set()
     _pump(lambda: not w.loading.active)

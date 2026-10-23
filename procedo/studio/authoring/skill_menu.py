@@ -240,7 +240,7 @@ def _refresh_main_after_wizard(main_window, result) -> None:
     if result != QDialog.DialogCode.Accepted:
         return
     try:
-        main_window._refresh_after_open()
+        main_window._project_controller.refresh_after_open()
     except Exception:  # noqa: BLE001 — best-effort; never crash on close
         pass
 

@@ -66,12 +66,12 @@ _ASSISTANT_WIDTH = 342
 
 def build_view_column(ws: StudioWorkspace, views: list[QWidget]) -> QWidget:
     """The segmented switch over the stacked views (``ws.view_stack``), the current view's
-    files right of the switch; switching calls ``ws._on_tab_changed``."""
+    files right of the switch; switching calls the document controller's ``on_tab_changed``."""
     ws.view_stack = QStackedWidget()
     ws.view_buttons = QButtonGroup(ws)
     ws.view_files = ui_kit.monospace(ui_kit.note(wrap=False))
     ws.view_stack.currentChanged.connect(lambda index: _show_view(ws, index))
-    ws.view_stack.currentChanged.connect(ws._on_tab_changed)
+    ws.view_stack.currentChanged.connect(ws._document_controller.on_tab_changed)
     buttons = []
     for index, (label, _files) in enumerate(VIEWS):
         button = segment(label)
@@ -143,7 +143,7 @@ def _header(ws: StudioWorkspace) -> ui_kit.HeaderBand:
     ws.artifact_pills = {label: QLabel() for label, _kind, _file in _ARTIFACTS}
     ws.sync_pill = ui_kit.ClickableLabel()
     ws.sync_pill.setObjectName("actionPill")
-    ws.sync_pill.clicked.connect(ws._on_sync_indicator_clicked)
+    ws.sync_pill.clicked.connect(ws._document_controller.on_sync_indicator_clicked)
     pills = QWidget()
     pills.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)  # centred, not stretched
     pills.setLayout(ui_kit.hbox(*ws.artifact_pills.values(), ui_kit.vertical_rule(), ws.sync_pill))
@@ -156,7 +156,7 @@ def _header(ws: StudioWorkspace) -> ui_kit.HeaderBand:
     ws.restart_server_action = server_menu.addAction("Restart server")
     ws.restart_server_action.setToolTip(
         "Restart the backend server (recover a hung / unresponsive backend without relaunching)")
-    ws.restart_server_action.triggered.connect(ws._on_restart_backend)
+    ws.restart_server_action.triggered.connect(ws._assistant_controller.on_restart_backend)
     server_menu.addAction("LLM settings…").triggered.connect(ws._on_settings)
     ws.server_pill.setMenu(server_menu)
 
@@ -170,7 +170,7 @@ def _header(ws: StudioWorkspace) -> ui_kit.HeaderBand:
     tools.setLayout(ui_kit.hbox(export, skill_chat))
     tools.layout().setSpacing(6)
     ws.save_all_btn = QPushButton("Save all")
-    ws.save_all_btn.clicked.connect(ws._on_save_all)
+    ws.save_all_btn.clicked.connect(ws._document_controller.on_save_all)
 
     ws.header = ui_kit.HeaderBand(
         "No test open", "Procedo Studio",
@@ -180,7 +180,7 @@ def _header(ws: StudioWorkspace) -> ui_kit.HeaderBand:
 
 
 def _footer(ws: StudioWorkspace) -> ui_kit.StatusLine:
-    ws.project_link = ui_kit.link("Project: none", ws._on_project_indicator_clicked)
+    ws.project_link = ui_kit.link("Project: none", ws._project_controller.on_open_project)
     ws.rules_link = ui_kit.link("Rules: none", ws._on_rules_indicator_clicked)
     ws.bundle_label = QLabel("Bundle: none")
     ws.validator_label = QLabel()

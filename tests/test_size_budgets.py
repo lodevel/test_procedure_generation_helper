@@ -12,7 +12,7 @@ EXCEPT units that already exceed a cap today; those are grandfathered at their
 current measurement (a ceiling they may only shrink under, never grow past).
 A new 1500-line non-allowlisted module fails immediately.
 
-The god files (``main_window.py``, ...) are intentionally NOT
+The god files (``core/task_config.py``, ...) are intentionally NOT
 carved here; this only freezes their size so the debt cannot compound.
 
 Pure ``pathlib`` + ``ast`` — imports nothing, so it runs headless with no
@@ -73,12 +73,10 @@ FILE_BUDGET: dict[str, int] = {
     # daemon file only delegates and records the open.
     "llm/opencode_backend.py": 1251,  # +9: bare-except cleanup log lines
     "llm/validator_dispatch.py": 1032,  # -131: the dead inventory loader and _import_validator went
-    "main_window.py": 1112,  # -528: the OpenCode server lifecycle + recovery left for controllers/llm_server_controller.py (wave 2 S13)
 }
 
 CLASS_METHOD_BUDGET: dict[tuple[str, str], int] = {
     ("dock/skill_chat_widget.py", "SkillChatWidget"): 42,
-    ("main_window.py", "StudioWorkspace"): 68,  # -17: the server lifecycle left for controllers/llm_server_controller.py (wave 2 S13)
 }
 
 FUNC_LEN_BUDGET: dict[tuple[str, str], int] = {

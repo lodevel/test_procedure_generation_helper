@@ -5,8 +5,8 @@ test-deleted lifecycle, the save choke-point (the task-#41 id=folder
 enforcement rides ArtifactManager through these save paths), sync-hash
 state + indicator + coherence prompts, the unsaved-changes prompt and
 the window-close flow. Method bodies were moved verbatim from
-``main_window.StudioWorkspace`` (``self`` -> ``mw``); the workspace keeps thin
-delegating methods for every name its tests and Qt connections pin.
+``main_window.StudioWorkspace`` (``self`` -> ``mw``); the workspace's menus,
+shell and signals connect straight to them.
 """
 
 from __future__ import annotations
@@ -219,7 +219,7 @@ class DocumentController:
         log.info(f"Opening test: {path}")
 
         # Check for unsaved changes before loading a new test
-        if mw.artifact_manager and mw._check_unsaved_changes():
+        if mw.artifact_manager and self.check_unsaved_changes():
             return  # User cancelled
 
         # Check artifact coherence before switching away
@@ -536,7 +536,7 @@ class DocumentController:
         )
 
         if result == QMessageBox.Save:
-            return not mw._on_save_all()  # a failed save cancels: the edits stay in the window
+            return not self.on_save_all()  # a failed save cancels: the edits stay in the window
         elif result == QMessageBox.Cancel:
             return True  # User cancelled
         else:
@@ -553,7 +553,7 @@ class DocumentController:
                 log.warning(f"Failed to save session state on close: {e}")
 
         # Check for unsaved changes (syncs editors + prompts)
-        if mw._check_unsaved_changes():
+        if self.check_unsaved_changes():
             event.ignore()
             return
 
@@ -563,7 +563,7 @@ class DocumentController:
             return
 
         # Cancel any running LLM workers
-        mw._cancel_all_llm_workers()
+        mw._assistant_controller.cancel_all_workers()
 
         # Stop all tab backends
         for tab in mw._get_llm_tabs():

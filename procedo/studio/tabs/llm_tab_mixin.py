@@ -173,7 +173,7 @@ class LLMTabMixin:
         """
         if self._drop_late_reply():
             return
-        self.main_window._play_notification_sound()
+        self.main_window._assistant_controller.play_notification_sound()
         is_active = self._is_active_tab()
 
         # 1. Cancel-was-pressed early-return.

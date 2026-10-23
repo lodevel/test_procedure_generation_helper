@@ -8,8 +8,8 @@ Covers the three seams:
   defaults.json — tasks appear/disappear and prompt templates swap.
 * ``bundle_capabilities._load_bundle_equipment_profiles`` resolves
   project-root-first with the env var as legacy fallback.
-* The editor's bundle watcher plumbing (real ``StudioWorkspace`` methods
-  bound to a light harness): bundle-dir / project-root events fire ONE
+* The editor's bundle watcher plumbing (the real ``project_controller``
+  functions driven on a light harness): bundle-dir / project-root events fire ONE
   debounced reload, unrelated writes fire none, and the
   ``.bundle_installed.json`` stamp is a belt-and-braces trigger.
 """
@@ -31,7 +31,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from procedo.studio.core.task_config import TaskConfigManager  # noqa: E402
 from procedo.studio.launch_env import BUNDLE_DEFAULTS_PATH  # noqa: E402
 from procedo.studio.pack_ops import bundle_capabilities  # noqa: E402
-from procedo.studio.main_window import StudioWorkspace  # noqa: E402
+from procedo.studio.controllers import project_controller  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -195,20 +195,12 @@ def test_equipment_profiles_project_first(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Watcher plumbing — real StudioWorkspace methods on a light harness
+# Watcher plumbing — real project_controller functions on a light harness
 # ---------------------------------------------------------------------------
 
 class _WatcherHarness:
-    """Carries exactly the state the bundle-watch methods touch; the
-    methods themselves are the REAL StudioWorkspace implementations."""
-
-    _watch_project_config = StudioWorkspace._watch_project_config
-    _watch_project_bundle = StudioWorkspace._watch_project_bundle
-    _bundle_signature_changed = StudioWorkspace._bundle_signature_changed
-    _bundle_stamp_changed = StudioWorkspace._bundle_stamp_changed
-    _on_config_dir_changed = StudioWorkspace._on_config_dir_changed
-    _on_config_file_changed = StudioWorkspace._on_config_file_changed
-    _on_bundle_change_debounced = StudioWorkspace._on_bundle_change_debounced
+    """Carries exactly the state the bundle-watch functions touch; the
+    functions themselves are the REAL ``project_controller`` ones."""
 
     def __init__(self, project_root: Path, debounce_ms: int = 60):
         config_dir = project_root / "config"
@@ -217,8 +209,10 @@ class _WatcherHarness:
             get_config_dir=lambda: config_dir,
         )
         self._config_watcher = QFileSystemWatcher()
-        self._config_watcher.fileChanged.connect(self._on_config_file_changed)
-        self._config_watcher.directoryChanged.connect(self._on_config_dir_changed)
+        self._config_watcher.fileChanged.connect(
+            lambda path: project_controller.on_config_file_changed(self, path))
+        self._config_watcher.directoryChanged.connect(
+            lambda path: project_controller.on_config_dir_changed(self, path))
         self._watched_config_path = None
         self._watched_config_dir = None
         self._watched_bundle_dir = None
@@ -229,7 +223,7 @@ class _WatcherHarness:
         self._bundle_change_timer.setSingleShot(True)
         self._bundle_change_timer.setInterval(debounce_ms)
         self._bundle_change_timer.timeout.connect(
-            self._on_bundle_change_debounced)
+            lambda: project_controller.on_bundle_change_debounced(self))
         self.funnel_calls = 0
 
     def _update_project_rules_indicators(self):
@@ -239,7 +233,7 @@ class _WatcherHarness:
         self.funnel_calls += 1
 
 
-def _armed_harness(tmp_path, qapp, tasks=None, name="wproj"):
+def _armed_harness(tmp_path, qapp, monkeypatch, tasks=None, name="wproj"):
     root = _make_project(tmp_path, tasks or [_task("t", "P")], name=name)
     # A project_id: the install stamp moved beside the machine-local venv it
     # describes, and that folder is keyed by the id (share slice 1).
@@ -247,39 +241,42 @@ def _armed_harness(tmp_path, qapp, tasks=None, name="wproj"):
         json.dumps({"project_id": "aaaaaaaa-1111-2222-3333-444444444444"}), encoding="utf-8"
     )
     h = _WatcherHarness(root)
-    h._watch_project_config()
+    # The funnel counts on the harness (the real one regates the window's tabs).
+    monkeypatch.setattr(project_controller, "handle_config_change",
+                        lambda mw: mw._handle_config_change())
+    project_controller.watch_project_config(h)
     return root, h
 
 
-def test_watch_arms_bundle_and_root(qapp, tmp_path):
-    root, h = _armed_harness(tmp_path, qapp)
+def test_watch_arms_bundle_and_root(qapp, tmp_path, monkeypatch):
+    root, h = _armed_harness(tmp_path, qapp, monkeypatch)
     assert h._watched_bundle_dir == root / "bundle"
     assert h._watched_project_root == root
     assert h._bundle_signature is not None  # seeded, not None-baseline
 
 
-def test_bundle_event_fires_one_debounced_reload(qapp, tmp_path):
+def test_bundle_event_fires_one_debounced_reload(qapp, tmp_path, monkeypatch):
     """defaults.json touched (atomic replace, as real imports do) + a
     burst of directory events → exactly ONE funnel call."""
-    root, h = _armed_harness(tmp_path, qapp)
+    root, h = _armed_harness(tmp_path, qapp, monkeypatch)
 
     time.sleep(0.02)  # ensure the mtime actually moves
     _write_defaults(root, [_task("t2", "P2")])
 
-    h._on_config_dir_changed(str(root / "bundle"))
+    project_controller.on_config_dir_changed(h, str(root / "bundle"))
     assert h._bundle_change_timer.isActive()
     # Same import also raises a project-root event: must coalesce.
-    h._on_config_dir_changed(str(root))
+    project_controller.on_config_dir_changed(h, str(root))
 
     assert _spin_until(qapp, lambda: h.funnel_calls > 0, 3.0)
     qapp.processEvents()
     assert h.funnel_calls == 1
 
 
-def test_bundle_dir_swap_rearms_watch(qapp, tmp_path):
+def test_bundle_dir_swap_rearms_watch(qapp, tmp_path, monkeypatch):
     """An import swaps bundle/ wholesale (drops the watch): the
     project-root event must re-arm the bundle-dir watch and fire."""
-    root, h = _armed_harness(tmp_path, qapp)
+    root, h = _armed_harness(tmp_path, qapp, monkeypatch)
 
     staging = root / "bundle.new"
     staging.mkdir()
@@ -292,29 +289,29 @@ def test_bundle_dir_swap_rearms_watch(qapp, tmp_path):
     os.replace(root / "bundle", old)
     os.replace(staging, root / "bundle")
 
-    h._on_config_dir_changed(str(root))
+    project_controller.on_config_dir_changed(h, str(root))
     assert h._watched_bundle_dir == root / "bundle"  # re-armed
     assert _spin_until(qapp, lambda: h.funnel_calls > 0, 3.0)
     assert h.funnel_calls == 1
 
 
-def test_no_reload_storm_on_unrelated_writes(qapp, tmp_path):
+def test_no_reload_storm_on_unrelated_writes(qapp, tmp_path, monkeypatch):
     """Unrelated project-root and config-dir writes must NOT fire the
     bundle funnel (the signature/stamp filters absorb the noise)."""
-    root, h = _armed_harness(tmp_path, qapp)
+    root, h = _armed_harness(tmp_path, qapp, monkeypatch)
 
     (root / "notes.txt").write_text("x", encoding="utf-8")
-    h._on_config_dir_changed(str(root))
+    project_controller.on_config_dir_changed(h, str(root))
 
     (root / "config" / "session.json").write_text("{}", encoding="utf-8")
-    h._on_config_dir_changed(str(root / "config"))
+    project_controller.on_config_dir_changed(h, str(root / "config"))
 
     assert not h._bundle_change_timer.isActive()
     _spin_until(qapp, lambda: False, 0.2)
     assert h.funnel_calls == 0
 
 
-def test_install_stamp_is_belt_and_braces_trigger(qapp, tmp_path):
+def test_install_stamp_is_belt_and_braces_trigger(qapp, tmp_path, monkeypatch):
     """The wheel-install stamp is written as the import's final step — a stamp
     change alone must fire the debounced reload. It sits beside the machine-local
     venv it describes, so the bridge is asked where rather than composing it from
@@ -322,25 +319,25 @@ def test_install_stamp_is_belt_and_braces_trigger(qapp, tmp_path):
     trigger would be dead while every pin stayed green."""
     from procedo.studio import _project_local_state
 
-    root, h = _armed_harness(tmp_path, qapp)
+    root, h = _armed_harness(tmp_path, qapp, monkeypatch)
 
     stamp = _project_local_state.install_record(root)
     assert stamp is not None and root not in stamp.parents
     # The install writes it; resolving where it goes never creates the folder.
     stamp.parent.mkdir(parents=True, exist_ok=True)
     stamp.write_text(json.dumps({"bundle": "b", "version": "2.0.0"}), encoding="utf-8")
-    h._on_config_dir_changed(str(root / "config"))
+    project_controller.on_config_dir_changed(h, str(root / "config"))
 
     assert h._bundle_change_timer.isActive()
     assert _spin_until(qapp, lambda: h.funnel_calls > 0, 3.0)
     assert h.funnel_calls == 1
 
 
-def test_real_fs_events_reach_the_funnel(qapp, tmp_path):
+def test_real_fs_events_reach_the_funnel(qapp, tmp_path, monkeypatch):
     """End-to-end through a live QFileSystemWatcher: an atomic rewrite
     of defaults.json inside bundle/ produces real directory events that
     reach the debounced funnel (no direct handler calls)."""
-    root, h = _armed_harness(tmp_path, qapp, name="wproj_real")
+    root, h = _armed_harness(tmp_path, qapp, monkeypatch, name="wproj_real")
 
     time.sleep(0.05)
     _write_defaults(root, [_task("t_live", "LIVE")])

@@ -523,7 +523,7 @@ def test_switching_project_stops_the_old_ones_process(project, spawns, tmp_path)
     assert proc.wait(timeout=10) is not None
 
 
-def test_a_bundle_change_in_studio_stops_the_projects_process(project, spawns):
+def test_a_bundle_change_in_studio_stops_the_projects_process(project, spawns, monkeypatch):
     from types import SimpleNamespace
 
     from procedo.studio.controllers import project_controller
@@ -533,8 +533,8 @@ def test_a_bundle_change_in_studio_stops_the_projects_process(project, spawns):
     window = SimpleNamespace(
         project_manager=SimpleNamespace(project_root=project),
         _update_project_rules_indicators=lambda: None,
-        _handle_config_change=lambda: None,
     )
+    monkeypatch.setattr(project_controller, "handle_config_change", lambda mw: None)
     project_controller.on_bundle_change_debounced(window)
     assert proc.wait(timeout=10) is not None
 

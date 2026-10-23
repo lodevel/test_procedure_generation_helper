@@ -8,21 +8,17 @@ from pathlib import Path
 from typing import Optional
 import json
 import logging
-import threading
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QMenuBar, QMessageBox, QFileDialog, QDialog,
+    QMainWindow, QWidget, QMenuBar, QMessageBox, QFileDialog,
 )
 from PySide6.QtCore import QFileSystemWatcher, QTimer
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 
 from procedo.core import library_dialog
-from procedo.core.off_gui import answer_to
 from procedo.core.config_manager_dialog import ProjectConfigDialog, TemplateManagerDialog
 from procedo.core.install_helper_dialog import InstallPackageDialog
 from procedo.core.project_model import ProjectModel
-from procedo.core.report_export import create_default_sidecar
 from procedo.core.scenario_dialog import ScenarioManagerDialog
-from procedo.core.word_export_dialog import WordExportDialog
 
 from .core import (
     ArtifactManager, SessionState, ProjectManager, ArtifactType,
@@ -31,7 +27,7 @@ from .core import (
 from .core.task_config import TaskConfigManager
 from .llm import (
     LLMBackend,
-    LLMRequest, LLMTask,
+    LLMRequest,
 )
 from .llm.backend_factory import (
     BackendFactory,
@@ -44,7 +40,8 @@ from .dock import DockWidget
 from .dialogs import SettingsDialog, load_settings
 from . import menus, shell
 from .controllers import (
-    DocumentController, LLMServerController, ProjectController, project_controller,
+    AssistantController, DocumentController, ExportController, LLMServerController,
+    ProjectController, project_controller,
 )
 
 log = logging.getLogger(__name__)
@@ -76,10 +73,6 @@ class StudioWorkspace(QWidget):
         llm_profile: Optional[str] = None,
     ):
         super().__init__(parent)
-        # Daemons (compact) answer through these relays and never
-        # hold this window: it may be deleted while they run, and then their answers are
-        # dropped (procedo.core.off_gui).
-        self._compacted = answer_to(self._on_compacted)
         log.debug("StudioWorkspace.__init__ starting")
 
         # Store CLI arguments
@@ -89,12 +82,14 @@ class StudioWorkspace(QWidget):
         self._cli_llm_backend = llm_backend
         self._cli_llm_profile = llm_profile
 
-        # Controllers carved out of this god-class (mechanical move):
-        # each owns one cohesive slice of behavior; the thin delegates
-        # below keep every test-pinned / Qt-connected name working.
+        # Controllers carved out of this god-class: each owns one cohesive
+        # slice of behavior; the menus, the shell and the signals below
+        # connect straight to them.
         self._project_controller = ProjectController(self)
         self._document_controller = DocumentController(self)
         self._llm_server = LLMServerController(self)
+        self._assistant_controller = AssistantController(self)
+        self._export_controller = ExportController(self)
 
         # Initialize managers
         log.debug("Initializing managers...")
@@ -113,8 +108,10 @@ class StudioWorkspace(QWidget):
         # directoryChanged signal catches the subsequent recreate so
         # we re-arm the file watch then (Codex Phase-4 review MEDIUM Q2).
         self._config_watcher = QFileSystemWatcher(self)
-        self._config_watcher.fileChanged.connect(self._on_config_file_changed)
-        self._config_watcher.directoryChanged.connect(self._on_config_dir_changed)
+        self._config_watcher.fileChanged.connect(
+            lambda path: project_controller.on_config_file_changed(self, path))
+        self._config_watcher.directoryChanged.connect(
+            lambda path: project_controller.on_config_dir_changed(self, path))
         self._watched_config_path: Optional[Path] = None
         self._watched_config_dir: Optional[Path] = None
         # Task #39: also watch <project>/bundle (+ the project root, to
@@ -130,7 +127,7 @@ class StudioWorkspace(QWidget):
         self._bundle_change_timer.setSingleShot(True)
         self._bundle_change_timer.setInterval(300)
         self._bundle_change_timer.timeout.connect(
-            self._on_bundle_change_debounced)
+            lambda: project_controller.on_bundle_change_debounced(self))
         
         # Initialize task config manager pointing at the repo-shared
         # fallback. ``reload(project_root)`` is called below whenever a
@@ -228,7 +225,7 @@ class StudioWorkspace(QWidget):
                 self._update_project_rules_indicators()
                 # Task #39: arm the config + bundle watchers for the
                 # CLI-supplied project (the main-app launch path).
-                self._watch_project_config()
+                project_controller.watch_project_config(self)
             
             # Step 2: Determine which test to open
             test_dir_to_open = None
@@ -281,13 +278,6 @@ class StudioWorkspace(QWidget):
             tabs.append(self.json_code_tab)
         return tabs
     
-    def _cancel_all_llm_workers(self):
-        """Cancel any running LLM workers across all tabs."""
-        for tab in self._get_llm_tabs():
-            if hasattr(tab, '_worker') and tab._worker:
-                tab._worker.cancel()
-                log.debug(f"Cancelled LLM worker for {tab.__class__.__name__}")
-
     def refresh_all_button_labels(self):
         """
         Refresh button labels in all tabs.
@@ -329,200 +319,9 @@ class StudioWorkspace(QWidget):
                 except Exception as e:
                     log.error(f"Error rebuilding validator buttons in {tab.__class__.__name__}: {e}")
 
-    
-    # ------------------------------------------------------------------
-    #  Export (File → Export → Markdown / Word)
-    # ------------------------------------------------------------------
-
-    def _current_procedure_text(self):
-        """Return the live procedure text from the active editor.
-
-        Reads ``text_editor.toPlainText()`` directly (never the artifact
-        cache) so unsaved edits are exported. Tries the active tab first,
-        then the text/json tab which always owns procedure_text.
-        """
-        candidates = [
-            self.view_stack.currentWidget(),
-            getattr(self, "text_json_tab", None),
-            getattr(self, "text_only_tab", None),
-        ]
-        for tab in candidates:
-            editor = getattr(tab, "text_editor", None)
-            if editor is not None:
-                txt = editor.toPlainText()
-                if txt and txt.strip():
-                    return txt
-        return None
-
     def _on_install_package(self):
         """Packages -> Install Package: the shared procedo.core dialog."""
         InstallPackageDialog(self).exec()
-
-    def _export_default_path(self, suffix: str) -> Path:
-        """Default save location/name for an export with *suffix* (e.g. '.md')."""
-        root = getattr(self.project_manager, "project_root", None)
-        if root is not None:
-            stem = Path(root).name or "procedure"
-            return Path(root) / f"{stem}{suffix}"
-        return Path.home() / f"procedure{suffix}"
-
-    def _on_export_markdown(self):
-        """File -> Export -> Markdown: the SELECTED tests' text concatenated, or a
-        quick single-procedure dump when no project is open."""
-        root = getattr(self.project_manager, "project_root", None)
-        if root is None:
-            self._export_markdown_single()
-            return
-        folders = self.project_manager.enumerate_test_folders()
-        if not folders:
-            QMessageBox.information(self, "Export to Markdown",
-                                    "This project has no test folders.")
-            return
-        from .dialogs.test_selection_dialog import TestSelectionDialog
-        sel = TestSelectionDialog(folders, require="text", parent=self)
-        if sel.exec() != QDialog.Accepted:
-            return
-        selected = sel.selected_folders()
-        if not selected:
-            QMessageBox.information(self, "Export to Markdown", "No tests selected.")
-            return
-        default = self._export_default_path(".md")
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export Tests to Markdown", str(default),
-            "Markdown (*.md);;All Files (*)")
-        if not path:
-            return
-        try:
-            parts = []
-            for f in selected:
-                txt = (f.path / "procedure_text.md").read_text(encoding="utf-8")
-                parts.append(f"# {f.name}\n\n{txt.strip()}\n")
-            Path(path).write_text("\n\n".join(parts), encoding="utf-8")
-        except Exception as e:
-            log.exception("Markdown export failed")
-            QMessageBox.critical(self, "Export Failed",
-                                 f"Could not write Markdown:\n{e}")
-            return
-        self.footer.show_message(
-            f"Exported {len(selected)} test(s) to Markdown -> {path}", 5000)
-
-    def _export_markdown_single(self):
-        """Quick dump of the open procedure's text (used when no project is open)."""
-        text = self._current_procedure_text()
-        if not text:
-            QMessageBox.information(
-                self, "Export to Markdown",
-                "There is no procedure text to export.\n"
-                "Open or author a procedure first.")
-            return
-        default = self._export_default_path(".md")
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export Procedure to Markdown", str(default),
-            "Markdown (*.md);;All Files (*)")
-        if not path:
-            return
-        try:
-            from .core.procedure_export import write_markdown
-            write_markdown(text, Path(path))
-        except Exception as e:
-            log.exception("Markdown export failed")
-            QMessageBox.critical(self, "Export Failed",
-                                 f"Could not write Markdown:\n{e}")
-            return
-        self.footer.show_message(f"Exported Markdown -> {path}", 5000)
-
-    def _on_export_word(self):
-        """File -> Export -> Word: the FULL report (.docx) over the SELECTED tests
-        (same engine as the main app), or a quick single-procedure dump when no
-        project is open."""
-        root = getattr(self.project_manager, "project_root", None)
-        if root is None:
-            self._export_word_single()
-            return
-        folders = self.project_manager.enumerate_test_folders()
-        if not folders:
-            QMessageBox.information(self, "Export to Word",
-                                    "This project has no test folders.")
-            return
-        from .dialogs.test_selection_dialog import TestSelectionDialog
-        sel = TestSelectionDialog(folders, require="json", parent=self)
-        if sel.exec() != QDialog.Accepted:
-            return
-        selected = sel.selected_folders()
-        if not selected:
-            QMessageBox.information(self, "Export to Word", "No tests selected.")
-            return
-        from .core.full_report import has_active_bundle
-
-        if not has_active_bundle(root):
-            if QMessageBox.question(
-                self, "No active bundle",
-                "This project has no active bundle, so the report will contain "
-                "metadata only — no test steps or expected results.\n\n"
-                "Export anyway?") != QMessageBox.StandardButton.Yes:
-                return
-
-        from procedo.core import project_exports
-        from procedo.core.evidence_store import EvidenceError
-
-        # The default folder is the project's evidence exports folder: a report kept
-        # there goes through the evidence store; any other folder is a plain file.
-        try:
-            export_folder = evidence_folder = project_exports.exports_folder(Path(root))
-        except EvidenceError as exc:  # no default inside the project: the user picks one
-            evidence_folder = None
-            QMessageBox.warning(self, "Export to Word",
-                                f"The project's evidence folder cannot be opened:\n{exc}\n\n"
-                                "Choose another folder for the report.")
-            chosen = QFileDialog.getExistingDirectory(self, "Export to Word", str(Path.home()))
-            if not chosen:
-                return
-            export_folder = Path(chosen)
-        sidecar = create_default_sidecar()
-        dlg = WordExportDialog(sidecar, Path(root), export_folder,
-                               default_docx_name="test_report.docx", parent=self)
-        if dlg.exec() != QDialog.Accepted:
-            return
-        output_path = dlg.get_output_path()
-        sidecar = dlg.get_sidecar()
-        from .dialogs.word_export_job import WordExportJob
-
-        def exported(path: Path, queued: bool) -> None:
-            later = " (waiting in this PC's outbox: Bench uploads it once the evidence folder is reachable)"
-            self.footer.show_message(
-                f"Exported {len(selected)}-test report -> {path}" + (later if queued else ""), 5000)
-
-        self._word_export = WordExportJob(  # rendered on a worker: the GUI never asks the engine
-            self, Path(root), [f.path for f in selected], output_path, sidecar,
-            on_exported=exported, evidence_folder=evidence_folder)
-
-    def _export_word_single(self):
-        """Quick dump of the open procedure as a plain .docx (used when no project)."""
-        text = self._current_procedure_text()
-        if not text:
-            QMessageBox.information(
-                self, "Export to Word",
-                "There is no procedure text to export.\n"
-                "Open or author a procedure first.")
-            return
-        default = self._export_default_path(".docx")
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export Procedure to Word", str(default),
-            "Word Document (*.docx);;All Files (*)")
-        if not path:
-            return
-        from .core.procedure_export import write_word, WordExportUnavailable
-        try:
-            write_word(text, Path(path), title=None)
-        except WordExportUnavailable as e:
-            QMessageBox.warning(self, "Word Export Unavailable", str(e))
-            return
-        except Exception as e:
-            log.exception("Word export failed")
-            QMessageBox.critical(self, "Export Failed",
-                                 f"Could not write Word document:\n{e}")
-            return
-        self.footer.show_message(f"Exported Word -> {path}", 5000)
 
     def _setup_central_widget(self):
         """The four views behind the segmented switch (``shell.build_view_column``)."""
@@ -541,7 +340,7 @@ class StudioWorkspace(QWidget):
         # repaints the header's pills and Save all
         views = (self.text_only_tab, self.text_json_tab, self.json_code_tab, self.traceability_tab)
         for tab in views:
-            tab.artifact_saved.connect(self._on_tab_artifact_saved)
+            tab.artifact_saved.connect(self._document_controller.on_tab_artifact_saved)
             tab.content_changed.connect(lambda: shell.refresh_header(self))
 
         # Views in workflow order: Text → Text-JSON → JSON-Code → Traceability
@@ -551,13 +350,13 @@ class StudioWorkspace(QWidget):
         """The test list: the Workspace column (``shell.build_frame`` lays it out)."""
         # Create workspace widget
         self.workspace_widget = WorkspaceTab(self)
-        self.workspace_widget.test_opened.connect(self._on_test_opened)
-        self.workspace_widget.test_deleted.connect(self._on_test_deleted)
+        self.workspace_widget.test_opened.connect(self._document_controller.on_test_opened)
+        self.workspace_widget.test_deleted.connect(self._document_controller.on_test_deleted)
         # Right-click "Mark Procedure In Sync" on the loaded test routes
         # through the existing acknowledgment flow (handles in-memory
         # session_state + disk write atomically, pops the confirmation).
         self.workspace_widget.request_mark_loaded_in_sync.connect(
-            self._on_sync_indicator_clicked,
+            self._document_controller.on_sync_indicator_clicked,
         )
     
     def _setup_dock(self):
@@ -565,30 +364,13 @@ class StudioWorkspace(QWidget):
         self.dock = DockWidget(self)
         
         # Update context limit based on backend config
-        self._update_context_limit()
+        self._assistant_controller.update_context_limit()
         
         # Connect chat signals
-        self.dock.chat_panel.message_sent.connect(self._on_chat_message)
-        self.dock.chat_panel.reset_requested.connect(self._on_reset_session)
-        self.dock.chat_panel.cancel_requested.connect(self._on_cancel_llm)
-        self.dock.chat_panel.compact_requested.connect(self._on_compact_session)
-    
-    def _update_context_limit(self):
-        """Update chat panel's 'Tokens: X/Y' indicator from common_llm.context_window.
-
-        This is purely a UI display value (the model's total context window)
-        so the operator can see how much budget has been consumed. It is
-        not sent to the LLM. Falls back to the legacy ``max_tokens`` key
-        for projects/users on older settings files.
-        """
-        if not hasattr(self, 'dock') or not hasattr(self.dock, 'chat_panel'):
-            return
-
-        common_llm = self._settings.get("common_llm", {}) if hasattr(self, '_settings') else {}
-        context_limit = common_llm.get(
-            "context_window", common_llm.get("max_tokens", 16384)
-        )
-        self.dock.chat_panel.set_context_limit(context_limit)
+        self.dock.chat_panel.message_sent.connect(self._assistant_controller.on_chat_message)
+        self.dock.chat_panel.reset_requested.connect(self._assistant_controller.on_reset_session)
+        self.dock.chat_panel.cancel_requested.connect(self._assistant_controller.on_cancel_llm)
+        self.dock.chat_panel.compact_requested.connect(self._assistant_controller.on_compact_session)
     
     def _update_project_rules_indicators(self):
         """Repaint the header (the test and its project) and the footer (project,
@@ -608,11 +390,6 @@ class StudioWorkspace(QWidget):
         text_tab = getattr(self, "text_only_tab", None)
         if text_tab is not None and hasattr(text_tab, "_maybe_load_netlist"):
             text_tab._maybe_load_netlist()
-    
-    def _on_project_indicator_clicked(self):
-        """Handle click on project indicator."""
-        # Same as opening project from File menu
-        self._on_open_project()
     
     def _on_rules_indicator_clicked(self):
         """Handle click on rules indicator."""
@@ -660,207 +437,8 @@ class StudioWorkspace(QWidget):
         """Update menu items based on artifact availability."""
         pass
     
-    def _on_sync_indicator_clicked(self):
-        """Handle click on the sync indicator (body in controllers/)."""
-        self._document_controller.on_sync_indicator_clicked()
-
     # ==================== Event Handlers ====================
     
-    def _on_tab_changed(self, index: int):
-        """Handle tab change (body in controllers/document_controller.py)."""
-        self._document_controller.on_tab_changed(index)
-
-    def _on_test_opened(self, path: Path):
-        """Handle test folder being opened (body in controllers/)."""
-        self._document_controller.on_test_opened(path)
-
-    def _on_test_deleted(self, path: Path):
-        """Handle a test folder being deleted (body in controllers/)."""
-        self._document_controller.on_test_deleted(path)
-
-    def _on_reset_session(self):
-        """Reset all LLM sessions (clears conversation history and rules cache)."""
-        # Cancel any in-flight work
-        self._cancel_all_llm_workers()
-        
-        # Reset all tab contexts (clear messages, reset _first_interaction flag, reset backend)
-        for tab in self._get_llm_tabs():
-            if hasattr(tab, 'tab_context'):
-                tab.tab_context.reset_conversation()
-                tab.tab_context.reset_backend()
-                log.info(f"{tab.__class__.__name__} tab context reset")
-        
-        # Clear chat panel UI and re-switch to current tab's context
-        if hasattr(self, 'dock') and hasattr(self.dock, 'chat_panel'):
-            # Get current tab's context before clearing
-            current_tab = self.view_stack.currentWidget()
-            current_tab_context = None
-            if hasattr(current_tab, 'tab_context'):
-                current_tab_context = current_tab.tab_context
-            
-            # Re-switch to current tab's context (which is now empty after reset)
-            self.dock.chat_panel.switch_context(current_tab_context)
-            log.info("Chat panel UI cleared and switched to current tab context")
-            
-            # Add system message to chat indicating reset
-            self.dock.chat_panel.add_system_message(
-                "🔄 Session reset - starting fresh. Rules will be sent on next interaction."
-            )
-        
-        self._llm_server.refresh_indicator()
-    
-    def _on_cancel_llm(self):
-        """Handle LLM cancellation request."""
-        # Check current tab for a running per-tab worker
-        current_tab = self.view_stack.currentWidget()
-        worker = getattr(current_tab, '_worker', None)
-        if worker and worker.isRunning():
-            log.info("User requested LLM cancellation (per-tab worker)")
-            worker.cancel()
-
-            # Immediate UI feedback
-            self.dock.chat_panel.set_llm_active(False)
-            self.dock.chat_panel.remove_thinking_message()
-            self.dock.chat_panel.add_system_message("Request cancelled by user")
-            self.footer.show_message("LLM request cancelled", 3000)
-
-    def _on_restart_backend(self):
-        """Restart the shared OpenCode server to recover a hung / unresponsive
-        backend without relaunching the editor. Cancels any in-flight request,
-        then retires the old manager and stands up a FRESH one (the retired
-        manager is single-use); the next send re-uses the restarted server."""
-        sm = self._llm_server.server_manager
-        if sm is None:
-            self.dock.chat_panel.add_system_message(
-                "No restartable backend server is configured.", tone="warning")
-            return
-        # Cancel any in-flight (possibly hung) request first (best-effort).
-        try:
-            self._on_cancel_llm()
-        except Exception:
-            log.exception("cancel before backend restart failed")
-        self.dock.chat_panel.add_message("system", "Restarting backend…")
-        self.footer.show_message("Restarting backend…", 3000)
-
-        # A manager is single-use after stop() (its _retired flag is
-        # permanent), so we can NOT stop+start the SAME object. Stand up a
-        # FRESH manager instead: restart_for_project retires the old
-        # one off the UI thread (no freeze, no orphan) and pre-warms the new
-        # one on a daemon thread, so this returns immediately.
-        self._llm_server.restart_for_project()
-
-    def _on_compact_session(self):
-        """Manually compact the active tab's LLM session so a long
-        conversation keeps fitting in the context window. Runs the compact
-        request (a network POST to the OpenCode server) off the UI thread;
-        the readout reflects the freed context on the next turn (the server
-        reports the reduced total then), and we refresh it now best-effort."""
-        current_tab = self.view_stack.currentWidget()
-        tab_context = getattr(current_tab, "tab_context", None)
-        if tab_context is None:
-            self.dock.chat_panel.add_system_message(
-                "No active session to compact.")
-            return
-        backend = tab_context.backend
-        self.dock.chat_panel.add_message("system", "Compacting session…")
-        self.loading.start("Compacting session…")
-
-        compacted = self._compacted
-
-        def _compact():
-            ok = False
-            try:
-                ok = bool(backend.compact())
-            except Exception:
-                log.exception("session compact failed")
-            compacted(ok)  # the UI feedback runs on the UI thread (this is a daemon)
-
-        threading.Thread(target=_compact, daemon=True).start()
-
-    def _on_compacted(self, ok):
-        """UI-thread end of one compaction."""
-        self.loading.done()
-        if ok:
-            self.dock.chat_panel.add_system_message(
-                "🗜️ Session compacted — context will shrink on the next reply.", tone="success")
-        else:
-            self.dock.chat_panel.add_system_message(
-                "Compaction is unavailable for this backend (or the request failed).", tone="warning")
-        # Re-render the readout from the latest known total (best-effort;
-        # the real reduction lands with the next turn's reported total).
-        try:
-            self.dock.chat_panel._update_context_label()
-        except Exception:
-            log.exception("context-label refresh after compact failed")
-
-    def _on_new_project(self):
-        """Handle new project creation (body in controllers/project_controller.py)."""
-        self._project_controller.on_new_project()
-
-    def _refresh_after_open(self):
-        """Common UI refresh after a project root is set (open / recent)."""
-        self._project_controller.refresh_after_open()
-
-    def _rebuild_open_recent_menu(self):
-        """Repopulate Open Recent from the shared recents list."""
-        self._project_controller.rebuild_open_recent_menu()
-
-    def _on_open_recent(self, path_str):
-        """Open a project from the recent list."""
-        self._project_controller.on_open_recent(path_str)
-
-    def _on_open_project(self):
-        """Handle open project action."""
-        self._project_controller.on_open_project()
-
-    def _watch_project_config(self) -> None:
-        """Arm config.json/config-dir watches (module fn: harness-liftable)."""
-        project_controller.watch_project_config(self)
-
-    def _watch_project_bundle(self) -> None:
-        """Arm bundle-dir + project-root watches (task #39)."""
-        project_controller.watch_project_bundle(self)
-
-    def _bundle_signature_changed(self) -> bool:
-        """Edge-triggered: bundle identity moved since the last check."""
-        return project_controller.bundle_signature_changed(self)
-
-    def _bundle_stamp_changed(self) -> bool:
-        """Edge-triggered: install stamp moved since the last check."""
-        return project_controller.bundle_stamp_changed(self)
-
-    def _on_bundle_change_debounced(self) -> None:
-        """Debounced funnel for bundle changes (task #39)."""
-        project_controller.on_bundle_change_debounced(self)
-
-    def _on_config_file_changed(self, path: str) -> None:
-        """Hot-reload when config.json changes."""
-        project_controller.on_config_file_changed(self, path)
-
-    def _on_config_dir_changed(self, path: str) -> None:
-        """Dir event: re-arm watches + hot-reload funnels."""
-        project_controller.on_config_dir_changed(self, path)
-
-    def _handle_config_change(self) -> None:
-        """Single funnel for hot-reload work (body in controllers/)."""
-        project_controller.handle_config_change(self)
-
-    def _on_save(self):
-        """Save the current tab's artifacts (body in controllers/)."""
-        self._document_controller.on_save()
-
-    def _on_tab_artifact_saved(self):
-        """Handle artifact_saved from any tab's per-button save."""
-        self._document_controller.on_tab_artifact_saved()
-
-    def _on_save_all(self):
-        """Save all dirty artifacts across all tabs; False when a write failed."""
-        return self._document_controller.on_save_all()
-
-    def _check_unsaved_changes(self) -> bool:
-        """True when the user cancelled the unsaved-changes prompt."""
-        return self._document_controller.check_unsaved_changes()
-
     def _on_settings(self):
         """Open settings dialog."""
         # Pass project_root so the Validator tab can read/write the
@@ -923,9 +501,9 @@ class StudioWorkspace(QWidget):
         dlg.exec()
         # Config / bundle may have changed -> refresh gating + rules. Runs on
         # Cancel too (task #39): the dialog can import a bundle live before
-        # being cancelled; _handle_config_change funnels the reload/regate.
+        # being cancelled; project_controller.handle_config_change funnels the reload/regate.
         self._update_project_rules_indicators()
-        self._handle_config_change()
+        project_controller.handle_config_change(self)
 
     def _on_template_manager(self):
         """Project -> Template Manager: manage saved customer-config templates via
@@ -943,10 +521,10 @@ class StudioWorkspace(QWidget):
         library_dialog.open_library(self, side=library_dialog.LOCAL, project_path=root)
         # Library changes may alter which bundle resolves -> refresh gating.
         # Task #39: an "Import into Project" must go live immediately —
-        # _handle_config_change reloads TaskConfigManager (task buttons /
+        # project_controller.handle_config_change reloads TaskConfigManager (task buttons /
         # prompt templates via the reload-callback chain) on top of the regate.
         self._update_project_rules_indicators()
-        self._handle_config_change()
+        project_controller.handle_config_change(self)
 
     def _on_scenarios(self):
         """Project -> Scenarios: author named test scenarios via the shared
@@ -1003,59 +581,6 @@ class StudioWorkspace(QWidget):
         from .dialogs.about_dialog import AboutDialog
         AboutDialog(self).exec()
     
-    def _on_chat_message(self, message: str):
-        """Handle chat message from user."""
-        # Set intent based on current tab
-        if self.session_state:
-            current_tab = self.view_stack.currentWidget()
-            if current_tab == self.text_only_tab:
-                self.session_state.intent = "Help write a clear, complete procedure text"
-            elif current_tab == self.text_json_tab:
-                self.session_state.intent = "Help write correct procedure text to generate valid JSON"
-            elif current_tab == self.json_code_tab:
-                self.session_state.intent = "Help generate correct test code from JSON procedure"
-            elif hasattr(self, 'traceability_tab') and current_tab == self.traceability_tab:
-                self.session_state.intent = "Help verify traceability between procedure and code"
-            else:
-                self.session_state.intent = "General assistance with test procedure development"
-        
-        # Get current active tab
-        current_tab = self.view_stack.currentWidget()
-        
-        # Check if chat is enabled for this tab
-        tab_id = getattr(current_tab, 'tab_id', None)
-        if tab_id and hasattr(self, 'task_config_manager') and self.task_config_manager:
-            chat_config = self.task_config_manager.get_chat_config(tab_id)
-            if not chat_config.enabled:
-                self.dock.chat_panel.add_message(
-                    "system", "Chat is disabled for this tab. Enable it in Settings → Chat."
-                )
-                return
-        
-        try:
-            current_tab._run_task_async(LLMTask.AD_HOC_CHAT, user_message=message)
-        except Exception as e:
-            log.error(f"Error executing chat task: {e}", exc_info=True)
-            QMessageBox.critical(self, "Task Error", f"Failed to execute task: {str(e)}")
-    
-    def _play_notification_sound(self) -> None:
-        """Play a system notification sound when the LLM finishes."""
-        log.debug("Playing notification sound...")
-        try:
-            import winsound
-        except ImportError:
-            log.warning("winsound not available (non-Windows platform)")
-            return
-        try:
-            winsound.MessageBeep(winsound.MB_ICONASTERISK)
-            log.debug("Notification sound played (MessageBeep)")
-        except Exception:
-            try:
-                winsound.Beep(1000, 200)
-                log.debug("Notification sound played (Beep fallback)")
-            except Exception as e:
-                log.warning(f"Sound playback failed: {e}")
-
     # ==================== Public Interface ====================
     
     def switch_to_tab(self, tab_name: str):
@@ -1081,7 +606,7 @@ class StudioWorkspace(QWidget):
     
     def open_test(self, path: Path):
         """Open a test folder programmatically."""
-        self._on_test_opened(path)
+        self._document_controller.on_test_opened(path)
     
     def set_project_root(self, path: Path):
         """Set project root programmatically."""

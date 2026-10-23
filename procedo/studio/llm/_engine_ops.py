@@ -938,32 +938,51 @@ def refusal(role: str, req: dict) -> dict | None:
     return {"ok": False, "kind": "Protocol", "error": f"the {role} engine does not take {what}"}
 
 
+# The ops that need no pack (pack_contract names a broken pack in its own section), and the per-key ops.
+_PACK_FREE = frozenset({"is_available", "pack_contract", "bench_identity", "functions_check",
+                        "function_signatures", "section_ownership"})
+_PER_KEY = frozenset({"display_snapshot", "extract"})
+
+
+def packs_unloadable(exc: BaseException) -> str:
+    """Why an op cannot trust its packs: the bundle's pack load raised ``exc``."""
+    return f"The bundle's packs could not be loaded: {type(exc).__name__}: {exc}"
+
+
+def _packs_error(spec: dict, registry) -> str:
+    """``registry(spec)`` (the daemon's pack load) done: why it failed, else "" — also in a venv
+    without the wheel, where each op gives its own "not importable" answer."""
+    if registry is None:
+        return ""
+    try:
+        registry(spec)
+    except Exception as exc:  # noqa: BLE001 — any load failure is said by the op
+        try:
+            _import_wheel()
+        except ImportError:
+            return ""
+        return packs_unloadable(exc)
+    return ""
+
+
 def run(spec: dict, registry=None) -> dict:
     """Run ``spec["op"]``; never raises. ``registry(spec)``, when given, loads the
-    packs first (the daemon's once-per-process load). A load failure does
-    not fail the op: it degrades to 'unknown pack' findings. Unknown op →
-    ``Other``; ImportError → ``ParserUnavailable``; any other exception →
-    ``Other`` with its traceback."""
-    try:
-        if registry is not None:
-            registry(spec)
-    except Exception:  # noqa: BLE001
-        pass
+    packs first (the daemon's once-per-process load). A load failure is never silent: a
+    :data:`_PACK_FREE` op answers as usual, a :data:`_PER_KEY` op says it in each key's ``errors``
+    (the user hears it through the validators' VALIDATOR_NOT_RUN finding: nothing reads a display
+    snapshot's), any other op fails with it (``ParserUnavailable``) — it would answer wrong (a pack
+    step's text blank). Unknown op → ``Other``; ImportError → ``ParserUnavailable``; any other
+    exception → ``Other`` with its traceback."""
+    load_error = _packs_error(spec, registry)
     op = spec.get("op")
     if op not in _OPS:
-        return {
-            "ok": False,
-            "kind": "Other",
-            "error": f"Unknown op: {op!r}. Valid ops: {sorted(_OPS)}",
-        }
+        return {"ok": False, "kind": "Other", "error": f"Unknown op: {op!r}. Valid ops: {sorted(_OPS)}"}
+    if load_error and op not in _PACK_FREE | _PER_KEY:
+        return {"ok": False, "kind": "ParserUnavailable", "error": load_error}
     try:
-        return _OPS[op](spec)
+        answer = _OPS[op](spec)
     except ImportError as exc:
-        return {
-            "ok": False,
-            "kind": "ParserUnavailable",
-            "error": str(exc),
-        }
+        return {"ok": False, "kind": "ParserUnavailable", "error": str(exc)}
     except Exception as exc:  # noqa: BLE001
         return {
             "ok": False,
@@ -971,3 +990,7 @@ def run(spec: dict, registry=None) -> dict:
             "error": f"{type(exc).__name__}: {exc}",
             "traceback": traceback.format_exc(),
         }
+    if load_error and op in _PER_KEY:
+        for entry in answer.get("tests") or answer.get("results") or []:
+            entry["errors"].update(dict.fromkeys(entry["data"], load_error))
+    return answer

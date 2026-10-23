@@ -321,3 +321,16 @@ class ManualRunEngineReadsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_an_in_process_pack_load_that_fails_says_why_on_every_call(monkeypatch, tmp_path):
+    """The no-project path loads the launcher's bundle once; its failure is said as the engine's ops say it."""
+    from procedo.studio.launch_env import BUNDLE_DEFAULTS_PATH
+
+    (tmp_path / "defaults.json").write_text(json.dumps({"pack_dispatch": {
+        "namespace_to_module": {"zz": "no_such_pack_parser"}}}), encoding="utf-8")
+    monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(tmp_path / "defaults.json"))
+    monkeypatch.setattr(pp, "_REGISTRY_LOAD", None)
+    for _ in range(2):
+        with pytest.raises(pp.ParserUnavailable, match="^The bundle's packs could not be loaded: "):
+            pp._inproc_import_wheel()

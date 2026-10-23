@@ -99,7 +99,7 @@ def _resolve_project_python(project_root: Path) -> _project_local_state.ProjectV
 # ---------------------------------------------------------------------------
 
 
-_REGISTRY_POPULATED = False
+_REGISTRY_LOAD: str | None = None  # None: not tried; "": loaded (or no bundle); else why it failed
 
 
 def _ensure_inproc_registry_populated() -> None:
@@ -109,24 +109,25 @@ def _ensure_inproc_registry_populated() -> None:
     equipment from a process-global registry; nothing parses psu/eload/scope/
     controller until it is populated. Source the bundle dir from
     ``PROCEDO_BUNDLE_DEFAULTS_PATH`` (a defaults.json file → its parent dir). No-op
-    when unset (no-project editor mode), when the wheel predates the registry
-    (old project), or on any load error — the parser then degrades to the
-    monolithic-free 'unknown pack' findings rather than crashing the editor.
+    when unset (no-project editor mode). A failed load is tried once and said
+    on every call (``ParserUnavailable``), as the engine's ops say it.
     """
-    global _REGISTRY_POPULATED
-    if _REGISTRY_POPULATED:
-        return
-    _REGISTRY_POPULATED = True  # set before work so a failure isn't retried per call
-    defaults_path = os.environ.get(launch_env.BUNDLE_DEFAULTS_PATH)
-    if not defaults_path:
-        return
-    try:
-        from rules_packager_base.rules.v2_0_2.parser._pack_registry import (
-            load_packs_into_registry,
-        )
-        load_packs_into_registry(Path(defaults_path).parent)
-    except Exception as exc:  # noqa: BLE001 — old wheel / bad bundle: degrade, don't crash
-        log.debug("in-proc pack registry population skipped: %s", exc)
+    global _REGISTRY_LOAD
+    if _REGISTRY_LOAD is None:
+        _REGISTRY_LOAD = ""
+        defaults_path = os.environ.get(launch_env.BUNDLE_DEFAULTS_PATH)
+        if defaults_path:
+            try:
+                from rules_packager_base.rules.v2_0_2.parser._pack_registry import (
+                    load_packs_into_registry,
+                )
+                load_packs_into_registry(Path(defaults_path).parent)
+            except Exception as exc:  # noqa: BLE001 — said by every call below
+                from ..llm._engine_ops import packs_unloadable
+
+                _REGISTRY_LOAD = packs_unloadable(exc)
+    if _REGISTRY_LOAD:
+        raise ParserUnavailable(_REGISTRY_LOAD)
 
 
 def _inproc_import_wheel():

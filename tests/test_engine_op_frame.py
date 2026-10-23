@@ -3,8 +3,9 @@
 One op table (``llm/_engine_ops.py``) serves every engine process, so the daemon's
 answer is the op table's answer over the JSON boundary. The op judges
 the document IN the frame: it never reads the path, never changes the daemon's
-latched instrument document, and a bundle that will not load degrades it instead
-of failing it.
+latched instrument document, and a bundle whose packs will not load is never silent:
+an op that needs no pack answers, a per-key op says it in each key's ``errors``, any
+other op fails with the reason.
 """
 from __future__ import annotations
 
@@ -159,7 +160,8 @@ def test_the_op_judges_its_frame_document_and_never_changes_the_sessions():
     assert session.procedure_json is held
 
 
-def test_a_bundle_that_will_not_load_degrades_the_op_but_refuses_instruments(monkeypatch):
+def test_a_bundle_that_will_not_load_fails_the_op_with_its_reason_and_refuses_instruments(monkeypatch):
+    """Never a plan without the bundle's packs: its pack steps would show blank (no emitter)."""
     tried = []
 
     def _broken(session, req):
@@ -170,10 +172,54 @@ def test_a_bundle_that_will_not_load_degrades_the_op_but_refuses_instruments(mon
     session = er._Session()
     op, _ = er._dispatch(session, {"cmd": "op", "op": "build_manual_run",
                                    "procedure_json": _document("linear")})
-    assert op["ok"] and op["steps"]
+    assert op == {"ok": False, "kind": "ParserUnavailable",
+                  "error": "The bundle's packs could not be loaded: RuntimeError: bundle broken"}
     assert tried == ["op"]   # the op asked for the daemon's once-per-process pack load
     exec_ops, _ = er._dispatch(session, {"cmd": "exec_ops", "ops": []})
     assert exec_ops["ok"] is False and "bundle broken" in exec_ops["error"]
+
+
+def _no_packs(spec):
+    raise RuntimeError("bundle broken")
+
+
+_NO_PACKS = "The bundle's packs could not be loaded: RuntimeError: bundle broken"
+
+
+def test_a_bundle_that_will_not_load_still_names_a_broken_pack_and_says_why_per_key(tmp_path):
+    pytest.importorskip("rules_packager_base.pack_contract")
+    contract = engine_ops.run({"op": "pack_contract", "modules": ["no_such_pack_parser"]}, _no_packs)
+    assert contract["ok"] and contract["packs"]["no_such_pack_parser"]["error"].startswith("ModuleNotFoundError")
+    (tmp_path / "bundle").mkdir()
+    (tmp_path / "bundle" / "defaults.json").write_text(json.dumps({"extractors": {
+        "meta": {"module": "rules_packager_base.rules.v2_0_2.extractors", "function": "extract_meta"}}}),
+        encoding="utf-8")
+    out = engine_ops.run({"op": "extract", "project": str(tmp_path), "keys": ["meta", "equipment"],
+                          "procedures": [{"id": "T1", "title": "Title"}]}, _no_packs)
+    (result,) = out["results"]
+    assert out["ok"] and result["data"]["meta"]["display_name"] == "Title (T1)"
+    assert result["errors"] == {"meta": _NO_PACKS, "equipment": "bundle declares no 'equipment' extractor"}
+
+
+def test_a_venv_without_the_wheel_keeps_the_ops_own_message(monkeypatch):
+    def _no_wheel():
+        raise ImportError("no wheel")
+
+    monkeypatch.setattr(engine_ops, "_import_wheel", _no_wheel)
+    assert engine_ops.run({"op": "parse_text", "text": "x"}, _no_packs) == {
+        "ok": False, "kind": "ParserUnavailable", "error": "no wheel"}
+
+
+def test_a_bundle_without_packs_or_a_frame_without_a_bundle_answers(monkeypatch, tmp_path):
+    from rules_packager_base.rules.v2_0_2.parser import _default_registry
+
+    # Loading a bundle without packs clears the process-wide registry: this worker's later tests need it.
+    monkeypatch.setattr(_default_registry, "clear_registry", lambda: None)
+    (tmp_path / "defaults.json").write_text("{}", encoding="utf-8")  # declares no pack_dispatch
+    frame = {"cmd": "op", "op": "build_manual_run", "procedure_json": _document("linear")}
+    for req in (frame, {**frame, "_bundle_dir": str(tmp_path)}):
+        op, _ = er._dispatch(er._Session(), req)
+        assert op["ok"] and op["steps"]
 
 
 def test_error_kinds_keep_the_exception_table(monkeypatch):

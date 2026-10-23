@@ -193,7 +193,6 @@ class ValidateResponseThreadsOverrideTests(unittest.TestCase):
             errors: list = []
 
         orig_recon = self.vd.reconstruction.reconstruct_for_pipeline
-        orig_import = self.vd._import_validator
         # Force the deterministic path "available" + a capturing validate_fn,
         # so we exercise the real handler dispatch without a wheel.
         self.vd.reconstruction.reconstruct_for_pipeline = _spy
@@ -205,7 +204,6 @@ class ValidateResponseThreadsOverrideTests(unittest.TestCase):
             )
         finally:
             self.vd.reconstruction.reconstruct_for_pipeline = orig_recon
-            self.vd._import_validator = orig_import
 
         self.assertIsNotNone(outcome)
         self.assertEqual(captured.get("task_override"), ["steps"])

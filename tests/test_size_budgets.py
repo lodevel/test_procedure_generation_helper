@@ -72,7 +72,7 @@ FILE_BUDGET: dict[str, int] = {
     # llm/_hold_resolution.py (fold-first rule, stale drop, ns rebind); the
     # daemon file only delegates and records the open.
     "llm/opencode_backend.py": 1251,  # +9: bare-except cleanup log lines
-    "llm/validator_dispatch.py": 1163,
+    "llm/validator_dispatch.py": 1032,  # -131: the dead inventory loader and _import_validator went
     "main_window.py": 1640,  # -44: Word export keywords and About left for dialogs/ (Studio redesign slice 7a)
 }
 

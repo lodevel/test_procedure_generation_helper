@@ -37,7 +37,7 @@ er = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(er)
 
 _HEAD = ("# T\nDesc.\n\n## Meta\nformat_version: 2.0.1\nboard: B\n"
-         "rules_pack: rules_packager_base@2.11.0\n\n## Equipment\nDMM_GENERIC : dmm\n\n## Steps\n")
+         "rules_pack: rules_packager_base@2.12.0\n\n## Equipment\nDMM_GENERIC : dmm\n\n## Steps\n")
 
 # Procedures copied from the engine's own tests (rules/v2_0_2/tests): a linear
 # read pair with an operator judgement, an @IF/@ELSE branch on a reading
@@ -250,3 +250,17 @@ def test_engine_op_sends_one_op_frame_with_the_document(monkeypatch, tmp_path):
     assert seen["frame"] == {"cmd": "op", "op": "build_manual_result",
                              "procedure_json": doc, "measurements": {"a": 1}}
     assert seen["timeout"] == pp._timeout()
+
+
+def test_the_write_not_started_op_leaves_the_tests_error_result(tmp_path):
+    # Owner, 2026-10-23: a run the bench refused (or whose instrument would not open) left no
+    # results.json, so it showed nowhere and the test kept its previous verdict.
+    module = tmp_path / "test.py"
+    module.write_text('TEST_NAME = "T"\nRULES = {}\n', encoding="utf-8")
+    answer = engine_ops.run({"op": "write_not_started", "module_path": str(module), "results_dir": str(tmp_path),
+                             "code": "RUN_ACTIVE", "description": "another test is already running on this bench"})
+    assert answer == {"ok": True}
+    written = json.loads((tmp_path / "results.json").read_text(encoding="utf-8"))
+    assert (written["test_name"], written["overall"]) == ("T", "ERROR")
+    assert written["outcome_details"] == [{"code": "RUN_ACTIVE", "step": None, "then": "stopped",
+                                           "description": "another test is already running on this bench"}]

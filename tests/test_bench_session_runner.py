@@ -429,6 +429,7 @@ class EndpointRekeyTests(_BenchBase):
         self.assertFalse(resp["ok"])
         self.assertEqual(resp["error"],
                          f"PSU1 at {_ADDR_A}: OSError: VI_ERROR_RSRC_NFOUND")
+        self.assertEqual(resp["exception_type"], "OSError")  # the not-started result's code
 
     def test_acquire_is_exclusive_until_release(self):
         s = self._session()

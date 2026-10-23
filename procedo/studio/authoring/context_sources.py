@@ -147,6 +147,7 @@ class ArtifactProvider:
     label: str
     provide: Callable[[], str]
     detail: str = ""
+    empty_hint: str = ""
 
 
 class ArtifactsSource(ContextSource):
@@ -160,7 +161,7 @@ class ArtifactsSource(ContextSource):
 
     def list_items(self) -> list[ContextItem]:
         return [
-            ContextItem("artifacts", p.key, p.label, p.detail)
+            ContextItem("artifacts", p.key, p.label, p.detail, p.empty_hint)
             for p in self._providers.values()
         ]
 

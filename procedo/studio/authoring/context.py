@@ -20,12 +20,14 @@ from typing import Sequence
 class ContextItem:
     """One checkable unit within a source (a rule file, a document, an
     artifact). ``key`` is unique within the source and is what gets passed back
-    to :meth:`ContextSource.materialize`."""
+    to :meth:`ContextSource.materialize`. ``empty_hint``: the likely reason when it
+    materializes empty, for the user."""
 
     source_id: str
     key: str
     label: str
     detail: str = ""
+    empty_hint: str = ""
 
 
 @dataclass(frozen=True)

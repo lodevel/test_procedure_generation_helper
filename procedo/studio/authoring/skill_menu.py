@@ -9,6 +9,7 @@ insert, the context sources).
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -144,24 +145,29 @@ def build_sources(main_window, root: Optional[Path]):
     # CLI subprocess (~seconds), and the picker re-materializes on every checkbox
     # toggle for the token readout — without this each toggle would re-run it.
     # Both providers below share the single load.
+    # The picker sizes its selection on a worker thread: the lock makes a second caller
+    # wait for the load in flight instead of starting another.
     _board_cache: dict = {}
+    _board_lock = threading.Lock()
 
     def _board() -> dict:
-        if "board" not in _board_cache:
-            _board_cache["board"] = odb_inspect.load_board(root)
-        return _board_cache["board"]
+        with _board_lock:
+            if "board" not in _board_cache:
+                _board_cache["board"] = odb_inspect.load_board(root)
+            return _board_cache["board"]
 
     # Connectivity and part numbers are SEPARATE toggles: connectivity is small
     # and broadly useful; the IC part-number block is larger and only some skills
     # need it.
     providers.append(ArtifactProvider(
         "netlist", "Netlist (connectivity)", lambda: format_netlist(_board())))
+    no_parts = "no ODB++ board archive in the project, or no part numbers on it?"
     providers.append(ArtifactProvider(
         "component_ids", "Component part numbers (ICs: U, IC)",
-        lambda: format_component_ids(_board())))
+        lambda: format_component_ids(_board()), empty_hint=no_parts))
     providers.append(ArtifactProvider(
         "other_component_ids", "Component part numbers (other: non-IC)",
-        lambda: format_other_component_ids(_board())))
+        lambda: format_other_component_ids(_board()), empty_hint=no_parts))
     sources.append(ArtifactsSource(providers))
     return sources, documents_dir
 

@@ -63,6 +63,12 @@ log = logging.getLogger(__name__)
 _NO_CONTEXT = ContextBundle("", 0)
 
 
+def _needed(skill) -> list[str]:
+    """The picker items ``skill`` cannot work without (frontmatter ``needs-context``)."""
+    value = (getattr(skill, "metadata", None) or {}).get("needs-context") or []
+    return [str(v) for v in (value if isinstance(value, list) else [value])]
+
+
 #: The Assistant column's composer input height (board S9).
 _INPUT_HEIGHT = 52
 #: The "Context to push" card's width on the board (its widest).
@@ -195,6 +201,8 @@ class SkillChatWidget(QWidget):
         # pushes the context (and no context panel is shown).
         self._picker: Optional[SkillContextPicker] = (
             SkillContextPicker(sources, documents_dir=documents_dir) if sources else None)
+        if self._picker is not None:
+            self._picker.tick(_needed(self._skill))
         self._setup_ui()
 
     # -- UI construction ------------------------------------------------------
@@ -399,15 +407,21 @@ class SkillChatWidget(QWidget):
         ``assemble(picker.selections())``."""
         self._pushed_context = context or _NO_CONTEXT
 
-    def resolved_context(self) -> ContextBundle:
+    def resolved_context(self, *, without_needed: bool = False) -> ContextBundle:
         """The context this widget would send right now — the picker's assembled
         selection (when it has a picker) or the host's pushed one: its text and the
         files attached with it. Hosts read this to PROPAGATE one widget's chosen
         context to another: a batch wizard hands one page's picker selection to every
-        per-item build chat (the ONE place the picker-vs-pushed fork lives)."""
-        if self._picker is not None:
-            return assemble(self._picker.selections())
-        return self._pushed_context
+        per-item build chat (the ONE place the picker-vs-pushed fork lives).
+        ``without_needed`` leaves out this skill's ``needs-context`` items: what only
+        this skill needs is not handed on (and re-billed) to every other chat."""
+        if self._picker is None:
+            return self._pushed_context
+        selections = self._picker.selections()
+        if without_needed:
+            needed = set(_needed(self._skill))
+            selections = [(s, [k for k in keys if k not in needed]) for s, keys in selections]
+        return assemble(selections)
 
     def run_kickoff(self, priming: str = "") -> None:
         """Start the skill with the resolved context (Run path). A non-empty
@@ -416,7 +430,8 @@ class SkillChatWidget(QWidget):
         prompt only). No-op if a request is in flight or the session is started."""
         if self._worker is not None or self._session.started:
             return
-        self._stage_context()
+        if not self._stage_context():
+            return
         title = (self._skill.title or self._skill.skill_id) if self._skill else "skill"
         self._append_line("System", f"Running '{title}'…")
         priming = (priming or "").strip()
@@ -427,20 +442,23 @@ class SkillChatWidget(QWidget):
             prompt = self._session.kickoff()
         self._dispatch(prompt, interactive=False)  # an initial build (not a user answer)
 
-    def send_user_turn(self, text: str) -> None:
+    def send_user_turn(self, text: str) -> bool:
         """Send a refine turn (programmatic twin of ``_on_send`` minus reading the
-        box). No-op if a request is in flight or ``text`` is blank."""
+        box). Not sent (False) if a request is in flight, ``text`` is blank or the
+        skill's needed context is missing."""
         if self._worker is not None:
-            return
+            return False
         text = (text or "").strip()
         if not text:
-            return
+            return False
         # Refresh the pushed context (it rides the first send, and again only when
         # the resolved selection changes — see SkillChatSession._lead_context).
-        self._stage_context()
+        if not self._stage_context():
+            return False
         prompt = self._session.start_user_turn(text)
         self._append_line("You", text)
         self._dispatch(prompt, interactive=True)  # a user answer/refine: may jump the queue
+        return True
 
     def clear(self) -> None:
         """Trash: cancel any in-flight send, start a FRESH session (same skill),
@@ -497,10 +515,18 @@ class SkillChatWidget(QWidget):
 
     # -- context resolution seam ---------------------------------------------
 
-    def _stage_context(self) -> None:
-        """Hand the session the context resolved now: its text and attached files."""
+    def _stage_context(self) -> bool:
+        """Hand the session the context resolved now: its text and attached files. A
+        conversation does not START without the context its skill needs: False, and the
+        status says what is missing."""
+        if self._picker is not None and not self._session.started:
+            problem = self._picker.unmet(_needed(self._skill))
+            if problem:
+                self._status.set_full_text(problem)
+                return False
         context = self.resolved_context()
         self._session.set_context(context.text, context.files)
+        return True
 
     def _index_of(self, skill) -> int:
         """Index of ``skill`` in ``self._skills`` matched by ``skill_id`` (robust to
@@ -574,8 +600,8 @@ class SkillChatWidget(QWidget):
         message = self._input.toPlainText().strip()
         if not message:
             return
-        self._input.clear()
-        self.send_user_turn(message)
+        if self.send_user_turn(message):
+            self._input.clear()
 
     def _dispatch(self, prompt: str, *, interactive: bool = True) -> None:
         """Fire a built turn (shared by Run + Send). With a ``dispatch_gate`` set
@@ -766,6 +792,8 @@ class SkillChatWidget(QWidget):
         OpenCode conversation. Emits ``conversation_reset``."""
         self._skill = skill
         self._session = SkillChatSession(self._skill)
+        if self._picker is not None:
+            self._picker.tick(_needed(skill))
         self._new_backend_session()  # new skill → fresh OpenCode conversation
         self._latest_draft = ""
         self._stream_buffer = ""

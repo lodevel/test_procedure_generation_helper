@@ -66,6 +66,7 @@ version: 0.1.0
 | `when-to-use` | no | One-line description, shown as the menu-item tooltip. |
 | `version` | no | Free-form version string. |
 | `kind` | no | Informational; defaults to `skill-chat`. **Does not** decide the type — see below. |
+| `needs-context` | no | Context-picker item keys the skill cannot work without (e.g. `[component_ids]`): ticked by default; a conversation does not start while one is unticked, missing or empty, and the chat says which. |
 
 **The type is decided by the folder, not the frontmatter.** Chat skills live in
 `authoring_skills/`. Wizards (a separate, code-based feature) live in a parallel

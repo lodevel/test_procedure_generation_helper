@@ -7,6 +7,7 @@ at the board's angle, opened in Bench's image popup."""
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -171,6 +172,11 @@ def test_the_context_card_counts_the_ticks_per_tab_and_in_its_readout(chat_dialo
     picker.set_checked("rules", ["001_rule.md", "003_rule.md"])
     picker._update_readout()
     assert picker._tabs.tabText(0) == "Rules 2"
+    assert picker._readout.text() == "Context: 2 items · loading…"  # sized on a worker thread
+    end = time.monotonic() + 3
+    while "~" not in picker._readout.text() and time.monotonic() < end:
+        QApplication.processEvents()
+        time.sleep(0.01)
     assert picker._readout.text().startswith("Context: 2 items · ~")
     assert picker.selections()[0][1] == ["001_rule.md", "003_rule.md"]
 

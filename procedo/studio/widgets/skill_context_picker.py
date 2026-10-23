@@ -14,6 +14,8 @@ imports a manager — sources carry their own dependencies.
 
 from __future__ import annotations
 
+import logging
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -24,6 +26,8 @@ from PySide6.QtWidgets import QPushButton, QTabWidget, QVBoxLayout, QWidget
 from procedo.core import ui_kit
 
 from ..authoring import ContextSource, assemble
+
+log = logging.getLogger(__name__)
 
 
 class _SourceTab(QWidget):
@@ -75,6 +79,8 @@ class SkillContextPicker(ui_kit.Card):
     "Context: N items · ~M tokens (est.)" readout (recomputed through :func:`assemble`)."""
 
     selectionChanged = Signal()
+    # (generation, readout text) from the worker that sized the selection.
+    _readout_ready = Signal(int, str)
 
     def __init__(
         self,
@@ -126,6 +132,8 @@ class SkillContextPicker(ui_kit.Card):
         self._readout_timer.setSingleShot(True)
         self._readout_timer.setInterval(150)
         self._readout_timer.timeout.connect(self._update_readout)
+        self._readout_generation = 0
+        self._readout_ready.connect(self._show_readout)
 
         self._update_readout()
 
@@ -144,6 +152,31 @@ class SkillContextPicker(ui_kit.Card):
         if tab is not None:
             tab.items.set_checked(keys or ())
             self._readout_timer.start()
+
+    def tick(self, keys) -> None:
+        """Tick ``keys`` in whichever tab offers them, keeping the ticks already made (a
+        skill's ``needs-context`` defaults)."""
+        wanted = set(keys)
+        for tab in self._iter_tabs():
+            tab.items.set_checked(set(tab.items.checked()) | (wanted & set(tab.items.keys())))
+        self._readout_timer.start()
+
+    def unmet(self, keys) -> str:
+        """Why the items ``keys`` cannot all ride the context — one not offered, unticked or
+        empty — in a sentence for the user; ``""`` when they can."""
+        for key in keys:
+            tab = next((t for t in self._iter_tabs() if key in t.items.keys()), None)
+            if tab is None:
+                return f"This skill needs '{key}', which this project does not offer."
+            item = next((i for i in tab.source.list_items() if i.key == key), None)
+            label = item.label if item else key
+            if key not in tab.items.checked():
+                return (f"This skill needs '{label}': tick it under Context to push "
+                        f"→ {tab.source.title}.")
+            if not tab.source.materialize([key]).strip():
+                why = f" ({item.empty_hint})" if item and item.empty_hint else ""
+                return f"This skill needs '{label}', but it is empty for this project{why}."
+        return ""
 
     # -- internals ------------------------------------------------------------
 
@@ -164,13 +197,38 @@ class SkillContextPicker(ui_kit.Card):
         self.selectionChanged.emit()
 
     def _update_readout(self) -> None:
-        """The readout and each tab's ticked count ("Rules 2")."""
+        """Each tab's ticked count ("Rules 2") now, and the readout once a worker thread has
+        sized the selection: materializing it can load the board (an ODB CLI run, ~0.5 s and
+        more), which must not freeze the window. "loading…" until then; only the latest
+        sizing is shown."""
         selections = self.selections()
         for i, (source, keys) in enumerate(selections):
             self._tabs.setTabText(i, f"{source.title} {len(keys)}")
-        item_count = sum(len(keys) for _, keys in selections)
-        tokens = assemble(selections).approx_tokens
-        self._readout.setText(f"Context: {item_count} items · ~{tokens:,} tokens (est.)")
+        count = sum(len(keys) for _, keys in selections)
+        self._readout_generation += 1
+        generation = self._readout_generation
+        if not count:
+            self._readout.setText("Context: 0 items · ~0 tokens (est.)")
+            return
+        self._readout.setText(f"Context: {count} items · loading…")
+
+        def size() -> None:
+            try:
+                tokens = assemble(selections).approx_tokens
+                text = f"Context: {count} items · ~{tokens:,} tokens (est.)"
+            except Exception:  # noqa: BLE001 — a failing source must not kill the readout
+                log.exception("context picker: could not size the selection")
+                text = f"Context: {count} items"
+            try:
+                self._readout_ready.emit(generation, text)
+            except RuntimeError:  # the picker was deleted meanwhile
+                pass
+
+        threading.Thread(target=size, name="context-readout", daemon=True).start()
+
+    def _show_readout(self, generation: int, text: str) -> None:
+        if generation == self._readout_generation:
+            self._readout.setText(text)
 
     def _iter_tabs(self):
         for i in range(self._tabs.count()):

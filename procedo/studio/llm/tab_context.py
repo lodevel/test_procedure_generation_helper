@@ -17,8 +17,8 @@ from typing import Optional, TYPE_CHECKING
 from pathlib import Path
 
 from . import reconstruction
-from .backend_base import LLMBackend, LLMRequest, LLMResponse, LLMTask
-from .output_contracts import get_contract_for_tab, get_allowed_artifacts, get_task_expected_artifacts
+from .backend_base import LLMBackend, LLMRequest, LLMTask
+from .output_contracts import get_contract_for_tab, get_allowed_artifacts
 from .prompt_builder import PromptBuilder
 from .response_parser import ResponseParser
 from ..core.fileio import content_digest
@@ -194,10 +194,6 @@ class TabContext:
         # Rules tracking for automatic re-sending when rules change
         self._rules_checksum: Optional[str] = None  # MD5 hash of rules content
         
-        # Artifact optimization state (tracks what's been sent to LLM)
-        self._last_json_content: Optional[str] = None
-        self._last_code_content: Optional[str] = None
-        self._last_text_content: Optional[str] = None
         
         log.info(
             f"TabContext initialized for {tab_id} (project_root={self.project_manager.project_root})"
@@ -285,10 +281,6 @@ class TabContext:
         self._first_interaction = True  # Reset flag so rules are sent on next interaction
         self._artifact_checksums.clear()  # Clear artifact checksums so all are re-sent
         self._rules_checksum = None  # Clear rules checksum so rules are re-sent
-        # Reset optimization state
-        self._last_json_content = None
-        self._last_code_content = None
-        self._last_text_content = None
         log.info(f"TabContext {self.tab_id}: conversation reset (_first_interaction=True, optimization state cleared)")
     
     def get_selected_rules(self) -> list[str]:
@@ -327,29 +319,6 @@ class TabContext:
             return tasks[0].selected_rules
         return None
     
-    def update_backend(self, new_backend: LLMBackend):
-        """
-        Update the backend for this tab context directly.
-        
-        Called when the user switches LLM backends in settings.
-        Preserves conversation history since messages are independent of backend.
-        
-        Note: Prefer using update_backend_factory() instead when possible,
-        as it integrates better with the factory-based architecture.
-        
-        Args:
-            new_backend: The new LLM backend instance
-        """
-        old_backend_name = self._backend.__class__.__name__ if self._backend else "None"
-        new_backend_name = new_backend.__class__.__name__
-        
-        self._backend = new_backend
-        
-        # Keep conversation history - it's independent of the backend
-        # Users can continue their conversation with the new backend
-        
-        log.info(f"TabContext {self.tab_id}: backend updated from {old_backend_name} to {new_backend_name}, preserving {len(self.messages)} messages")
-    
     def update_backend_factory(self, new_factory: "BackendFactory"):
         """
         Update backend factory and recreate backend on next use.
@@ -374,9 +343,6 @@ class TabContext:
             self._backend = None
         
         # Reset optimization state since new backend means new session
-        self._last_json_content = None
-        self._last_code_content = None
-        self._last_text_content = None
         self._first_interaction = True
         
         log.info(
@@ -398,65 +364,10 @@ class TabContext:
                 self._backend.reset_session()
         
         # Reset optimization state since new session
-        self._last_json_content = None
-        self._last_code_content = None
-        self._last_text_content = None
         self._first_interaction = True
         
         log.info(f"TabContext {self.tab_id}: backend session reset, optimization state cleared")
     
-    # Artifact optimization helper methods
-    
-    def _should_include_json(self, content: Optional[str], force: bool) -> bool:
-        """
-        Determine if JSON should be included in request.
-        
-        Args:
-            content: Current JSON content
-            force: If True, always include
-            
-        Returns:
-            True if JSON should be included
-        """
-        if not content:
-            return False
-        if force or self._first_interaction:
-            return True
-        return content != self._last_json_content
-    
-    def _should_include_code(self, content: Optional[str], force: bool) -> bool:
-        """
-        Determine if code should be included in request.
-        
-        Args:
-            content: Current code content
-            force: If True, always include
-            
-        Returns:
-            True if code should be included
-        """
-        if not content:
-            return False
-        if force or self._first_interaction:
-            return True
-        return content != self._last_code_content
-    
-    def _should_include_text(self, content: Optional[str], force: bool) -> bool:
-        """
-        Determine if text should be included in request.
-        
-        Args:
-            content: Current text content
-            force: If True, always include
-            
-        Returns:
-            True if text should be included
-        """
-        if not content:
-            return False
-        if force or self._first_interaction:
-            return True
-        return content != self._last_text_content
     
     def _update_optimization_state(self, request: LLMRequest):
         """
@@ -468,21 +379,6 @@ class TabContext:
         Args:
             request: The request that was built and will be sent
         """
-        # Track JSON content if included
-        if request.procedure_json:
-            self._last_json_content = request.procedure_json
-            log.debug(f"TabContext {self.tab_id}: Updated last_json_content")
-        
-        # Track code content if included
-        if request.test_code:
-            self._last_code_content = request.test_code
-            log.debug(f"TabContext {self.tab_id}: Updated last_code_content")
-        
-        # Track text content if included
-        if request.procedure_text:
-            self._last_text_content = request.procedure_text
-            log.debug(f"TabContext {self.tab_id}: Updated last_text_content")
-        
         # Track artifact checksums and first-interaction flag
         for name in ("procedure_text", "procedure_json", "test_code"):
             content = getattr(request, name, None)
@@ -560,71 +456,6 @@ class TabContext:
         contents = parts["bundle"] + parts["project"]
         return "\n".join(contents) if contents else None
 
-    def send_task(
-        self,
-        task: LLMTask,
-        user_message: Optional[str] = None,
-        strict_mode: bool = False
-    ) -> LLMResponse:
-        """
-        Send an LLM task with tab-specific context.
-        
-        This is the main method for executing LLM requests in a tab context.
-        It builds the prompt with:
-        - Task instruction
-        - Tab-specific output contract
-        - Filtered rules (only selected ones)
-        - Current artifacts
-        - Session summary
-        
-        Args:
-            task: LLM task to execute
-            user_message: Optional user message for ad-hoc chat
-            strict_mode: Whether to enforce strict validation
-            
-        Returns:
-            LLMResponse with result
-        """
-        log.info(f"TabContext {self.tab_id}: sending task {task.value}")
-        
-        # Build and send request
-        request = self._build_request(task, user_message, strict_mode)
-        
-        # Store user message in history
-        if user_message:
-            user_msg = ChatMessage(
-                role="user",
-                content=user_message,
-                full_prompt=None  # Will be filled after backend builds it
-            )
-            self.messages.append(user_msg)
-        
-        # Send request
-        response = self.backend.send_request(request)
-        
-        # Only confirm delivery if the backend actually succeeded
-        if response.success:
-            self.confirm_request_delivered(request)
-            response = self._validate_contract(response)
-        
-        # Store assistant response in history
-        if response.success and response.assistant_message:
-            assistant_msg = ChatMessage(
-                role="assistant",
-                content=response.assistant_message,
-                full_response=response.raw_response,
-                prompt_tokens=response.prompt_tokens,
-                completion_tokens=response.completion_tokens,
-                total_tokens=response.total_tokens
-            )
-            self.messages.append(assistant_msg)
-            
-            # Update cumulative tokens
-            self.cumulative_tokens += response.total_tokens
-            log.debug(f"TabContext {self.tab_id}: cumulative tokens = {self.cumulative_tokens}")
-        
-        return response
-    
     def _build_request(
         self,
         task: LLMTask,
@@ -715,39 +546,6 @@ class TabContext:
         configure_board_request(request, self)
         return request
     
-    def record_response(self, response: LLMResponse, validate_contract: bool = True):
-        """
-        Record an LLM response in message history.
-        
-        Use this when executing requests asynchronously (not through send_task).
-        
-        Args:
-            response: The LLM response to record
-            validate_contract: Whether to validate output contract (default True)
-        """
-        # Store assistant response in history BEFORE validation
-        # This ensures users see the message even if validation fails
-        if response.assistant_message:
-            assistant_msg = ChatMessage(
-                role="assistant",
-                content=response.assistant_message,
-                full_response=response.raw_response,
-                prompt_tokens=response.prompt_tokens,
-                completion_tokens=response.completion_tokens,
-                total_tokens=response.total_tokens
-            )
-            self.messages.append(assistant_msg)
-            
-            # Update cumulative tokens
-            self.cumulative_tokens += response.total_tokens
-            log.debug(f"TabContext {self.tab_id}: cumulative tokens = {self.cumulative_tokens}")
-        
-        # Validate contract if requested (may set response.success = False)
-        if validate_contract and response.success:
-            response = self._validate_contract(response)
-        
-        return response
-    
     def _get_required_artifacts_for_task(self, task: LLMTask) -> list[str]:
         """
         Determine which artifacts are required for a given task.
@@ -831,81 +629,6 @@ class TabContext:
         
         return context
     
-    def _validate_contract(self, response: LLMResponse) -> LLMResponse:
-        """
-        Validate that response complies with tab's output contract.
-        
-        Performs two levels of validation:
-        - Tab-level: Check against allowed artifacts for this tab
-        - Task-level: Check against expected artifacts for current task
-        
-        Args:
-            response: LLM response to validate
-            
-        Returns:
-            Modified response with success=False if contract violated
-        """
-        # Level 1: Tab-level validation (existing)
-        allowed = get_allowed_artifacts(self.tab_id)
-        
-        tab_violations = []
-        
-        # Check each proposal type against tab contract
-        if response.procedure_text and response.procedure_text.mode and "procedure_text" not in allowed:
-            tab_violations.append("procedure_text")
-        
-        if response.procedure_json and response.procedure_json.mode and "procedure_json" not in allowed:
-            tab_violations.append("procedure_json")
-        
-        if response.test_code and response.test_code.mode and "test_code" not in allowed:
-            tab_violations.append("test_code")
-        
-        if tab_violations:
-            log.warning(f"TabContext {self.tab_id}: tab-level contract violation - proposed forbidden artifacts: {tab_violations}")
-            response.success = False
-            response.error_message = (
-                f"Output contract violation: This tab ({self.tab_id}) does not allow "
-                f"proposals for: {', '.join(tab_violations)}. "
-                f"Allowed artifacts: {', '.join(allowed)}. "
-                f"Please check the Raw Response tab for the full LLM output."
-            )
-            return response
-        
-        # Level 2: Task-level validation (new)
-        if self._current_task:
-            expected = get_task_expected_artifacts(self._current_task)
-            
-            # If task has specific expectations, validate them
-            if expected is not None:
-                task_violations = []
-                
-                # Check each proposal type against task expectations
-                if response.procedure_text and response.procedure_text.mode and "procedure_text" not in expected:
-                    task_violations.append("procedure_text")
-                
-                if response.procedure_json and response.procedure_json.mode and "procedure_json" not in expected:
-                    task_violations.append("procedure_json")
-                
-                if response.test_code and response.test_code.mode and "test_code" not in expected:
-                    task_violations.append("test_code")
-                
-                if task_violations:
-                    log.warning(
-                        f"TabContext {self.tab_id}: task-level contract violation for {self._current_task.value} - "
-                        f"proposed unexpected artifacts: {task_violations}, expected: {expected}"
-                    )
-                    response.success = False
-                    response.error_message = (
-                        f"Task contract violation: The task '{self._current_task.value}' should only produce "
-                        f"{', '.join(expected)}, but the LLM proposed: {', '.join(task_violations)}. "
-                        f"Expected artifacts: {', '.join(expected)}. "
-                        f"This may indicate the LLM misunderstood the task. "
-                        f"Please check the Raw Response tab and consider re-running the task."
-                    )
-                    return response
-        
-        return response
-
     # Artifact tracking methods for conditional sending
     
     def should_send_artifact(self, artifact_name: str, force: bool = False) -> bool:
@@ -998,25 +721,3 @@ class TabContext:
         if artifact_name in self._artifact_checksums:
             del self._artifact_checksums[artifact_name]
             log.debug(f"TabContext {self.tab_id}: marked {artifact_name} as modified")
-    
-    def add_system_message(self, content: str, metadata: dict = None):
-        """
-        Add a system message to the conversation history.
-        
-        System messages record user actions and system events for LLM context.
-        
-        Args:
-            content: System message content
-            metadata: Optional metadata dictionary
-        """
-        from datetime import datetime
-        import uuid
-        
-        system_msg = ChatMessage(
-            role="system",
-            content=content,
-            msg_id=str(uuid.uuid4())
-        )
-        
-        self.messages.append(system_msg)
-        log.debug(f"TabContext {self.tab_id}: added system message: {content}")

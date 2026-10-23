@@ -9,7 +9,7 @@ import pytest
 
 from procedo.core import temp_root
 from procedo.studio.core.validators import CodeValidator
-from procedo.studio.pack_ops import pack_parsers
+from procedo.studio.pack_ops import engine, engine_session
 
 
 @pytest.fixture
@@ -28,16 +28,16 @@ def temp_dir(tmp_path, monkeypatch):
 def test_an_engine_process_makes_no_folder_of_its_own(temp_dir, tmp_path):
     """Its working folder is the temp root itself (test_project_venv_bridge pins the
     cwd), so even a killed instance leaves nothing behind."""
-    pack_parsers.RemoteSession(tmp_path).kill()
+    engine_session.RemoteSession(tmp_path).kill()
     assert list(temp_root.root().iterdir()) == []
 
 
 def test_safe_off_remote_leaves_nothing_in_the_temp_root(temp_dir, tmp_path, monkeypatch):
     def no_venv(_root):
-        raise pack_parsers.ParserUnavailable("no venv")
+        raise engine_session.ParserUnavailable("no venv")
 
-    monkeypatch.setattr(pack_parsers, "_resolve_project_python", no_venv)
-    res = pack_parsers.safe_off_remote([], {}, tmp_path)
+    monkeypatch.setattr(engine_session, "_resolve_project_python", no_venv)
+    res = engine.safe_off_remote([], {}, tmp_path)
     assert res["kind"] == "ParserUnavailable"
     assert list(temp_root.root().iterdir()) == []
 

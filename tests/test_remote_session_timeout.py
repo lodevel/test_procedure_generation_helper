@@ -5,7 +5,7 @@ import json
 import time
 from types import SimpleNamespace
 
-from procedo.studio.pack_ops import pack_parsers as pp
+from procedo.studio.pack_ops import engine_session
 
 OPS = [
     {"node_path": "1", "op": {"device": "psu1", "op": "psu.output", "channel": 1, "on": True}},
@@ -43,7 +43,7 @@ class _Proc:
 
 
 def _session(tmp_path, proc):
-    sess = pp.RemoteSession(tmp_path)
+    sess = engine_session.RemoteSession(tmp_path)
     sess._proc = proc
     return sess
 
@@ -72,4 +72,4 @@ def test_a_batch_waits_one_op_budget_per_frame_however_long_it_is(tmp_path, monk
     sess = _session(tmp_path, _Proc([]))
     monkeypatch.setattr(sess, "_request", lambda frame, timeout, on_progress=None: seen.update(t=timeout) or {"ok": True})
     sess.exec_ops(OPS * 10, {}, work_dir=tmp_path)
-    assert seen["t"] == pp._TIMEOUT_REMOTE_EXEC      # not 45 + 5 x 30
+    assert seen["t"] == engine_session._TIMEOUT_REMOTE_EXEC      # not 45 + 5 x 30

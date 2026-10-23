@@ -28,7 +28,7 @@ import pytest
 from procedo.core import project_local_state, temp_root, venv_pool
 from procedo.studio import _project_local_state
 from procedo.studio.core import odb_inspect
-from procedo.studio.pack_ops import pack_parsers
+from procedo.studio.pack_ops import engine, engine_session, pack_parsers
 
 _PROJECT_ID = "aaaaaaaa-1111-2222-3333-444444444444"
 
@@ -92,7 +92,7 @@ def test_the_bridge_finds_an_interpreter_for_a_project_with_no_dot_venv(venvs_ro
     python = _install_interpreter(project)
     assert not (project / ".venv").exists()  # the old location is not even created
 
-    venv = pack_parsers._resolve_project_python(project)
+    venv = engine_session._resolve_project_python(project)
 
     assert venv.python == python
     assert venvs_root in python.parents
@@ -107,8 +107,8 @@ def test_an_unfinished_build_is_not_an_interpreter_to_dispatch_into(venvs_root, 
     python = _install_interpreter(project, complete=False)
     assert python.exists()  # ...and it is still not a venv
 
-    with pytest.raises(pack_parsers.ParserUnavailable) as raised:
-        pack_parsers._resolve_project_python(project)
+    with pytest.raises(engine_session.ParserUnavailable) as raised:
+        engine_session._resolve_project_python(project)
     assert "machine-local venv" in str(raised.value)
     # The message still names where one WOULD be — that is what ``interpreter`` is for.
     assert str(python) in str(raised.value)
@@ -118,7 +118,7 @@ def test_the_bundle_dir_is_the_projects_even_though_the_venv_is_elsewhere(venvs_
     project = _project(tmp_path)
     python = _install_interpreter(project)
 
-    venv = pack_parsers._resolve_project_python(project)
+    venv = engine_session._resolve_project_python(project)
 
     assert venv.bundle_dir == project / "bundle"
     # The derivation this replaced — parents[2] of the interpreter — now names a
@@ -137,7 +137,7 @@ def test_every_op_frame_carries_the_projects_bundle_dir(
     python = _install_interpreter(project)
     daemons: list[_FakeDaemon] = []
     monkeypatch.setattr(engine, "_slots", {})
-    monkeypatch.setattr(pack_parsers.subprocess, "Popen",
+    monkeypatch.setattr(engine_session.subprocess, "Popen",
                         lambda argv, **_k: daemons.append(_FakeDaemon(argv)) or daemons[-1])
 
     pack_parsers.is_available(project)
@@ -151,8 +151,8 @@ def test_every_op_frame_carries_the_projects_bundle_dir(
 
 def test_no_venv_is_still_parser_unavailable(venvs_root, tmp_path):
     project = _project(tmp_path)  # nothing installed under the app-data root
-    with pytest.raises(pack_parsers.ParserUnavailable) as raised:
-        pack_parsers._resolve_project_python(project)
+    with pytest.raises(engine_session.ParserUnavailable) as raised:
+        engine_session._resolve_project_python(project)
     assert "machine-local venv" in str(raised.value)
 
 
@@ -262,9 +262,9 @@ def test_safe_off_does_not_refuse_merely_because_the_venv_moved(
         daemons.append(_FakeDaemon(argv))
         return daemons[-1]
 
-    monkeypatch.setattr(pack_parsers.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(engine_session.subprocess, "Popen", fake_popen)
 
-    result = pack_parsers.safe_off_remote(
+    result = engine.safe_off_remote(
         [{"device": "PSU1", "etype": "psu", "channels": [1]}],
         {"PSU1": {"visa": "TCPIP0::10.0.0.5::INSTR"}},
         project,
@@ -288,8 +288,8 @@ def test_safe_off_still_refuses_when_there_really_is_no_venv(
     def never(*_args, **_kwargs):
         raise AssertionError("no daemon may be launched without a venv")
 
-    monkeypatch.setattr(pack_parsers.subprocess, "Popen", never)
+    monkeypatch.setattr(engine_session.subprocess, "Popen", never)
 
-    result = pack_parsers.safe_off_remote([], {}, project)
+    result = engine.safe_off_remote([], {}, project)
 
     assert result["ok"] is False and result["kind"] == "ParserUnavailable"

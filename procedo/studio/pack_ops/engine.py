@@ -32,7 +32,7 @@ from typing import Any, Optional
 
 from procedo.core import display_snapshot, temp_root
 
-from . import pack_parsers
+from . import engine_session
 from .bench_client import BenchSessionClient
 
 _LOST = ("SessionDead", "SessionTimeout")
@@ -44,7 +44,7 @@ class _Slot:
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.key: Optional[tuple] = None
-        self.session: Optional[pack_parsers.RemoteSession] = None
+        self.session: Optional[engine_session.RemoteSession] = None
         self.generation = 0   # bumped by every stop(), which works without the lock
 
 
@@ -63,7 +63,7 @@ def tools_op(project_root: Path, spec: dict[str, Any], timeout: float) -> dict[s
 
 
 def _op(role: str, project_root: Path, spec: dict[str, Any], timeout: float) -> dict[str, Any]:
-    venv = pack_parsers._resolve_project_python(project_root)
+    venv = engine_session._resolve_project_python(project_root)
     key = (role, str(venv.python), display_snapshot.bundle_key(project_root))
     slot = _slot(role, project_root)
     with slot.lock:
@@ -109,6 +109,30 @@ def _take_run(project_root: Path) -> tuple[BenchSessionClient, bool]:
         return slot.session, True
 
 
+def safe_off_remote(
+    targets: list[dict[str, Any]],
+    bench_map: dict[str, dict[str, Any]],
+    project_root: Path,
+    procedure_json: Optional[dict] = None,
+    timeout: Optional[int] = None,
+) -> dict[str, Any]:
+    """RECOVERY safe-off once a holder lost its RUN instance (it killed it first): a
+    FRESH instance in the project's RUN slot drives ``targets`` (``[{"device","etype",
+    "channels"}]``) OFF, ELOAD before PSU, then shuts down (close + unlock), so recovery
+    and RUN are never two live processes; a live holder's instance still in the slot
+    does the off and stays its holder's. Never raises: ``{"ok": True, "log",
+    "unsafe"?}`` or ``{"ok": False, "kind", "error"}``."""
+    sess, taken = run_for_recovery(project_root)
+    if not taken:
+        return sess.safe_off(targets, bench_map, timeout, procedure_json=procedure_json)
+    try:
+        res = sess.safe_off(targets, bench_map, timeout, procedure_json=procedure_json)
+        sess.shutdown()              # close + unlock the just-opened devices
+        return res
+    finally:
+        sess.kill()
+
+
 def _slot(role: str, project_root: Path) -> _Slot:
     name = (role, os.path.normcase(os.path.abspath(project_root)))
     with _slots_lock:
@@ -119,7 +143,7 @@ def _replace(slot: _Slot, key: tuple, role: str, project_root: Path) -> None:
     """A fresh instance in ``slot``; the one it replaces exits."""
     if slot.session is not None:
         _retire(slot.session)
-    slot.key, slot.session = key, pack_parsers.RemoteSession(project_root, role=role)
+    slot.key, slot.session = key, engine_session.RemoteSession(project_root, role=role)
 
 
 def _replaced(slot: _Slot, generation: int, key: tuple, role: str, project_root: Path) -> bool:
@@ -134,7 +158,7 @@ def _replaced(slot: _Slot, generation: int, key: tuple, role: str, project_root:
     return False
 
 
-def _retire(session: pack_parsers.RemoteSession) -> None:
+def _retire(session: engine_session.RemoteSession) -> None:
     """End an instance; one that already died is not started again just to be told
     to stop (``shutdown`` would lazily restart it)."""
     if session.alive:

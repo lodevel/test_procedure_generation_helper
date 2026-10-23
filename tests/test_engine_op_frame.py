@@ -24,6 +24,7 @@ ensure_workflow_editor_importable()
 
 from procedo.studio.llm import _engine_ops as engine_ops  # noqa: E402
 from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
+from procedo.studio.pack_ops import engine_session  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
     not _env.rules_packager_available(), reason=_env.WHEEL_SKIP_REASON
@@ -87,7 +88,7 @@ def _in_process(spec: dict) -> dict:
 @pytest.fixture(scope="module")
 def live_session():
     """A RemoteSession over the REAL daemon script, on this interpreter (no project venv)."""
-    sess = pp.RemoteSession(Path("/nonexistent"))
+    sess = engine_session.RemoteSession(Path("/nonexistent"))
 
     def _start():
         sess._bundle_dir = None
@@ -241,7 +242,7 @@ def test_error_kinds_keep_the_exception_table(monkeypatch):
 
 
 def test_engine_op_sends_one_op_frame_with_the_document(monkeypatch, tmp_path):
-    sess = pp.RemoteSession(tmp_path)
+    sess = engine_session.RemoteSession(tmp_path)
     seen = {}
     monkeypatch.setattr(sess, "_request", lambda frame, timeout, on_progress=None:
                         seen.update(frame=frame, timeout=timeout) or {"ok": True})
@@ -249,7 +250,7 @@ def test_engine_op_sends_one_op_frame_with_the_document(monkeypatch, tmp_path):
     sess.engine_op("build_manual_result", procedure_json=doc, measurements={"a": 1})
     assert seen["frame"] == {"cmd": "op", "op": "build_manual_result",
                              "procedure_json": doc, "measurements": {"a": 1}}
-    assert seen["timeout"] == pp._timeout()
+    assert seen["timeout"] == engine_session._timeout()
 
 
 def test_the_write_not_started_op_leaves_the_tests_error_result(tmp_path):

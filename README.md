@@ -77,7 +77,10 @@ test_procedure_generation_helper/
     │   └── worker.py              # Async LLM worker thread
     ├── pack_ops/                  # The bridge into the project venv
     │   ├── pack_parsers.py        # Façade: parse/codegen/validate in project venv
-    │   └── engine.py              # One engine process per project and role
+    │   ├── engine.py              # One engine process per project and role
+    │   ├── engine_session.py      # RemoteSession: the channel to one engine process
+    │   ├── engine_replies.py      # Engine replies as editor-facing objects
+    │   └── bundle_capabilities.py # Bundle defaults readers + capability gating
     ├── tabs/                      # Tab widgets
     │   ├── text_only_tab.py       # "Text" tab
     │   ├── text_json_tab.py       # "Text-JSON" tab
@@ -240,8 +243,8 @@ and it is driven by Procedo Bench's interactive/manual runner
   `app.py::_bootstrap_editor_on_path` sys.path hack survives only as a logged
   deprecation shim.
 - Several main-GUI modules import from `procedo.studio` directly —
-  `pack_ops.pack_parsers` (e.g. `bench_fields`, `bench_constant_names`,
-  `build_manual_run`/`build_manual_result`), `llm.section_ownership`, and
+  `pack_ops.bundle_capabilities` (`bench_fields`, `bench_constant_names`),
+  `pack_ops.engine_replies` (`ManualRunResult` of `build_manual_run`), `llm.section_ownership`, and
   `core.task_config`.
 - The interactive/manual runner (`guided_manual_execution_dialog.py`) uses
   `pack_parsers` and the per-op execution daemon to run ops against live equipment;

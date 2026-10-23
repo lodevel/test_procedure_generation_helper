@@ -7,7 +7,7 @@ import pytest
 from PySide6.QtWidgets import QGroupBox, QToolButton
 
 from procedo.studio.llm import LLMTask
-from procedo.studio.pack_ops import pack_parsers
+from procedo.studio.pack_ops import bundle_capabilities, pack_parsers
 from procedo.studio.widgets.action_bar import ActionBar
 
 from .test_main_window_characterization import (
@@ -108,9 +108,9 @@ def test_pack_buttons_stay_hidden_until_the_wheel_provides_them(opened, monkeypa
     assert not _divider_visible(tj)
 
     monkeypatch.setattr(pack_parsers, "is_available", lambda root=None: (True, ""))
-    monkeypatch.setattr(pack_parsers, "can", lambda cap, text, root=None: (
+    monkeypatch.setattr(bundle_capabilities, "can", lambda cap, text, root=None: (
         (False, [("PSU1", "labscpi")]) if cap == "emit" else (True, [])))
-    monkeypatch.setattr(pack_parsers, "can_for_types", lambda cap, types, root=None: (True, []))
+    monkeypatch.setattr(bundle_capabilities, "can_for_types", lambda cap, types, root=None: (True, []))
     for tab in (tj, to):
         tab.refresh_parser_button()
     jc.refresh_code_parser_button()

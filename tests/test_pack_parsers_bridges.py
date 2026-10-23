@@ -21,6 +21,8 @@ from tests._qt_stub import ensure_workflow_editor_importable
 ensure_workflow_editor_importable()
 
 from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
+from procedo.studio.pack_ops import engine_session  # noqa: E402
+from procedo.studio.pack_ops import engine_replies  # noqa: E402
 from procedo.studio.llm import _engine_ops as engine_ops  # noqa: E402
 
 from tests import _env
@@ -126,7 +128,7 @@ class GetSectionOwnershipSideCarTests(unittest.TestCase):
         # ParserUnavailable. This proves we fall THROUGH (not return None/{}).
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)  # no bundle/rules/section_ownership.json
-            with self.assertRaises(pp.ParserUnavailable):
+            with self.assertRaises(engine_session.ParserUnavailable):
                 pp.get_section_ownership(project_root=root)
 
 
@@ -220,14 +222,14 @@ class BuildManualRunOpTests(unittest.TestCase):
     def setUp(self) -> None:
         self.procedure_json, _ = pp.parse_text(PROC_MANUAL)
 
-    def _run(self, measurements: dict | None = None) -> "pp.ManualRunResult":
+    def _run(self, measurements: dict | None = None) -> "engine_replies.ManualRunResult":
         spec = json.loads(json.dumps({
             "op": "build_manual_run",
             "procedure_json": self.procedure_json,
             "measurements": measurements,
             "controls": None,
         }))
-        return pp.ManualRunResult.from_dict(json.loads(json.dumps(engine_ops.run(spec))))
+        return engine_replies.ManualRunResult.from_dict(json.loads(json.dumps(engine_ops.run(spec))))
 
     def test_static_plan_pending_with_expected_joined(self) -> None:
         run = self._run()
@@ -246,8 +248,8 @@ class BuildManualRunOpTests(unittest.TestCase):
 
     def test_steps_are_frozen_manual_step_views(self) -> None:
         run = self._run()
-        self.assertTrue(all(isinstance(s, pp.ManualStep) for s in run.steps))
-        self.assertIsInstance(run, pp.ManualRunResult)
+        self.assertTrue(all(isinstance(s, engine_replies.ManualStep) for s in run.steps))
+        self.assertIsInstance(run, engine_replies.ManualRunResult)
         # attribute access (frozen dataclass), not dict access
         self.assertTrue(run.steps[0].node_path.startswith("steps["))
         with self.assertRaises(Exception):
@@ -276,7 +278,7 @@ class ManualStepSchemaParityTests(unittest.TestCase):
         from dataclasses import fields
         from rules_packager_base.rules.v2_0_2.parser.manual_run import StepDescriptor
         self.assertEqual(
-            {f.name for f in fields(pp.ManualStep)},
+            {f.name for f in fields(engine_replies.ManualStep)},
             {f.name for f in fields(StepDescriptor)} | {"wait_s", "wait_refused", "value_text", "value_note", "names"},
         )
 
@@ -296,7 +298,7 @@ class ManualRunEngineReadsTests(unittest.TestCase):
         refused = self._wait("MAX")
         self.assertEqual((refused.get("wait_s"), refused["wait_refused"]), (None, "not a number: 'MAX'"))
         self.assertNotIn("wait_s", self._wait(5, op="note"))
-        step = pp.ManualStep.from_dict(self._wait(2))
+        step = engine_replies.ManualStep.from_dict(self._wait(2))
         self.assertEqual((step.wait_s, step.wait_refused), (2, ""))
 
     def test_a_typed_reading_is_read_or_refused_by_the_engine(self) -> None:
@@ -332,5 +334,5 @@ def test_an_in_process_pack_load_that_fails_says_why_on_every_call(monkeypatch, 
     monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(tmp_path / "defaults.json"))
     monkeypatch.setattr(pp, "_REGISTRY_LOAD", None)
     for _ in range(2):
-        with pytest.raises(pp.ParserUnavailable, match="^The bundle's packs could not be loaded: "):
+        with pytest.raises(engine_session.ParserUnavailable, match="^The bundle's packs could not be loaded: "):
             pp._inproc_import_wheel()

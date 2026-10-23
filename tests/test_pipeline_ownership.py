@@ -25,7 +25,7 @@ from tests._qt_stub import ensure_workflow_editor_importable
 
 ensure_workflow_editor_importable()
 
-from procedo.studio.pack_ops import pack_parsers  # noqa: E402
+from procedo.studio.pack_ops import engine_session, pack_parsers  # noqa: E402
 from procedo.studio.llm.reconstruction import pipeline_ownership  # noqa: E402
 
 from tests import _env
@@ -132,7 +132,7 @@ class PipelineOwnershipFallbackTests(unittest.TestCase):
         self._orig = pack_parsers.get_section_ownership
 
         def _raise(project_root=None):
-            raise pack_parsers.ParserUnavailable("wheel missing")
+            raise engine_session.ParserUnavailable("wheel missing")
 
         pack_parsers.get_section_ownership = _raise
 

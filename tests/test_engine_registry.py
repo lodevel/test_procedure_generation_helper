@@ -29,7 +29,7 @@ ensure_workflow_editor_importable()
 from procedo.core import temp_root  # noqa: E402
 from procedo.studio import _project_local_state  # noqa: E402
 from procedo.studio.llm import _engine_ops as engine_ops  # noqa: E402
-from procedo.studio.pack_ops import engine, pack_parsers  # noqa: E402
+from procedo.studio.pack_ops import engine, engine_session, pack_parsers  # noqa: E402
 
 _DAEMON = Path(pack_parsers.__file__).resolve().parent.parent / "llm" / "_execute_op_subprocess.py"
 _REAL_POPEN = subprocess.Popen
@@ -42,7 +42,7 @@ def project(tmp_path, monkeypatch):
     (root / "bundle").mkdir(parents=True)
     (root / "bundle" / "bundle.json").write_text("{}", encoding="utf-8")
     venv = _project_local_state.ProjectVenv(Path(sys.executable), root / "bundle")
-    monkeypatch.setattr(pack_parsers, "_resolve_project_python", lambda _root: venv)
+    monkeypatch.setattr(engine_session, "_resolve_project_python", lambda _root: venv)
     monkeypatch.setattr(engine, "_slots", {})
     monkeypatch.setattr(engine, "_closed", False)   # an earlier test's exit hook closed it
     yield root
@@ -60,11 +60,11 @@ def spawns(monkeypatch):
         seen.append((argv, kwargs))
         return _REAL_POPEN(argv, **kwargs)
 
-    monkeypatch.setattr(pack_parsers.subprocess, "Popen", spy)
+    monkeypatch.setattr(engine_session.subprocess, "Popen", spy)
     return seen
 
 
-def _session(root: Path) -> pack_parsers.RemoteSession:
+def _session(root: Path) -> engine_session.RemoteSession:
     return engine._slots[("tools", os.path.normcase(os.path.abspath(root)))].session
 
 
@@ -221,7 +221,7 @@ def test_a_restarted_process_releases_the_old_claim_before_it_claims(project, sp
 
 
 def test_close_kills_a_process_that_ignores_stdin_eof(project):
-    sess = pack_parsers.RemoteSession(project, role="tools")
+    sess = engine_session.RemoteSession(project, role="tools")
     sess._proc = _REAL_POPEN([sys.executable, "-c", "import time; time.sleep(60)"],
                              stdin=subprocess.PIPE)
     started = time.monotonic()
@@ -364,7 +364,7 @@ def fakes(project, monkeypatch):
         started.append(_Fake(argv, *plan))
         return started[-1]
 
-    monkeypatch.setattr(pack_parsers.subprocess, "Popen", popen)
+    monkeypatch.setattr(engine_session.subprocess, "Popen", popen)
     return started, plans
 
 
@@ -429,7 +429,7 @@ def test_is_available_answers_no_with_the_engine_s_error(project, fakes):
 def test_a_lost_engine_is_parser_unavailable_to_the_bridges(project, fakes):
     _started, plans = fakes
     plans.append((["die"], 0.0))
-    with pytest.raises(pack_parsers.ParserUnavailable, match="closed pipe"):
+    with pytest.raises(engine_session.ParserUnavailable, match="closed pipe"):
         pack_parsers.render_text({"steps": []}, project_root=project)
 
 
@@ -647,10 +647,10 @@ def test_a_recovery_safe_off_never_starts_a_second_run_beside_a_live_one(project
     holder's RUN still live, the off goes through it, and it stays its holder's."""
     run = engine.run(project)
     assert run.ping()["pong"]
-    pack_parsers.safe_off_remote([], {}, project)   # no packs here: the frame's answer is moot
+    engine.safe_off_remote([], {}, project)   # no packs here: the frame's answer is moot
     assert len(spawns) == 1 and run.alive
     run.shutdown()
-    pack_parsers.safe_off_remote([], {}, project)   # a fresh one, ended
+    engine.safe_off_remote([], {}, project)   # a fresh one, ended
     assert len(spawns) == 2 and engine.run(project) is not None
 
 

@@ -291,14 +291,14 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         """Enable Quick Code only if every equipment type in the JSON has a
         codegen-capable pack. Best-effort: any failure leaves it enabled. A running Quick Code
         keeps it disabled until it answers."""
-        from ..pack_ops import pack_parsers
+        from ..pack_ops import bundle_capabilities
         if engine_async.busy(self.quick_code_btn):
             return
         try:
             doc = json.loads(self.json_editor.toPlainText() or "{}")
             etypes = [e.get("type") for e in (doc.get("equipment") or [])
                       if isinstance(e, dict) and e.get("type")]
-            ok, missing = pack_parsers.can_for_types("codegen", etypes, project_root)
+            ok, missing = bundle_capabilities.can_for_types("codegen", etypes, project_root)
             if ok:
                 self.quick_code_btn.setEnabled(True)
                 self.quick_code_btn.setToolTip("Deterministic JSON → Code")
@@ -332,10 +332,10 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
             button=self.quick_code_btn, cue=self.code_card.loading, cue_label="Generating code\u2026")
 
     def _quick_code_done(self, sent: str, procedure: dict, answer) -> None:
-        from ..pack_ops import pack_parsers
+        from ..pack_ops import engine_session
         try:
             code_str, warnings = answer()
-        except pack_parsers.ParserUnavailable as e:
+        except engine_session.ParserUnavailable as e:
             self.show_warning("Code Generator Unavailable", str(e))
             return
         except Exception as e:

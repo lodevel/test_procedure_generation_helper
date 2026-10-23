@@ -420,15 +420,15 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
     """RemoteSession.exec_op unwraps a batch-of-one to the flat ⚡ shape, and a
     missing venv degrades to a dead-session error (mocks the transport)."""
 
-    def _pp(self):
+    def _engine_session(self):
         from tests._qt_stub import ensure_workflow_editor_importable
         ensure_workflow_editor_importable()
-        from procedo.studio.pack_ops import pack_parsers as pp
-        return pp
+        from procedo.studio.pack_ops import engine_session
+        return engine_session
 
     def _session(self, batch_result):
-        pp = self._pp()
-        s = pp.RemoteSession(Path("/nonexistent"))
+        engine_session = self._engine_session()
+        s = engine_session.RemoteSession(Path("/nonexistent"))
         # mock the daemon; tolerate the streaming/verdict kwargs exec_ops now
         # forwards (on_progress, and the run state rides inside `frame`).
         s._request = lambda frame, timeout=None, on_progress=None: batch_result
@@ -456,8 +456,8 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
         self.assertEqual(out["error"], "boom")
 
     def test_no_venv_marks_session_dead(self):
-        pp = self._pp()
-        s = pp.RemoteSession(Path("/nonexistent"))   # real transport, no venv
+        engine_session = self._engine_session()
+        s = engine_session.RemoteSession(Path("/nonexistent"))   # real transport, no venv
         out = s.exec_ops([{"node_path": "a", "op": {
             "op": "psu.measure_voltage", "device": "PSU1"}}], {"PSU1": {"visa": "X"}},
             work_dir=Path("run"))
@@ -468,8 +468,8 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
     def test_dead_resp_terminates_proc(self):
         # dead == True must GUARANTEE the proc is gone, so recovery never opens a
         # 2nd process on a device the old daemon still holds.
-        pp = self._pp()
-        s = pp.RemoteSession(Path("/x"))
+        engine_session = self._engine_session()
+        s = engine_session.RemoteSession(Path("/x"))
 
         class _FP:
             def __init__(self): self.killed = False
@@ -486,8 +486,8 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
 
     # -- frames carry the document itself, never a path ------------------------
     def test_frames_carry_the_document_never_a_path(self):
-        pp = self._pp()
-        s = pp.RemoteSession(Path("/nonexistent"))
+        engine_session = self._engine_session()
+        s = engine_session.RemoteSession(Path("/nonexistent"))
 
         class _In:
             lines: list = []
@@ -528,8 +528,8 @@ class RemoteSessionLiveTransportTests(unittest.TestCase):
     def _live_session(self):
         from tests._qt_stub import ensure_workflow_editor_importable
         ensure_workflow_editor_importable()
-        from procedo.studio.pack_ops import pack_parsers as pp
-        s = pp.RemoteSession(Path("/nonexistent"))
+        from procedo.studio.pack_ops import engine_session
+        s = engine_session.RemoteSession(Path("/nonexistent"))
         runner = _RUNNER   # the llm/ daemon script (module-level, verified on import)
 
         def _start():               # use THIS interpreter (no project venv in test env)

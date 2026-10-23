@@ -6,7 +6,7 @@ Covers the three seams:
   (``<project>/bundle/defaults.json`` beats a stale
   ``PROCEDO_BUNDLE_DEFAULTS_PATH``), and ``reload()`` picks up a CHANGED
   defaults.json — tasks appear/disappear and prompt templates swap.
-* ``pack_parsers._load_bundle_equipment_profiles`` resolves
+* ``bundle_capabilities._load_bundle_equipment_profiles`` resolves
   project-root-first with the env var as legacy fallback.
 * The editor's bundle watcher plumbing (real ``StudioWorkspace`` methods
   bound to a light harness): bundle-dir / project-root events fire ONE
@@ -30,7 +30,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from procedo.studio.core.task_config import TaskConfigManager  # noqa: E402
 from procedo.studio.launch_env import BUNDLE_DEFAULTS_PATH  # noqa: E402
-from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
+from procedo.studio.pack_ops import bundle_capabilities  # noqa: E402
 from procedo.studio.main_window import StudioWorkspace  # noqa: E402
 
 
@@ -189,9 +189,9 @@ def test_equipment_profiles_project_first(tmp_path, monkeypatch):
     root = _make_project(tmp_path, [], name="proj_eq")
     _write_defaults(root, [], profiles=[proj_profile])
 
-    assert pp._load_bundle_equipment_profiles(root) == [proj_profile]
+    assert bundle_capabilities._load_bundle_equipment_profiles(root) == [proj_profile]
     # No project root → env fallback unchanged.
-    assert pp._load_bundle_equipment_profiles(None) == [env_profile]
+    assert bundle_capabilities._load_bundle_equipment_profiles(None) == [env_profile]
 
 
 # ---------------------------------------------------------------------------

@@ -183,12 +183,12 @@ def test_the_wizards_parse_and_meta_sync_run_off_the_gui_thread(qapp, tmp_path, 
 
 
 def test_the_wizards_api_raises_the_engines_error(qapp, tmp_path, monkeypatch):
-    from procedo.studio.pack_ops import pack_parsers
+    from procedo.studio.pack_ops import engine_session
     pm = SimpleNamespace(project_root=tmp_path)
     api = StudioAuthoringApi(SimpleNamespace(project_manager=pm, backend_factory=None))
     monkeypatch.setattr(engine, "tools_op", _Tools(
         reply=lambda spec: {"ok": False, "kind": "ParserUnavailable", "error": "no venv here"}))
-    with pytest.raises(pack_parsers.ParserUnavailable, match="no venv here"):
+    with pytest.raises(engine_session.ParserUnavailable, match="no venv here"):
         api.parse_procedure_text("# A\n")
 
 

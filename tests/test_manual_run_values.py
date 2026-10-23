@@ -17,6 +17,7 @@ ensure_workflow_editor_importable()
 
 from procedo.studio.llm import _engine_ops as engine_ops  # noqa: E402
 from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
+from procedo.studio.pack_ops import engine_replies  # noqa: E402
 
 from tests import _env  # noqa: E402
 
@@ -36,12 +37,12 @@ _TABLE = ('@TABLE PINS\n@ROW PINS loc="P1 pin 1" net=VCC\n@ROW PINS loc="P1 pin 
           "@DO k\n2. Operator: read DC voltage on P2 pin 1 as {30}.\n@WHILE {30} < 1 V\n@ENDDO\n")
 
 
-def _plan(steps: str, expected: str, measurements: dict | None = None) -> pp.ManualRunResult:
+def _plan(steps: str, expected: str, measurements: dict | None = None) -> engine_replies.ManualRunResult:
     doc, _ = pp.parse_text(_HEAD + steps + "\n## Expected\n" + expected)
     out = engine_ops.run(json.loads(json.dumps({"op": "build_manual_run", "procedure_json": doc,
                                                 "measurements": measurements or {}})))
     assert out["ok"], out
-    return pp.ManualRunResult.from_dict(json.loads(json.dumps(out)))
+    return engine_replies.ManualRunResult.from_dict(json.loads(json.dumps(out)))
 
 
 def _by_ref(plan) -> dict:

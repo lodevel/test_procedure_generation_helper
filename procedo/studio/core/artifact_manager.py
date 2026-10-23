@@ -192,7 +192,7 @@ class ArtifactManager:
             return
         if not isinstance(doc, dict):
             return
-        from ..pack_ops import engine_async, pack_parsers
+        from ..pack_ops import engine_async, engine_session, pack_parsers
         root = self.test_dir.parent.parent if self.test_dir is not None else None
         if root is None or not (root / "tests").is_dir():
             root = None                      # no project layout: the editor's own pack
@@ -200,7 +200,7 @@ class ArtifactManager:
         def done(answer) -> None:
             try:
                 refreshed = json.dumps(answer(), indent=2, ensure_ascii=False)
-            except pack_parsers.ParserUnavailable as exc:
+            except engine_session.ParserUnavailable as exc:
                 logging.getLogger(__name__).warning("media not refreshed on save: %s", exc)
                 return
             if refreshed == saved or artifact.content != saved or artifact.original_content != saved:

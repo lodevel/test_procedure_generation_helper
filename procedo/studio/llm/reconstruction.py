@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from . import section_ownership
-from ..pack_ops import pack_parsers
+from ..pack_ops import engine_session, pack_parsers
 
 
 def pipeline_ownership(
@@ -39,7 +39,7 @@ def pipeline_ownership(
     raises ``ParserUnavailable``, caught by ``reconstructed_or_error``)."""
     try:
         base = pack_parsers.get_section_ownership(project_root)
-    except pack_parsers.ParserUnavailable:
+    except engine_session.ParserUnavailable:
         base = section_ownership.DEFAULT_OWNERSHIP
     return section_ownership.resolve(base, task_override)
 
@@ -96,7 +96,7 @@ def reconstructed_or_error(
         error / timeout): ``(None, None, reason)``.
 
     Two failure modes the bare :func:`reconstruct_for_pipeline` call leaks:
-      - ``pack_parsers.ParserUnavailable`` — caught here so it never propagates
+      - ``engine_session.ParserUnavailable`` — caught here so it never propagates
         into a Qt slot and silently drops the proposal.
       - ``recon.success == False`` — the wheel still returns a (usually
         NON-None) half-built ``.text``; we surface it as ``best_effort_text``
@@ -113,7 +113,7 @@ def reconstructed_or_error(
             task_override=task_override,
             project_root=project_root,
         )
-    except pack_parsers.ParserUnavailable as exc:
+    except engine_session.ParserUnavailable as exc:
         return None, None, f"Could not reconstruct procedure_text.md: {exc}"
     if not recon.success:
         details = "; ".join(

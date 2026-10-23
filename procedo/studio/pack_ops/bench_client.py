@@ -1,7 +1,7 @@
 """The RUN instance's channel: the host side of the instrument and run-handle frames.
 
 :func:`.engine.run` hands one per project to its holder — the guided dialog or the
-bench session. Thin subclass of :class:`~procedo.studio.pack_ops.pack_parsers.RemoteSession`
+bench session. Thin subclass of :class:`~procedo.studio.pack_ops.engine_session.RemoteSession`
 adding ``acquire_run`` / ``plan_only`` (dry-run reconcile) / ``run_test`` /
 ``cancel_run`` / ``release_run``, and a guided run's ``call_function`` / ``cancel_call``.
 ``end_session()`` IS the inherited ``shutdown()`` — deliberately no new frame.
@@ -29,7 +29,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from .pack_parsers import RemoteSession, _TIMEOUT_REMOTE_EXEC
+from .engine_session import RemoteSession, _TIMEOUT_REMOTE_EXEC
 
 # Daemon->host stream frames run_test consumes before its final response.
 # Anything NOT in this set is the final response (error kinds like

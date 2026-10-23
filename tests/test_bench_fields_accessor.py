@@ -21,7 +21,7 @@ from tests._qt_stub import ensure_workflow_editor_importable
 
 ensure_workflow_editor_importable()
 
-from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
+from procedo.studio.pack_ops import bundle_capabilities  # noqa: E402
 from procedo.studio.launch_env import BUNDLE_DEFAULTS_PATH  # noqa: E402
 
 
@@ -46,7 +46,7 @@ class TestBenchFieldsAccessor(unittest.TestCase):
         self._bundle({"controller": [
             {"name": "baud", "type": "enum", "default": 115200, "choices": [9600, 115200]},
         ]})
-        bf = pp.bench_fields()
+        bf = bundle_capabilities.bench_fields()
         self.assertEqual(bf["controller"][0]["type"], "enum")
         self.assertEqual(bf["controller"][0]["choices"], [9600, 115200])
 
@@ -56,18 +56,18 @@ class TestBenchFieldsAccessor(unittest.TestCase):
             "controller": [{"name": "port"}, {"name": "baud"}],
         })
         self.assertEqual(
-            pp.bench_constant_names("psu", "PSU1"),
+            bundle_capabilities.bench_constant_names("psu", "PSU1"),
             ["PSU1_VISA", "PSU1_REMOTE", "PSU1_CHANNELS"],
         )
         self.assertEqual(
-            pp.bench_constant_names("controller", "FNCORE_DSC"),
+            bundle_capabilities.bench_constant_names("controller", "FNCORE_DSC"),
             ["FNCORE_DSC_PORT", "FNCORE_DSC_BAUD"],
         )
 
     def test_empty_when_no_bundle(self):
         os.environ.pop(BUNDLE_DEFAULTS_PATH, None)
-        self.assertEqual(pp.bench_fields(), {})
-        self.assertEqual(pp.bench_constant_names("psu", "PSU1"), [])
+        self.assertEqual(bundle_capabilities.bench_fields(), {})
+        self.assertEqual(bundle_capabilities.bench_constant_names("psu", "PSU1"), [])
 
     def test_empty_when_pre_benchfields_bundle(self):
         d = self.enterContext(tempfile.TemporaryDirectory())
@@ -75,7 +75,7 @@ class TestBenchFieldsAccessor(unittest.TestCase):
             json.dumps({"pack_dispatch": {"capabilities": {}}}), encoding="utf-8"
         )
         os.environ[BUNDLE_DEFAULTS_PATH] = str(Path(d) / "defaults.json")
-        self.assertEqual(pp.bench_fields(), {})
+        self.assertEqual(bundle_capabilities.bench_fields(), {})
 
 
 if __name__ == "__main__":

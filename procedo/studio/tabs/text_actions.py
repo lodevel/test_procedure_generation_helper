@@ -112,7 +112,7 @@ class TextActionsMixin:
         """Enable/disable the ⚡ buttons per the current procedure's equipment
         capabilities. Best-effort: any failure leaves buttons enabled (gating
         is UX, never a correctness gate)."""
-        from ..pack_ops import pack_parsers
+        from ..pack_ops import bundle_capabilities
         text = self.text_card.editor.toPlainText()
         for button, tip, caps in self._pack_gates():
             if engine_async.busy(button):
@@ -120,7 +120,7 @@ class TextActionsMixin:
             try:
                 missing = []
                 for cap in caps:
-                    ok, miss = pack_parsers.can(cap, text, project_root)
+                    ok, miss = bundle_capabilities.can(cap, text, project_root)
                     if not ok:
                         missing.extend(miss)
                 if missing:
@@ -162,10 +162,10 @@ class TextActionsMixin:
             button=self.sync_equipment_btn, cue=self.text_card.loading, cue_label="Syncing equipment\u2026")
 
     def _sync_equipment_done(self, original: str, answer) -> None:
-        from ..pack_ops import pack_parsers
+        from ..pack_ops import engine_session
         try:
             new_text, warnings = answer()
-        except pack_parsers.ParserUnavailable as exc:
+        except engine_session.ParserUnavailable as exc:
             self.show_error("Sync Equipment failed", str(exc))
             return
         if not engine_async.unchanged(self.text_card.editor, original, self.status_message.emit):
@@ -221,10 +221,10 @@ class TextActionsMixin:
             cue=self.text_card.loading, cue_label="Syncing meta\u2026")
 
     def _sync_meta_done(self, original: str, answer) -> None:
-        from ..pack_ops import pack_parsers
+        from ..pack_ops import engine_session
         try:
             new_text, warnings = answer()
-        except pack_parsers.ParserUnavailable as exc:
+        except engine_session.ParserUnavailable as exc:
             self.show_error("Sync Meta failed", str(exc))
             return
         if not engine_async.unchanged(self.text_card.editor, original, self.status_message.emit):
@@ -266,10 +266,10 @@ class TextActionsMixin:
             cue=self.text_card.loading, cue_label="Renumbering steps\u2026")
 
     def _renumber_done(self, original: str, answer) -> None:
-        from ..pack_ops import pack_parsers
+        from ..pack_ops import engine_session
         try:
             renumbered = answer()
-        except pack_parsers.ParserUnavailable as exc:
+        except engine_session.ParserUnavailable as exc:
             self.show_error("Renumber failed", str(exc))
             return
         if not engine_async.unchanged(self.text_card.editor, original, self.status_message.emit):
@@ -321,10 +321,10 @@ class TextActionsMixin:
 
     def _parse_and_generate_parsed(self, sent: str, answer) -> None:
         """Text → JSON (strict) answered: on to JSON → code."""
-        from ..pack_ops import pack_parsers
+        from ..pack_ops import engine_session, pack_parsers
         try:
             procedure, parse_warnings = answer()
-        except pack_parsers.ParserUnavailable as e:
+        except engine_session.ParserUnavailable as e:
             self.show_warning("Parser Unavailable", str(e))
             return
         except Exception as e:
@@ -356,7 +356,7 @@ class TextActionsMixin:
     def _parse_and_generate_generated(self, sent: str, procedure: dict, answer) -> None:
         """JSON → code (strict) answered: offer both files as one card."""
         from ..core import ArtifactType
-        from ..pack_ops import pack_parsers
+        from ..pack_ops import engine_session
 
         # ensure_ascii=False matches the LLM JSON-proposal write path so the
         # diff base (artifact_manager content) doesn't show spurious \uXXXX vs
@@ -364,7 +364,7 @@ class TextActionsMixin:
         procedure_str = json.dumps(procedure, indent=2, ensure_ascii=False)
         try:
             code, gen_warnings = answer()
-        except pack_parsers.ParserUnavailable as e:
+        except engine_session.ParserUnavailable as e:
             self.show_warning("Parser Unavailable", str(e))
             return
         except Exception as e:

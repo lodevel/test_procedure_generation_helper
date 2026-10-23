@@ -21,6 +21,8 @@ from tests._qt_stub import ensure_workflow_editor_importable
 ensure_workflow_editor_importable()
 
 from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
+from procedo.studio.pack_ops import engine_session  # noqa: E402
+from procedo.studio.pack_ops import bundle_capabilities  # noqa: E402
 from procedo.studio.launch_env import BUNDLE_DEFAULTS_PATH  # noqa: E402
 
 
@@ -73,7 +75,7 @@ def test_new_key_loads_all_records(monkeypatch, tmp_path):
         {"equipment_profiles": [CONTROLLER_PROFILE, PSU_PROFILE]},
         monkeypatch,
     )
-    assert pp._load_bundle_equipment_profiles() == [
+    assert bundle_capabilities._load_bundle_equipment_profiles() == [
         CONTROLLER_PROFILE, PSU_PROFILE,
     ]
 
@@ -84,26 +86,26 @@ def test_non_dict_entries_are_dropped(monkeypatch, tmp_path):
         {"equipment_profiles": ["junk", 7, CONTROLLER_PROFILE, None]},
         monkeypatch,
     )
-    assert pp._load_bundle_equipment_profiles() == [CONTROLLER_PROFILE]
+    assert bundle_capabilities._load_bundle_equipment_profiles() == [CONTROLLER_PROFILE]
 
 
 def test_env_unset_returns_empty(monkeypatch):
     """No bundle context (env unset) is not an error — degrade to []."""
     monkeypatch.delenv(BUNDLE_DEFAULTS_PATH, raising=False)
-    assert pp._load_bundle_equipment_profiles() == []
+    assert bundle_capabilities._load_bundle_equipment_profiles() == []
 
 
 def test_missing_file_returns_empty(monkeypatch, tmp_path):
     """A stale env var pointing at a deleted file degrades to []."""
     monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(tmp_path / "gone.json"))
-    assert pp._load_bundle_equipment_profiles() == []
+    assert bundle_capabilities._load_bundle_equipment_profiles() == []
 
 
 def test_malformed_json_returns_empty(monkeypatch, tmp_path):
     bad = tmp_path / "defaults.json"
     bad.write_text("{not json", encoding="utf-8")
     monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(bad))
-    assert pp._load_bundle_equipment_profiles() == []
+    assert bundle_capabilities._load_bundle_equipment_profiles() == []
 
 
 def test_old_key_only_bundle_raises_parser_unavailable(monkeypatch, tmp_path):
@@ -115,22 +117,22 @@ def test_old_key_only_bundle_raises_parser_unavailable(monkeypatch, tmp_path):
         {"controller_profiles": [CONTROLLER_PROFILE]},
         monkeypatch,
     )
-    with pytest.raises(pp.ParserUnavailable, match="equipment_profiles"):
-        pp._load_bundle_equipment_profiles()
+    with pytest.raises(engine_session.ParserUnavailable, match="equipment_profiles"):
+        bundle_capabilities._load_bundle_equipment_profiles()
 
 
 def test_key_missing_entirely_raises_parser_unavailable(monkeypatch, tmp_path):
     _write_defaults(tmp_path, {"workflows": {}}, monkeypatch)
-    with pytest.raises(pp.ParserUnavailable):
-        pp._load_bundle_equipment_profiles()
+    with pytest.raises(engine_session.ParserUnavailable):
+        bundle_capabilities._load_bundle_equipment_profiles()
 
 
 def test_non_list_value_raises_parser_unavailable(monkeypatch, tmp_path):
     _write_defaults(
         tmp_path, {"equipment_profiles": {"oops": "dict"}}, monkeypatch,
     )
-    with pytest.raises(pp.ParserUnavailable):
-        pp._load_bundle_equipment_profiles()
+    with pytest.raises(engine_session.ParserUnavailable):
+        bundle_capabilities._load_bundle_equipment_profiles()
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +191,7 @@ def test_sync_old_key_only_bundle_raises(monkeypatch, tmp_path):
     )
     _capture_inproc_sync(monkeypatch)
 
-    with pytest.raises(pp.ParserUnavailable, match="rebuild the bundle"):
+    with pytest.raises(engine_session.ParserUnavailable, match="rebuild the bundle"):
         pp.sync_equipment_from_steps("## Steps\n", project_root=None)
 
 

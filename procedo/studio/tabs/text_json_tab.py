@@ -164,14 +164,14 @@ class TextJsonTab(TextActionsMixin, LLMTabMixin, BaseTab):
             cue=self.json_card.loading, cue_label="Parsing\u2026")
 
     def _quick_parse_done(self, sent: str, answer) -> None:
-        from ..pack_ops import pack_parsers
+        from ..pack_ops import engine_session
         # pack_parsers.parse_text raises ParseFailure on grammar errors
         # (with .code, .fix_hint, .findings — same shape the legacy
         # ParseError carried) or ParserUnavailable if the wheel isn't
         # importable. Route both through the structured dialog.
         try:
             result, warnings = answer()
-        except pack_parsers.ParserUnavailable as e:
+        except engine_session.ParserUnavailable as e:
             self.show_warning("Parser Unavailable", str(e))
             return
         except Exception as e:
@@ -234,10 +234,10 @@ class TextJsonTab(TextActionsMixin, LLMTabMixin, BaseTab):
             cue=self.text_card.loading, cue_label="Rendering\u2026")
 
     def _quick_render_done(self, sent: str, answer) -> None:
-        from ..pack_ops import pack_parsers
+        from ..pack_ops import engine_session
         try:
             result_text = answer()
-        except pack_parsers.ParserUnavailable as e:
+        except engine_session.ParserUnavailable as e:
             self.show_warning("Parser Unavailable", str(e))
             return
         except Exception as e:

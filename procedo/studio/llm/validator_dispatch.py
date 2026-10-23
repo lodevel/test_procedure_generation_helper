@@ -295,7 +295,7 @@ def _outcome_from_parse_error(exc: Any) -> ValidationOutcome:
     Two cases:
 
     * The exception carries a non-empty ``.findings`` list (Phase 5.1
-      ``pack_parsers.ParseFailure``): every Finding becomes a row so
+      ``engine_replies.ParseFailure``): every Finding becomes a row so
       the structured-error dialog shows all the wheel's reasons, not
       just the first. Without this fan-out the dialog renders one
       catch-all "[PARSE_ERROR] parsing failed" line and silently drops
@@ -639,11 +639,11 @@ def _fill_parser_owned_meta(
     """
     if not isinstance(json_obj, dict):
         return
-    from ..pack_ops import pack_parsers
+    from ..pack_ops import engine_replies, engine_session, pack_parsers
 
     try:
         derived = pack_parsers.sync_meta_json(json_obj, project_root=project_root)
-    except (pack_parsers.ParserUnavailable, pack_parsers.ParseFailure) as exc:
+    except (engine_session.ParserUnavailable, engine_replies.ParseFailure) as exc:
         log.debug("meta fill skipped (parser path unavailable): %s", exc)
         return
     except Exception as exc:  # noqa: BLE001 - never break the gate on a fill error

@@ -2325,7 +2325,7 @@ class BenchClientLiveTests(unittest.TestCase):
         from tests._qt_stub import ensure_workflow_editor_importable
         ensure_workflow_editor_importable()
         from procedo.studio.pack_ops import bench_client as bc
-        from procedo.studio.pack_ops.pack_parsers import RemoteSession
+        from procedo.studio.pack_ops.engine_session import RemoteSession
         self.assertIs(bc.BenchSessionClient.end_session, RemoteSession.shutdown)
 
     def test_run_test_frame_carries_the_options_only_when_non_default(self):

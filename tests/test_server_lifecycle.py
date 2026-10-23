@@ -641,9 +641,9 @@ def test_wait_for_server_aborts_when_retired_mid_wait(tmp_path):
 # --------------------------------------------------------------------------- #
 
 class _FakeSM:
-    """A minimal server-manager stand-in for the StudioWorkspace recovery seam.
+    """A minimal server-manager stand-in for the LLMServerController recovery seam.
 
-    The StudioWorkspace tick + recovery finally now read the strong predicate
+    The controller's tick + recovery finally now read the strong predicate
     ``is_alive`` (process up AND /health 200), so the fake exposes both. By
     default ``is_alive`` tracks ``is_running``; ``wedged=True`` models a
     hung server (process up, /health dead) where ``is_running`` is True but
@@ -672,21 +672,21 @@ class _FakeSM:
 
 def _fake_window(sm):
     """A bare object carrying just what the recovery methods touch, so the
-    StudioWorkspace methods can be driven unbound (no Qt)."""
+    LLMServerController methods can be driven unbound (no Qt)."""
     import types
-    from procedo.studio.main_window import StudioWorkspace
+    from procedo.studio.controllers.llm_server_controller import LLMServerController
     w = types.SimpleNamespace()
-    w._server_manager = sm
+    w.server_manager = sm
     w._server_recovering = False
     w._server_recovery_attempts = 0
     # Off-thread health-probe state the new tick path reads/writes.
     w._last_server_alive = None
     w._health_probe_inflight = False
-    # The cap is a StudioWorkspace class attribute the unbound method reads off self.
-    w._MAX_SERVER_RECOVERY_ATTEMPTS = StudioWorkspace._MAX_SERVER_RECOVERY_ATTEMPTS
-    # footer.show_message / _refresh_server_indicator are side-effect-only.
-    w.footer = MagicMock()
-    w._refresh_server_indicator = MagicMock()
+    # The cap is a LLMServerController class attribute the unbound method reads off self.
+    w._MAX_SERVER_RECOVERY_ATTEMPTS = LLMServerController._MAX_SERVER_RECOVERY_ATTEMPTS
+    # The window's footer.show_message / refresh_indicator are side-effect-only.
+    w._mw = types.SimpleNamespace(footer=MagicMock())
+    w.refresh_indicator = MagicMock()
     return w
 
 
@@ -701,7 +701,7 @@ def _run_tick_sync(w):
     spawned thread body inline on ``.start()`` and (b) deliver every answer
     inline. The bound methods resolve off ``w`` (a SimpleNamespace), so we
     install the inline answer channels and UI-thread continuations on it."""
-    from procedo.studio.main_window import StudioWorkspace
+    from procedo.studio.controllers.llm_server_controller import LLMServerController
 
     def _inline_thread(target, args=(), daemon=False):
         t = MagicMock()
@@ -710,20 +710,20 @@ def _run_tick_sync(w):
 
     # The UI-thread continuations, bound on the SimpleNamespace, and the answer
     # channels delivering to them at once (no event loop).
-    w._on_health_probe_result = lambda sm, alive: StudioWorkspace._on_health_probe_result(w, sm, alive)
-    w._on_recover_done = lambda sm, ok: StudioWorkspace._on_recover_done(w, sm, ok)
-    w._health_verdict = lambda verdict: StudioWorkspace._on_health_verdict(w, verdict)
-    w._recovered = lambda verdict: StudioWorkspace._on_recovered(w, verdict)
+    w._on_health_probe_result = lambda sm, alive: LLMServerController._on_health_probe_result(w, sm, alive)
+    w._on_recover_done = lambda sm, ok: LLMServerController._on_recover_done(w, sm, ok)
+    w._health_verdict = lambda verdict: LLMServerController._on_health_verdict(w, verdict)
+    w._recovered = lambda verdict: LLMServerController._on_recovered(w, verdict)
 
-    with patch("procedo.studio.main_window.threading.Thread",
+    with patch("procedo.studio.controllers.llm_server_controller.threading.Thread",
                side_effect=_inline_thread):
-        StudioWorkspace._on_server_health_tick(w)
+        LLMServerController._on_server_health_tick(w)
 
 
 def test_auto_recovery_gives_up_after_three_failures():
     # A server that stays down: each tick relaunches and increments the failure
     # count; after MAX (3) consecutive failures we STOP spawning recoveries.
-    from procedo.studio.main_window import StudioWorkspace
+    from procedo.studio.controllers.llm_server_controller import LLMServerController
     sm = _FakeSM(alive=False)
     w = _fake_window(sm)
 
@@ -732,7 +732,7 @@ def test_auto_recovery_gives_up_after_three_failures():
     # Three relaunch attempts, three failures recorded.
     assert sm.ensure_calls == 3
     assert w._server_recovery_attempts == 3
-    assert w._server_recovery_attempts >= StudioWorkspace._MAX_SERVER_RECOVERY_ATTEMPTS
+    assert w._server_recovery_attempts >= LLMServerController._MAX_SERVER_RECOVERY_ATTEMPTS
 
     # A FOURTH tick must NOT relaunch — auto-recovery has given up.
     _run_tick_sync(w)
@@ -742,7 +742,7 @@ def test_auto_recovery_gives_up_after_three_failures():
 def test_auto_recovery_resets_when_server_back_alive():
     # After the give-up cap, the moment the server reads alive again the tick
     # resets the counter so a FUTURE crash is auto-recovered.
-    from procedo.studio.main_window import StudioWorkspace
+    from procedo.studio.controllers.llm_server_controller import LLMServerController
     sm = _FakeSM(alive=False)
     w = _fake_window(sm)
     for _ in range(3):
@@ -762,16 +762,16 @@ def test_auto_recovery_resets_when_server_back_alive():
 
 
 def test_reset_server_recovery_rearms_after_giveup():
-    # A manual action (Restart backend / Start server) calls _reset_server_recovery
+    # A manual action (Restart backend / Start server) calls reset_recovery
     # which clears the give-up state so the next tick auto-recovers again.
-    from procedo.studio.main_window import StudioWorkspace
+    from procedo.studio.controllers.llm_server_controller import LLMServerController
     sm = _FakeSM(alive=False)
     w = _fake_window(sm)
     for _ in range(3):
         _run_tick_sync(w)
     assert w._server_recovery_attempts == 3  # gave up
 
-    StudioWorkspace._reset_server_recovery(w)
+    LLMServerController.reset_recovery(w)
     assert w._server_recovery_attempts == 0
     assert w._server_recovering is False
 
@@ -800,7 +800,7 @@ def test_stop_manager_async_sets_retired_synchronously():
     # thread that races into the old manager's start() must already see
     # _retired==True the instant _stop_manager_async returns. We block stop()
     # on an event so it provably has NOT run yet, then assert _retired is True.
-    from procedo.studio.main_window import StudioWorkspace
+    from procedo.studio.controllers.llm_server_controller import LLMServerController
 
     stop_gate = threading.Event()
 
@@ -818,8 +818,8 @@ def test_stop_manager_async_sets_retired_synchronously():
 
     mgr = _FakeManager()
     # Call the method unbound — it only spawns the stop thread; it touches no
-    # StudioWorkspace instance state, so a bare object suffices as `self`.
-    StudioWorkspace._stop_manager_async(object(), mgr)
+    # LLMServerController instance state, so a bare object suffices as `self`.
+    LLMServerController._stop_manager_async(object(), mgr)
 
     # SYNCHRONOUS guarantee: _retired is already armed even though stop()'s
     # teardown is still blocked on the gate (deferred off this thread).
@@ -831,33 +831,33 @@ def test_stale_health_probe_does_not_clear_live_inflight_flag():
     # Residual #1: a probe spawned for an OLD manager must not clear the CURRENT
     # manager's in-flight flag — otherwise the next tick stacks a 2nd concurrent
     # probe. The flag clear must happen AFTER the stale-manager guard returns.
-    from procedo.studio.main_window import StudioWorkspace
+    from procedo.studio.controllers.llm_server_controller import LLMServerController
     current_sm = _FakeSM(alive=True)
     w = _fake_window(current_sm)
     w._health_probe_inflight = True  # the CURRENT manager's probe is in flight
 
     old_sm = _FakeSM(alive=True)  # a different (swapped-out) manager
     # A late result from the OLD manager's probe marshals back.
-    StudioWorkspace._on_health_probe_result(w, old_sm, True)
+    LLMServerController._on_health_probe_result(w, old_sm, True)
 
     # Dropped by the stale-manager guard WITHOUT clearing the live flag.
     assert w._health_probe_inflight is True
     # The stale verdict must not have driven the current indicator either.
-    w._refresh_server_indicator.assert_not_called()
+    w.refresh_indicator.assert_not_called()
 
 
 def test_current_health_probe_clears_inflight_flag():
     # The complement: the CURRENT manager's probe DOES clear its own in-flight
     # flag (so the next tick is unblocked).
-    from procedo.studio.main_window import StudioWorkspace
+    from procedo.studio.controllers.llm_server_controller import LLMServerController
     sm = _FakeSM(alive=True)
     w = _fake_window(sm)
     w._health_probe_inflight = True
 
-    StudioWorkspace._on_health_probe_result(w, sm, True)
+    LLMServerController._on_health_probe_result(w, sm, True)
 
     assert w._health_probe_inflight is False
-    w._refresh_server_indicator.assert_called_once_with(True)
+    w.refresh_indicator.assert_called_once_with(True)
 
 
 # --- Settings-dialog probe hardening (residuals #2/#3/#4) -------------------

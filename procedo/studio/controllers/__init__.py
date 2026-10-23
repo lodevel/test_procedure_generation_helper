@@ -8,6 +8,7 @@ docstring for the harness seam that forces this).
 """
 
 from .document_controller import DocumentController
+from .llm_server_controller import LLMServerController
 from .project_controller import ProjectController
 
-__all__ = ["DocumentController", "ProjectController"]
+__all__ = ["DocumentController", "LLMServerController", "ProjectController"]

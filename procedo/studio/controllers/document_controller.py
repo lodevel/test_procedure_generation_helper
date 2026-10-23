@@ -572,8 +572,8 @@ class DocumentController:
                 tab.tab_context._backend.stop()
 
         # Stop server manager if exists
-        if hasattr(mw, '_server_manager') and mw._server_manager:
+        if mw._llm_server.server_manager:
             log.info("Stopping OpenCode server manager...")
-            mw._server_manager.stop()
+            mw._llm_server.server_manager.stop()
 
         event.accept()

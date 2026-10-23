@@ -743,7 +743,7 @@ class SettingsDialog(QDialog):
         # auto-recovering this server after this attempt (best-effort — the
         # parent is the main window when launched from it).
         parent = self.parent()
-        reset = getattr(parent, "_reset_server_recovery", None)
+        reset = getattr(getattr(parent, "_llm_server", None), "reset_recovery", None)
         if callable(reset):
             reset()
         # Bump the generation token: each Start-server attempt owns a fresh

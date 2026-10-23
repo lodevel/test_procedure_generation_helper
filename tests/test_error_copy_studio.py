@@ -15,6 +15,9 @@ from procedo.studio.tabs.base_tab import BaseTab
 
 from .test_main_window_characterization import qapp as qapp
 
+#: These tests show REAL static boxes and close them themselves (procedo.core.testing).
+pytestmark = pytest.mark.real_modals
+
 
 @pytest.fixture
 def hook(qapp):

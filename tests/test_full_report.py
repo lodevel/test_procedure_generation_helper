@@ -124,7 +124,8 @@ def test_the_word_export_asks_the_engine_only_off_the_gui_thread(tmp_path, monke
     monkeypatch.setattr(engine, "tools_op", tools_op)
     window, written = QWidget(), []
     out = tmp_path / "o.docx"
-    WordExportJob(window, proj, [test_dir], out, report_export.create_default_sidecar(), written.append)
+    WordExportJob(window, proj, [test_dir], out, report_export.create_default_sidecar(),
+                  lambda path, queued: written.append(path))
     deadline = time.monotonic() + 20
     while not written and time.monotonic() < deadline:
         app.processEvents()

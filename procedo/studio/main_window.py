@@ -750,8 +750,22 @@ class StudioWorkspace(QWidget):
                 "Export anyway?") != QMessageBox.StandardButton.Yes:
                 return
 
-        export_folder = Path(root) / "exports"
-        export_folder.mkdir(parents=True, exist_ok=True)
+        from procedo.core import project_exports
+        from procedo.core.evidence_store import EvidenceError
+
+        # The default folder is the project's evidence exports folder: a report kept
+        # there goes through the evidence store; any other folder is a plain file.
+        try:
+            export_folder = evidence_folder = project_exports.exports_folder(Path(root))
+        except EvidenceError as exc:  # no default inside the project: the user picks one
+            evidence_folder = None
+            QMessageBox.warning(self, "Export to Word",
+                                f"The project's evidence folder cannot be opened:\n{exc}\n\n"
+                                "Choose another folder for the report.")
+            chosen = QFileDialog.getExistingDirectory(self, "Export to Word", str(Path.home()))
+            if not chosen:
+                return
+            export_folder = Path(chosen)
         sidecar = create_default_sidecar()
         dlg = WordExportDialog(sidecar, Path(root), export_folder,
                                default_docx_name="test_report.docx", parent=self)
@@ -760,10 +774,15 @@ class StudioWorkspace(QWidget):
         output_path = dlg.get_output_path()
         sidecar = dlg.get_sidecar()
         from .dialogs.word_export_job import WordExportJob
+
+        def exported(path: Path, queued: bool) -> None:
+            later = " (waiting in this PC's outbox: Bench uploads it once the evidence folder is reachable)"
+            self.footer.show_message(
+                f"Exported {len(selected)}-test report -> {path}" + (later if queued else ""), 5000)
+
         self._word_export = WordExportJob(  # rendered on a worker: the GUI never asks the engine
             self, Path(root), [f.path for f in selected], output_path, sidecar,
-            on_exported=lambda path: self.footer.show_message(
-                f"Exported {len(selected)}-test report -> {path}", 5000))
+            on_exported=exported, evidence_folder=evidence_folder)
 
     def _export_word_single(self):
         """Quick dump of the open procedure as a plain .docx (used when no project)."""

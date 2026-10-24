@@ -229,13 +229,12 @@ class BuildManualRunOpTests(unittest.TestCase):
         self.procedure_json, _ = pp.parse_text(PROC_MANUAL)
 
     def _run(self, measurements: dict | None = None) -> "engine_replies.ManualRunResult":
-        spec = json.loads(json.dumps({
+        return engine_replies.ManualRunResult.from_dict(_env.engine_answer({
             "op": "build_manual_run",
             "procedure_json": self.procedure_json,
             "measurements": measurements,
             "controls": None,
         }))
-        return engine_replies.ManualRunResult.from_dict(json.loads(json.dumps(engine_ops.run(spec))))
 
     def test_static_plan_pending_with_expected_joined(self) -> None:
         run = self._run()

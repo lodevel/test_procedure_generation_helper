@@ -93,7 +93,7 @@ def test_the_word_export_asks_the_engine_only_off_the_gui_thread(tmp_path, monke
 
     from procedo.core import report_export
     from procedo.studio.dialogs.word_export_job import WordExportJob
-    from procedo.engine_client import _engine_ops
+    from tests import _env
     from procedo.engine_client import engine
 
     pytest.importorskip("rules_packager_base.rules.v2_0_2.extractors")
@@ -119,7 +119,7 @@ def test_the_word_export_asks_the_engine_only_off_the_gui_thread(tmp_path, monke
         asked.append((spec.get("op"), threading.current_thread() is threading.main_thread()))
         if spec.get("op") != "extract":
             return {"ok": False, "error": "not in this test"}
-        return json.loads(json.dumps(_engine_ops.run(json.loads(json.dumps(spec)))))
+        return _env.engine_answer(spec)
 
     monkeypatch.setattr(engine, "tools_op", tools_op)
     window, written = QWidget(), []

@@ -48,14 +48,14 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
 from ..core.validation_outcome import (
+    FauxParseError,
     ValidationIssueView,
     ValidationOutcome,
-    _FauxParseError,
-    _issue_from_validator,
-    _merge_outcomes,
-    _outcome_from_parse_error,
-    _outcome_from_report,
-    _skipped,
+    issue_from_validator,
+    merge_outcomes,
+    outcome_from_parse_error,
+    outcome_from_report,
+    skipped_outcome,
 )
 from . import reconstruction
 from .backend_base import LLMResponse
@@ -78,11 +78,11 @@ log = logging.getLogger(__name__)
 #
 # Multi-slot responses (a single LLM turn proposing both text AND json,
 # say) get every applicable handler run; outcomes are merged by
-# :func:`_merge_outcomes` so the FSM and the chat banners see a single
+# :func:`merge_outcomes` so the FSM and the chat banners see a single
 # combined result.
 #
 # Handlers MUST be permissive: missing optional inputs (no current
-# artifact, no inventory) collapse to ``_skipped`` rather than crashing.
+# artifact, no inventory) collapse to ``skipped_outcome`` rather than crashing.
 # That keeps a partly-filled editor working — e.g. validating a proposed
 # text against a not-yet-authored json simply parses the text alone.
 
@@ -226,7 +226,7 @@ def _validate_proposed_text(
     # can translate full-doc line numbers back to fragment coords per-issue below.
     shift = _fragment_line_shift(recon.text, str(proposed_text))
     if not recon.success:
-        outcome = _outcome_from_report(recon)  # surfaces RECON_* / body findings
+        outcome = outcome_from_report(recon)  # surfaces RECON_* / body findings
         _translate_issue_lines(outcome, shift)
         return outcome
     reconstructed_text = recon.text
@@ -241,7 +241,7 @@ def _validate_proposed_text(
         original_text=original_text,
         check_names=check_names,
     )
-    outcome = _outcome_from_report(report)
+    outcome = outcome_from_report(report)
     _translate_issue_lines(outcome, shift)
     return outcome
 
@@ -305,8 +305,8 @@ def _validate_proposed_json(
         try:
             proposed_json = json.loads(proposed_json)
         except json.JSONDecodeError as exc:
-            return _outcome_from_parse_error(
-                _FauxParseError("JS_BODY_INVALID", str(exc))
+            return outcome_from_parse_error(
+                FauxParseError("JS_BODY_INVALID", str(exc))
             )
     # Mirror the text path's reconstruct step, JSON-side: re-derive the
     # parser-owned Meta pins (format_version / rules_pack and the conditional
@@ -323,7 +323,7 @@ def _validate_proposed_json(
     if text:
         kwargs["text"] = text
     report = validate_fn(**kwargs)
-    return _outcome_from_report(report)
+    return outcome_from_report(report)
 
 
 def _fill_parser_owned_meta(
@@ -388,11 +388,11 @@ def _validate_proposed_code(
         return None
     json_obj = _resolve_json_for_crosscheck(response, current)
     if json_obj is None:
-        return _skipped(
+        return skipped_outcome(
             "no procedure_json available — cannot validate proposed code"
         )
     report = validate_fn(json_obj=json_obj, mode="all")
-    return _outcome_from_report(report)
+    return outcome_from_report(report)
 
 
 _ARTIFACT_HANDLERS: tuple[Callable[..., Optional[ValidationOutcome]], ...] = (
@@ -584,12 +584,12 @@ def validate_response(
     and the at-apply reconstruction.
     """
     if project_root is None:
-        return _skipped("no active project")
+        return skipped_outcome("no active project")
     from ..pack_ops import pack_parsers
     import functools
     available, reason = pack_parsers.is_available(project_root)
     if not available:
-        return _skipped(f"deterministic validator unavailable: {reason}")
+        return skipped_outcome(f"deterministic validator unavailable: {reason}")
     validate_fn = functools.partial(pack_parsers.validate, project_root=project_root)
 
     # Phase 7.1 (2026-04-30): auto-restore operator-only meta fields the
@@ -613,10 +613,10 @@ def validate_response(
                 "validator handler %s crashed; falling back to operator review.",
                 handler.__name__,
             )
-            outcome = _skipped(f"validator crashed: {type(exc).__name__}: {exc}")
+            outcome = skipped_outcome(f"validator crashed: {type(exc).__name__}: {exc}")
         if outcome is not None:
             outcomes.append(outcome)
-    merged = _merge_outcomes(outcomes)
+    merged = merge_outcomes(outcomes)
     if restore_issues:
         # Surface auto-restore warnings alongside any validator outcome.
         # Don't downgrade ok=True → False; warnings shouldn't block apply.
@@ -738,7 +738,7 @@ def validate_current_state(
     in the loop, just `text + json + code + inventory` through the validator's
     full mode='all' pipeline.
 
-    Returns warnings as well as errors (unlike :func:`_outcome_from_report`
+    Returns warnings as well as errors (unlike :func:`outcome_from_report`
     which is tuned for the FSM and returns errors only). The findings panel
     benefits from seeing soft-warning codes too — operators can read them and
     decide whether to act.
@@ -746,10 +746,10 @@ def validate_current_state(
     from ..pack_ops import pack_parsers
     available, reason = pack_parsers.is_available(project_root)
     if not available:
-        return _skipped(f"Validator unavailable: {reason}")
+        return skipped_outcome(f"Validator unavailable: {reason}")
 
     if not (text or json_str or code):
-        return _skipped(
+        return skipped_outcome(
             "No artifacts to validate (procedure_text, procedure.json, and "
             "test.py are all empty)."
         )
@@ -759,7 +759,7 @@ def validate_current_state(
         try:
             json_obj = json.loads(json_str)
         except json.JSONDecodeError as exc:
-            return _outcome_from_parse_error(_FauxParseError(
+            return outcome_from_parse_error(FauxParseError(
                 "JSON_DECODE_FAILED",
                 f"procedure.json is not valid JSON: {exc}",
             ))
@@ -788,8 +788,8 @@ def validate_current_state(
         )
 
     issues: list[ValidationIssueView] = []
-    issues.extend(_issue_from_validator(i) for i in getattr(report, "errors", []))
-    issues.extend(_issue_from_validator(i) for i in getattr(report, "warnings", []))
+    issues.extend(issue_from_validator(i) for i in getattr(report, "errors", []))
+    issues.extend(issue_from_validator(i) for i in getattr(report, "warnings", []))
     return ValidationOutcome(
         ok=bool(getattr(report, "ok", True)),
         skipped=False,

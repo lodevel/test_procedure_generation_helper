@@ -29,6 +29,13 @@ def _add_row(form: QFormLayout, label: str, field) -> None:
     form.addRow(ui_kit.form_label(label, ui_kit.LABEL_WIDTH), field)
 
 
+def _section(settings: dict, name: str) -> dict:
+    """The settings.json section *name*; a section that is not an object (a hand-edit) reads as
+    empty, so the dialog still opens and Save replaces it instead of staying refused."""
+    section = settings.get(name)
+    return section if isinstance(section, dict) else {}
+
+
 def _fixed(widget: QWidget, width: int) -> QWidget:
     """*widget* as wide as the board draws it (a number, a host name)."""
     widget.setFixedWidth(width)
@@ -331,7 +338,7 @@ class SettingsDialog(QDialog):
         Start-server poll's re-query). One in-flight probe at a time.
         """
         if self.opencode_model.count() == 0:
-            preserve = self._settings.get("opencode", {}).get("model", "") or ""
+            preserve = _section(self._settings, "opencode").get("model", "") or ""
         else:
             preserve = self.opencode_model.currentText().strip()
         # C4: query the LIVE running server's port when a manager is running —
@@ -548,7 +555,7 @@ class SettingsDialog(QDialog):
         )
         
         # Common LLM parameters
-        common_llm = self._settings.get("common_llm", {})
+        common_llm = _section(self._settings, "common_llm")
         # Backwards-compat: old setting name was "max_tokens"; prefer new "context_window"
         self.context_window.setValue(
             common_llm.get("context_window", common_llm.get("max_tokens", 16384))
@@ -558,7 +565,7 @@ class SettingsDialog(QDialog):
         # OpenCode settings — host/port set BEFORE the final
         # _on_backend_changed (below) so the model dropdown queries the right
         # server; _populate_opencode_models preserves opencode["model"].
-        opencode = self._settings.get("opencode", {})
+        opencode = _section(self._settings, "opencode")
         self.opencode_port.setValue(opencode.get("port", 4096))
         self.opencode_host.setText(opencode.get("host", "127.0.0.1"))
         self.opencode_wsl_path.setText(opencode.get("wsl_path", ""))
@@ -572,7 +579,7 @@ class SettingsDialog(QDialog):
             opencode.get("fold_system_into_prompt", False))
 
         # Wizard settings
-        wizard = self._settings.get("wizard", {})
+        wizard = _section(self._settings, "wizard")
         self.wizard_max_sessions.setValue(
             int(wizard.get("max_concurrent_sessions", 5)))
 
@@ -623,10 +630,7 @@ class SettingsDialog(QDialog):
             settings = read_settings()  # never a fallback to {}: that would wipe the rest
             settings["llm_backend"] = self.backend_combo.currentText()
             for section, values in owned.items():
-                stored = settings.get(section, {})
-                if not isinstance(stored, dict):
-                    raise ValueError(f"settings.json: the '{section}' section is not an object")
-                settings[section] = {**stored, **values}
+                settings[section] = {**_section(settings, section), **values}
             save_settings(settings)
         except Exception as e:  # the dialog stays open, its values kept: the user can retry
             QMessageBox.critical(self, "Save Failed", str(e))

@@ -138,13 +138,22 @@ def test_save_keeps_every_key_the_dialog_does_not_own_as_stored_at_save_time(qap
     assert dlg.get_settings() == saved
 
 
-@pytest.mark.parametrize("stored, said", [
-    ('{"wizard": {"last_skill": "dcdc"}', "settings.json"),  # damaged (or half-read)
-    ('{"wizard": ["last_skill"]}', "wizard"),  # a section the dialog writes is not an object
-])
+def test_save_replaces_a_section_it_owns_that_is_not_an_object(qapp, no_network):
+    """A damaged section is the dialog's own to replace: Save is not refused until the file
+    is fixed by hand, and the keys it does not own survive."""
+    save_settings({"custom_output_format": "fmt", "wizard": ["last_skill"]})
+    dlg = _open(qapp)
+    dlg.wizard_max_sessions.setValue(4)
+    dlg._on_save()
+    saved = load_settings()
+    assert saved["wizard"] == {"max_concurrent_sessions": 4}
+    assert saved["custom_output_format"] == "fmt"
+
+
 def test_save_refuses_when_the_stored_settings_cannot_be_read_and_writes_nothing(
-        qapp, no_network, monkeypatch, stored, said):
+        qapp, no_network, monkeypatch):
     """Never fall back to {} at Save: writing only the dialog's keys would wipe the rest."""
+    stored = '{"wizard": {"last_skill": "dcdc"}'  # damaged (or half-read)
     from procedo.studio.core.studio_settings import get_settings_path
 
     errors: list[tuple[str, str]] = []
@@ -154,7 +163,7 @@ def test_save_refuses_when_the_stored_settings_cannot_be_read_and_writes_nothing
     get_settings_path().write_text(stored, encoding="utf-8")
     dlg._on_save()
     assert [title for title, _ in errors] == ["Save Failed"]
-    assert said in errors[0][1]
+    assert "settings.json" in errors[0][1]
     assert get_settings_path().read_text(encoding="utf-8") == stored
     assert dlg.result() != dlg.DialogCode.Accepted
     dlg.reject()

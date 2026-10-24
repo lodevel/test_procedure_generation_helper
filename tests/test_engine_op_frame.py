@@ -1,6 +1,6 @@
 """The live daemon answers an engine ``op`` frame (engine_process plan, slice 1).
 
-One op table (``llm/_engine_ops.py``) serves every engine process, so the daemon's
+One op table (``engine_client/_engine_ops.py``) serves every engine process, so the daemon's
 answer is the op table's answer over the JSON boundary. The op judges
 the document IN the frame: it never reads the path, never changes the daemon's
 latched instrument document, and a bundle whose packs will not load is never silent:
@@ -22,7 +22,7 @@ from tests._qt_stub import ensure_workflow_editor_importable
 
 ensure_workflow_editor_importable()
 
-from procedo.studio.llm import _engine_ops as engine_ops  # noqa: E402
+from procedo.engine_client import _engine_ops as engine_ops  # noqa: E402
 from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
 from procedo.studio.pack_ops import engine_session  # noqa: E402
 
@@ -30,8 +30,7 @@ pytestmark = pytest.mark.skipif(
     not _env.rules_packager_available(), reason=_env.WHEEL_SKIP_REASON
 )
 
-_STUDIO = Path(__file__).resolve().parent.parent / "procedo" / "studio"
-_DAEMON = _STUDIO / "llm" / "_execute_op_subprocess.py"
+_DAEMON = Path(__file__).resolve().parent.parent / "procedo" / "engine_client" / "_execute_op_subprocess.py"
 
 _spec = importlib.util.spec_from_file_location("_exec_op_runner_opframe", _DAEMON)
 er = importlib.util.module_from_spec(_spec)

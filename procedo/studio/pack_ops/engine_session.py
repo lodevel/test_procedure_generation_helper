@@ -1,5 +1,5 @@
 """The host side of one engine process: :class:`RemoteSession`, the persistent
-NDJSON channel to ``llm/_execute_op_subprocess.py`` in the project venv (start,
+NDJSON channel to ``engine_client/_execute_op_subprocess.py`` in the project venv (start,
 one stdin writer, per-frame read timeout, stderr tail, venv claim, terminate and
 reap). :mod:`.engine` owns the instances, one per project and role;
 :mod:`.bench_client` adds the RUN frames; :mod:`.pack_parsers` sends ops through it.
@@ -59,7 +59,7 @@ def _in_flight(ops, done: int) -> str:
 
 
 class RemoteSession:
-    """Persistent channel to one engine process (``llm/_execute_op_subprocess.py``
+    """Persistent channel to one engine process (``engine_client/_execute_op_subprocess.py``
     in the project venv); :mod:`.engine` owns them, one per project and role.
 
     ``role`` is the daemon's job (``--role``). ``tools`` serves ops only. ``run``
@@ -89,8 +89,7 @@ class RemoteSession:
     def _start(self) -> None:
         venv = _resolve_project_python(self._project_root)  # may raise ParserUnavailable
         self._bundle_dir = str(venv.bundle_dir)
-        # Daemon stayed in llm/ when pack_parsers moved to pack_ops/ (29e5f66).
-        runner = Path(__file__).resolve().parent.parent / "llm" / "_execute_op_subprocess.py"
+        runner = Path(__file__).resolve().parents[2] / "engine_client" / "_execute_op_subprocess.py"
         # The child's temp files go with this app's, and so does a relative write of a
         # frame without a working folder (an exec_ops frame names the run's own).
         temp = str(temp_root.root())
@@ -290,7 +289,7 @@ class RemoteSession:
 
     def engine_op(self, op: str, timeout: Optional[int] = None,
                   **fields: Any) -> dict[str, Any]:
-        """One engine op (``llm/_engine_ops.py``) in this live daemon, with its
+        """One engine op (``engine_client/_engine_ops.py``) in this live daemon, with its
         document in ``fields`` (``procedure_json``). Returns the op's result
         dict, or the session's typed failure."""
         return self._request({"cmd": "op", "op": op, **fields}, timeout or _timeout())

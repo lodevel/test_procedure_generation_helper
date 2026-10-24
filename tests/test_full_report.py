@@ -93,7 +93,7 @@ def test_the_word_export_asks_the_engine_only_off_the_gui_thread(tmp_path, monke
 
     from procedo.core import report_export
     from procedo.studio.dialogs.word_export_job import WordExportJob
-    from procedo.studio.llm import _engine_ops
+    from procedo.engine_client import _engine_ops
     from procedo.studio.pack_ops import engine
 
     pytest.importorskip("rules_packager_base.rules.v2_0_2.extractors")

@@ -1,7 +1,7 @@
-"""AST size-budget guard for the workflow editor (``procedo/studio/``).
+"""AST size-budget guard for the workflow editor (``procedo/studio/``, ``procedo/engine_client/``).
 
 Sibling of the host ``tests/test_size_budgets.py`` — same ratchet, applied to
-the editor's own source package.  Every ``.py`` under ``procedo/studio/`` must
+the editor's own source packages.  Every ``.py`` under ``procedo/`` must
 stay within a hard structural budget:
 
 * file length     <= ``FILE_CAP``   lines
@@ -30,8 +30,8 @@ FILE_CAP = 1000
 METHOD_CAP = 40
 FUNC_CAP = 150
 
-# tests/ -> editor root -> procedo.studio package
-_PKG = Path(__file__).resolve().parent.parent / "procedo" / "studio"
+# tests/ -> editor root -> the procedo namespace (procedo.studio, procedo.engine_client)
+_PKG = Path(__file__).resolve().parent.parent / "procedo"
 _SKIP_DIRS = {"__pycache__", "build", "dist", ".venv"}
 
 # --- Grandfather ledger (measured on the current tree) -----------------------
@@ -40,8 +40,8 @@ _SKIP_DIRS = {"__pycache__", "build", "dist", ".venv"}
 # carve the file, then lower or delete its entry.
 
 FILE_BUDGET: dict[str, int] = {
-    "core/task_config.py": 1288,
-    "llm/_execute_op_subprocess.py": 1283,  # -15: the per-path procedure latch went (engine_process slice 3)
+    "studio/core/task_config.py": 1288,
+    "engine_client/_execute_op_subprocess.py": 1283,  # -15: the per-path procedure latch went (engine_process slice 3)
     # +50: bench-session S3 — frame dispatch,
     # reader-thread wiring, and the held-rekey seams (_ensure_held routing,
     # channel-union safe-off fallback, per-path procedure docs); ALL new logic
@@ -70,11 +70,11 @@ FILE_BUDGET: dict[str, int] = {
     # _ensure_held's resolution CARVED into the new sibling
     # llm/_hold_resolution.py (fold-first rule, stale drop, ns rebind); the
     # daemon file only delegates and records the open.
-    "llm/opencode_backend.py": 1251,  # +9: bare-except cleanup log lines
+    "studio/llm/opencode_backend.py": 1251,  # +9: bare-except cleanup log lines
 }
 
 CLASS_METHOD_BUDGET: dict[tuple[str, str], int] = {
-    ("dock/skill_chat_widget.py", "SkillChatWidget"): 42,
+    ("studio/dock/skill_chat_widget.py", "SkillChatWidget"): 42,
 }
 
 FUNC_LEN_BUDGET: dict[tuple[str, str], int] = {

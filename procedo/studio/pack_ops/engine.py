@@ -2,7 +2,7 @@
 
 Every wheel op the app asks of a project (parse, render, validate, codegen,
 export rows…) is a frame to that project's TOOLS instance,
-``llm/_execute_op_subprocess.py --role tools`` in the project venv, instead of a
+``engine_client/_execute_op_subprocess.py --role tools`` in the project venv, instead of a
 fresh Python per call (docs/plans/engine_process.md). An instance starts on first
 use and is replaced when it died or its key moved: the role, the interpreter or
 the bundle (``display_snapshot.bundle_key``). Bench and Studio are separate OS

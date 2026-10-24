@@ -1,8 +1,8 @@
 """The engine's op table, and which frames each engine role takes.
 
 Loaded by FILE PATH by the persistent daemon ``_execute_op_subprocess.py``
-(through ``_sib``) in the project venv — never through the ``procedo.studio``
-package, whose init imports PySide6 (absent from the project venv). Each op is
+(through ``_sib``) in the project venv — never through the ``procedo``
+package, which is absent from the project venv. Each op is
 computation on the spec it is given plus the in-memory pack registry: a
 document travels IN the spec, never as a path.
 
@@ -85,7 +85,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 # The manual_reading op lives beside this module; imported however this one was loaded: as
-# procedo.studio.llm's (the app) or by path with llm/ on sys.path (the daemon's ``_sib``).
+# procedo.engine_client's (the app) or by path, its folder on sys.path (the daemon's ``_sib``).
 _manual_reading = importlib.import_module(f"{__package__}._manual_reading" if __package__ else "_manual_reading")
 
 log = logging.getLogger(__name__)

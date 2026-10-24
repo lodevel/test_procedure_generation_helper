@@ -18,13 +18,13 @@ from tests._qt_stub import ensure_workflow_editor_importable
 
 ensure_workflow_editor_importable()
 
-from procedo.studio.llm import _engine_ops as engine_ops  # noqa: E402
+from procedo.engine_client import _engine_ops as engine_ops  # noqa: E402
 from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
 from procedo.studio.pack_ops.bench_client import BenchSessionClient  # noqa: E402
 
 pytestmark = pytest.mark.skipif(not _env.rules_packager_available(), reason=_env.WHEEL_SKIP_REASON)
 
-_DAEMON = Path(__file__).resolve().parent.parent / "procedo" / "studio" / "llm" / "_execute_op_subprocess.py"
+_DAEMON = Path(__file__).resolve().parent.parent / "procedo" / "engine_client" / "_execute_op_subprocess.py"
 _HEAD = ("# T\nDesc.\n\n## Meta\nformat_version: 2.0.1\nboard: B\n"
          "rules_pack: rules_packager_base@2.12.0\n\n## Equipment\nDMM_GENERIC : dmm\n\n## Steps\n")
 FUNCS = '''\

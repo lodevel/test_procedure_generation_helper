@@ -1,6 +1,6 @@
 """The editor's logic packages load without Qt, so a Python server can run them.
 
-Every module of ``core``, ``llm``, ``authoring`` and ``pack_ops`` is imported in
+Every module of ``core``, ``llm``, ``authoring``, ``pack_ops`` and ``procedo.engine_client`` is imported in
 a fresh interpreter where PySide6 cannot load. Only the Qt adapters listed below
 may fail; anything else that drags Qt in is a regression.
 """
@@ -21,10 +21,11 @@ _PROBE = """
 import importlib, pkgutil, sys
 sys.modules["PySide6"] = None
 failed = []
-for pkg in ("core", "llm", "authoring", "pack_ops"):
-    mod = importlib.import_module("procedo.studio." + pkg)
+for pkg in ("procedo.studio.core", "procedo.studio.llm", "procedo.studio.authoring",
+            "procedo.studio.pack_ops", "procedo.engine_client"):
+    mod = importlib.import_module(pkg)
     for info in pkgutil.iter_modules(mod.__path__):
-        name = f"procedo.studio.{pkg}.{info.name}"
+        name = f"{pkg}.{info.name}"
         try:
             importlib.import_module(name)
         except Exception as exc:

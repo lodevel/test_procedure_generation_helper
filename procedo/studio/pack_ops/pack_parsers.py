@@ -11,10 +11,10 @@ editor stays usable with no project open.
 Mechanism
 ---------
 An op is a frame to the project's TOOLS engine (:mod:`.engine`): one persistent
-``llm/_execute_op_subprocess.py --role tools`` per project, run by FILE PATH in
+``engine_client/_execute_op_subprocess.py --role tools`` per project, run by FILE PATH in
 the machine-local venv (``_project_local_state``), serving the op table
-``llm/_engine_ops.py``. By path, not ``-m``: ``procedo/studio/__init__.py``
-imports PySide6, which the project venv does not have.
+``engine_client/_engine_ops.py``. By path, not ``-m``: the project venv does not
+have the ``procedo`` package.
 """
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ def _ensure_inproc_registry_populated() -> None:
                 )
                 load_packs_into_registry(Path(defaults_path).parent)
             except Exception as exc:  # noqa: BLE001 — said by every call below
-                from ..llm._engine_ops import packs_unloadable
+                from procedo.engine_client._engine_ops import packs_unloadable
 
                 _REGISTRY_LOAD = packs_unloadable(exc)
     if _REGISTRY_LOAD:

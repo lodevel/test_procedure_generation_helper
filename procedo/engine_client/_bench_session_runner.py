@@ -1,9 +1,9 @@
 """Bench-session holder machinery for the persistent daemon (S3).
 
 Imported by ``_execute_op_subprocess.py`` as a PLAIN SIBLING module —
-file-path invocation puts ``llm/`` on ``sys.path``, so ``import
-_bench_session_runner`` resolves without touching the ``procedo.studio``
-package (PySide6 is absent from project venvs).  The daemon passes its own
+file-path invocation puts ``engine_client/`` on ``sys.path``, so ``import
+_bench_session_runner`` resolves without touching the ``procedo``
+package (absent from project venvs).  The daemon passes its own
 module-globals dict (``d``) into every entry point so this module reuses the
 daemon's device machinery (``_ensure_held`` / ``_safe_off_all_held`` /
 ``_close_held`` / ``_teardown`` / ``_write_frame`` / ``_PROTO_OUT``) without a

@@ -1,6 +1,6 @@
 """A guided run's ``call`` frame in the RUN engine process (``_execute_op_subprocess.py``).
 
-Imported as a PLAIN SIBLING (``_sib``), never through the ``procedo.studio`` package (PySide6 is
+Imported as a PLAIN SIBLING (``_sib``), never through the ``procedo`` package (it is
 absent from project venvs). The daemon passes its module globals (``d``) so this module uses its
 frame writer, its protocol channel and THE stdin reader (``_bench_session_runner``) with no import
 cycle.

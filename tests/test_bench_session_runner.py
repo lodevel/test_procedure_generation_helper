@@ -57,7 +57,7 @@ def setUpModule() -> None:
     reg.set_equipment_dispatch({e: {"": e} for e in ("psu", "eload", "scope")})
 
 _RUNNER = (Path(__file__).resolve().parent.parent
-           / "procedo" / "studio" / "llm" / "_execute_op_subprocess.py")
+           / "procedo" / "engine_client" / "_execute_op_subprocess.py")
 _BSR_PATH = _RUNNER.parent / "_bench_session_runner.py"
 
 # Load the sibling FIRST under its canonical name so the daemon's lazy

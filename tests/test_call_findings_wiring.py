@@ -16,7 +16,7 @@ from tests._qt_stub import ensure_workflow_editor_importable
 ensure_workflow_editor_importable()
 
 from procedo.studio.core.validators_registry import ValidatorContext, ensure_builtins_registered, get  # noqa: E402
-from procedo.studio.llm import _engine_ops as engine_ops  # noqa: E402
+from procedo.engine_client import _engine_ops as engine_ops  # noqa: E402
 from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
 
 pytestmark = pytest.mark.skipif(not _env.rules_packager_available(), reason=_env.WHEEL_SKIP_REASON)

@@ -38,7 +38,7 @@ reg.register_lifecycle(labpack.LIFECYCLE)
 reg.register_lifecycle({"fncore": {"remote": False, "cleanup": None}})
 
 _RUNNER = (Path(__file__).resolve().parent.parent
-           / "procedo" / "studio" / "llm" / "_execute_op_subprocess.py")
+           / "procedo" / "engine_client" / "_execute_op_subprocess.py")
 _spec = importlib.util.spec_from_file_location("_exec_op_runner", _RUNNER)
 er = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(er)
@@ -530,7 +530,7 @@ class RemoteSessionLiveTransportTests(unittest.TestCase):
         ensure_workflow_editor_importable()
         from procedo.studio.pack_ops import engine_session
         s = engine_session.RemoteSession(Path("/nonexistent"))
-        runner = _RUNNER   # the llm/ daemon script (module-level, verified on import)
+        runner = _RUNNER   # the engine_client/ daemon script (module-level, verified on import)
 
         def _start():               # use THIS interpreter (no project venv in test env)
             s._bundle_dir = None

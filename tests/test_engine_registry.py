@@ -28,10 +28,10 @@ ensure_workflow_editor_importable()
 
 from procedo.core import temp_root  # noqa: E402
 from procedo.studio import _project_local_state  # noqa: E402
-from procedo.studio.llm import _engine_ops as engine_ops  # noqa: E402
+from procedo.engine_client import _engine_ops as engine_ops  # noqa: E402
 from procedo.studio.pack_ops import engine, engine_session, pack_parsers  # noqa: E402
 
-_DAEMON = Path(pack_parsers.__file__).resolve().parent.parent / "llm" / "_execute_op_subprocess.py"
+_DAEMON = Path(__file__).resolve().parent.parent / "procedo" / "engine_client" / "_execute_op_subprocess.py"
 _REAL_POPEN = subprocess.Popen
 
 

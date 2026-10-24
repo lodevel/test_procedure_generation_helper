@@ -1,7 +1,7 @@
 """The guided run's one reading rule (the engine op ``manual_reading``): what a reading entered
 as text stores for its step, and why a typed one is refused. Part of the engine's op table
-(``_engine_ops``), loaded beside it — never through the ``procedo.studio`` package, whose init
-imports PySide6 (absent from the project venv)."""
+(``_engine_ops``), loaded beside it — never through the ``procedo`` package, which is
+absent from the project venv."""
 
 from __future__ import annotations
 

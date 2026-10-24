@@ -4,8 +4,8 @@ Invoked by FILE PATH (NOT ``-m``) in the *project* venv::
 
     <machine-local venv>/<bin>/python <abs>/_execute_op_subprocess.py --role run|tools
 
-Running via ``-m`` would trigger ``procedo/studio/__init__.py`` (PySide6, absent
-from the project venv); invoking by path keeps ``__name__ == "__main__"`` and
+Running via ``-m`` would need the ``procedo`` package (absent from the project
+venv); invoking by path keeps ``__name__ == "__main__"`` and
 skips the package init.  It serves the engine's op table (``op`` frames,
 ``_engine_ops.py``) and, as RUN, imports the hardware drivers (labscpi /
 fncore).  Each role refuses frames outside its job (``_engine_ops.refusal``).
@@ -1114,8 +1114,8 @@ _PROTO_OUT = None
 # deliberately NOT in this set: it IS the existing "shutdown" frame.
 _BENCH_CMDS = ("acquire_run", "release_run", "run_test", "cancel_run", "prompt_response")
 def _sib(name: str):
-    """Lazy sibling import, never through the procedo.studio package (PySide6
-    is absent from project venvs); sys.modules is the cache."""
+    """Lazy sibling import, never through the procedo package (it is
+    absent from project venvs); sys.modules is the cache."""
     try:
         return sys.modules[name]
     except KeyError:

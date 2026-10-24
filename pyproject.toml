@@ -34,7 +34,7 @@ procedo-studio = "procedo.studio.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["procedo.studio*"]
+include = ["procedo.studio*", "procedo.engine_client*"]
 
 # Ship the baked-in workflow defaults so an INSTALLED editor (the host installs
 # this package editable into its venv) resolves them via importlib.resources —

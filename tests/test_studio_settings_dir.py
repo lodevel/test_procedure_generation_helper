@@ -111,7 +111,7 @@ def test_studio_start_migrates_before_anything_reads_its_settings(monkeypatch):
     monkeypatch.setattr(studio_main, "parse_args", _args)
     monkeypatch.setattr("procedo.studio.logging_config.setup_logging", lambda **kw: None)
     monkeypatch.setattr(studio_main, "QApplication", _App)
-    monkeypatch.setattr(temp_root, "sweep", lambda: None)
+    monkeypatch.setattr(temp_root, "_sweep_leftovers", lambda: None)
     monkeypatch.setattr(studio_main, "MainWindow", _Window)
     monkeypatch.setattr(studio_main, "apply_app_theme", lambda name, app: name)
     monkeypatch.setattr(error_copy, "install_error_copy", lambda app: True)  # the fake app filters nothing

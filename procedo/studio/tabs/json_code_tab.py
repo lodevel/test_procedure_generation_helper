@@ -49,6 +49,7 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
     
     # Tab identifier for button label management
     tab_id = "json_code"
+    _proposal_fields = (("procedure_json", "procedure_json"), ("test_code", "test_code"))
     
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
@@ -213,25 +214,6 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
             self._handle_json_proposal(response.procedure_json)
         if response.test_code and response.test_code.mode:
             self._handle_code_proposal(response.test_code)
-
-    def _get_expected_artifact_fields(self) -> list[str]:
-        """Get expected artifact fields for this tab."""
-        return ["procedure_json", "test_code"]
-
-    def _parse_response_to_dict(self, response) -> dict:
-        """Parse LLMResponse into the dict format expected by _validate_output_contract."""
-        parsed = {
-            "assistant_message": response.assistant_message,
-            "open_questions": response.session_delta.get("open_questions", []),
-        }
-        parsed["propose_update"] = False
-        if response.procedure_json and response.procedure_json.mode:
-            parsed["propose_update"] = True
-            parsed["procedure_json"] = response.procedure_json.content
-        if response.test_code and response.test_code.mode:
-            parsed["propose_update"] = True
-            parsed["test_code"] = response.test_code.content
-        return parsed
 
     def _handle_code_proposal(self, proposal):
         """Offer a test_code proposal (``self.code_card``) as a proposal card."""

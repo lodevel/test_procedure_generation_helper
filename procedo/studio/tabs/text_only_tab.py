@@ -41,6 +41,7 @@ class TextOnlyTab(TextActionsMixin, LLMTabMixin, BaseTab):
     """
 
     tab_id = "text_only"
+    _proposal_fields = (("procedure_text", "text_procedure"),)
 
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
@@ -137,20 +138,6 @@ class TextOnlyTab(TextActionsMixin, LLMTabMixin, BaseTab):
         # text-proposal reconstruction (None → bundle default).
         if response.procedure_text and response.procedure_text.mode:
             self._handle_text_proposal(response.procedure_text, task)
-
-    def _get_expected_artifact_fields(self) -> list[str]:
-        return ["text_procedure"]
-
-    def _parse_response_to_dict(self, response) -> dict:
-        parsed = {
-            "assistant_message": response.assistant_message,
-            "open_questions": response.session_delta.get("open_questions", []),
-        }
-        parsed["propose_update"] = False
-        if response.procedure_text and response.procedure_text.mode:
-            parsed["propose_update"] = True
-            parsed["text_procedure"] = response.procedure_text.content
-        return parsed
 
     def on_activated(self):
         self.load_content()

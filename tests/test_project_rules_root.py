@@ -1,6 +1,6 @@
 """Studio's rules are the open project's: the folder the user picked for it (the footer's Rules
 link), else its ACTIVE bundle's rules, resolved as Bench resolves them
-(``bundle_registry.active_rules_dir``), else none, never what the previous project had. A
+(``project_bundle.active_rules_dir``), else none, never what the previous project had. A
 project has no root ``rules/``, no ``config/rules/``, and a ``rules/`` beside it is not its
 rules: none of them is ever read."""
 

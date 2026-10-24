@@ -108,13 +108,13 @@ def _build_pdf_tools_block(project_root: Optional[Path]) -> dict:
     script, its documents dir, its active bundle's rules (``active_rules_dir``, as Studio) and
     its own rule documents' folder, at RUNTIME; else a placeholder under the config dir.
     """
-    from procedo.core import bundle_registry
+    from procedo.core import project_bundle
     from ..core.project_manager import PROJECT_RULES_DIR
     from ..llm.mcp_config import build_pdf_tools_mcp_block
 
     if project_root is not None:
         documents_dir, own_rules = project_root / "documents", project_root / PROJECT_RULES_DIR
-        rules_dir = bundle_registry.active_rules_dir(project_root)
+        rules_dir = project_bundle.active_rules_dir(project_root)
     else:
         documents_dir, own_rules, rules_dir = get_opencode_config_dir() / "documents", "", None
     rules_dir = rules_dir or get_opencode_config_dir() / "rules"

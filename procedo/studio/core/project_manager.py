@@ -308,13 +308,13 @@ class ProjectManager:
     
     def detect_rules_root(self) -> bool:
         """Load the open project's rules: the folder the user picked for it, else its
-        active bundle's rules (``bundle_registry.active_rules_dir``, as Bench resolves
+        active bundle's rules (``project_bundle.active_rules_dir``, as Bench resolves
         them), else none, never what the previous project had. True when rules loaded."""
-        from procedo.core import bundle_registry
+        from procedo.core import project_bundle
 
         location = self._picked_rules_root
         if location is None and self.project_root is not None:
-            location = bundle_registry.active_rules_dir(self.project_root)
+            location = project_bundle.active_rules_dir(self.project_root)
         if location is not None and not self._is_valid_rules_root(location):
             location = None
         self._use_rules(location)

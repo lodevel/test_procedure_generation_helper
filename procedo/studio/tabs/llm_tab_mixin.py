@@ -18,8 +18,11 @@ import logging
 from datetime import datetime
 from typing import Optional
 
+from procedo.core.off_gui import answer_to
+
 from ..core.proposal import current_test
 from ..llm import LLMTask, ChatMessage
+from ..llm.backend_factory import SERVER_STARTING_TEXT
 from ..llm.prompt_builder import PromptBuilder, TaskPromptNotDeclaredError
 from ..llm.output_contracts import get_contract_for_tab
 from ..llm.reconstruction import pipeline_ownership
@@ -50,7 +53,46 @@ class LLMTabMixin:
 
     def _run_task_async(self, task: LLMTask, retry: bool = False, **kwargs):
         """Run LLM task asynchronously in a worker thread (*retry*: the auto-correct loop's
-        next attempt of the current run)."""
+        next attempt of the current run). A tab with no backend yet waits for its start
+        (:meth:`_await_backend`)."""
+        backend = self.tab_context.backend
+        if backend is None:
+            self._await_backend(task, retry, kwargs)
+            return
+        self._run_task_on(backend, task, retry, kwargs)
+
+    def _await_backend(self, task: LLMTask, retry: bool, kwargs: dict) -> None:
+        """Queue the send until the tab's backend has started off the GUI thread (the AI
+        server's start can take a minute); the chat is locked and shows the loading cue
+        meanwhile. A second send meanwhile replaces the queued one and waits for the same
+        start."""
+        waiting = getattr(self, "_queued_send", None) is not None
+        self._queued_send = (task, retry, kwargs, current_test(self.artifact_manager))
+        if waiting:
+            return
+        chat = self.main_window.dock.chat_panel
+        chat.set_llm_active(True, cancellable=False)
+        chat.loading.start(SERVER_STARTING_TEXT)
+        self.tab_context.start_backend(answer_to(self._on_backend_started))
+
+    def _on_backend_started(self, answer) -> None:
+        """The backend start answered (GUI thread): the queued send runs on that backend (on a
+        fallback ``NoneBackend`` its reply is the server's failure), unless its test was closed
+        meanwhile."""
+        backend = self.tab_context.adopt_backend(answer)
+        chat = self.main_window.dock.chat_panel
+        chat.loading.done()
+        chat.set_llm_active(False)
+        task, retry, kwargs, test = self._queued_send
+        self._queued_send = None
+        if test != current_test(self.artifact_manager):
+            log.warning("Dropped the send queued for %s: its test was closed",
+                        test[1] if test else None)
+            return
+        self._run_task_on(backend, task, retry, kwargs)
+
+    def _run_task_on(self, backend, task: LLMTask, retry: bool, kwargs: dict) -> None:
+        """:meth:`_run_task_async` on the tab's started *backend*."""
         # FSM bootstrap. Two entry paths:
         #   (a) Operator request — whatever the FSM holds (a finished run, or
         #       one a failed request left in LLM_REQUESTED) is reset, and a
@@ -94,7 +136,7 @@ class LLMTabMixin:
         # rides request.user_message separately, so retries keep working.
         if self.tab_context.messages and task != LLMTask.REVIEW_TEXT_PROCEDURE:
             try:
-                window = self.tab_context.backend.get_context_window()
+                window = backend.get_context_window()
             except Exception:
                 window = None
             char_budget = int((window or 16000) * 4 * 0.25)
@@ -142,7 +184,7 @@ class LLMTabMixin:
         self.main_window.dock.chat_panel.switch_context(self.tab_context)
         self.main_window.dock.chat_panel.add_thinking_message()
 
-        self._worker = LLMWorker(self.tab_context.backend, request, parent=self)
+        self._worker = LLMWorker(backend, request, parent=self)
         self._worker.finished.connect(self._handle_llm_response)
         self._worker.error.connect(self._handle_llm_error)
         self._worker.thinking_chunk.connect(self.main_window.dock.chat_panel.append_thinking_text)

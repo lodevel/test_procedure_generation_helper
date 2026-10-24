@@ -154,7 +154,7 @@ class AssistantController(QObject):
         def _compact():
             ok = False
             try:
-                ok = bool(backend.compact())
+                ok = backend is not None and bool(backend.compact())  # None: never started
             except Exception:
                 log.exception("session compact failed")
             compacted(ok)  # the UI feedback runs on the UI thread (this is a daemon)

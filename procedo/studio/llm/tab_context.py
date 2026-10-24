@@ -18,7 +18,7 @@ from pathlib import Path
 
 from . import reconstruction
 from .backend_base import LLMBackend, LLMRequest, LLMTask
-from .backend_factory import start_backend
+from .backend_factory import request_backend
 from .output_contracts import get_contract_for_tab, get_allowed_artifacts
 from ..core.fileio import content_digest
 from ..core.project_manager import RuleDoc
@@ -110,7 +110,7 @@ class TabContext:
         self.board_data_enabled = False
         self.board_data_project = None
         self._backend_factory = backend_factory
-        self._backend: Optional[LLMBackend] = None  # Lazy initialization
+        self._backend: Optional[LLMBackend] = None  # started on first use: start_backend
         self.project_manager = project_manager
         self.task_config_manager = task_config_manager
         self.artifact_manager = artifact_manager
@@ -146,13 +146,24 @@ class TabContext:
         )
     
     @property
-    def backend(self) -> LLMBackend:
-        """The tab's backend, created on first access; what is kept: ``start_backend``."""
-        backend = self._backend
-        if backend is None:
-            backend, keep = start_backend(self._backend_factory, self.tab_id)
-            if keep:
-                self._backend = backend
+    def backend(self) -> Optional[LLMBackend]:
+        """The tab's backend once one was started and kept (:meth:`start_backend`), else None."""
+        return self._backend
+
+    def start_backend(self, send) -> None:
+        """Start a backend for this tab, the GUI thread never waiting on the server
+        (``request_backend``): ``send`` gets ``(factory, backend, keep)``, for
+        :meth:`adopt_backend`."""
+        factory = self._backend_factory
+        request_backend(factory, self.tab_id, lambda started: send((factory, *started)))
+
+    def adopt_backend(self, answer) -> LLMBackend:
+        """The backend :meth:`start_backend` answered: kept as the tab's as ``start_backend``
+        says, unless the tab's factory changed meanwhile (a settings swap): then it serves the
+        one send that waited for it."""
+        factory, backend, keep = answer
+        if keep and factory is self._backend_factory:
+            self._backend = backend
         return backend
     
     def update_managers(self, artifact_manager: "ArtifactManager"):
@@ -229,7 +240,7 @@ class TabContext:
         
         This is the preferred way to change backend configuration.
         The existing backend is discarded and a new one will be created
-        lazily on the next access to the backend property.
+        on the next send (:meth:`start_backend`).
         
         Args:
             new_factory: The new BackendFactory instance

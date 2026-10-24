@@ -217,8 +217,8 @@ class ChatPanel(QWidget):
         layout.addWidget(self.scroll_area, stretch=1)
 
     def _build_composer(self) -> QFrame:
-        """The column's foot (#composer): the three options, the input, Send and the icon
-        buttons, the context meter and the validator dot."""
+        """The column's foot (#composer): the loading cue (:attr:`loading`), the three options,
+        the input, Send and the icon buttons, the context meter and the validator dot."""
         self.board_data_checkbox = BoardDataCheckBox()
         self.force_mode_checkbox = QCheckBox("Force: resend all")
         self.force_mode_checkbox.setToolTip(
@@ -287,6 +287,8 @@ class ChatPanel(QWidget):
         for row in (options, buttons, meter):
             column.addLayout(row)
         column.insertWidget(1, self.input_field)
+        # The shared "still loading" cue: a send waiting for the AI server to start.
+        self.loading = ui_kit.LoadingCue().add_to(column, 0)
         return composer
 
     def eventFilter(self, obj, event):

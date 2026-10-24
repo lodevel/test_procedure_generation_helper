@@ -272,12 +272,10 @@ class LLMServerController(QObject):
         live.request_timeout = common.get("request_timeout", 120.0)
         live.startup_timeout = oc.get("startup_timeout", live.startup_timeout)
         # Drop each live backend's memoised context window so the token readout
-        # re-resolves for the new model. Touch EXISTING backends only (via the
-        # private handle) — never ``tab_context.backend``, whose getter would
-        # lazily spawn a backend/session as a side effect of a settings save.
+        # re-resolves for the new model (a tab not started yet has none).
         for tab in self._mw._get_llm_tabs():
             ctx = getattr(tab, "tab_context", None)
-            backend = getattr(ctx, "_backend", None)
+            backend = getattr(ctx, "backend", None)
             if backend is not None:
                 backend._context_window = None
         self.refresh_indicator()

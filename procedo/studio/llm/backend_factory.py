@@ -12,6 +12,8 @@ Design Philosophy:
 """
 
 import logging
+import threading
+from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -23,9 +25,13 @@ from .server_manager import OpenCodeServerManager
 log = logging.getLogger(__name__)
 
 
+#: What a chat shows while its send waits for the AI server to start (:func:`request_backend`).
+SERVER_STARTING_TEXT = "Starting the AI server\u2026"
+
+
 def start_backend(factory, tab_id: str) -> tuple[LLMBackend, bool]:
-    """A new backend for *tab_id* from *factory*, started, and whether to keep it: the lazy
-    create a Studio tab (``TabContext.backend``) and a skill chat make on first use.
+    """A new backend for *tab_id* from *factory*, started, and whether to keep it: what a
+    Studio tab and a skill chat make on first use (:func:`request_backend`).
 
     A ``NoneBackend`` the factory answers as a *fallback* (the OpenCode server would not start)
     is not kept, so the next use tries the factory, and the server, again; one is kept when
@@ -40,6 +46,26 @@ def start_backend(factory, tab_id: str) -> tuple[LLMBackend, bool]:
     if not keep:
         log.info(f"Fallback NoneBackend for '{tab_id}': the next use tries again")
     return backend, keep
+
+
+def request_backend(factory, tab_id: str, send) -> None:
+    """``send(start_backend(factory, tab_id))`` without the GUI thread ever waiting on a server
+    start: at once when no server is involved (no factory, or the backend is off), else from a
+    worker thread (the factory shares one server start among the threads asking meanwhile).
+    A start that raised answers a fallback ``NoneBackend`` carrying what it raised."""
+    if factory is None or factory.backend_type == BACKEND_TYPE_NONE:
+        send(start_backend(factory, tab_id))
+        return
+
+    def _start() -> None:
+        try:
+            started = start_backend(factory, tab_id)
+        except Exception as exc:
+            log.exception(f"Starting the backend for '{tab_id}' failed")
+            started = (NoneBackend(reason=str(exc) or type(exc).__name__), False)
+        send(started)
+
+    threading.Thread(target=_start, name=f"start-backend-{tab_id}", daemon=True).start()
 
 
 # Backend type constants
@@ -171,6 +197,9 @@ class BackendFactory:
         """
         self._config = config
         self._server_manager = server_manager
+        # The server start running now, shared by every thread needing the server meanwhile.
+        self._server_start: Optional[Future] = None
+        self._server_start_lock = threading.Lock()
 
         log.debug(
             f"BackendFactory initialized: type={config.backend_type}, "
@@ -257,7 +286,7 @@ class BackendFactory:
         # Ensure server is running
         if not self._server_manager.is_running:
             log.debug("Server not running, starting via manager...")
-            if not self._server_manager.start():
+            if not self._start_server():
                 status = self._server_manager.last_status
                 reason = status.message if status else None
                 log.error(f"Failed to start OpenCode server: {reason}")
@@ -276,6 +305,24 @@ class BackendFactory:
 
         log.debug(f"Created OpenCodeBackend for tab '{tab_id}'")
         return backend
+
+    def _start_server(self) -> bool:
+        """Start the shared server: ONE attempt for every thread that asks while it runs (each
+        waits for it and gets its outcome), never a second start stacked behind it."""
+        with self._server_start_lock:
+            attempt, mine = self._server_start, self._server_start is None
+            if mine:
+                attempt = self._server_start = Future()
+        if not mine:
+            return attempt.result()
+        ok = False
+        try:
+            ok = self._server_manager.start()
+        finally:
+            with self._server_start_lock:
+                self._server_start = None
+            attempt.set_result(ok)
+        return ok
 
     def is_backend_available(self) -> bool:
         """

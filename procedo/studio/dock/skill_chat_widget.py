@@ -184,7 +184,7 @@ class SkillChatWidget(QWidget):
         opencode_settings: dict = {}
         self._context_limit = 16384  # token window for the context-% readout
         try:
-            from ..dialogs.settings_dialog import load_settings
+            from ..core.studio_settings import load_settings
             _s = load_settings()
             opencode_settings = _s.get("opencode", {}) or {}
             _common = _s.get("common_llm", {}) or {}

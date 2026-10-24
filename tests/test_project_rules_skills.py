@@ -145,7 +145,7 @@ def test_the_skill_chat_request_carries_the_selected_pdf(tmp_path, qapp, monkeyp
     ``LLMRequest.attachments`` the Studio tabs fill); a later turn carries none."""
     from procedo.studio.dock import skill_chat_widget as scw
 
-    monkeypatch.setattr("procedo.studio.dialogs.settings_dialog.load_settings", lambda: {})
+    monkeypatch.setattr("procedo.studio.core.studio_settings.load_settings", lambda: {})
     docs = _docs(tmp_path)
     sent = []
 
@@ -259,7 +259,7 @@ def test_the_server_takes_the_project_rules_folder_from_its_command_line(tmp_pat
 # --------------------------------------------------------------------------- #
 
 def test_the_pdf_tools_block_passes_the_bundle_rules_and_the_project_rules_folders(tmp_path):
-    from procedo.studio.dialogs.settings_dialog import _build_pdf_tools_block
+    from procedo.studio.llm.launch_config import _build_pdf_tools_block
 
     root = _project(tmp_path)
     cmd = _build_pdf_tools_block(root)["pdf_tools"]["command"]
@@ -269,17 +269,17 @@ def test_the_pdf_tools_block_passes_the_bundle_rules_and_the_project_rules_folde
 
 
 def test_the_pdf_tools_block_without_a_project_has_no_project_rules_folder(tmp_path, monkeypatch):
-    from procedo.studio.dialogs import settings_dialog
+    from procedo.studio.llm import launch_config
 
-    monkeypatch.setattr(settings_dialog, "get_opencode_config_dir", lambda: tmp_path)
-    cmd = settings_dialog._build_pdf_tools_block(None)["pdf_tools"]["command"]
+    monkeypatch.setattr(launch_config, "get_opencode_config_dir", lambda: tmp_path)
+    cmd = launch_config._build_pdf_tools_block(None)["pdf_tools"]["command"]
     assert "--project-rules-dir" not in cmd
 
 
 def test_a_project_without_a_loadable_bundle_lists_no_bundle_rules(tmp_path):
     """The bundle rules folder is the one Studio resolves (bundle_registry.active_rules_dir):
     no loadable bundle, no bundle rules for the tools either."""
-    from procedo.studio.dialogs.settings_dialog import _build_pdf_tools_block
+    from procedo.studio.llm.launch_config import _build_pdf_tools_block
 
     root = _project(tmp_path)
     (root / "bundle" / "bundle.json").write_text(json.dumps({}), encoding="utf-8")

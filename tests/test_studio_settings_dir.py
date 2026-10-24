@@ -1,4 +1,4 @@
-"""Procedo Studio's settings folder is named in ONE place (``settings_dialog.get_settings_path``,
+"""Procedo Studio's settings folder is named in ONE place (``studio_settings.get_settings_path``,
 through the host's ``app_identity``), and Studio migrates the old folder at start-up before
 anything reads a setting."""
 
@@ -12,13 +12,14 @@ from procedo.core import app_identity, app_identity_migration, error_copy, temp_
 
 from procedo.studio import __main__ as studio_main
 from procedo.studio import main_window
-from procedo.studio.dialogs import settings_dialog
+from procedo.studio.core import studio_settings
+from procedo.studio.llm import launch_config
 
 _PKG = Path(__file__).resolve().parents[1] / "procedo" / "studio"
-_THE_ONE_SITE = "dialogs/settings_dialog.py"
+_THE_ONE_SITE = "core/studio_settings.py"
 
 
-def test_no_site_but_the_settings_dialog_names_the_settings_folder():
+def test_no_site_but_studio_settings_names_the_settings_folder():
     """A second place building the path would split the settings again: Studio reaches its
     folder through ``get_settings_path`` alone, and never writes QSettings of its own."""
     folder = re.compile(r"studio_settings_dir\(|roaming_data_dir\(|\.workflow_editor\b")
@@ -42,7 +43,7 @@ def test_the_tests_never_reach_the_real_folders_settings_or_environment(tmp_path
         app_identity.legacy_roaming_data_dir(),
         app_identity.legacy_local_data_dir(),
         app_identity.legacy_studio_settings_dir(),
-        settings_dialog.get_settings_path(),
+        studio_settings.get_settings_path(),
         Path.home(),
         *(Path(os.environ[name]) for name in ("APPDATA", "LOCALAPPDATA", "USERPROFILE", "HOME")),
     ):
@@ -57,10 +58,10 @@ def test_the_tests_never_reach_the_real_folders_settings_or_environment(tmp_path
 
 
 def test_the_settings_live_in_studio_s_folder():
-    path = settings_dialog.get_settings_path()
+    path = studio_settings.get_settings_path()
 
     assert path == app_identity.studio_settings_dir() / "settings.json"
-    assert settings_dialog.get_opencode_master_path().is_relative_to(path.parent)
+    assert launch_config.get_opencode_master_path().is_relative_to(path.parent)
 
 
 def _args() -> argparse.Namespace:
@@ -73,7 +74,7 @@ def _args() -> argparse.Namespace:
 def test_studio_start_migrates_before_anything_reads_its_settings(monkeypatch):
     seen: list[str] = []
     organizations: list[str] = []
-    read = settings_dialog.get_settings_path
+    read = studio_settings.get_settings_path
 
     class _App:
         def __init__(self, argv):
@@ -115,7 +116,7 @@ def test_studio_start_migrates_before_anything_reads_its_settings(monkeypatch):
     monkeypatch.setattr(error_copy, "install_error_copy", lambda app: True)  # the fake app filters nothing
     monkeypatch.setattr(app_identity_migration, "migrate", lambda: seen.append("migrate"))
     monkeypatch.setattr(
-        settings_dialog, "get_settings_path", lambda: (seen.append("settings"), read())[1]
+        studio_settings, "get_settings_path", lambda: (seen.append("settings"), read())[1]
     )
 
     assert studio_main.main() == 0
@@ -135,8 +136,8 @@ def test_studio_s_migration_copies_the_old_settings_folder():
 
     app_identity_migration.migrate()
 
-    assert settings_dialog.load_settings() == {"api_key": "sk-fake"}
-    assert settings_dialog.get_opencode_master_path().read_text(encoding="utf-8") == (
+    assert studio_settings.load_settings() == {"api_key": "sk-fake"}
+    assert launch_config.get_opencode_master_path().read_text(encoding="utf-8") == (
         '{"provider": {}}'
     )
     assert not (app_identity.studio_settings_dir() / "opencode" / "launch").exists()

@@ -24,12 +24,11 @@ import json
 import unittest
 
 from procedo.studio.llm.backend_base import LLMResponse, LLMProposal
+from procedo.studio.core.validation_outcome import ValidationIssueView, ValidationOutcome
 from procedo.studio.llm.validator_dispatch import (
     _auto_restore_operator_only_fields,
     _extract_meta_requirement_from_text,
     format_validator_feedback,
-    ValidationIssueView,
-    ValidationOutcome,
 )
 
 

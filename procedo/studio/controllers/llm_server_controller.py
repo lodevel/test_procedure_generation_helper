@@ -144,7 +144,7 @@ class LLMServerController(QObject):
         if sm is None:
             return
         try:
-            from ..dialogs.settings_dialog import (
+            from ..llm.launch_config import (
                 build_launch_config, ensure_master_config)
             from ..authoring.tool_folders import build_skill_tools_universe
             _pr = getattr(self._mw.project_manager, 'project_root', None)

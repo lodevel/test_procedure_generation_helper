@@ -12,7 +12,7 @@ from PySide6.QtCore import QCoreApplication
 
 import procedo.studio.tabs.llm_tab_mixin as llm_tab_mixin
 from procedo.studio.llm import LLMTask
-from procedo.studio.llm.validator_dispatch import ValidationOutcome
+from procedo.studio.core.validation_outcome import ValidationOutcome
 
 from .test_proposal_cards import opened as opened  # noqa: F401
 from .test_main_window_characterization import (  # noqa: F401

@@ -26,8 +26,8 @@ from ..llm.reconstruction import pipeline_ownership
 from ..llm.backend_base import ValidationIssue
 from ..llm.run_state import LLMRunState, RunStateKind
 from ..llm.tab_context import ChatMessage as _ChatMessage
+from ..core.validation_outcome import ValidationOutcome
 from ..llm.validator_dispatch import (
-    ValidationOutcome,
     format_validator_feedback,
     validate_response,
 )

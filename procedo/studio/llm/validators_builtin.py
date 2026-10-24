@@ -32,11 +32,8 @@ from ..core.validators_registry import (
     ValidatorContext,
     register,
 )
-from .validator_dispatch import (
-    ValidationIssueView,
-    ValidationOutcome,
-    validate_current_state,
-)
+from ..core.validation_outcome import ValidationIssueView, ValidationOutcome
+from .validator_dispatch import validate_current_state
 
 log = logging.getLogger(__name__)
 

@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from ..llm.validator_dispatch import ValidationOutcome  # canonical result type
+from .validation_outcome import ValidationOutcome  # canonical result type
 
 log = logging.getLogger(__name__)
 

@@ -109,18 +109,18 @@ def test_revision_changes_without_eager_payload_and_reset_allows_refetch(panel, 
 
 
 def test_no_board_is_optional_and_configured_archive_is_shared(panel, tmp_path, monkeypatch):
-    from procedo.studio.dialogs import settings_dialog
+    from procedo.studio.llm import launch_config
 
     context = make_context(tmp_path)
     panel.switch_context(context)
     assert not panel.board_data_checkbox.isEnabled()
     assert request_body(context)[1]["tools"]["project_tools_board_context"] is False
-    monkeypatch.setattr(settings_dialog, "_python_win", lambda: "C:/Python/python.exe")
-    empty_block = settings_dialog._build_project_tools_block(tmp_path)
+    monkeypatch.setattr(launch_config, "_python_win", lambda: "C:/Python/python.exe")
+    empty_block = launch_config._build_project_tools_block(tmp_path)
     # Register the lazy server even before a board exists, so a later project
     # board selection can be used without restarting the editor.
     assert "--project-root" in empty_block["project_tools"]["command"]
-    assert settings_dialog._build_project_tools_block(None) is None
+    assert launch_config._build_project_tools_block(None) is None
     (tmp_path / "config").mkdir()
     configured = tmp_path / "boards" / "chosen.tgz"
     configured.parent.mkdir()
@@ -128,7 +128,7 @@ def test_no_board_is_optional_and_configured_archive_is_shared(panel, tmp_path, 
     (tmp_path / "wrong.tgz").write_bytes(b"fallback must not win")
     (tmp_path / "config" / "config.json").write_text(
         json.dumps({"odb_archive": "boards/chosen.tgz"}), encoding="utf-8")
-    block = settings_dialog._build_project_tools_block(tmp_path)
+    block = launch_config._build_project_tools_block(tmp_path)
     command = block["project_tools"]["command"]
     assert command[command.index("--odb-tgz") + 1] == str(configured)
     assert command[command.index("--project-root") + 1] == str(tmp_path)
@@ -142,7 +142,7 @@ def test_no_board_is_optional_and_configured_archive_is_shared(panel, tmp_path, 
 @pytest.mark.parametrize("configured_limit", [1024, 2 * 1024 * 1024])
 def test_launch_transport_preserves_complete_admitted_board(tmp_path, monkeypatch, configured_limit):
     from procedo.studio.authoring.netlist_text import BOARD_CONTEXT_MAX_BYTES
-    from procedo.studio.dialogs import settings_dialog as settings
+    from procedo.studio.llm import launch_config as settings
 
     master = tmp_path / "master.json"
     master.write_text(json.dumps({

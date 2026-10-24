@@ -22,7 +22,9 @@ from PySide6.QtWidgets import (
 from procedo.core import ui_kit
 from procedo.core.board_netlist import read_hide_prefixes
 from procedo.studio.dialogs import settings_dialog
-from procedo.studio.dialogs.settings_dialog import SettingsDialog, load_settings, save_settings
+from procedo.studio.core.studio_settings import load_settings, save_settings
+from procedo.studio.dialogs.settings_dialog import SettingsDialog
+from procedo.studio.llm import launch_config
 from procedo.studio.llm import validator_loop_settings
 
 from .test_main_window_characterization import qapp as qapp
@@ -98,7 +100,7 @@ def test_every_setting_round_trips_through_settings_json_skills_included(qapp, n
     dlg = _open(qapp)
     assert dlg.web_default.isChecked() and dlg.project_tools_default.isChecked()
     assert dlg.fold_system_into_prompt.isChecked() and not dlg.save_docs_default.isChecked()
-    assert dlg.opencode_config_path.text() == str(settings_dialog.get_opencode_master_path())
+    assert dlg.opencode_config_path.text() == str(launch_config.get_opencode_master_path())
     dlg._on_save()
     assert load_settings() == saved
 

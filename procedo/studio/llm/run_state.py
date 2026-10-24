@@ -21,7 +21,7 @@ from enum import Enum
 from typing import Any, Optional
 
 from .backend_base import LLMResponse, LLMTask
-from .validator_dispatch import ValidationOutcome
+from ..core.validation_outcome import ValidationOutcome
 
 
 class RunStateKind(Enum):

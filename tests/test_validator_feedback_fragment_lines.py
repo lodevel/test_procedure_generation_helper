@@ -34,9 +34,8 @@ from tests._qt_stub import ensure_workflow_editor_importable
 ensure_workflow_editor_importable()
 
 from procedo.studio.llm import validator_dispatch  # noqa: E402
+from procedo.studio.core.validation_outcome import ValidationIssueView, ValidationOutcome  # noqa: E402
 from procedo.studio.llm.validator_dispatch import (  # noqa: E402
-    ValidationIssueView,
-    ValidationOutcome,
     _fragment_line_shift,
     format_validator_feedback,
 )

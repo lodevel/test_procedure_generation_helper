@@ -37,7 +37,8 @@ from .tabs import (
     WorkspaceTab, TextOnlyTab, TextJsonTab, JsonCodeTab, TraceabilityTab
 )
 from .dock import DockWidget
-from .dialogs import SettingsDialog, load_settings
+from .dialogs import SettingsDialog
+from .core.studio_settings import load_settings
 from . import menus, shell
 from .controllers import (
     AssistantController, DocumentController, ExportController, LLMServerController,

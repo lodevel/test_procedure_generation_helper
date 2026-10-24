@@ -30,7 +30,7 @@ def _skill(needs=None):
 @pytest.fixture
 def chat(qapp, monkeypatch):
     """A skill chat over an Artifacts source, its sends recorded instead of fired."""
-    monkeypatch.setattr("procedo.studio.dialogs.settings_dialog.load_settings", lambda: {})
+    monkeypatch.setattr("procedo.studio.core.studio_settings.load_settings", lambda: {})
     sent: list = []
     made: list = []
 

@@ -28,7 +28,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QPushButton, QScrollArea, Q
 
 from procedo.core import ui_kit
 
-from ..llm.validator_dispatch import ValidationOutcome
+from ..core.validation_outcome import ValidationOutcome
 from ..widgets import issue_cards
 
 
@@ -80,13 +80,11 @@ class ValidatorErrorDialog(QDialog):
     ) -> None:
         """Show the dialog populated from an arbitrary exception (e.g. a
         ``ParseError`` from a Quick-Parse / Quick-Code button). Wraps
-        :func:`outcome_from_exception` from validator_dispatch so the
+        :func:`outcome_from_exception` from validation_outcome so the
         Quick-button error paths and the LLM-loop residual-failure path
         share one rendering call site (no duplicated five-line block at
         every catch)."""
-        # Local import: keeps validator_dispatch out of the dialog's
-        # import-time chain when no Quick button has fired yet.
-        from ..llm.validator_dispatch import outcome_from_exception
+        from ..core.validation_outcome import outcome_from_exception
         cls.show_for(
             outcome_from_exception(exc),
             title=title,

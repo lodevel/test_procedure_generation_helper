@@ -41,7 +41,6 @@ _SKIP_DIRS = {"__pycache__", "build", "dist", ".venv"}
 
 FILE_BUDGET: dict[str, int] = {
     "core/task_config.py": 1288,
-    "dialogs/settings_dialog.py": 1252,  # -53: its pages are Bench's paged dialog (Studio redesign slice 7b)
     "llm/_execute_op_subprocess.py": 1283,  # -15: the per-path procedure latch went (engine_process slice 3)
     # +50: bench-session S3 — frame dispatch,
     # reader-thread wiring, and the held-rekey seams (_ensure_held routing,
@@ -72,7 +71,6 @@ FILE_BUDGET: dict[str, int] = {
     # llm/_hold_resolution.py (fold-first rule, stale drop, ns rebind); the
     # daemon file only delegates and records the open.
     "llm/opencode_backend.py": 1251,  # +9: bare-except cleanup log lines
-    "llm/validator_dispatch.py": 1032,  # -131: the dead inventory loader and _import_validator went
 }
 
 CLASS_METHOD_BUDGET: dict[tuple[str, str], int] = {

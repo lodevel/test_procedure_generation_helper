@@ -47,7 +47,7 @@ from procedo.studio.core.validators_registry import (
     register,
     unregister_all,
 )
-from procedo.studio.llm.validator_dispatch import ValidationOutcome
+from procedo.studio.core.validation_outcome import ValidationOutcome
 from procedo.studio.tabs.base_tab import BaseTab
 
 

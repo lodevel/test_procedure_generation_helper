@@ -16,7 +16,7 @@ from procedo.bench import theme as bench_theme
 
 from ..core import odb_inspect
 from ..core.artifact_manager import ArtifactManager, ArtifactType
-from ..dialogs.settings_dialog import load_settings, save_settings
+from ..core.studio_settings import load_settings, save_settings
 from ..dock.skill_chat_widget import SkillChatWidget
 from ..pack_ops import engine_async, pack_parsers
 from . import load_wizards

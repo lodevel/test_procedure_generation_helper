@@ -60,7 +60,7 @@ class _Issue:
     """Editor-facing adapter over a wheel ``Finding`` (in-process path).
 
     Mirrors the legacy canonical.py wrapper's _Issue shape so
-    ``validator_dispatch._issue_from_validator`` can consume it.
+    ``validation_outcome._issue_from_validator`` can consume it.
     """
 
     def __init__(self, finding: Any) -> None:

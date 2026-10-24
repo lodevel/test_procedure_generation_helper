@@ -1,5 +1,5 @@
 """Tests for the OpenCode launch-config derivation in
-``procedo.studio.dialogs.settings_dialog``.
+``procedo.studio.llm.launch_config``.
 
 Verifies the master = providers-only blueprint + derived opencode.json with the
 3 MCP blocks built FRESH at runtime:
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from procedo.studio.dialogs import settings_dialog as sd
+from procedo.studio.llm import launch_config as lc
 from procedo.studio.llm.mcp_config import win_to_wsl_path
 
 
@@ -29,7 +29,7 @@ def config_dir(tmp_path, monkeypatch):
     """Redirect the editor's OpenCode config dir to a tmp location."""
     cfg = tmp_path / "opencode"
     cfg.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(sd, "get_opencode_config_dir", lambda: cfg)
+    monkeypatch.setattr(lc, "get_opencode_config_dir", lambda: cfg)
     return cfg
 
 
@@ -38,13 +38,13 @@ def _expected_python_win() -> str:
 
 
 def _script_for(name: str) -> str:
-    # Mirrors settings_dialog._mcp_script_win: authoring/<name> next to the
-    # dialogs package's parent (procedo/studio/authoring/).
-    return str(Path(sd.__file__).resolve().parents[1] / "authoring" / name)
+    # Mirrors launch_config._mcp_script_win: authoring/<name> next to the
+    # llm package's parent (procedo/studio/authoring/).
+    return str(Path(lc.__file__).resolve().parents[1] / "authoring" / name)
 
 
 def test_master_path_is_master_json(config_dir):
-    assert sd.get_opencode_master_path() == config_dir / "master.json"
+    assert lc.get_opencode_master_path() == config_dir / "master.json"
 
 
 def test_ensure_master_strips_model_and_mcp(config_dir, tmp_path):
@@ -57,7 +57,7 @@ def test_ensure_master_strips_model_and_mcp(config_dir, tmp_path):
         "theme": "dark",
     }), encoding="utf-8")
 
-    master = sd.ensure_master_config(seed_from=seed)
+    master = lc.ensure_master_config(seed_from=seed)
     data = json.loads(master.read_text(encoding="utf-8"))
 
     # Providers + general carried; model/small_model/mcp stripped.
@@ -71,22 +71,22 @@ def test_ensure_master_strips_model_and_mcp(config_dir, tmp_path):
 def test_ensure_master_generated_once(config_dir, tmp_path):
     seed = tmp_path / "opencode.json"
     seed.write_text(json.dumps({"provider": {"a": {}}}), encoding="utf-8")
-    master = sd.ensure_master_config(seed_from=seed)
+    master = lc.ensure_master_config(seed_from=seed)
     # User edits the master; a second ensure must NOT overwrite it.
     master.write_text(json.dumps({"provider": {"edited": {}}}), encoding="utf-8")
-    sd.ensure_master_config(seed_from=seed)
+    lc.ensure_master_config(seed_from=seed)
     data = json.loads(master.read_text(encoding="utf-8"))
     assert data == {"provider": {"edited": {}}}
 
 
 def test_build_launch_config_master_has_no_mcp(config_dir):
     # Master with providers only; no model/mcp.
-    master = sd.get_opencode_master_path()
+    master = lc.get_opencode_master_path()
     master.write_text(json.dumps({
         "provider": {"openai": {"models": {"gpt-5": {}}}},
     }), encoding="utf-8")
 
-    launch_dir = sd.build_launch_config(project_root=None)
+    launch_dir = lc.build_launch_config(project_root=None)
     derived = json.loads((launch_dir / "opencode.json").read_text(encoding="utf-8"))
 
     # Master itself is unchanged (still no mcp).
@@ -97,10 +97,10 @@ def test_build_launch_config_master_has_no_mcp(config_dir):
 
 
 def test_build_launch_config_no_project_drops_project_tools(config_dir):
-    master = sd.get_opencode_master_path()
+    master = lc.get_opencode_master_path()
     master.write_text(json.dumps({"provider": {"a": {}}}), encoding="utf-8")
 
-    launch_dir = sd.build_launch_config(project_root=None)
+    launch_dir = lc.build_launch_config(project_root=None)
     derived = json.loads((launch_dir / "opencode.json").read_text(encoding="utf-8"))
 
     mcp = derived["mcp"]
@@ -112,7 +112,7 @@ def test_build_launch_config_no_project_drops_project_tools(config_dir):
 
 
 def test_build_launch_config_fresh_mcp_paths_with_project(config_dir, tmp_path):
-    master = sd.get_opencode_master_path()
+    master = lc.get_opencode_master_path()
     master.write_text(json.dumps({"provider": {"a": {}}}), encoding="utf-8")
 
     project = tmp_path / "demo_project"
@@ -135,7 +135,7 @@ def test_build_launch_config_fresh_mcp_paths_with_project(config_dir, tmp_path):
         encoding="utf-8",
     )
 
-    launch_dir = sd.build_launch_config(project_root=project)
+    launch_dir = lc.build_launch_config(project_root=project)
     derived = json.loads((launch_dir / "opencode.json").read_text(encoding="utf-8"))
     mcp = derived["mcp"]
 
@@ -177,18 +177,18 @@ def test_build_launch_config_fresh_mcp_paths_with_project(config_dir, tmp_path):
 
 def test_build_launch_config_atomic_write_in_launch_dir(config_dir):
     """The derived config is the only file left in launch/ — no temp turds."""
-    master = sd.get_opencode_master_path()
+    master = lc.get_opencode_master_path()
     master.write_text(json.dumps({"provider": {"a": {}}}), encoding="utf-8")
 
-    launch_dir = sd.build_launch_config(project_root=None)
+    launch_dir = lc.build_launch_config(project_root=None)
     leftovers = [p.name for p in launch_dir.iterdir()]
     assert leftovers == ["opencode.json"]
 
 
 def test_build_launch_config_missing_master_still_writes(config_dir):
     """No master.json yet -> derive from an empty config (mcp still built)."""
-    assert not sd.get_opencode_master_path().exists()
-    launch_dir = sd.build_launch_config(project_root=None)
+    assert not lc.get_opencode_master_path().exists()
+    launch_dir = lc.build_launch_config(project_root=None)
     derived = json.loads((launch_dir / "opencode.json").read_text(encoding="utf-8"))
     # pdf_tools is always present; skill-tool blocks discovered dynamically.
     assert "pdf_tools" in derived["mcp"]
@@ -198,14 +198,14 @@ def test_build_launch_config_strips_model_defensively(config_dir):
     """A user who edited model/small_model back into master.json must NOT have
     them leak into the derived launch config — they're stripped defensively so
     the blueprint stays project-agnostic (OpenCode auto-picks). (MINOR fix.)"""
-    master = sd.get_opencode_master_path()
+    master = lc.get_opencode_master_path()
     master.write_text(json.dumps({
         "provider": {"a": {}},
         "model": "openai/gpt-5",
         "small_model": "openai/gpt-5-mini",
     }), encoding="utf-8")
 
-    launch_dir = sd.build_launch_config(project_root=None)
+    launch_dir = lc.build_launch_config(project_root=None)
     derived = json.loads((launch_dir / "opencode.json").read_text(encoding="utf-8"))
     assert "model" not in derived
     assert "small_model" not in derived
@@ -215,11 +215,11 @@ def test_build_launch_config_honours_launch_dir_override(config_dir):
     """Test Connection passes an explicit launch_dir (launch_test/) so its
     derived config + pid file never collide with the live launch/ dir.
     (BLOCKER B isolation.)"""
-    master = sd.get_opencode_master_path()
+    master = lc.get_opencode_master_path()
     master.write_text(json.dumps({"provider": {"a": {}}}), encoding="utf-8")
 
     test_dir = config_dir / "launch_test"
-    out = sd.build_launch_config(project_root=None, launch_dir=test_dir)
+    out = lc.build_launch_config(project_root=None, launch_dir=test_dir)
 
     # Written into the override dir, NOT the live launch/ dir.
     assert out == test_dir
@@ -231,6 +231,6 @@ def test_build_launch_config_honours_launch_dir_override(config_dir):
 def test_launch_test_dir_is_separate_from_live(config_dir):
     """The throwaway Test-Connection dir is a distinct sibling of the live one,
     so a probe's pid file can never overwrite/delete the live server's."""
-    assert sd.get_opencode_launch_test_dir() != sd.get_opencode_launch_dir()
-    assert sd.get_opencode_launch_test_dir().name == "launch_test"
-    assert sd.get_opencode_launch_dir().name == "launch"
+    assert lc.get_opencode_launch_test_dir() != lc.get_opencode_launch_dir()
+    assert lc.get_opencode_launch_test_dir().name == "launch_test"
+    assert lc.get_opencode_launch_dir().name == "launch"

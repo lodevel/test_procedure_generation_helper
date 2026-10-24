@@ -16,7 +16,7 @@ from procedo.core.off_gui import answer_to
 from procedo.core.page_nav import PagedArea, field_row, heading, page_form
 
 from ..core.task_config import TaskConfigManager
-from ..core.studio_settings import load_settings, save_settings
+from ..core.studio_settings import load_settings, read_settings, save_settings
 from ..llm.launch_config import (
     build_launch_config, ensure_master_config, get_opencode_launch_test_dir,
     get_opencode_master_path,
@@ -919,10 +919,13 @@ class SettingsDialog(QDialog):
             },
         }
         try:
-            settings = load_settings()
+            settings = read_settings()  # never a fallback to {}: that would wipe the rest
             settings["llm_backend"] = self.backend_combo.currentText()
             for section, values in owned.items():
-                settings[section] = {**settings.get(section, {}), **values}
+                stored = settings.get(section, {})
+                if not isinstance(stored, dict):
+                    raise ValueError(f"settings.json: the '{section}' section is not an object")
+                settings[section] = {**stored, **values}
             save_settings(settings)
         except Exception as e:  # the dialog stays open, its values kept: the user can retry
             QMessageBox.critical(self, "Save Failed", str(e))

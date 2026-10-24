@@ -169,3 +169,25 @@ def test_a_save_that_fails_midway_leaves_the_previous_settings_file(monkeypatch)
     assert path.read_bytes() == before
     assert json.loads(before) == {"llm_backend": "opencode"}
     assert [p.name for p in path.parent.iterdir() if p.name.endswith(".tmp")] == []
+
+
+def test_reading_the_settings_strictly_raises_where_loading_falls_back():
+    """``read_settings`` (Save's read) raises on a file it cannot read or parse;
+    ``load_settings`` (start-up) falls back to defaults; a missing file is {} for both."""
+    import pytest
+
+    path = studio_settings.get_settings_path()
+    assert studio_settings.read_settings() == {} == studio_settings.load_settings()
+    for damaged in ('{"llm_backend": ', '["not", "an", "object"]'):
+        path.write_text(damaged, encoding="utf-8")
+        with pytest.raises(ValueError, match="settings.json"):
+            studio_settings.read_settings()
+        assert studio_settings.load_settings() == {}
+    path.unlink()
+    path.mkdir()  # unreadable: the read itself fails (OSError)
+    try:
+        with pytest.raises(OSError):
+            studio_settings.read_settings()
+        assert studio_settings.load_settings() == {}
+    finally:
+        path.rmdir()

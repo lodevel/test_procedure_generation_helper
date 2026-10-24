@@ -20,18 +20,30 @@ def get_settings_path() -> Path:
     return settings_dir / "settings.json"
 
 
-def load_settings() -> dict:
-    """Load settings from file."""
+def read_settings() -> dict:
+    """The settings as stored ({} when there is no file yet); raises OSError when the file
+    cannot be read and ValueError when it is not a JSON object. A writer that keeps the keys
+    it does not own reads with this: a fallback to {} would make it wipe them."""
     path = get_settings_path()
-    if path.exists():
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (OSError, ValueError):
-            # Unreadable or corrupt settings file (JSONDecodeError is a
-            # ValueError) — fall back to defaults rather than crash startup.
-            log.warning("Could not load settings from %s; using defaults", path)
-    return {}
+    if not path.exists():
+        return {}
+    try:
+        settings = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{path} is damaged: {e}") from e
+    if not isinstance(settings, dict):
+        raise ValueError(f"{path} does not hold a JSON object")
+    return settings
+
+
+def load_settings() -> dict:
+    """Load settings from file, the defaults ({}) when it cannot be read: start-up never
+    crashes on a damaged file."""
+    try:
+        return read_settings()
+    except (OSError, ValueError):
+        log.warning("Could not load settings from %s; using defaults", get_settings_path())
+        return {}
 
 
 def save_settings(settings: dict):

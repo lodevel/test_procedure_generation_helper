@@ -138,6 +138,28 @@ def test_save_keeps_every_key_the_dialog_does_not_own_as_stored_at_save_time(qap
     assert dlg.get_settings() == saved
 
 
+@pytest.mark.parametrize("stored, said", [
+    ('{"wizard": {"last_skill": "dcdc"}', "settings.json"),  # damaged (or half-read)
+    ('{"wizard": ["last_skill"]}', "wizard"),  # a section the dialog writes is not an object
+])
+def test_save_refuses_when_the_stored_settings_cannot_be_read_and_writes_nothing(
+        qapp, no_network, monkeypatch, stored, said):
+    """Never fall back to {} at Save: writing only the dialog's keys would wipe the rest."""
+    from procedo.studio.core.studio_settings import get_settings_path
+
+    errors: list[tuple[str, str]] = []
+    monkeypatch.setattr(settings_dialog.QMessageBox, "critical",
+                        lambda parent, title, text: errors.append((title, text)))
+    dlg = _open(qapp)
+    get_settings_path().write_text(stored, encoding="utf-8")
+    dlg._on_save()
+    assert [title for title, _ in errors] == ["Save Failed"]
+    assert said in errors[0][1]
+    assert get_settings_path().read_text(encoding="utf-8") == stored
+    assert dlg.result() != dlg.DialogCode.Accepted
+    dlg.reject()
+
+
 def test_the_validator_page_saves_to_the_project_config(qapp, no_network, project):
     dlg = _open(qapp, project)
     dlg.validator_enabled.setChecked(False)

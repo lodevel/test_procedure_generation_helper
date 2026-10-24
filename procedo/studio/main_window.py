@@ -16,7 +16,7 @@ from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 from procedo.core import library_dialog
 from procedo.core.config_manager_dialog import ProjectConfigDialog, TemplateManagerDialog
 from procedo.core.install_helper_dialog import InstallPackageDialog
-from procedo.core.project_model import ProjectModel
+from procedo.core import project_seeding
 from procedo.core.scenario_dialog import ScenarioManagerDialog
 
 from .core import ArtifactManager, SessionState, ProjectManager
@@ -478,7 +478,7 @@ class StudioWorkspace(QWidget):
                 self, "Project Configuration",
                 "Open or create a project first.")
             return
-        origin = ProjectModel.get_active_config_from_path(root)
+        origin = project_seeding.active_config_name(root)
         dlg = ProjectConfigDialog.for_project(self, project_path=root, project_config_origin=origin)
         if dlg is None:
             return
@@ -494,7 +494,7 @@ class StudioWorkspace(QWidget):
         the shared TemplateManagerDialog.
         """
         root = getattr(self.project_manager, "project_root", None)
-        origin = ProjectModel.get_active_config_from_path(root) if root else None
+        origin = project_seeding.active_config_name(root) if root else None
         TemplateManagerDialog(self, project_path=root, project_config_origin=origin).exec()
 
     def _on_bundle_library(self):

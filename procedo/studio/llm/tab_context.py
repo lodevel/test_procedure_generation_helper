@@ -18,6 +18,7 @@ from pathlib import Path
 
 from . import reconstruction
 from .backend_base import LLMBackend, LLMRequest, LLMTask
+from .backend_factory import start_backend
 from .output_contracts import get_contract_for_tab, get_allowed_artifacts
 from ..core.fileio import content_digest
 from ..core.project_manager import RuleDoc
@@ -171,12 +172,7 @@ class TabContext:
             return self._backend
 
         log.info(f"TabContext {self.tab_id}: Creating backend lazily via factory")
-        backend = self._backend_factory.create_backend(self.tab_id)
-
-        # Start the backend if needed
-        if hasattr(backend, 'start'):
-            log.debug(f"TabContext {self.tab_id}: Starting backend")
-            backend.start()
+        backend = start_backend(self._backend_factory, self.tab_id)
 
         # Only cache the backend if it is a real backend or the user
         # explicitly configured "none".  A NoneBackend returned as a

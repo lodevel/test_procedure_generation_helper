@@ -54,6 +54,7 @@ from ..authoring import ContextBundle, SkillChatSession, assemble
 from ..widgets.composer_input import ComposerInput
 from ..widgets.skill_context_picker import SkillContextPicker
 from ..llm.backend_base import LLMRequest, LLMTask
+from ..llm.backend_factory import start_backend
 from ..llm.context_usage import format_context_usage, used_tokens
 from ..llm.worker import LLMWorker
 from ..widgets.work_timer import WorkTimer
@@ -528,17 +529,13 @@ class SkillChatWidget(QWidget):
     # -- backend lifecycle ----------------------------------------------------
 
     def _ensure_backend(self):
-        """Lazily mint + start the dedicated backend.
+        """Lazily mint + start the dedicated backend (``start_backend``, as a Studio tab).
 
-        Mirrors :class:`TabContext`'s lazy-create-then-start pattern. The
-        backend is cached for the widget's lifetime so the OpenCode session is
+        The backend is cached for the widget's lifetime so the OpenCode session is
         stable across turns (reused per send via ``ensure_session``, not
         recreated)."""
         if self._backend is None:
-            self._backend = self._backend_factory.create_backend(
-                tab_id=self._backend_tab_id)
-            if hasattr(self._backend, "start"):
-                self._backend.start()
+            self._backend = start_backend(self._backend_factory, self._backend_tab_id)
         return self._backend
 
     def _ensure_session(self) -> None:

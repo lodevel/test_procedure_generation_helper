@@ -23,6 +23,16 @@ from .server_manager import OpenCodeServerManager
 log = logging.getLogger(__name__)
 
 
+def start_backend(factory, tab_id: str) -> LLMBackend:
+    """A new backend for *tab_id* from *factory*, started: the lazy create a Studio tab
+    (``TabContext.backend``) and a skill chat make on first use; each caller decides what it
+    keeps."""
+    backend = factory.create_backend(tab_id=tab_id)
+    if hasattr(backend, "start"):
+        backend.start()
+    return backend
+
+
 # Backend type constants
 BACKEND_TYPE_OPENCODE = "opencode"
 BACKEND_TYPE_NONE = "none"

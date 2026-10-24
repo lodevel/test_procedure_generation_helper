@@ -1,8 +1,8 @@
-"""Unit tests for the in-process ``get_section_ownership`` / ``reconstruct_text``
-bridges in ``procedo.studio.pack_ops.pack_parsers``.
+"""Unit tests for the ``get_section_ownership`` / ``reconstruct_text`` bridges in
+``procedo.studio.pack_ops.pack_parsers``.
 
-Only the ``project_root=None`` (in-process import) path is exercised here; the
-subprocess path needs a project venv, which is out of scope for these tests.
+The project's engine is answered in this process (the ``engine_in_process``
+fixture): a real engine process needs a project venv, out of scope here.
 
 Runs without PySide6:
     PYTHONPATH=. python3 -m pytest tests/test_pack_parsers_bridges.py --noconftest -q
@@ -71,11 +71,13 @@ not valid expected syntax
 """
 
 
+@pytest.mark.usefixtures("engine_in_process")
 class GetSectionOwnershipTests(unittest.TestCase):
-    """In-process section ownership map (``project_root=None`` → wheel default)."""
+    """No side-car: the engine's section ownership map (the wheel default)."""
 
     def test_returns_expected_six_key_map(self) -> None:
-        ownership = pp.get_section_ownership()
+        with tempfile.TemporaryDirectory() as td:
+            ownership = pp.get_section_ownership(Path(td))
         self.assertEqual(
             ownership,
             {
@@ -132,6 +134,7 @@ class GetSectionOwnershipSideCarTests(unittest.TestCase):
                 pp.get_section_ownership(project_root=root)
 
 
+@pytest.mark.usefixtures("engine_in_process")
 class ReconstructTextSuccessTests(unittest.TestCase):
     """A valid non-controller fragment + prior reconstructs cleanly."""
 
@@ -157,6 +160,7 @@ class ReconstructTextSuccessTests(unittest.TestCase):
         self.assertEqual(self.report.json["id"], "PRIOR_TEST")
 
 
+@pytest.mark.usefixtures("engine_in_process")
 class ReconstructTextFailureTests(unittest.TestCase):
     """An invalid Expected body produces error findings."""
 
@@ -211,6 +215,7 @@ DMM_GENERIC : dmm
 """
 
 
+@pytest.mark.usefixtures("engine_in_process")
 class BuildManualRunOpTests(unittest.TestCase):
     """The ``build_manual_run`` engine op on the document it is sent, read back
     through ``ManualRunResult.from_dict`` (what the guided dialog does), with the
@@ -325,14 +330,12 @@ if __name__ == "__main__":
     unittest.main()
 
 
-def test_an_in_process_pack_load_that_fails_says_why_on_every_call(monkeypatch, tmp_path):
-    """The no-project path loads the launcher's bundle once; its failure is said as the engine's ops say it."""
-    from procedo.studio.launch_env import BUNDLE_DEFAULTS_PATH
-
-    (tmp_path / "defaults.json").write_text(json.dumps({"pack_dispatch": {
-        "namespace_to_module": {"zz": "no_such_pack_parser"}}}), encoding="utf-8")
-    monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(tmp_path / "defaults.json"))
-    monkeypatch.setattr(pp, "_REGISTRY_LOAD", None)
-    for _ in range(2):
-        with pytest.raises(engine_session.ParserUnavailable, match="^The bundle's packs could not be loaded: "):
-            pp._inproc_import_wheel()
+def test_with_no_project_open_every_op_says_there_is_no_engine():
+    """The app's venv has no wheel: with no project open nothing runs, in this process or another."""
+    assert pp.is_available(None) == (False, pp.NO_PROJECT)
+    for call in (lambda: pp.parse_text("# T\n"), lambda: pp.render_text({}), lambda: pp.refresh_media({}),
+                 lambda: pp.renumber_steps_text(""), lambda: pp.sync_equipment_from_steps("", controller_profiles=[]),
+                 lambda: pp.sync_meta_text(""), lambda: pp.generate_code({}), lambda: pp.validate(text=""),
+                 lambda: pp.get_section_ownership(None), lambda: pp.reconstruct_text("")):
+        with pytest.raises(engine_session.ParserUnavailable, match=f"^{pp.NO_PROJECT}$"):
+            call()

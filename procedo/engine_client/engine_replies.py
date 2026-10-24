@@ -1,7 +1,6 @@
 """Editor-facing views of engine replies: the parse failure, the findings and
 reports of validate / reconstruct, and the guided-manual run plan of
-``build_manual_run`` — each built from the op's JSON dict (or, on the in-process
-path, from the wheel's own objects)."""
+``build_manual_run`` — each built from the op's JSON dict."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
@@ -21,7 +20,7 @@ class ParseFailure(Exception):
 
 
 def _reconstruct_parse_failure(result: dict[str, Any]) -> "NoReturn":
-    """Raise ParseFailure reconstructed from a subprocess error dict."""
+    """Raise ParseFailure reconstructed from the engine's parse_text error dict."""
     findings_dicts = result.get("findings", [])
     issues = [_IssueFromDict(d) for d in findings_dicts]
     exc = ParseFailure(result.get("error", "Parsing failed."))
@@ -38,7 +37,9 @@ def _reconstruct_issues_from_dicts(findings: list[dict]) -> list["_IssueFromDict
 
 
 class _IssueFromDict:
-    """Editor-facing _Issue reconstructed from a subprocess JSON dict."""
+    """Editor-facing finding reconstructed from the engine's finding dict
+    (``_engine_ops._finding_to_dict``); ``validation_outcome._issue_from_validator``
+    consumes it."""
 
     def __init__(self, d: dict) -> None:
         self.code = d.get("code", "") or ""
@@ -56,37 +57,11 @@ class _IssueFromDict:
         self.fixable_by = d.get("fixable_by", "either") or "either"
 
 
-class _Issue:
-    """Editor-facing adapter over a wheel ``Finding`` (in-process path).
-
-    Mirrors the legacy canonical.py wrapper's _Issue shape so
-    ``validation_outcome._issue_from_validator`` can consume it.
-    """
-
-    def __init__(self, finding: Any) -> None:
-        self.code = getattr(finding, "code", "") or ""
-        self.message = getattr(finding, "message", "") or ""
-        self.severity = getattr(finding, "severity", "error") or "error"
-        line = getattr(finding, "line", 0)
-        col = getattr(finding, "col", 0)
-        loc: dict[str, Any] = {}
-        if line:
-            loc["line"] = line
-        if col:
-            loc["column"] = col
-        self.location = loc
-        self.fix_hint = getattr(finding, "fix_hint", "") or ""
-        self.fixable_by = getattr(finding, "fixable_by", "either") or "either"
-
-
 class _ValidateReport:
     """Duck-typed report shape consumed by ``validator_dispatch``."""
 
-    def __init__(self, findings: list[Any]) -> None:
-        # Accept both Finding objects (in-process) and _IssueFromDict (subprocess).
-        self._issues = [
-            f if hasattr(f, "location") else _Issue(f) for f in findings
-        ]
+    def __init__(self, findings: list["_IssueFromDict"]) -> None:
+        self._issues = list(findings)
         self.ok = not any(i.severity == "error" for i in self._issues)
         self.errors = [i for i in self._issues if i.severity == "error"]
         self.warnings = [i for i in self._issues if i.severity == "warning"]
@@ -96,9 +71,8 @@ class _ReconstructReport:
     """Duck-typed report for :func:`reconstruct_text`.
 
     Mirrors ``_ValidateReport``'s finding normalization while also carrying
-    the reconstructed ``.text``/``.json`` payload. Build via the
-    :meth:`from_parse_result` (in-process) / :meth:`from_dict` (subprocess)
-    classmethods rather than ``__init__`` directly.
+    the reconstructed ``.text``/``.json`` payload. Build via :meth:`from_dict`
+    rather than ``__init__`` directly.
     """
 
     def __init__(
@@ -117,18 +91,8 @@ class _ReconstructReport:
         self.warnings = [i for i in self.findings if i.severity == "warning"]
 
     @classmethod
-    def from_parse_result(cls, pr: Any) -> "_ReconstructReport":
-        """Wrap an in-process wheel ``ParseResult``."""
-        return cls(
-            success=pr.success,
-            text=pr.text,
-            json=pr.json,
-            findings=[_Issue(f) for f in pr.findings],
-        )
-
-    @classmethod
     def from_dict(cls, d: dict) -> "_ReconstructReport":
-        """Wrap a subprocess JSON result dict."""
+        """Wrap the engine's reconstruct result dict."""
         return cls(
             success=d["success"],
             text=d.get("text"),
@@ -141,7 +105,7 @@ class _ReconstructReport:
 # Guided-manual run plan: editor-facing views over the wheel's ManualRun /
 # StepDescriptor as the build_manual_run engine op returns them (JSON).
 #
-# These two are PUBLIC (unlike the private _Report/_Issue siblings above): they are
+# These two are PUBLIC (unlike the private _Report/_IssueFromDict siblings above): they are
 # the GUI-facing RETURN type of build_manual_run, whose field names the modal binds
 # directly. Collections are tuples so the frozen views are genuinely immutable.
 # ---------------------------------------------------------------------------
@@ -218,24 +182,3 @@ class ManualRunResult:
             channels=dict(d.get("channels") or {}),
             constants=tuple(d.get("constants") or ()),
         )
-
-
-# ---------------------------------------------------------------------------
-# Internal: ParseFailure construction (in-process path)
-# ---------------------------------------------------------------------------
-
-
-def _make_parse_failure(errors: list[Any], findings: list[Any]) -> "ParseFailure":
-    primary = errors[0] if errors else None
-    code = getattr(primary, "code", "PARSE_ERROR") if primary else "PARSE_ERROR"
-    line = getattr(primary, "line", None) if primary else None
-    col = getattr(primary, "col", None) if primary else None
-    fix_hint = getattr(primary, "fix_hint", "") if primary else ""
-    msg = str(primary) if primary else "Parsing failed."
-    exc = ParseFailure(msg)
-    exc.code = code
-    exc.line = line
-    exc.column = col
-    exc.fix_hint = fix_hint
-    exc.findings = [_Issue(f) for f in findings]
-    return exc

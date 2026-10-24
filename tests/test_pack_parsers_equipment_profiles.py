@@ -140,14 +140,15 @@ def test_non_list_value_raises_parser_unavailable(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _capture_inproc_sync(monkeypatch):
+def _capture_sync(monkeypatch):
+    """The profiles the sync_equipment op is sent."""
     captured = {}
 
-    def fake_sync(text, controller_profiles):
-        captured["profiles"] = controller_profiles
-        return text, []
+    def fake_engine(_root, spec, timeout=None):
+        captured["profiles"] = spec["controller_profiles"]
+        return {"ok": True, "text": spec["text"], "warnings": []}
 
-    monkeypatch.setattr(pp, "_inproc_sync_equipment", fake_sync)
+    monkeypatch.setattr(pp, "_engine_call", fake_engine)
     return captured
 
 
@@ -160,7 +161,7 @@ def test_sync_filters_controllers_and_shims_pattern(monkeypatch, tmp_path):
         {"equipment_profiles": [PSU_PROFILE, CONTROLLER_PROFILE]},
         monkeypatch,
     )
-    captured = _capture_inproc_sync(monkeypatch)
+    captured = _capture_sync(monkeypatch)
 
     pp.sync_equipment_from_steps("## Steps\n", project_root=None)
 
@@ -175,7 +176,7 @@ def test_sync_filters_controllers_and_shims_pattern(monkeypatch, tmp_path):
 
 def test_sync_env_unset_passes_empty_profiles(monkeypatch):
     monkeypatch.delenv(BUNDLE_DEFAULTS_PATH, raising=False)
-    captured = _capture_inproc_sync(monkeypatch)
+    captured = _capture_sync(monkeypatch)
 
     pp.sync_equipment_from_steps("## Steps\n", project_root=None)
 
@@ -189,7 +190,7 @@ def test_sync_old_key_only_bundle_raises(monkeypatch, tmp_path):
         {"controller_profiles": [CONTROLLER_PROFILE]},
         monkeypatch,
     )
-    _capture_inproc_sync(monkeypatch)
+    _capture_sync(monkeypatch)
 
     with pytest.raises(engine_session.ParserUnavailable, match="rebuild the bundle"):
         pp.sync_equipment_from_steps("## Steps\n", project_root=None)
@@ -203,7 +204,7 @@ def test_sync_explicit_profiles_bypass_bundle_load(monkeypatch, tmp_path):
         {"controller_profiles": [CONTROLLER_PROFILE]},  # old-format bundle
         monkeypatch,
     )
-    captured = _capture_inproc_sync(monkeypatch)
+    captured = _capture_sync(monkeypatch)
     explicit = [{"subtype": "x", "pattern": "^x$"}]
 
     pp.sync_equipment_from_steps(

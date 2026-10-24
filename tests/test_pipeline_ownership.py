@@ -42,19 +42,23 @@ from procedo.core.section_ownership import (  # noqa: E402
 )
 
 
+@pytest.mark.usefixtures("engine_in_process")
 class PipelineOwnershipNoOverrideTests(unittest.TestCase):
     """With no override, the resolved ownership matches the wheel's declared
     ``section_ownership()`` map (equipment/steps/expected = LLM-owned)."""
 
     def setUp(self) -> None:
-        self.own = pipeline_ownership(project_root=None)
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        self.root = Path(td.name)  # a project without a side-car: the engine's map
+        self.own = pipeline_ownership(project_root=self.root)
 
     def test_returns_section_ownership(self) -> None:
         self.assertIsInstance(self.own, SectionOwnership)
 
     @_skip_no_wheel
     def test_llm_sections_match_wheel_map(self) -> None:
-        expected = resolve(pack_parsers.get_section_ownership(None))
+        expected = resolve(pack_parsers.get_section_ownership(self.root))
         self.assertEqual(self.own.llm_sections, expected.llm_sections)
 
     def test_default_llm_sections_are_equipment_steps_expected(self) -> None:

@@ -25,9 +25,8 @@ from procedo.studio.llm.reconstruction import (  # noqa: E402
 
 from tests import _env
 
-pytestmark = pytest.mark.skipif(
-    not _env.rules_packager_available(), reason=_env.WHEEL_SKIP_REASON
-)  # noqa: E402
+pytestmark = [pytest.mark.skipif(not _env.rules_packager_available(), reason=_env.WHEEL_SKIP_REASON),
+              pytest.mark.usefixtures("engine_in_process")]
 
 _skip_no_labscpi = pytest.mark.skipif(
     not _env.labscpi_psu_reconstruct_available(), reason=_env.LABSCPI_SKIP_REASON

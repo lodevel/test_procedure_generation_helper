@@ -2,11 +2,10 @@
 
 Each entry point dispatches to the **project's** venv Python rather than the
 editor's own interpreter, so the wheel imported is the one bundled with the
-active project (which may differ from the GUI's installed wheel).
-
-When ``project_root=None`` (editor startup, no project loaded) every entry
-point falls back to in-process import — the original behaviour — so the
-editor stays usable with no project open.
+active project (which may differ from the GUI's installed wheel). The app's
+own venv has no wheel: with no project open (``project_root=None``) there is
+no engine, so every entry point raises :class:`ParserUnavailable`
+(:func:`is_available` says so).
 
 Mechanism
 ---------
@@ -18,14 +17,12 @@ have the ``procedo`` package.
 """
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 from typing import Any, Optional
 
 from procedo.core import section_ownership
 from procedo.engine_client.engine_replies import (
-    _make_parse_failure,
     _ReconstructReport,
     _reconstruct_issues_from_dicts,
     _reconstruct_parse_failure,
@@ -33,14 +30,13 @@ from procedo.engine_client.engine_replies import (
 )
 from procedo.engine_client.engine_session import ParserUnavailable, _timeout
 
-from .. import launch_env
 from . import bundle_capabilities
-
-# Wheel version we expect (used in error messages only).
-_REQUIRED_WHEEL = "rules_packager_base.rules.v2_0_2.parser"
 
 # Default timeouts (seconds).
 _TIMEOUT_IS_AVAILABLE = 5
+
+#: Why no op runs with no project open: the wheel runs only in a project's engine.
+NO_PROJECT = "no project is open: the deterministic parser runs in the project's engine"
 
 
 # ---------------------------------------------------------------------------
@@ -48,76 +44,15 @@ _TIMEOUT_IS_AVAILABLE = 5
 # ---------------------------------------------------------------------------
 
 
-def _engine_call(project_root: Path, spec: dict[str, Any],
+def _engine_call(project_root: Optional[Path], spec: dict[str, Any],
                  timeout: Optional[float] = None) -> dict[str, Any]:
     """``spec`` answered by the project's TOOLS engine: the op's result dict, or
-    ``{"ok": False, "kind", "error"}``. Raises ParserUnavailable without a venv."""
+    ``{"ok": False, "kind", "error"}``. Raises ParserUnavailable with no project
+    open or without a venv."""
+    if project_root is None:
+        raise ParserUnavailable(NO_PROJECT)
     from procedo.engine_client import engine  # the project's engine processes
     return engine.tools_op(project_root, spec, timeout or _timeout())
-
-
-# ---------------------------------------------------------------------------
-# In-process fallback helpers (project_root=None path)
-# ---------------------------------------------------------------------------
-
-
-_REGISTRY_LOAD: str | None = None  # None: not tried; "": loaded (or no bundle); else why it failed
-
-
-def _ensure_inproc_registry_populated() -> None:
-    """Populate the process-global pack registry once for the in-process path.
-
-    Post pack-pluggable cutover the base engine resolves pack verbs/schema/
-    equipment from a process-global registry; nothing parses psu/eload/scope/
-    controller until it is populated. Source the bundle dir from
-    ``PROCEDO_BUNDLE_DEFAULTS_PATH`` (a defaults.json file → its parent dir). No-op
-    when unset (no-project editor mode). A failed load is tried once and said
-    on every call (``ParserUnavailable``), as the engine's ops say it.
-    """
-    global _REGISTRY_LOAD
-    if _REGISTRY_LOAD is None:
-        _REGISTRY_LOAD = ""
-        defaults_path = os.environ.get(launch_env.BUNDLE_DEFAULTS_PATH)
-        if defaults_path:
-            try:
-                from rules_packager_base.rules.v2_0_2.parser._pack_registry import (
-                    load_packs_into_registry,
-                )
-                load_packs_into_registry(Path(defaults_path).parent)
-            except Exception as exc:  # noqa: BLE001 — said by every call below
-                from procedo.engine_client._engine_ops import packs_unloadable
-
-                _REGISTRY_LOAD = packs_unloadable(exc)
-    if _REGISTRY_LOAD:
-        raise ParserUnavailable(_REGISTRY_LOAD)
-
-
-def _inproc_import_wheel():
-    try:
-        import rules_packager_base.rules.v2_0_2.parser as _parser
-        _ensure_inproc_registry_populated()
-        return _parser
-    except ImportError as exc:
-        raise ParserUnavailable(
-            f"{_REQUIRED_WHEEL} is not importable: {exc}. "
-            f"Reinstall the rules_packager_base wheel (>= 2.0.4) into "
-            f"the venv running Procedo Studio. The LLM fallback "
-            f"remains available."
-        ) from exc
-
-
-def _inproc_import_codegen():
-    try:
-        from rules_packager_base.rules.v2_0_2.parser import codegen as _codegen
-        _ensure_inproc_registry_populated()
-        return _codegen
-    except ImportError as exc:
-        raise ParserUnavailable(
-            f"rules_packager_base.rules.v2_0_2.parser.codegen is not "
-            f"importable: {exc}. Reinstall the rules_packager_base wheel "
-            f"(>= 2.0.1) into the venv running Procedo Studio. The "
-            f"LLM fallback remains available."
-        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -128,19 +63,8 @@ def _inproc_import_codegen():
 def is_available(
     project_root: Optional[Path] = None,
 ) -> tuple[bool, str]:
-    """Probe whether the wheel imports cleanly. Returns ``(available, reason)``.
-
-    When ``project_root`` is None (no project open), probes the editor's own
-    venv via in-process import (original behaviour). When ``project_root`` is
-    given, asks the project's engine.
-    """
-    if project_root is None:
-        try:
-            _inproc_import_wheel()
-            return True, "deterministic path active"
-        except ParserUnavailable as exc:
-            return False, str(exc)
-
+    """Probe whether the project's engine imports the wheel cleanly. Returns
+    ``(available, reason)``; never available with no project open."""
     try:
         result = _engine_call(project_root, {"op": "is_available"}, _TIMEOUT_IS_AVAILABLE)
     except ParserUnavailable as exc:
@@ -159,9 +83,6 @@ def parse_text(
     Returns ``(procedure_json, warnings)``. Raises :class:`ParserUnavailable`
     or :class:`ParseFailure` on failure.
     """
-    if project_root is None:
-        return _inproc_parse_text(text)
-
     result = _engine_call(
         project_root, {"op": "parse_text", "text": text, "project_root": str(project_root)})
 
@@ -179,9 +100,6 @@ def render_text(
     project_root: Optional[Path] = None,
 ) -> str:
     """Emit canonical-text procedure from the v2.0.1 JSON shape."""
-    if project_root is None:
-        return _inproc_render_text(procedure_json)
-
     result = _engine_call(
         project_root, {"op": "render_text", "procedure_json": procedure_json})
     if not result.get("ok"):
@@ -196,16 +114,8 @@ def refresh_media(
     """Recompute the derived ``media`` of a procedure JSON with the pack's one
     catalogue. ``parse()`` already does this for its own output, so this is a
     no-op on a parser-produced JSON and the refresh a hand- or LLM-edited
-    JSON needs. Returns the refreshed dict (a fresh one from the subprocess
-    path). Raises :class:`ParserUnavailable` when the wheel cannot run."""
-    if project_root is None:
-        try:
-            from rules_packager_base.rules.v2_0_2 import media as _media
-        except ImportError as exc:
-            raise ParserUnavailable(f"rules_packager_base media catalogue not importable: {exc}") from exc
-        _media.populate_media(procedure_json)
-        return procedure_json
-
+    JSON needs. Returns the refreshed dict (a fresh one). Raises
+    :class:`ParserUnavailable` when the wheel cannot run."""
     result = _engine_call(
         project_root, {"op": "refresh_media", "procedure_json": procedure_json})
     if not result.get("ok"):
@@ -223,9 +133,6 @@ def renumber_steps_text(
     ``parser.renumber_steps``. Returns the new text (or the original
     when nothing changed). Raises :class:`ParserUnavailable` if the
     wheel isn't importable."""
-    if project_root is None:
-        return _inproc_renumber_steps(text)
-
     result = _engine_call(project_root, {"op": "renumber_steps", "text": text})
     if not result.get("ok"):
         raise ParserUnavailable(result.get("error", "engine error"))
@@ -261,9 +168,6 @@ def sync_equipment_from_steps(
             if p.get("equipment_type") == "controller"
         ]
 
-    if project_root is None:
-        return _inproc_sync_equipment(text, controller_profiles)
-
     result = _engine_call(
         project_root,
         {
@@ -286,9 +190,6 @@ def sync_meta_text(
     active bundle, with no LLM — the deterministic counterpart to the LLM. Board
     / format_version / extra keys are preserved. Returns ``(new_text, warnings)``.
     Raises :class:`ParserUnavailable` if the wheel isn't importable."""
-    if project_root is None:
-        return _inproc_sync_meta(text)
-
     result = _engine_call(project_root, {"op": "sync_meta", "text": text})
     if not result.get("ok"):
         raise ParserUnavailable(result.get("error", "engine error"))
@@ -327,9 +228,6 @@ def generate_code(
     Returns ``(code, warnings)``. Raises :class:`ParserUnavailable` if the
     wheel isn't importable.
     """
-    if project_root is None:
-        return _inproc_generate_code(procedure)
-
     result = _engine_call(project_root, {"op": "generate_code", "procedure": procedure})
     if not result.get("ok"):
         raise ParserUnavailable(result.get("error", "engine error"))
@@ -349,15 +247,6 @@ def validate(
     the Call steps checked against its ``functions/`` too). Returns a ``_ValidateReport``
     duck-typed against the legacy ProcedureTextRenderer.validate() shape; raises
     :class:`ParserUnavailable` if the wheel isn't importable."""
-    if project_root is None:
-        return _inproc_validate(
-            text=text,
-            json_obj=json_obj,
-            mode=mode,
-            original_text=original_text,
-            check_names=check_names,
-        )
-
     spec: dict[str, Any] = {"op": "validate", "mode": mode, "check_names": check_names,
                             "project": str(project_root)}
     if text is not None:
@@ -392,12 +281,10 @@ def get_section_ownership(
     3. Wheel default (subprocess) only when the side-car is absent or
        invalid; raises :class:`ParserUnavailable` on failure.
 
-    ``project_root`` is None (editor / no project): the in-process wheel
-    default, unchanged.
+    ``project_root`` is None (no project open): raises :class:`ParserUnavailable`.
     """
     if project_root is None:
-        return _inproc_import_wheel().section_ownership()
-
+        raise ParserUnavailable(NO_PROJECT)
     override = section_ownership.load_config_override(project_root)
     loaded = section_ownership.load_bundle_ownership(project_root / "bundle")
     if loaded is None:
@@ -421,10 +308,6 @@ def reconstruct_text(
     Returns a ``_ReconstructReport`` duck-typed against ``_ValidateReport``.
     Raises :class:`ParserUnavailable` if the wheel isn't importable.
     """
-    if project_root is None:
-        pr = _inproc_import_wheel().reconstruct(fragment, prior, owned_sections)
-        return _ReconstructReport.from_parse_result(pr)
-
     result = _engine_call(
         project_root,
         {
@@ -439,93 +322,6 @@ def reconstruct_text(
     if not result.get("ok"):
         raise ParserUnavailable(result.get("error", "engine error"))
     return _ReconstructReport.from_dict(result)
-
-
-# ---------------------------------------------------------------------------
-# In-process implementations (used when project_root=None)
-# ---------------------------------------------------------------------------
-
-
-def _inproc_parse_text(
-    text: str,
-    *,
-    project_root: Optional[Path] = None,
-) -> tuple[dict[str, Any], list[str]]:
-    result = _inproc_import_wheel().parse(text, project_root=project_root)
-    if not result.success or result.json is None:
-        raise _make_parse_failure(result.errors, result.findings)
-    warnings = [
-        _format_finding(f) for f in result.findings if f.severity == "warning"
-    ]
-    return result.json, warnings
-
-
-def _inproc_render_text(procedure_json: dict[str, Any]) -> str:
-    wheel = _inproc_import_wheel()
-    return wheel.render(procedure_json)
-
-
-def _inproc_renumber_steps(text: str) -> str:
-    wheel = _inproc_import_wheel()
-    return wheel.renumber_steps(text)
-
-
-def _inproc_sync_equipment(
-    text: str, controller_profiles: list[dict],
-) -> tuple[str, list[str]]:
-    wheel = _inproc_import_wheel()
-    new_text, findings = wheel.sync_equipment_text(
-        text, controller_profiles=controller_profiles,
-    )
-    warnings = [_format_finding(f) for f in findings]
-    return new_text, warnings
-
-
-def _inproc_sync_meta(text: str) -> tuple[str, list[str]]:
-    wheel = _inproc_import_wheel()
-    new_text, findings = wheel.sync_meta_text(text)
-    warnings = [_format_finding(f) for f in findings]
-    return new_text, warnings
-
-
-def _inproc_generate_code(procedure: dict[str, Any]) -> tuple[str, list[str]]:
-    codegen = _inproc_import_codegen()
-    code = codegen.generate(procedure, None)
-    return code, []
-
-
-def _inproc_validate(
-    *,
-    text: Optional[str],
-    json_obj: Optional[dict[str, Any]],
-    mode: str,
-    original_text: Optional[str],
-    check_names: bool,
-) -> "_ValidateReport":
-    wheel = _inproc_import_wheel()
-    findings: list[Any] = []
-
-    parsed_json = json_obj
-    if text is not None:
-        result = wheel.parse(text)
-        findings.extend(result.findings)
-        if result.success and result.json is not None:
-            parsed_json = parsed_json or result.json
-
-    if parsed_json is not None and mode in ("all", "schema"):
-        findings.extend(wheel.validate_schema(parsed_json))
-
-    if text is not None and original_text and check_names:
-        findings.extend(wheel.check_name_fidelity(original_text, text))
-
-    return _ValidateReport(findings)
-
-
-def _format_finding(finding: Any) -> str:
-    code = getattr(finding, "code", "?")
-    line = getattr(finding, "line", 0)
-    msg = getattr(finding, "message", str(finding))
-    return f"line {line} [{code}] {msg}"
 
 
 # ---------------------------------------------------------------------------

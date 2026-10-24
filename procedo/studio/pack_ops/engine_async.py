@@ -6,8 +6,8 @@ daemon thread and hands the answer back on the GUI thread through a :mod:`proced
 relay (``QTimer.singleShot`` from a worker thread never fires). :func:`wait` is the same for a
 caller that needs the result before it returns (the wizards' authoring API is synchronous).
 
-Without a project the wheel runs in this process, and importing it installs a signal handler,
-which fails off the main thread: those calls run at once, on the GUI thread.
+Without a project there is no engine: those calls refuse at once (``ParserUnavailable``), on the
+GUI thread.
 """
 from __future__ import annotations
 

@@ -13,7 +13,7 @@ import subprocess
 import sys
 import threading
 
-# --- probe 1: in-process labscpi 'psu' reconstruction ------------------------
+# --- probe 1: labscpi 'psu' reconstruction by the engine's op table ----------
 
 # Minimal grammar-valid labscpi fixtures (mirrors tests/test_reconstruction.py).
 _PSU_FRAGMENT = """## Equipment
@@ -36,7 +36,7 @@ labscpi_pack: old@1.0.0
 """
 
 LABSCPI_SKIP_REASON = (
-    "in-process pack dispatch cannot reconstruct labscpi 'psu' grammar: the "
+    "the engine's op table, run in this process, cannot reconstruct labscpi 'psu' grammar: the "
     "editor venv has no bundle-matched rules_packager_base wheel + labscpi "
     "grammar pack registered (probe reconstruct fails with EQP_TYPE_UNKNOWN "
     "'psu'). Runs on a bench machine with the project bundle installed."
@@ -45,8 +45,8 @@ LABSCPI_SKIP_REASON = (
 
 @functools.lru_cache(maxsize=1)
 def labscpi_psu_reconstruct_available() -> bool:
-    """True iff the in-process (project_root=None) pack-dispatch path can
-    successfully reconstruct a minimal labscpi ``psu`` fragment.
+    """True iff the engine's op table, run in this process (the
+    ``engine_in_process`` fixture's), reconstructs a minimal labscpi ``psu`` fragment.
 
     This is the shared precondition of every reconstruct/validate-dispatch
     test that feeds ``psu`` grammar through ``procedo.studio.llm``:
@@ -57,12 +57,10 @@ def labscpi_psu_reconstruct_available() -> bool:
         from tests._qt_stub import ensure_workflow_editor_importable
 
         ensure_workflow_editor_importable()
-        from procedo.studio.pack_ops import pack_parsers
+        from procedo.engine_client import _engine_ops
 
-        report = pack_parsers.reconstruct_text(
-            _PSU_FRAGMENT, _PSU_PRIOR, project_root=None
-        )
-        return report.success is True
+        answer = _engine_ops.run({"op": "reconstruct", "fragment": _PSU_FRAGMENT, "prior": _PSU_PRIOR})
+        return answer.get("success") is True
     except Exception:
         return False
 
@@ -134,7 +132,7 @@ def nested_interpreter_spawn_works() -> bool:
 
 WHEEL_SKIP_REASON = (
     "the rules_packager_base grammar wheel is not installed in this venv; the "
-    "in-process pack_parsers bridge cannot run. Installed on bench/host venvs."
+    "engine's op table cannot run in this process. Installed on bench/host venvs."
 )
 
 

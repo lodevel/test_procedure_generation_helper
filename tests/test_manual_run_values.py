@@ -22,6 +22,7 @@ from procedo.engine_client import engine_replies  # noqa: E402
 from tests import _env  # noqa: E402
 
 _wheel = pytest.mark.skipif(not _env.rules_packager_available(), reason=_env.WHEEL_SKIP_REASON)
+pytestmark = pytest.mark.usefixtures("engine_in_process")
 # The engine's source beside this editor (the host tree's external/): its guard never skips.
 _ENGINE_SRC = Path(__file__).resolve().parents[2] / "rules_packager" / "src"
 

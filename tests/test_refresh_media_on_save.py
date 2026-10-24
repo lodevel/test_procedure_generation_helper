@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from rules_packager_base.rules.v2_0_2 import parse
 from procedo.studio.core import ArtifactType
 from procedo.studio.core.artifact_manager import ArtifactManager
 from procedo.studio.pack_ops import pack_parsers
+
+pytestmark = pytest.mark.usefixtures("engine_in_process")
 
 _HAND = {
     "format_version": "2.0.1",
@@ -42,7 +45,7 @@ rules_pack: rules_packager_base@2.0.5
 
 
 def _manager(tmp_path):
-    test_dir = tmp_path / "GPO"          # no project layout above: the editor's own pack, in-process
+    test_dir = tmp_path / "GPO"          # no project layout above: the engine stand-in answers at once
     test_dir.mkdir()
     manager = ArtifactManager()
     manager.set_test_dir(test_dir)
@@ -81,11 +84,9 @@ def test_content_that_is_not_a_procedure_is_saved_as_written(tmp_path):
         assert (tmp_path / "GPO" / "procedure.json").read_text(encoding="utf-8") == content
 
 
-def test_refresh_media_in_process_is_the_catalogue(tmp_path):
-    doc = json.loads(json.dumps(_HAND))
-    out = pack_parsers.refresh_media(doc)
-    assert out is doc
-    assert [m["caption"] for m in doc["steps"][0]["media"]] == ["P4 pin 1"]
+def test_refresh_media_is_the_catalogue():
+    out = pack_parsers.refresh_media(json.loads(json.dumps(_HAND)))
+    assert [m["caption"] for m in out["steps"][0]["media"]] == ["P4 pin 1"]
 
 
 def _saved_over_a_baseline(tmp_path, *, acknowledged):

@@ -197,7 +197,7 @@ class ArtifactManager:
         from ..pack_ops import engine_async, pack_parsers
         root = self.test_dir.parent.parent if self.test_dir is not None else None
         if root is None or not (root / "tests").is_dir():
-            root = None                      # no project layout: the editor's own pack
+            root = None                      # no project layout: no engine, the refresh refuses
 
         def done(answer) -> None:
             try:

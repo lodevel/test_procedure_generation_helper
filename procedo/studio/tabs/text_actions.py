@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
+from typing import Optional
 
 from PySide6.QtWidgets import QPushButton
 
@@ -39,6 +41,59 @@ def format_chat_warnings(warnings: list[str]) -> str:
     if not warnings:
         return ""
     return "\n\n⚠ Warnings:\n" + "\n".join(f"• {w}" for w in warnings)
+
+
+#: The warning marking a Sync Equipment answer that would delete unparseable lines.
+_SYNCEQP_BLOCKED = "[SYNCEQP_BLOCKED]"
+
+
+@dataclass(frozen=True)
+class _TextTransform:
+    """A deterministic rewrite of procedure_text.md: the ``pack_parsers`` function (text →
+    ``(text, warnings)``, or the text alone without *warns*), the button it runs from, and the
+    (status, chat) it says when the text is *applied*, already the *same*, or *refused* (a
+    blocked answer, when given)."""
+
+    op: str
+    button: str
+    cue_label: str
+    error_title: str
+    applied: tuple[str, str]
+    same: tuple[str, str]
+    refused: Optional[tuple[str, str]] = None
+    warns: bool = True
+
+
+_SYNC_EQUIPMENT = _TextTransform(
+    "sync_equipment_from_steps", "sync_equipment_btn", "Syncing equipment\u2026",
+    "Sync Equipment failed",
+    applied=("Equipment synced from steps",
+             "🔧 Sync Equipment applied — ## Equipment refreshed from steps. "
+             "Declared types were kept (type conflicts are warned) and "
+             "ratings merged as max(declared, observed)."),
+    same=("Sync Equipment: no changes (everything already declared)",
+          "🔧 Sync Equipment: no changes (## Equipment already matches "
+          "every device referenced in steps)."),
+    refused=("Sync Equipment: REFUSED — unparseable ## Equipment lines (see chat)",
+             "🔧 Sync Equipment REFUSED — the existing ## Equipment block "
+             "has lines that don't parse (wrong syntax, or their pack "
+             "isn't in the active bundle); syncing would delete them. "
+             "Nothing was changed."))
+
+_SYNC_META = _TextTransform(
+    "sync_meta_text", "sync_meta_btn", "Syncing meta\u2026", "Sync Meta failed",
+    applied=("Meta synced from bundle",
+             "🏷️ Sync Meta applied — ## Meta regenerated from the active bundle "
+             "(pack versions re-pinned; board / format_version preserved)."),
+    same=("Sync Meta: no changes (## Meta already matches the bundle)",
+          "🏷️ Sync Meta: no changes (## Meta already matches the active bundle)."))
+
+_RENUMBER_STEPS = _TextTransform(
+    "renumber_steps_text", "renumber_steps_btn", "Renumbering steps\u2026", "Renumber failed",
+    applied=("Steps renumbered",
+             "🔢 Renumber Steps applied — every step in ## Steps is now sequential 1..N."),
+    same=("Steps already sequential", "🔢 Renumber Steps: already sequential — no changes."),
+    warns=False)
 
 
 class TextActionsMixin:
@@ -148,146 +203,57 @@ class TextActionsMixin:
         """Rescan ``## Steps`` and refresh ``## Equipment``. Declared
         types anchor (conflicts are warned, never flipped) and ratings
         merge as max(declared, observed) — bench headroom survives.
-        Refuses (text untouched) when declared lines don't parse.
-        Outcome + warnings posted to the chat panel."""
-        from ..pack_ops import pack_parsers
-        original = self.text_card.editor.toPlainText()
-        if not original:
-            return
-        project_root = getattr(self.project_manager, "project_root", None)
-        engine_async.call(
-            project_root,
-            lambda: pack_parsers.sync_equipment_from_steps(original, project_root=project_root),
-            lambda answer: self._sync_equipment_done(original, answer),
-            button=self.sync_equipment_btn, cue=self.text_card.loading, cue_label="Syncing equipment\u2026")
-
-    def _sync_equipment_done(self, original: str, answer) -> None:
-        from procedo.engine_client import engine_session
-        try:
-            new_text, warnings = answer()
-        except engine_session.ParserUnavailable as exc:
-            self.show_error("Sync Equipment failed", str(exc))
-            return
-        if not engine_async.unchanged(self.text_card.editor, original, self.status_message.emit):
-            return
-        if any("[SYNCEQP_BLOCKED]" in w for w in warnings):
-            self.status_message.emit(
-                "Sync Equipment: REFUSED — unparseable ## Equipment lines "
-                "(see chat)"
-            )
-            post_to_chat(
-                self.main_window,
-                "🔧 Sync Equipment REFUSED — the existing ## Equipment block "
-                "has lines that don't parse (wrong syntax, or their pack "
-                "isn't in the active bundle); syncing would delete them. "
-                "Nothing was changed."
-                + format_chat_warnings(warnings),
-            )
-            return
-        if new_text == original:
-            self.status_message.emit(
-                "Sync Equipment: no changes (everything already declared)"
-            )
-            post_to_chat(
-                self.main_window,
-                "🔧 Sync Equipment: no changes (## Equipment already matches "
-                "every device referenced in steps)."
-                + format_chat_warnings(warnings),
-            )
-            return
-        self.text_card.set_text(new_text)
-        self.status_message.emit("Equipment synced from steps")
-        post_to_chat(
-            self.main_window,
-            "🔧 Sync Equipment applied — ## Equipment refreshed from steps. "
-            "Declared types were kept (type conflicts are warned) and "
-            "ratings merged as max(declared, observed)."
-            + format_chat_warnings(warnings),
-        )
+        Refuses (text untouched) when declared lines don't parse."""
+        self._transform_text(_SYNC_EQUIPMENT)
 
     def _on_sync_meta(self) -> None:
         """Regenerate the ``## Meta`` block (format_version / board + the
         rules_pack / labscpi_pack / fncore_pack version pins) from the active
         bundle, deterministically (no LLM). board / format_version and extra
         keys are preserved; pack versions are re-pinned to the bundle."""
-        from ..pack_ops import pack_parsers
-        original = self.text_card.editor.toPlainText()
-        if not original:
-            return
-        project_root = getattr(self.project_manager, "project_root", None)
-        engine_async.call(
-            project_root, lambda: pack_parsers.sync_meta_text(original, project_root=project_root),
-            lambda answer: self._sync_meta_done(original, answer), button=self.sync_meta_btn,
-            cue=self.text_card.loading, cue_label="Syncing meta\u2026")
-
-    def _sync_meta_done(self, original: str, answer) -> None:
-        from procedo.engine_client import engine_session
-        try:
-            new_text, warnings = answer()
-        except engine_session.ParserUnavailable as exc:
-            self.show_error("Sync Meta failed", str(exc))
-            return
-        if not engine_async.unchanged(self.text_card.editor, original, self.status_message.emit):
-            return
-        if new_text == original:
-            self.status_message.emit(
-                "Sync Meta: no changes (## Meta already matches the bundle)"
-            )
-            post_to_chat(
-                self.main_window,
-                "🏷️ Sync Meta: no changes (## Meta already matches the active bundle)."
-                + format_chat_warnings(warnings),
-            )
-            return
-        self.text_card.set_text(new_text)
-        self.status_message.emit("Meta synced from bundle")
-        post_to_chat(
-            self.main_window,
-            "🏷️ Sync Meta applied — ## Meta regenerated from the active bundle "
-            "(pack versions re-pinned; board / format_version preserved)."
-            + format_chat_warnings(warnings),
-        )
+        self._transform_text(_SYNC_META)
 
     def _on_renumber_steps(self) -> None:
         """Rewrite the leading ``N.`` on every step in the ``## Steps``
         block to be sequential 1..N. Pure text transform routed
         through the bundle's parser so the convention stays
-        bundle-defined. Skips the rewrite when nothing changed so
-        the dirty flag doesn't flip needlessly. Confirmation in chat."""
+        bundle-defined."""
+        self._transform_text(_RENUMBER_STEPS)
+
+    def _transform_text(self, how: _TextTransform) -> None:
+        """Run *how* on the text off the GUI thread; :meth:`_text_transformed` takes its answer."""
         from ..pack_ops import pack_parsers
         original = self.text_card.editor.toPlainText()
         if not original:
             return
         project_root = getattr(self.project_manager, "project_root", None)
+        transform = getattr(pack_parsers, how.op)
         engine_async.call(
-            project_root,
-            lambda: pack_parsers.renumber_steps_text(original, project_root=project_root),
-            lambda answer: self._renumber_done(original, answer), button=self.renumber_steps_btn,
-            cue=self.text_card.loading, cue_label="Renumbering steps\u2026")
+            project_root, lambda: transform(original, project_root=project_root),
+            lambda answer: self._text_transformed(how, original, answer),
+            button=getattr(self, how.button), cue=self.text_card.loading, cue_label=how.cue_label)
 
-    def _renumber_done(self, original: str, answer) -> None:
+    def _text_transformed(self, how: _TextTransform, original: str, answer) -> None:
+        """Apply the transformed text, unless refused or unchanged (the text left as it is, so
+        the dirty flag doesn't flip needlessly); the outcome goes to the status bar and the chat,
+        the warnings with it."""
         from procedo.engine_client import engine_session
         try:
-            renumbered = answer()
+            new_text, warnings = answer() if how.warns else (answer(), [])
         except engine_session.ParserUnavailable as exc:
-            self.show_error("Renumber failed", str(exc))
+            self.show_error(how.error_title, str(exc))
             return
         if not engine_async.unchanged(self.text_card.editor, original, self.status_message.emit):
             return
-        if renumbered == original:
-            self.status_message.emit("Steps already sequential")
-            post_to_chat(
-                self.main_window,
-                "🔢 Renumber Steps: already sequential — no changes.",
-            )
-            return
-        self.text_card.set_text(renumbered)
-        self.status_message.emit("Steps renumbered")
-        post_to_chat(
-            self.main_window,
-            "🔢 Renumber Steps applied — every step in ## Steps is now "
-            "sequential 1..N.",
-        )
+        if how.refused and any(_SYNCEQP_BLOCKED in w for w in warnings):
+            status, chat = how.refused
+        elif new_text == original:
+            status, chat = how.same
+        else:
+            self.text_card.set_text(new_text)
+            status, chat = how.applied
+        self.status_message.emit(status)
+        post_to_chat(self.main_window, chat + format_chat_warnings(warnings))
 
     def _on_parse_and_generate(self):
         """Strict one-click: Text → JSON → test.py, offered as one proposal card.

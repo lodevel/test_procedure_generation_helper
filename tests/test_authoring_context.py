@@ -124,17 +124,15 @@ def test_documents_source_missing_dir_is_empty(tmp_path):
 # RulesSource                                                                 #
 # --------------------------------------------------------------------------- #
 
-def test_rules_source_lists_and_applies_transform(tmp_path):
+def test_rules_source_lists_and_strips_the_pipeline_frontmatter(tmp_path):
     r1 = tmp_path / "r1.md"
-    r1.write_text("rule one body", encoding="utf-8")
+    r1.write_text("---\nid: one\nrelated:\n  - r2.md\n---\nrule one body", encoding="utf-8")
     r2 = tmp_path / "r2.md"
     r2.write_text("rule two body", encoding="utf-8")
-    src = RulesSource(lambda: [RuleDoc("r1.md", r1, "bundle"), RuleDoc("r2.md", r2, "bundle")],
-                      transform=str.upper)
+    src = RulesSource(lambda: [RuleDoc("r1.md", r1, "bundle"), RuleDoc("r2.md", r2, "bundle")])
     assert [i.key for i in src.list_items()] == ["r1.md", "r2.md"]   # the documents' order
     out = src.materialize(["r1.md"])
-    assert "## r1.md" in out and "RULE ONE BODY" in out
-    assert "r2" not in out.lower()
+    assert out == "## r1.md\n\n---\nid: one\n---\nrule one body"
 
 
 def test_rules_source_ignores_unknown_key(tmp_path):

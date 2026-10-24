@@ -13,13 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
 
-from ..core.project_manager import (
-    ATTACHED_NOTE,
-    PROJECT_RULES_WIN,
-    RuleDoc,
-    attached_as_file,
-    rule_doc_detail,
-)
+from ..core.project_manager import PROJECT_RULES_WIN, RuleDoc, rule_doc_detail
+from ..core.rule_context import attached_files, chosen_rule_docs, rule_doc_texts
 from .context import ContextItem, ContextSource
 from .pdf_text import extract_pdf_text
 
@@ -84,20 +79,13 @@ class DocumentsSource(ContextSource):
 class RulesSource(ContextSource):
     """The rule documents the Studio tabs send (``ProjectManager.get_rule_docs``):
     the bundle's rules, keyed by file name, then the project's own documents,
-    keyed ``project/<name>``, after a line saying they win. A PDF is only named in
-    the text: it goes as it is, attached as a file (:meth:`files`), as in the tabs.
+    keyed ``project/<name>``, after a line saying they win; each read as the tabs read it
+    (``core.rule_context``): a PDF is only named in the text, it goes as it is, attached
+    as a file (:meth:`files`)."""
 
-    ``transform`` post-processes each text document (the wiring passes the
-    frontmatter stripper)."""
-
-    def __init__(
-        self,
-        rule_docs: Callable[[], Sequence[RuleDoc]],
-        transform: Callable[[str], str] = lambda s: s,
-    ):
+    def __init__(self, rule_docs: Callable[[], Sequence[RuleDoc]]):
         super().__init__("rules", "Rules")
         self._rule_docs = rule_docs
-        self._transform = transform
 
     def list_items(self) -> list[ContextItem]:
         items = []
@@ -109,26 +97,13 @@ class RulesSource(ContextSource):
             items.append(ContextItem("rules", doc.key, doc.key, rule_doc_detail(doc, size)))
         return items
 
-    def _chosen(self, keys: Sequence[str]) -> list[RuleDoc]:
-        """The documents of ``keys``, in the documents' order (bundle rules first)."""
-        wanted = set(keys)
-        return [doc for doc in self._rule_docs() if doc.key in wanted]
-
     def files(self, keys: Sequence[str]) -> list[Path]:
-        return [doc.path for doc in self._chosen(keys) if attached_as_file(doc.path)]
+        return attached_files(chosen_rule_docs(self._rule_docs(), keys))
 
     def materialize(self, keys: Sequence[str]) -> str:
         blocks = []
         headed = False  # the project-wins line is in
-        for doc in self._chosen(keys):
-            if attached_as_file(doc.path):
-                body = ATTACHED_NOTE
-            else:
-                try:
-                    body = self._transform(doc.path.read_text(encoding="utf-8-sig"))
-                except (OSError, UnicodeDecodeError) as exc:
-                    log.warning("could not read rule %s: %s", doc.key, exc)
-                    continue
+        for doc, body in rule_doc_texts(chosen_rule_docs(self._rule_docs(), keys)):
             if not body.strip():
                 continue
             if doc.origin == "project" and not headed:

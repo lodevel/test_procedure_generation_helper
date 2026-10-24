@@ -48,6 +48,7 @@ from threading import RLock
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from procedo.core import config_manager
+from procedo.core.workflow_defaults import read_editor_defaults
 
 from .. import launch_env
 from ..llm.backend_base import LLMTask
@@ -120,30 +121,11 @@ class ChatConfig:
 # Workflow editor defaults
 # ---------------------------------------------------------------------------
 #
-# DEFAULT_TASK_CONFIGS / DEFAULT_CHAT_CONFIG are loaded from
-# ``default_workflows.json`` (next to this module) at import time so the
-# parent app's Project Configuration → Workflows tab can read the exact
-# same defaults via a simple JSON read — no cross-package import. The
-# JSON file is the source of truth; the in-code dicts mirror it.
-#
-# If the JSON file is missing or malformed, we fall back to a minimal
-# baked-in set so tests that monkey-patch the file path still work.
-
-DEFAULT_WORKFLOWS_JSON_PATH: Path = (
-    Path(__file__).parent / "default_workflows.json"
-)
-
-
-def _load_default_workflows() -> Dict[str, Any]:
-    """Read ``default_workflows.json``; return empty dict on any error."""
-    try:
-        with open(DEFAULT_WORKFLOWS_JSON_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError) as exc:
-        log.warning("Could not load %s: %s — using empty defaults.",
-                    DEFAULT_WORKFLOWS_JSON_PATH, exc)
-        return {}
+# DEFAULT_TASK_CONFIGS / DEFAULT_CHAT_CONFIG are built at import time from
+# the host's ``procedo/core/default_workflows.json``, read by its one reader
+# (``procedo.core.workflow_defaults.read_editor_defaults``) — the same file the
+# Project Configuration → Workflows tab shows. An unreadable file reads as
+# empty defaults.
 
 
 def _build_default_task_configs(
@@ -173,7 +155,7 @@ def _build_default_chat_config(raw: Dict[str, Any]) -> Dict[str, ChatConfig]:
     return out
 
 
-_DEFAULT_WORKFLOWS_RAW: Dict[str, Any] = _load_default_workflows()
+_DEFAULT_WORKFLOWS_RAW: Dict[str, Any] = read_editor_defaults()
 DEFAULT_TASK_CONFIGS: Dict[str, List[TaskConfig]] = _build_default_task_configs(
     _DEFAULT_WORKFLOWS_RAW
 )

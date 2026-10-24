@@ -45,7 +45,7 @@ FILE_BUDGET: dict[str, int] = {
     # +50: bench-session S3 — frame dispatch,
     # reader-thread wiring, and the held-rekey seams (_ensure_held routing,
     # channel-union safe-off fallback, per-path procedure docs); ALL new logic
-    # lives in the new sibling llm/_bench_session_runner.py.
+    # lives in the new sibling engine_client/_bench_session_runner.py.
     # +12: F-H6 boundary health check — the guided-op probe seam in
     # _ensure_held plus the typed HealthRefusal passthrough in _cmd_exec_ops
     # +8: R2 backstop — shutdown folds any leftover unconfirmed_off record
@@ -68,7 +68,7 @@ FILE_BUDGET: dict[str, int] = {
     # the helper itself lives in _bench_session_runner.py.
     # -2 (cap 1300 -> 1298): stale-name-hold fix (owner ruling 2026-08-27) —
     # _ensure_held's resolution CARVED into the new sibling
-    # llm/_hold_resolution.py (fold-first rule, stale drop, ns rebind); the
+    # engine_client/_hold_resolution.py (fold-first rule, stale drop, ns rebind); the
     # daemon file only delegates and records the open.
     "studio/llm/opencode_backend.py": 1251,  # +9: bare-except cleanup log lines
 }

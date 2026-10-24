@@ -197,7 +197,7 @@ def _build_run_skill_block(project_root, launch_dir, run_skill_secret):
         _uni = build_skill_tools_universe(project_root)
         if _uni:
             _uf = launch_file_path(launch_dir, UNIVERSE_FILE)
-            _uf.write_text(json.dumps(_uni), encoding="utf-8")
+            atomic_write_text(_uf, json.dumps(_uni))
             universe_file = str(_uf)
     except Exception:
         log.exception("Failed to write run_skill universe file")

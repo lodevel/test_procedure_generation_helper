@@ -258,3 +258,16 @@ def test_each_studio_process_builds_its_own_launch_config(config_dir, monkeypatc
     second_in_json = json.dumps(str(second_project))[1:-1]  # its documents dir, its rules
     assert second_in_json in second.read_text(encoding="utf-8")
     assert second_in_json not in built_first.decode("utf-8")
+
+
+def test_the_run_skill_universe_file_is_written_atomically(tmp_path, monkeypatch):
+    """A child skill reading the gate universe never sees a half-written file."""
+    written = []
+    real = lc.atomic_write_text
+    monkeypatch.setattr(lc, "atomic_write_text", lambda path, text: (written.append(path), real(path, text)))
+    monkeypatch.setattr("procedo.studio.authoring.tool_folders.build_skill_tools_universe",
+                        lambda project_root: {"srv": ["tool"]})
+    lc._build_run_skill_block(tmp_path / "proj", tmp_path / "launch", "secret")
+    universe = launch_files.launch_file_path(tmp_path / "launch", launch_files.UNIVERSE_FILE)
+    assert written == [universe]
+    assert json.loads(universe.read_text(encoding="utf-8")) == {"srv": ["tool"]}

@@ -149,9 +149,9 @@ def test_sweep_orphan_kills_our_opencode_pid(tmp_path):
         mgr._sweep_orphan()
 
     flat = [" ".join(c) for c in calls]
-    # A graceful TERM AND an escalated KILL -9 were issued against OUR pid.
-    assert any("kill 9999" in f and "kill -9" not in f for f in flat)
-    assert any("kill -9 9999" in f for f in flat)
+    # A graceful TERM AND an escalated KILL were issued against OUR pid's tree.
+    assert any("kill -TERM" in f and "t 9999" in f for f in flat)
+    assert any("kill -KILL" in f and "t 9999" in f for f in flat)
     # The stale file is gone after a conclusive sweep.
     assert not (tmp_path / "opencode.pid").exists()
 
@@ -331,8 +331,8 @@ def test_sweep_orphan_skips_kill9_when_recheck_not_ours(tmp_path):
         mgr._sweep_orphan()
 
     # The graceful TERM ran; the -9 did NOT.
-    assert any("kill 7777" in c and "kill -9" not in c for c in calls)
-    assert not any("kill -9" in c for c in calls)
+    assert any("kill -TERM" in c and "t 7777" in c for c in calls)
+    assert not any("kill -KILL" in c for c in calls)
     # A conclusive OURS-then-gone sweep clears the (now stale) pid file.
     assert not (tmp_path / "opencode.pid").exists()
 
@@ -359,8 +359,8 @@ def test_sweep_orphan_keeps_pid_file_when_recheck_unknown(tmp_path):
         mgr._sweep_orphan()
 
     # TERM ran; -9 did NOT (inconclusive re-check).
-    assert any("kill 8888" in c and "kill -9" not in c for c in calls)
-    assert not any("kill -9" in c for c in calls)
+    assert any("kill -TERM" in c and "t 8888" in c for c in calls)
+    assert not any("kill -KILL" in c for c in calls)
     # Pid file SURVIVES — a possibly-running orphan is never lost.
     assert (tmp_path / "opencode.pid").exists()
 
@@ -633,6 +633,101 @@ def test_wait_for_server_aborts_when_retired_mid_wait(tmp_path):
     assert mgr._retired is True
     # Aborted within a couple of poll ticks, NOT after the 60s timeout.
     assert elapsed < 5.0
+
+
+# --------------------------------------------------------------------------- #
+# stop() kills only the process tree WE started — by pid, never by name        #
+# --------------------------------------------------------------------------- #
+
+def _fake_spawn(stderr_lines, *, alive=True):
+    """A fake ``wsl.exe`` Popen handle (Windows pid 4242) whose stderr carries
+    ``stderr_lines`` — the serve command's Linux-pid marker among wsl noise."""
+    proc = _live_proc() if alive else _dead_proc()
+    proc.stderr = iter(stderr_lines)
+    return proc
+
+
+def _start_with(mgr, proc, runs):
+    """start() against a fake launcher; every subprocess.run is recorded."""
+    healthy = MagicMock(); healthy.ok = True
+
+    def fake_run(cmd, *a, **k):
+        runs.append(list(cmd))
+        r = MagicMock(); r.returncode = 0; r.stdout = ""
+        return r
+
+    with patch.object(mgr, "_diagnose_installation", return_value=healthy), \
+         patch("procedo.studio.llm.server_manager.find_free_port", return_value=5005), \
+         patch("procedo.studio.llm.server_manager.subprocess.Popen", return_value=proc), \
+         patch("procedo.studio.llm.server_manager.subprocess.run", side_effect=fake_run), \
+         patch.object(mgr, "_wait_for_server", return_value=True):
+        assert mgr.start() is True
+
+
+def _kill_runs(runs):
+    return [" ".join(c) for c in runs if "kill" in " ".join(c)]
+
+
+def test_stop_kills_the_linux_pid_it_started_never_by_name(tmp_path):
+    mgr = _mgr(tmp_path)
+    runs = []
+    proc = _fake_spawn(["wsl: Failed to translate 'L:\\libcom'\n", "__OC_PID__31337\n",
+                        "opencode booting\n"])
+    _start_with(mgr, proc, runs)
+    # The pid file records the LINUX pid the serve command printed, not wsl.exe's.
+    deadline = time.monotonic() + 5
+    while mgr._read_pid_file() is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert mgr._read_pid_file()["pid"] == 31337
+
+    with patch("procedo.studio.llm.server_manager.subprocess.run",
+               side_effect=lambda cmd, *a, **k: runs.append(list(cmd)) or MagicMock()):
+        mgr.stop()
+
+    flat = [" ".join(c) for c in runs]
+    assert not any("pkill" in f or "killall" in f or " -f " in f for f in flat)
+    kills = _kill_runs(runs)
+    assert len(kills) == 1 and "kill -TERM" in kills[0]
+    assert "31337" in kills[0] and "4242" not in kills[0]
+    proc.terminate.assert_called_once()  # wsl.exe itself: through OUR handle
+    assert mgr._read_pid_file() is None
+    # The marker never reaches the failure-reason tail.
+    assert not any("__OC_PID__" in line for line in mgr._stderr_tail)
+
+
+def test_stop_skips_linux_kill_once_our_wsl_exe_exited(tmp_path):
+    # Our wsl.exe already exited, so the Linux process is gone and its pid may
+    # belong to someone else now: no Linux-side kill at all.
+    mgr = _mgr(tmp_path)
+    runs = []
+    mgr._server_process = _fake_spawn(["__OC_PID__31337\n"], alive=False)
+    mgr._start_stderr_drain(5005)
+    with patch("procedo.studio.llm.server_manager.subprocess.run",
+               side_effect=lambda cmd, *a, **k: runs.append(list(cmd)) or MagicMock()):
+        mgr._stop_process()
+    assert _kill_runs(runs) == []
+
+
+def test_stop_without_a_linux_pid_issues_no_name_kill(tmp_path, monkeypatch):
+    # The marker never arrived (bash still in .bashrc): stop through the wsl.exe
+    # handle only; never fall back to a name-based kill.
+    mgr = _mgr(tmp_path)
+    monkeypatch.setattr(OpenCodeServerManager, "_LINUX_PID_WAIT", 0.01)
+    runs = []
+    proc = _fake_spawn([])
+    mgr._server_process = proc
+    mgr._start_stderr_drain(5005)
+    with patch("procedo.studio.llm.server_manager.subprocess.run",
+               side_effect=lambda cmd, *a, **k: runs.append(list(cmd)) or MagicMock()):
+        mgr._stop_process()
+    assert _kill_runs(runs) == []
+    proc.terminate.assert_called_once()
+
+
+def test_serve_command_prints_its_linux_pid_then_execs_opencode(tmp_path):
+    cmd = _mgr(tmp_path)._build_serve_command(5123)
+    assert cmd.startswith("echo __OC_PID__$$ >&2; ")
+    assert "exec opencode serve --port 5123" in cmd
 
 
 # --------------------------------------------------------------------------- #

@@ -13,6 +13,8 @@ import subprocess
 import threading
 import time
 from collections import deque
+from concurrent.futures import Future
+from concurrent.futures import TimeoutError as FutureTimeout
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -128,6 +130,9 @@ class OpenCodeServerManager:
         # prevents the pipe-buffer deadlock a chatty server would otherwise hit.
         self._stderr_tail: "deque[str]" = deque(maxlen=50)
         self._stderr_thread: Optional[threading.Thread] = None
+        # The Linux pid of the current spawn, parsed from its stderr marker by
+        # the drain thread (see _PID_MARKER). None until the first spawn.
+        self._linux_pid: "Optional[Future[int]]" = None
     
     @property
     def config(self) -> OpenCodeConfig:
@@ -355,10 +360,11 @@ class OpenCodeServerManager:
                         # be a non-translatable drive (e.g. L:).
                         cwd=self._config.working_directory or safe_wsl_cwd(),
                     )
-                    self._start_stderr_drain()
+                    # The drain also records OUR Linux pid (pid file) as soon as
+                    # the serve command prints it, so a crashed next session can
+                    # sweep it.
+                    self._start_stderr_drain(port)
                     log.debug(f"Server process started, PID: {self._server_process.pid}")
-                    # Record OUR process so a crashed next session can sweep it.
-                    self._write_pid_file(self._server_process.pid, port)
 
                     if not self._wait_for_server():
                         detail = "".join(self._stderr_tail).strip()
@@ -398,9 +404,20 @@ class OpenCodeServerManager:
             self.last_status = ServerStatus.failure(last_err, last_detail)
             return False
 
+    # The serve command prints this marker + its Linux pid on stderr, then
+    # ``exec``s ``opencode serve`` — so that pid IS the server (or, if the login
+    # shell wsl.exe runs expanded ``$$`` without exec'ing bash, its ancestor).
+    # wsl.exe's own pid is a Windows pid and names nothing on the Linux side.
+    _PID_MARKER = "__OC_PID__"
+    # How long a stop waits for that marker when it lands mid-boot (bash still
+    # sourcing .bashrc), before it falls back to stopping wsl.exe alone.
+    _LINUX_PID_WAIT = 3.0
+
     def _build_serve_command(self, port: int) -> str:
         """Build the ``opencode serve`` shell command (run via ``bash -ic`` so
-        the user's PATH resolves ``opencode``).
+        the user's PATH resolves ``opencode``). It first prints
+        ``_PID_MARKER<pid>`` on stderr, then ``exec``s the server so the
+        printed pid stays the server's for its whole life.
 
         Two inline env vars (wsl.exe does not forward Windows env without WSLENV):
 
@@ -426,7 +443,8 @@ class OpenCodeServerManager:
             cfg_wsl = win_to_wsl_path(str(launch_dir)).rstrip("/") + "/opencode.json"
             env += f"OPENCODE_CONFIG={shlex.quote(cfg_wsl)} "
         return (
-            f"{env}opencode serve --port {int(port)} "
+            f"echo {self._PID_MARKER}$$ >&2; "
+            f"{env}exec opencode serve --port {int(port)} "
             f"--hostname {shlex.quote(str(self._config.server_hostname))}"
         )
     
@@ -531,21 +549,32 @@ class OpenCodeServerManager:
         return ServerStatus.healthy() if err is ServerError.NONE \
             else ServerStatus.failure(err, detail)
 
-    def _start_stderr_drain(self) -> None:
+    def _start_stderr_drain(self, port: int) -> None:
         """Drain the server's stderr into a bounded tail on a daemon thread —
         keeps the pipe from filling (which would deadlock the server) and keeps
-        the last lines available as a failure reason."""
+        the last lines available as a failure reason. The ``_PID_MARKER`` line
+        is taken out of the stream: its Linux pid goes to the pid file and to
+        ``self._linux_pid`` (what ``_stop_process`` kills)."""
         proc = self._server_process
         if proc is None or proc.stderr is None:
             return
-        # Fresh per-spawn tail so a lingering drain thread from a previous spawn
-        # can't write into this spawn's reason blob.
+        # Fresh per-spawn tail + pid so a lingering drain thread from a previous
+        # spawn can't write into this spawn's reason blob or pid.
         tail: "deque[str]" = deque(maxlen=50)
         self._stderr_tail = tail
+        linux_pid: "Future[int]" = Future()
+        self._linux_pid = linux_pid
 
         def _drain() -> None:
             try:
                 for line in proc.stderr:
+                    text = line.strip()
+                    pid = text[len(self._PID_MARKER):]
+                    if (not linux_pid.done() and text.startswith(self._PID_MARKER)
+                            and pid.isdigit()):
+                        self._write_pid_file(int(pid), port)
+                        linux_pid.set_result(int(pid))
+                        continue
                     tail.append(line)
             except Exception:  # noqa: BLE001 — best-effort drain
                 pass
@@ -601,14 +630,29 @@ class OpenCodeServerManager:
     
     def _stop_process(self) -> None:
         """
-        Stop the server process if we own it.
-        
+        Stop the server process if we own it — and only what we started.
+
+        Two handles name it: the ``wsl.exe`` Popen (a Windows process) and the
+        Linux pid its serve command printed (``_PID_MARKER``). Terminating
+        wsl.exe alone can leave the Linux-side ``opencode serve`` running (a WSL
+        relay gotcha), so the Linux tree under OUR pid is signalled first — by
+        pid, NEVER by name: a name match can hit another session's or another
+        user's server. That pid is trusted only while our wsl.exe still runs:
+        once it has exited the Linux process is gone and the pid may be reused.
+
         Note: If we attached to an external server (_server_process is None),
         this method does nothing - we don't stop servers we didn't start.
         """
         if self._server_process is None:
             return
-        
+
+        if self._server_process.poll() is None:
+            linux_pid = self._await_linux_pid()
+            if linux_pid is None:
+                log.warning("Server's Linux pid unknown; stopping wsl.exe only")
+            else:
+                self._signal_linux_tree(linux_pid, "TERM")
+
         log.debug(f"Stopping server process PID {self._server_process.pid}...")
         try:
             self._server_process.terminate()
@@ -624,23 +668,36 @@ class OpenCodeServerManager:
         finally:
             self._server_process = None
 
-        # Terminating wsl.exe can leave the Linux-side `opencode serve` running
-        # (a WSL relay gotcha). We reach here only when WE started the server
-        # (the early return above guards the attached case), so best-effort kill
-        # it by OUR exact port — never the user's manually-launched one — so it
-        # doesn't outlive the editor on close OR crash (via the atexit hook).
-        try:
-            subprocess.run(
-                [self._config.wsl_path, "bash", "-ic",
-                 f"pkill -f 'opencode serve --port {self._config.server_port}'"],
-                capture_output=True, timeout=3, cwd=safe_wsl_cwd(),
-            )
-        except Exception as e:  # noqa: BLE001 — best-effort cleanup
-            log.debug(f"WSL-side pkill of opencode serve failed (best-effort): {e}")
-
         # Our process is gone — drop the PID file so the next session's
         # orphan-sweep has nothing stale to chase.
         self._remove_pid_file()
+
+    def _await_linux_pid(self) -> Optional[int]:
+        """The current spawn's Linux pid, waiting up to ``_LINUX_PID_WAIT`` for
+        its marker when a stop lands mid-boot; ``None`` if it never came."""
+        if self._linux_pid is None:
+            return None
+        try:
+            return self._linux_pid.result(timeout=self._LINUX_PID_WAIT)
+        except FutureTimeout:
+            return None
+
+    def _signal_linux_tree(self, pid: int, sig: str) -> None:
+        """Send ``sig`` to the Linux process ``pid`` and all its descendants —
+        selected by pid/parent pid only, never by name. The whole tree is listed
+        before any signal is sent. ``wsl -e`` runs bash directly, so no login
+        shell re-expands the ``$`` in the script. Best-effort."""
+        script = (
+            't() { for c in $(pgrep -P "$1"); do t "$c"; done; echo "$1"; }; '
+            f"kill -{sig} $(t {int(pid)}) 2>/dev/null"
+        )
+        try:
+            subprocess.run(
+                [self._config.wsl_path, "-e", "bash", "-c", script],
+                capture_output=True, timeout=5, cwd=safe_wsl_cwd(),
+            )
+        except Exception as e:  # noqa: BLE001 — best-effort cleanup
+            log.debug(f"Linux-side kill -{sig} of pid {pid} failed (best-effort): {e}")
 
     # ------------------------------------------------------------------ #
     # Orphan-sweep via a PID file (C3)
@@ -854,13 +911,7 @@ class OpenCodeServerManager:
 
         # identity is OURS — graceful TERM first.
         log.info(f"Sweeping orphan opencode serve (pid {pid}) from a prior session")
-        try:
-            subprocess.run(
-                [self._config.wsl_path, "bash", "-ic", f"kill {int(pid)} 2>/dev/null"],
-                capture_output=True, timeout=5, cwd=safe_wsl_cwd(),
-            )
-        except Exception as e:  # noqa: BLE001 — best-effort
-            log.debug(f"Orphan sweep TERM failed for pid {pid}: {e}")
+        self._signal_linux_tree(pid, "TERM")
 
         # Brief grace for the process to exit on its own.
         time.sleep(1.0)
@@ -871,13 +922,7 @@ class OpenCodeServerManager:
         # on a fresh, conclusive OURS.
         post = self._pid_is_our_opencode(pid)
         if post is PidIdentity.OURS:
-            try:
-                subprocess.run(
-                    [self._config.wsl_path, "bash", "-ic", f"kill -9 {int(pid)} 2>/dev/null"],
-                    capture_output=True, timeout=5, cwd=safe_wsl_cwd(),
-                )
-            except Exception as e:  # noqa: BLE001 — best-effort
-                log.debug(f"Orphan sweep KILL -9 failed for pid {pid}: {e}")
+            self._signal_linux_tree(pid, "KILL")
             # We forcibly -9'd OUR process — the pid file has served its purpose.
             self._remove_pid_file()
         elif post is PidIdentity.NOT_OURS:

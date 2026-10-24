@@ -15,6 +15,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from procedo.studio.dock import skill_chat_widget as scw
+from procedo.studio.dock.backend_request import request_backend
 from procedo.studio.llm import backend_factory
 from procedo.studio.llm.backend_base import LLMTask, NoneBackend
 from procedo.studio.llm.backend_factory import BACKEND_TYPE_OPENCODE, BackendConfig, BackendFactory
@@ -229,7 +230,7 @@ def test_studio_closed_during_a_start_leaves_no_server_and_no_pid_file(qapp, tmp
          patch("procedo.studio.llm.server_manager.subprocess.run", return_value=MagicMock()), \
          patch("procedo.studio.llm.server_manager.requests.get",
                side_effect=requests.exceptions.ConnectionError()):
-        backend_factory.request_backend(factory, "text_json", answers.take)
+        request_backend(factory, "text_json", answers.take)
         deadline = time.monotonic() + 10
         while mgr._read_pid_file() is None and time.monotonic() < deadline:
             time.sleep(0.01)
@@ -362,9 +363,9 @@ def test_a_request_that_fails_unlocks_the_chat_and_says_why(opened, monkeypatch)
     w.view_stack.setCurrentWidget(view)
     view.tab_context.update_backend_factory(_factory(monkeypatch, _SlowServer()))
 
-    def refuse(on_answer):
+    def refuse(factory, tab_id, on_answer):
         raise RuntimeError("no QApplication")
-    monkeypatch.setattr(view.tab_context, "request_backend", refuse)
+    monkeypatch.setattr(llm_tab_mixin, "request_backend", refuse)
 
     view._run_task_async(LLMTask.AD_HOC_CHAT, user_message="check U5")
 

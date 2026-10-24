@@ -13,6 +13,7 @@ import pytest
 from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QApplication
 
+from procedo.studio.dock.backend_request import request_backend
 from procedo.studio.llm.backend_base import NoneBackend
 from procedo.studio.llm.backend_factory import start_backend
 from procedo.studio.llm.tab_context import TabContext
@@ -76,7 +77,7 @@ class _Answers(QObject):
 def _started(tab):
     """The tab's backend start, its answer adopted (as the tab does on the GUI thread)."""
     answers = _Answers()
-    tab.request_backend(answers.take)
+    request_backend(tab.backend_factory, tab.tab_id, answers.take)
     return tab.adopt_backend(answers.first())
 
 
@@ -103,7 +104,7 @@ def test_a_tab_keeps_the_none_backend_it_was_configured_with(qapp):
     factory = _Factory(chosen, backend_type="none")
     tab = _tab(factory)
     answers = _Answers()
-    tab.request_backend(answers.take)
+    request_backend(tab.backend_factory, tab.tab_id, answers.take)
     assert answers.got and tab.adopt_backend(answers.got[0]) is chosen and tab.backend is chosen
     assert len(factory.asked) == 1
 
@@ -119,7 +120,7 @@ def test_a_backend_started_for_a_replaced_factory_is_stopped_never_used(qapp):
     backend = _Backend()
     tab = _tab(_Factory(backend, backend_type="none"))
     answers = _Answers()
-    tab.request_backend(answers.take)
+    request_backend(tab.backend_factory, tab.tab_id, answers.take)
     tab.update_backend_factory(_Factory(_Backend()))
     assert tab.adopt_backend(answers.first()) is None and tab.backend is None
     assert backend.stopped

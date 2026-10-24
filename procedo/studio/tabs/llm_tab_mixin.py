@@ -20,7 +20,7 @@ from typing import Optional
 
 from ..core.proposal import current_test
 from ..llm import LLMTask, ChatMessage
-from ..llm.backend_factory import SERVER_STARTING_TEXT
+from ..dock.backend_request import SERVER_STARTING_TEXT, request_backend
 from ..llm.prompt_builder import PromptBuilder, TaskPromptNotDeclaredError
 from ..llm.output_contracts import get_contract_for_tab
 from ..llm.reconstruction import pipeline_ownership
@@ -84,7 +84,7 @@ class LLMTabMixin:
         chat.set_llm_active(True, cancellable=False)
         chat.loading.start(SERVER_STARTING_TEXT)
         try:
-            self.tab_context.request_backend(self._on_backend_started)
+            self._request_backend()
         except Exception:
             if self._queued_send is None:  # answered at once: the failure is the send's own
                 raise
@@ -96,6 +96,11 @@ class LLMTabMixin:
                 role="system", content="Not sent: the AI server could not be started.",
                 tone="danger"))
 
+    def _request_backend(self) -> None:
+        """Start the tab's backend off the GUI thread; :meth:`_on_backend_started` answers."""
+        request_backend(self.tab_context.backend_factory, self.tab_context.tab_id,
+                        self._on_backend_started)
+
     def _on_backend_started(self, answer) -> None:
         """The backend start answered (GUI thread): the queued send runs on that backend (on a
         fallback ``NoneBackend`` its reply is the server's failure), unless its test was closed
@@ -103,7 +108,7 @@ class LLMTabMixin:
         for a start on the new one."""
         backend = self.tab_context.adopt_backend(answer)
         if backend is None:
-            self.tab_context.request_backend(self._on_backend_started)
+            self._request_backend()
             return
         chat = self.main_window.dock.chat_panel
         chat.loading.done()

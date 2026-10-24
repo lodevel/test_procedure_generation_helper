@@ -17,8 +17,6 @@ from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import Optional
 
-from procedo.core.off_gui import run_off_gui
-
 from .backend_base import LLMBackend, NoneBackend
 from .lifecycle_adapters import ManagerLifecycle, make_wsl_lifecycle
 from .opencode_backend import OpenCodeBackend, OpenCodeConfig
@@ -27,13 +25,10 @@ from .server_manager import OpenCodeServerManager
 log = logging.getLogger(__name__)
 
 
-#: What a chat shows while its send waits for the AI server to start (:func:`request_backend`).
-SERVER_STARTING_TEXT = "Starting the AI server\u2026"
-
-
 def start_backend(factory, tab_id: str) -> tuple[LLMBackend, bool]:
     """A new backend for *tab_id* from *factory*, started, and whether to keep it: what a
-    Studio tab and a skill chat make on first use (:func:`request_backend`).
+    Studio tab and a skill chat make on first use (off the GUI thread:
+    ``procedo.studio.dock.backend_request``).
 
     A ``NoneBackend`` the factory answers as a *fallback* (the OpenCode server would not start)
     is not kept, so the next use tries the factory, and the server, again; one is kept when
@@ -48,25 +43,6 @@ def start_backend(factory, tab_id: str) -> tuple[LLMBackend, bool]:
     if not keep:
         log.info(f"Fallback NoneBackend for '{tab_id}': the next use tries again")
     return backend, keep
-
-
-def request_backend(factory, tab_id: str, on_answer) -> None:
-    """``on_answer((factory, *start_backend(factory, tab_id)))`` (a QObject's bound method)
-    without the GUI thread ever waiting on a server start: at once when no server is involved
-    (no factory, or the backend is off), else from a worker (``run_off_gui``; the factory
-    shares one server start among the threads asking meanwhile). A start that raised answers
-    a fallback ``NoneBackend`` carrying what it raised."""
-    def _start() -> tuple:
-        try:
-            return (factory, *start_backend(factory, tab_id))
-        except Exception as exc:
-            log.exception(f"Starting the backend for '{tab_id}' failed")
-            return factory, NoneBackend(reason=str(exc) or type(exc).__name__), False
-
-    if factory is None or factory.backend_type == BACKEND_TYPE_NONE:
-        on_answer(_start())
-    else:
-        run_off_gui(_start, on_answer, name=f"start-backend-{tab_id}")
 
 
 # Backend type constants

@@ -18,7 +18,6 @@ from pathlib import Path
 
 from . import reconstruction
 from .backend_base import LLMBackend, LLMRequest, LLMTask
-from .backend_factory import request_backend
 from .output_contracts import get_contract_for_tab, get_allowed_artifacts
 from ..core.fileio import content_digest
 from ..core.project_manager import RuleDoc
@@ -110,7 +109,7 @@ class TabContext:
         self.board_data_enabled = False
         self.board_data_project = None
         self._backend_factory = backend_factory
-        self._backend: Optional[LLMBackend] = None  # started on first use: request_backend
+        self._backend: Optional[LLMBackend] = None  # started on first use, then adopted
         self.project_manager = project_manager
         self.task_config_manager = task_config_manager
         self.artifact_manager = artifact_manager
@@ -147,19 +146,19 @@ class TabContext:
     
     @property
     def backend(self) -> Optional[LLMBackend]:
-        """The tab's backend once one was started and kept (:meth:`request_backend`), else
+        """The tab's backend once one was started and kept (:meth:`adopt_backend`), else
         None."""
         return self._backend
 
-    def request_backend(self, on_answer) -> None:
-        """Start a backend for this tab, the GUI thread never waiting on the server
-        (``backend_factory.request_backend``): *on_answer* gets ``(factory, backend, keep)``,
-        for :meth:`adopt_backend`."""
-        request_backend(self._backend_factory, self.tab_id, on_answer)
+    @property
+    def backend_factory(self) -> Optional["BackendFactory"]:
+        """The factory the tab's backend is started from (the Qt side starts it off the GUI
+        thread: ``procedo.studio.dock.backend_request``)."""
+        return self._backend_factory
 
     def adopt_backend(self, answer) -> Optional[LLMBackend]:
-        """The backend :meth:`request_backend` answered, kept as the tab's as ``start_backend``
-        says. None when the tab's factory changed meanwhile (a Settings save): that backend is
+        """The ``(factory, backend, keep)`` a backend request answered, kept as the tab's as
+        ``start_backend`` says. None when the tab's factory changed meanwhile (a Settings save): that backend is
         stopped, and the send that waited asks the new factory."""
         factory, backend, keep = answer
         if factory is not self._backend_factory:
@@ -244,7 +243,7 @@ class TabContext:
         
         This is the preferred way to change backend configuration.
         The existing backend is discarded and a new one will be created
-        on the next send (:meth:`request_backend`).
+        on the next send.
         
         Args:
             new_factory: The new BackendFactory instance

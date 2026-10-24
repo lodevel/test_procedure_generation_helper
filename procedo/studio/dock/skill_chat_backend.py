@@ -10,7 +10,7 @@ import threading
 
 from PySide6.QtCore import QObject
 
-from ..llm.backend_factory import SERVER_STARTING_TEXT, request_backend
+from .backend_request import SERVER_STARTING_TEXT, request_backend
 
 log = logging.getLogger(__name__)
 

@@ -1,11 +1,13 @@
 """The lazy backend create (``backend_factory.start_backend``) of a Studio tab and of a skill
-chat: one create-and-start; what each keeps differs on purpose (pinned here): a tab retries the
-factory after a fallback ``NoneBackend`` (the server would not start), a skill chat keeps its
-first backend until Restart."""
+chat, one policy for both: a backend is created and started on first use and kept, except a
+fallback ``NoneBackend`` (the server would not start): the next use tries the factory (and the
+server) again; without a factory, a kept ``NoneBackend``."""
 
 from __future__ import annotations
 
 from types import SimpleNamespace
+
+import pytest
 
 from procedo.studio.llm.backend_base import NoneBackend
 from procedo.studio.llm.backend_factory import start_backend
@@ -41,7 +43,7 @@ def _tab(factory):
 def test_start_backend_creates_for_the_tab_id_and_starts_it():
     backend = _Backend()
     factory = _Factory(backend)
-    assert start_backend(factory, "skill_chat") is backend
+    assert start_backend(factory, "skill_chat") == (backend, True)
     assert factory.asked == ["skill_chat"] and backend.started == 1
 
 
@@ -71,18 +73,38 @@ def test_a_tab_without_a_factory_has_a_none_backend():
     assert isinstance(_tab(None).backend, NoneBackend)
 
 
-def test_a_skill_chat_keeps_its_first_backend_even_a_fallback(qapp, monkeypatch):
+@pytest.fixture
+def skill_chat(qapp, monkeypatch):
+    """A skill chat over *factory* (its backend tab id ``my_wizard``)."""
     from procedo.studio.dock import skill_chat_widget as scw
     from .test_project_rules_skills import _delete_now
     from .test_skill_needed_context import _skill
 
     monkeypatch.setattr("procedo.studio.core.studio_settings.load_settings", lambda: {})
-    fallback = NoneBackend(reason="server down")
-    factory = _Factory(fallback, _Backend())
-    widget = scw.SkillChatWidget([_skill()], factory, backend_tab_id="my_wizard")
-    try:
-        assert widget._ensure_backend() is fallback
-        assert widget._ensure_backend() is fallback and factory.asked == ["my_wizard"]
-    finally:
+    made = []
+
+    def make(factory):
+        made.append(scw.SkillChatWidget([_skill()], factory, backend_tab_id="my_wizard"))
+        return made[-1]
+
+    yield make
+    for widget in made:
         widget.shutdown()
         _delete_now(widget)
+
+
+def test_a_skill_chat_retries_after_a_fallback_none_backend(skill_chat):
+    """It kept the fallback: "server down" on every send until Restart."""
+    fallback, real = NoneBackend(reason="server down"), _Backend()
+    factory = _Factory(fallback, real)
+    widget = skill_chat(factory)
+    assert widget._ensure_backend() is fallback
+    assert widget._ensure_backend() is real and widget._ensure_backend() is real
+    assert factory.asked == ["my_wizard", "my_wizard"] and real.started == 1
+
+
+def test_a_skill_chat_without_a_factory_has_a_none_backend(skill_chat):
+    """It failed with an AttributeError ("Failed to start — see logs.")."""
+    widget = skill_chat(None)
+    backend = widget._ensure_backend()
+    assert isinstance(backend, NoneBackend) and widget._ensure_backend() is backend

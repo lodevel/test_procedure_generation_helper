@@ -529,14 +529,18 @@ class SkillChatWidget(QWidget):
     # -- backend lifecycle ----------------------------------------------------
 
     def _ensure_backend(self):
-        """Lazily mint + start the dedicated backend (``start_backend``, as a Studio tab).
+        """Lazily mint + start the dedicated backend; what is kept: ``start_backend``, as in
+        a Studio tab.
 
         The backend is cached for the widget's lifetime so the OpenCode session is
         stable across turns (reused per send via ``ensure_session``, not
         recreated)."""
-        if self._backend is None:
-            self._backend = start_backend(self._backend_factory, self._backend_tab_id)
-        return self._backend
+        backend = self._backend
+        if backend is None:
+            backend, keep = start_backend(self._backend_factory, self._backend_tab_id)
+            if keep:
+                self._backend = backend
+        return backend
 
     def _ensure_session(self) -> None:
         """Make sure the cached backend has a LIVE session, creating one only if it

@@ -149,43 +149,12 @@ class TabContext:
     
     @property
     def backend(self) -> LLMBackend:
-        """
-        Get backend instance, creating lazily on first access.
-
-        If the factory returns a :class:`NoneBackend` as a *fallback*
-        (e.g. because the OpenCode server was not running), the result is
-        **not** cached so that the next access retries the factory and can
-        pick up a newly available server.  A ``NoneBackend`` is only
-        cached when the configured backend type is explicitly ``"none"``.
-
-        Returns:
-            LLMBackend instance for this tab
-        """
-        if self._backend is not None:
-            return self._backend
-
-        from .backend_base import NoneBackend
-
-        if self._backend_factory is None:
-            log.warning(f"TabContext {self.tab_id}: No backend factory available")
-            self._backend = NoneBackend()
-            return self._backend
-
-        log.info(f"TabContext {self.tab_id}: Creating backend lazily via factory")
-        backend = start_backend(self._backend_factory, self.tab_id)
-
-        # Only cache the backend if it is a real backend or the user
-        # explicitly configured "none".  A NoneBackend returned as a
-        # fallback (server unavailable) must NOT be cached so that the
-        # next property access retries.
-        if not isinstance(backend, NoneBackend) or self._backend_factory.backend_type == "none":
-            self._backend = backend
-        else:
-            log.info(
-                f"TabContext {self.tab_id}: Factory returned fallback NoneBackend — "
-                "will retry on next access"
-            )
-
+        """The tab's backend, created on first access; what is kept: ``start_backend``."""
+        backend = self._backend
+        if backend is None:
+            backend, keep = start_backend(self._backend_factory, self.tab_id)
+            if keep:
+                self._backend = backend
         return backend
     
     def update_managers(

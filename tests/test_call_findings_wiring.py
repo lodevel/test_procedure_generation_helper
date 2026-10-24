@@ -22,7 +22,7 @@ from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
 pytestmark = pytest.mark.skipif(not _env.rules_packager_available(), reason=_env.WHEEL_SKIP_REASON)
 
 ABSENT = "procedo_no_such_package_s9b"
-TEXT = ("# T\nDesc.\n\n## Meta\nformat_version: 2.0.2\nboard: B\nrules_pack: rules_packager_base@2.12.0\n\n"
+TEXT = ("# T\nDesc.\n\n## Meta\nformat_version: 2.0.2\nboard: B\nrules_pack: rules_packager_base@2.13.0\n\n"
         "## Equipment\nDMM1 : dmm\n\n## Steps\n"
         "1. Operator: read DC voltage on TP1 with DMM1 as {1}.\n"
         "2. Call analysis.rise_time({1}, limit=2) as {30} us.\n\n## Expected\n{30} < 5 us\n")

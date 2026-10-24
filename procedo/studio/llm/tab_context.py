@@ -157,12 +157,16 @@ class TabContext:
         for :meth:`adopt_backend`."""
         request_backend(self._backend_factory, self.tab_id, on_answer)
 
-    def adopt_backend(self, answer) -> LLMBackend:
-        """The backend :meth:`request_backend` answered: kept as the tab's as ``start_backend``
-        says, unless the tab's factory changed meanwhile (a settings swap): then it serves the
-        one send that waited for it."""
+    def adopt_backend(self, answer) -> Optional[LLMBackend]:
+        """The backend :meth:`request_backend` answered, kept as the tab's as ``start_backend``
+        says. None when the tab's factory changed meanwhile (a Settings save): that backend is
+        stopped, and the send that waited asks the new factory."""
         factory, backend, keep = answer
-        if keep and factory is self._backend_factory:
+        if factory is not self._backend_factory:
+            if hasattr(backend, "stop"):
+                backend.stop()
+            return None
+        if keep:
             self._backend = backend
         return backend
     

@@ -52,9 +52,8 @@ from procedo.ui import fluent_qss, theme, ui_kit
 from ..authoring import ContextBundle, SkillChatSession, assemble
 from ..widgets.composer_input import ComposerInput
 from ..widgets.skill_context_picker import SkillContextPicker
-from .skill_chat_backend import SkillChatBackend
+from .skill_chat_backend import WORKING, SkillChatBackend
 from ..llm.backend_base import LLMRequest, LLMTask
-from ..llm.backend_factory import SERVER_STARTING_TEXT, request_backend
 from ..llm.context_usage import format_context_usage, used_tokens
 from ..llm.worker import LLMWorker
 from ..widgets.work_timer import WorkTimer
@@ -62,8 +61,6 @@ from ..widgets.work_timer import WorkTimer
 log = logging.getLogger(__name__)
 
 _NO_CONTEXT = ContextBundle("", 0)
-#: The Conversation card's cue while a turn is in flight.
-_WORKING = "Working\u2026"
 
 
 def _needed(skill) -> list[str]:
@@ -157,11 +154,8 @@ class SkillChatWidget(QWidget):
         self._dispatch_gate = dispatch_gate
         self._session = SkillChatSession(self._skill)
 
-        # The dedicated backend (started on first send) + the in-flight worker.
-        self._llm = SkillChatBackend(backend_factory, backend_tab_id)
+        # The in-flight worker (the dedicated backend, ``_llm``, comes with the UI's cue).
         self._worker: Optional[LLMWorker] = None
-        # The (prompt, files) of the turn waiting for the backend to start (request_backend).
-        self._queued: Optional[tuple[str, list]] = None
         # The most recent assistant draft (what a host Inserts / parses). Empty
         # until the first reply lands.
         self._latest_draft: str = ""
@@ -207,6 +201,8 @@ class SkillChatWidget(QWidget):
         if self._picker is not None:
             self._picker.tick(_needed(self._skill))
         self._setup_ui()
+        # The dedicated backend, started on the first send (its cue: the Conversation card's).
+        self._llm = SkillChatBackend(backend_factory, backend_tab_id, self._loading, parent=self)
 
     # -- UI construction ------------------------------------------------------
 
@@ -247,7 +243,7 @@ class SkillChatWidget(QWidget):
         conversation = ui_kit.Card("Conversation")
         conversation.body.addWidget(self._transcript)
         self._loading = conversation.loading
-        self.busy_changed.connect(self._loading.hold(_WORKING).set)
+        self.busy_changed.connect(self._loading.hold(WORKING).set)
         cards = ui_kit.hbox()
         cards.setSpacing(12)
         cards.addWidget(conversation, 1)
@@ -458,7 +454,7 @@ class SkillChatWidget(QWidget):
         if self._worker is not None:
             self._worker.cancel()
             self._teardown_worker()
-        self._queued = None  # a turn waiting for the backend's start is dropped too
+        self._llm.drop_queued()  # a turn waiting for the backend's start is dropped too
         self._session = SkillChatSession(self._skill)
         self._llm.new_session()  # discard OpenCode's history too
         self._latest_draft = ""
@@ -475,7 +471,6 @@ class SkillChatWidget(QWidget):
         private OpenCode session doesn't leak. MANDATORY: a QWidget's closeEvent
         does NOT fire when embedded, so EVERY host MUST call this from its own
         closeEvent."""
-        self._queued = None  # a turn waiting for the backend's start never fires
         if self._worker is not None:
             self._worker.cancel()
             self._worker.wait(2000)
@@ -485,7 +480,8 @@ class SkillChatWidget(QWidget):
     def stop(self) -> None:
         """Public Stop: cancel the in-flight turn (host-facing). The wizard's
         *Abandon* calls this to halt a running build. No-op when idle or merely
-        queued (no worker yet) — the host cancels the queued fire on its side."""
+        queued by the host (no worker yet) — the host cancels the queued fire on its side; one
+        waiting for the AI server's start is not sent."""
         self._on_stop()
 
     def set_input_placeholder(self, text: str) -> None:
@@ -525,22 +521,6 @@ class SkillChatWidget(QWidget):
             if s is skill or getattr(s, "skill_id", None) == target:
                 return i
         return -1
-
-    # -- backend lifecycle ----------------------------------------------------
-
-    def _on_backend_started(self, started) -> None:
-        """The dedicated backend's start answered (GUI thread, ``request_backend``): kept as
-        ``start_backend`` says, for the widget's lifetime so the OpenCode session is stable
-        across turns (reused per send via ``ensure_session``, not recreated); the queued turn
-        fires on it (on a fallback ``NoneBackend`` its reply is the server's failure). Nothing
-        fires once the chat was cleared or shut down meanwhile."""
-        _factory, backend, keep = started
-        self._loading.done()
-        self._loading.set_label(_WORKING)
-        self._llm.adopt(backend, keep)
-        queued, self._queued = self._queued, None
-        if queued is not None:
-            self._really_dispatch(*queued, backend)
 
     # -- send path ------------------------------------------------------------
 
@@ -586,16 +566,13 @@ class SkillChatWidget(QWidget):
             self._set_busy(False)
             self._status.set_full_text("Failed to start — see logs.")
 
-    def _really_dispatch(self, prompt: str, files: list, backend=None) -> None:
-        """Build the worker and start streaming — the actual fire, run immediately or released
-        later by the gate (the UI already locked busy): on *backend*, else the dedicated one,
-        once it has started off the GUI thread (the Conversation card's cue says so meanwhile)."""
-        backend = self._llm.backend if backend is None else backend
-        if backend is None:
-            self._queued = (prompt, files)
-            self._loading.start(SERVER_STARTING_TEXT)
-            request_backend(self._llm.factory, self._llm.tab_id, self._on_backend_started)
-            return
+    def _really_dispatch(self, prompt: str, files: list) -> None:
+        """The actual fire, run immediately or released later by the gate (the UI already
+        locked busy): on the dedicated backend, once it has started off the GUI thread."""
+        self._llm.await_backend(lambda backend: self._fire(backend, prompt, files))
+
+    def _fire(self, backend, prompt: str, files: list) -> None:
+        """Build the worker on *backend* and start streaming."""
         self._llm.ensure_session()
 
         _declared = list(
@@ -742,9 +719,12 @@ class SkillChatWidget(QWidget):
         self.reply_failed.emit(message)
 
     def _on_stop(self) -> None:
+        """Stop the turn in flight; one still waiting for the AI server is not sent."""
         if self._worker is not None:
             self._worker.cancel()
             self._status.set_full_text("Stopping…")
+        elif self._llm.drop_queued():
+            self._on_error("Not sent: stopped while the AI server was starting.")
 
     def _on_skill_changed(self, index: int) -> None:
         """Combo path: switch the active skill. (The combo is disabled while a
@@ -783,6 +763,8 @@ class SkillChatWidget(QWidget):
         if not self._llm.relaunch_server():
             self._status.set_full_text("This backend has no restartable server.")
             return
+        if self._llm.drop_queued():
+            self._on_error("Not sent: the AI server is restarting.")
         # Cancel any in-flight (possibly hung) request: the next send reconnects to the
         # fresh server.
         if self._worker is not None:

@@ -83,13 +83,28 @@ class LLMTabMixin:
             return
         chat.set_llm_active(True, cancellable=False)
         chat.loading.start(SERVER_STARTING_TEXT)
-        self.tab_context.request_backend(self._on_backend_started)
+        try:
+            self.tab_context.request_backend(self._on_backend_started)
+        except Exception:
+            if self._queued_send is None:  # answered at once: the failure is the send's own
+                raise
+            log.exception("Requesting the tab's backend failed")
+            self._queued_send = None
+            chat.loading.done()
+            chat.set_llm_active(False)
+            chat.post(self.tab_context, ChatMessage(
+                role="system", content="Not sent: the AI server could not be started.",
+                tone="danger"))
 
     def _on_backend_started(self, answer) -> None:
         """The backend start answered (GUI thread): the queued send runs on that backend (on a
         fallback ``NoneBackend`` its reply is the server's failure), unless its test was closed
-        meanwhile."""
+        meanwhile. Started for a factory a Settings save replaced meanwhile: the send waits
+        for a start on the new one."""
         backend = self.tab_context.adopt_backend(answer)
+        if backend is None:
+            self.tab_context.request_backend(self._on_backend_started)
+            return
         chat = self.main_window.dock.chat_panel
         chat.loading.done()
         chat.set_llm_active(False)
@@ -194,6 +209,7 @@ class LLMTabMixin:
         self.main_window.dock.chat_panel.switch_context(self.tab_context)
         self.main_window.dock.chat_panel.add_thinking_message()
 
+        self._turn_backend = backend  # the reply's context window is this backend's
         self._worker = LLMWorker(backend, request, parent=self)
         self._worker.finished.connect(self._handle_llm_response)
         self._worker.error.connect(self._handle_llm_error)
@@ -378,7 +394,7 @@ class LLMTabMixin:
             # lazily here (the server is up post-response) and cached per backend;
             # leaves the static fallback in place when it can't be resolved.
             try:
-                window = self.tab_context.backend.get_context_window()
+                window = self._turn_backend.get_context_window()
             except Exception:
                 window = None
             if isinstance(window, int) and window > 0:

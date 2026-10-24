@@ -1,27 +1,84 @@
 """The dedicated backend of one skill chat (:class:`~procedo.studio.dock.skill_chat_widget.
-SkillChatWidget`): its own OpenCode session, kept for the chat's lifetime so the session is
-stable across turns, a fresh session on a reset, the shared server's relaunch, the stop."""
+SkillChatWidget`): started off the GUI thread on the first send, its own OpenCode session, kept
+for the chat's lifetime so the session is stable across turns, a fresh session on a reset, the
+shared server's relaunch, the stop."""
 
 from __future__ import annotations
 
 import logging
 import threading
 
+from PySide6.QtCore import QObject
+
+from ..llm.backend_factory import SERVER_STARTING_TEXT, request_backend
+
 log = logging.getLogger(__name__)
 
+#: The Conversation card's cue while a turn is in flight.
+WORKING = "Working\u2026"
 
-class SkillChatBackend:
-    """One skill chat's backend (``backend``: None until one started and was kept)."""
 
-    def __init__(self, factory, tab_id: str) -> None:
+def _stop(backend) -> None:
+    """Stop a started backend nobody uses."""
+    if hasattr(backend, "stop"):
+        try:
+            backend.stop()
+        except Exception:
+            log.exception("skill-chat backend stop failed")
+
+
+class SkillChatBackend(QObject):
+    """One skill chat's backend (``backend``: None until one started and was kept); *cue* is
+    the chat's loading cue, which says "Starting the AI server…" while a turn waits for it."""
+
+    def __init__(self, factory, tab_id: str, cue, parent=None) -> None:
+        super().__init__(parent)
         self.factory = factory
         self.tab_id = tab_id
         self.backend = None
+        self._cue = cue
+        self._starting = cue.hold(SERVER_STARTING_TEXT)
+        self._queued = None  # fire(backend) of the turn waiting for the backend's start
+        self._requested = False  # a start is out
+        self._closed = False
 
-    def adopt(self, backend, keep: bool) -> None:
-        """A started backend: kept as ``start_backend`` says."""
-        if keep and self.backend is None:
+    def await_backend(self, fire) -> None:
+        """``fire(backend)`` now, or once the backend has started off the GUI thread
+        (``request_backend``), the cue saying so meanwhile — mirrors the Studio tab's
+        ``_await_backend``. A second turn meanwhile replaces the queued one and waits for the
+        same start."""
+        if self.backend is not None:
+            fire(self.backend)
+            return
+        self._queued = fire
+        self._starting.set(True)
+        if not self._requested:
+            self._requested = True
+            request_backend(self.factory, self.tab_id, self._on_started)
+
+    def drop_queued(self) -> bool:
+        """Drop the turn waiting for the backend (its start goes on): True when one was."""
+        queued, self._queued = self._queued, None
+        if self._starting.on:
+            self._starting.set(False)
+            self._cue.set_label(WORKING)
+        return queued is not None
+
+    def _on_started(self, answer) -> None:
+        """The start answered (GUI thread): kept as ``start_backend`` says, the queued turn
+        fired on it (on a fallback ``NoneBackend`` its reply is the server's failure). One
+        nobody uses — the chat shut down meanwhile, or not kept and no turn waiting — is
+        stopped."""
+        _factory, backend, keep = answer
+        self._requested = False
+        fire = None if self._closed else self._queued
+        self.drop_queued()
+        if keep and not self._closed and self.backend is None:
             self.backend = backend
+        elif fire is None:
+            _stop(backend)
+        if fire is not None:
+            fire(backend)
 
     def ensure_session(self) -> None:
         """Make sure the cached backend has a LIVE session, creating one only if it
@@ -72,10 +129,10 @@ class SkillChatBackend:
         return True
 
     def shutdown(self) -> None:
-        """Stop the backend so the private OpenCode session doesn't leak."""
-        if self.backend is not None and hasattr(self.backend, "stop"):
-            try:
-                self.backend.stop()
-            except Exception:
-                log.exception("skill-chat backend stop failed")
+        """Stop the backend so the private OpenCode session doesn't leak; a turn waiting for
+        its start never fires, and what that start answers is stopped."""
+        self._closed = True
+        self.drop_queued()
+        if self.backend is not None:
+            _stop(self.backend)
             self.backend = None

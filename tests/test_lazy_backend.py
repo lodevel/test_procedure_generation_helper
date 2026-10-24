@@ -23,9 +23,13 @@ from .test_main_window_characterization import qapp as qapp
 class _Backend:
     def __init__(self):
         self.started = 0
+        self.stopped = False
 
     def start(self):
         self.started += 1
+
+    def stop(self):
+        self.stopped = True
 
 
 class _Factory:
@@ -110,14 +114,15 @@ def test_a_tab_without_a_factory_has_a_none_backend(qapp):
     assert isinstance(backend, NoneBackend) and tab.backend is backend
 
 
-def test_a_backend_started_for_a_replaced_factory_serves_its_send_only(qapp):
-    """A settings swap during the start: the tab's next send starts on the new factory."""
+def test_a_backend_started_for_a_replaced_factory_is_stopped_never_used(qapp):
+    """A Settings save during the start: the send asks the new factory."""
     backend = _Backend()
     tab = _tab(_Factory(backend, backend_type="none"))
     answers = _Answers()
     tab.request_backend(answers.take)
     tab.update_backend_factory(_Factory(_Backend()))
-    assert tab.adopt_backend(answers.first()) is backend and tab.backend is None
+    assert tab.adopt_backend(answers.first()) is None and tab.backend is None
+    assert backend.stopped
 
 
 @pytest.fixture
@@ -141,22 +146,20 @@ def skill_chat(qapp, monkeypatch):
 
 
 def test_a_skill_chat_retries_after_a_fallback_none_backend(skill_chat):
-    """It kept the fallback: "server down" on every send until Restart."""
+    """It kept the fallback: "server down" on every send until Restart. A backend nobody
+    keeps or waits for is stopped."""
     fallback, real, later = NoneBackend(reason="server down"), _Backend(), _Backend()
-    widget = skill_chat(_Factory())
-    widget._on_backend_started((None, fallback, False))
-    assert widget._llm.backend is None
-    widget._on_backend_started((None, real, True))
-    widget._on_backend_started((None, later, True))  # a second start meanwhile never replaces it
-    assert widget._llm.backend is real
+    llm = skill_chat(_Factory())._llm
+    llm._on_started((None, fallback, False))
+    assert llm.backend is None
+    llm._on_started((None, real, True))
+    llm._on_started((None, later, True))  # a second start never replaces it
+    assert llm.backend is real and not real.stopped and later.stopped
 
 
-def test_a_skill_chat_without_a_factory_has_a_none_backend(skill_chat, monkeypatch):
+def test_a_skill_chat_without_a_factory_has_a_none_backend(skill_chat):
     """It failed with an AttributeError ("Failed to start — see logs.")."""
     fired = []
-    widget = skill_chat(None)
-    real = widget._really_dispatch
-    monkeypatch.setattr(widget, "_really_dispatch", lambda prompt, files, backend=None: (
-        real(prompt, files) if backend is None else fired.append(backend)))
-    widget._really_dispatch("hello", [])  # no server involved: fired at once
-    assert isinstance(widget._llm.backend, NoneBackend) and fired == [widget._llm.backend]
+    llm = skill_chat(None)._llm
+    llm.await_backend(fired.append)  # no server involved: fired at once
+    assert isinstance(llm.backend, NoneBackend) and fired == [llm.backend]

@@ -39,7 +39,7 @@ class _SlowServer:
     """A fake server manager whose start takes :data:`START_S` and then succeeds (or not)."""
 
     def __init__(self, ok: bool = True):
-        self.ok, self.up, self.starts = ok, False, 0
+        self.ok, self.up, self.starts, self.relaunched = ok, False, 0, 0
         self.last_status = None
         self.config = OpenCodeConfig()
 
@@ -55,12 +55,16 @@ class _SlowServer:
             self.last_status = SimpleNamespace(message=DOWN)
         return self.ok
 
+    def relaunch(self):
+        self.relaunched += 1
+
 
 class _Backend:
     """The OpenCode backend a started server gives (no network)."""
 
     def __init__(self, **_config):
-        self.started = False
+        self.started = self.stopped = False
+        _Backend.made.append(self)
 
     def start(self):
         self.started = True
@@ -70,7 +74,7 @@ class _Backend:
         return None
 
     def stop(self):
-        pass
+        self.stopped = True
 
 
 class _Worker:
@@ -109,6 +113,7 @@ def _factory(monkeypatch, server) -> BackendFactory:
     # The test project's bundle declares no prompt: the tab's prompt is this one.
     monkeypatch.setattr(llm_tab_mixin.PromptBuilder, "build", lambda self, request, **kw: "PROMPT")
     _Worker.made = []
+    _Backend.made = []
     config = BackendConfig(backend_type=BACKEND_TYPE_OPENCODE, opencode=server.config)
     return BackendFactory(config, server)
 
@@ -281,3 +286,89 @@ def test_a_task_that_replaces_a_waiting_send_says_so_and_goes_once(opened, monke
     assert server.starts == 1 and len(_Worker.made) == 1
     assert _Worker.made[0].request.task == LLMTask.REVIEW_TEXT_PROCEDURE
     assert view.tab_context.messages[-1].full_prompt == "PROMPT"
+
+
+# --- a waiting turn: Stop, Restart, close; a Settings save; a failed request ---------------
+
+def _system_lines(chat):
+    return [text for speaker, text in chat._blocks if speaker == "System"]
+
+
+def test_stop_while_the_server_starts_drops_the_turn_and_unlocks_the_chat(
+        skill_chat, monkeypatch):
+    chat = skill_chat(_factory(monkeypatch, _SlowServer()))
+    failed = []
+    chat.reply_failed.connect(failed.append)
+    chat.send_user_turn("hello")
+    assert chat._stop_btn.isEnabled()
+
+    chat._stop_btn.click()
+
+    reason = "Not sent: stopped while the AI server was starting."
+    assert failed == [reason] and _system_lines(chat)[-1] == reason
+    assert ("You", "hello") in chat._blocks  # what was typed stays
+    assert chat._send_btn.isEnabled() and not chat._loading.active
+    _spin(lambda: chat._llm.backend is not None)  # the start goes on, for the next turn
+    assert _Worker.made == []
+
+
+def test_restart_while_the_server_starts_drops_the_turn(skill_chat, monkeypatch):
+    server = _SlowServer()
+    chat = skill_chat(_factory(monkeypatch, server))
+    chat.send_user_turn("hello")
+
+    chat._on_restart_backend()
+
+    assert _system_lines(chat)[-1] == "Not sent: the AI server is restarting."
+    assert not chat._loading.active and chat._send_btn.isEnabled()
+    _spin(lambda: server.relaunched and not chat._llm._requested)
+    assert _Worker.made == []
+
+
+def test_a_chat_closed_while_the_server_starts_stops_what_it_answers(skill_chat, monkeypatch):
+    server = _SlowServer()
+    chat = skill_chat(_factory(monkeypatch, server))
+    chat.send_user_turn("hello")
+    chat.shutdown()
+    _spin(lambda: not chat._llm._requested)
+
+    assert chat._llm.backend is None and _Worker.made == []
+    assert [b.stopped for b in _Backend.made] == [True]  # started, nobody's: stopped
+    assert not chat._llm._starting.on  # its "Starting the AI server…" went with the close
+
+
+def test_a_settings_save_during_the_start_sends_on_the_new_server(opened, monkeypatch, mbox):
+    w = opened
+    view = w.text_only_tab
+    old, new = _SlowServer(), _SlowServer()
+    view.tab_context.update_backend_factory(_factory(monkeypatch, old))
+    view._run_task_async(LLMTask.REVIEW_TEXT_PROCEDURE)
+    replacement = _factory(monkeypatch, new)
+    view.tab_context.update_backend_factory(replacement)  # what a Settings save does
+
+    _spin(lambda: _Worker.made)
+
+    assert mbox.critical == [] and old.starts == new.starts == 1
+    (worker,) = _Worker.made
+    stale, fresh = _Backend.made  # the replaced factory's (stopped), the new one's
+    assert worker.backend is fresh is view.tab_context.backend and fresh.started
+    assert stale.stopped and not fresh.stopped
+    assert not w.dock.chat_panel.loading.active
+
+
+def test_a_request_that_fails_unlocks_the_chat_and_says_why(opened, monkeypatch):
+    w = opened
+    view = w.text_only_tab
+    w.view_stack.setCurrentWidget(view)
+    view.tab_context.update_backend_factory(_factory(monkeypatch, _SlowServer()))
+
+    def refuse(on_answer):
+        raise RuntimeError("no QApplication")
+    monkeypatch.setattr(view.tab_context, "request_backend", refuse)
+
+    view._run_task_async(LLMTask.AD_HOC_CHAT, user_message="check U5")
+
+    chat = w.dock.chat_panel
+    assert chat.send_btn.isEnabled() and not chat.loading.active
+    assert view._queued_send is None
+    assert _lines(view)[-2:] == ["check U5", "Not sent: the AI server could not be started."]

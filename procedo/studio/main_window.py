@@ -6,7 +6,6 @@ Implements the main UI structure from Section 9.
 
 from pathlib import Path
 from typing import Optional
-import json
 import logging
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QMenuBar, QMessageBox, QFileDialog,
@@ -20,19 +19,9 @@ from procedo.core.install_helper_dialog import InstallPackageDialog
 from procedo.core.project_model import ProjectModel
 from procedo.core.scenario_dialog import ScenarioManagerDialog
 
-from .core import (
-    ArtifactManager, SessionState, ProjectManager, ArtifactType,
-    CodeValidator
-)
+from .core import ArtifactManager, SessionState, ProjectManager
 from .core.task_config import TaskConfigManager
-from .llm import (
-    LLMBackend,
-    LLMRequest,
-)
-from .llm.backend_factory import (
-    BackendFactory,
-    BACKEND_TYPE_NONE
-)
+from .llm.backend_factory import BackendFactory
 from .tabs import (
     WorkspaceTab, TextOnlyTab, TextJsonTab, JsonCodeTab, TraceabilityTab
 )

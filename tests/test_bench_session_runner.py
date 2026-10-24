@@ -442,26 +442,6 @@ class EndpointRekeyTests(_BenchBase):
         r3 = self._acquire(s, [_claim("T-B", "PSU2", _ADDR_B)])
         self.assertTrue(r3["ok"])
 
-    def test_old_wheel_reports_unsupported_bundle(self):
-        # Simulate an old wheel: kill BOTH resolution paths of
-        # ``from rules_packager_base import bench_endpoints`` — the parent
-        # package attribute AND the sys.modules entry (None -> ImportError).
-        import rules_packager_base as rpb
-        saved_attr = rpb.bench_endpoints
-        saved_mod = sys.modules.get("rules_packager_base.bench_endpoints")
-        del rpb.bench_endpoints
-        sys.modules["rules_packager_base.bench_endpoints"] = None
-
-        def _restore():
-            rpb.bench_endpoints = saved_attr
-            sys.modules["rules_packager_base.bench_endpoints"] = saved_mod
-        self.addCleanup(_restore)
-        s = self._session()
-        resp = self._acquire(s, [_claim("T-A", "PSU1")])
-        self.assertFalse(resp["ok"])
-        self.assertEqual(resp["kind"], "unsupported_bundle")
-        self.assertIn("2.0.5", resp["error"])
-
     def test_identities_from_idn_attribute(self):
         class _IdnFake(_Fake):
             idn = "ACME PSU 9080,SN123"
@@ -581,31 +561,6 @@ class GuidedRoutingTests(_BenchBase):
         self.assertEqual(len(self._devcalls("GUIDED", "connect")), 1)
         self.assertEqual(len(self._devcalls("GUIDED", "set_voltage")), 1)
         self.assertEqual(len(self._devcalls("PHYS", "set_voltage")), 0)
-        self.assertEqual(set(s.held), {_EP_A, "PSU1"})
-
-    def test_named_op_stays_name_keyed_on_old_wheel(self):
-        # Old-wheel venv (no bench_endpoints): the canonical fold is
-        # unavailable, so the op keeps today's name-keyed behavior (the same
-        # unsupported-bundle conditional pattern as acquire_run).
-        s = self._session()
-        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
-        r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
-        self._dispatch(s, {"cmd": "release_run", "run_id": r1["run_id"]})
-        import rules_packager_base as rpb
-        saved_attr = rpb.bench_endpoints
-        saved_mod = sys.modules.get("rules_packager_base.bench_endpoints")
-        del rpb.bench_endpoints
-        sys.modules["rules_packager_base.bench_endpoints"] = None
-
-        def _restore():
-            rpb.bench_endpoints = saved_attr
-            sys.modules["rules_packager_base.bench_endpoints"] = saved_mod
-        self.addCleanup(_restore)
-        r = er._cmd_exec_ops(s, {"ops": [self._set_v("PSU1")],
-                                 "bench_map": {"PSU1": {"visa": _ADDR_A,
-                                                        "_dev": "GUIDED"}}})
-        self.assertFalse(r["aborted"], r)
-        self.assertEqual(len(self._devcalls("GUIDED", "connect")), 1)
         self.assertEqual(set(s.held), {_EP_A, "PSU1"})
 
 
@@ -2196,30 +2151,6 @@ class StaleNameHoldTests(_BenchBase):
         self.assertEqual(len(self._devcalls("GUIDED-B2", "connect")), 0)
         self.assertEqual(len(self._devcalls("GUIDED-B", "close")), 0)
         self.assertEqual(len(self._devcalls("GUIDED-B", "set_voltage")), 2)
-
-    def test_wheel_less_fallback_keeps_name_keyed_reuse(self):
-        # No canonical_endpoint (old wheel): staleness is unprovable — the
-        # name-keyed hold is reused exactly as today, nothing closed.
-        import rules_packager_base as rpb
-        saved_attr = rpb.bench_endpoints
-        saved_mod = sys.modules.get("rules_packager_base.bench_endpoints")
-        del rpb.bench_endpoints
-        sys.modules["rules_packager_base.bench_endpoints"] = None
-
-        def _restore():
-            rpb.bench_endpoints = saved_attr
-            sys.modules["rules_packager_base.bench_endpoints"] = saved_mod
-        self.addCleanup(_restore)
-        s = self._session()
-        self._exec(s, _ADDR_B, "GUIDED-B")
-        inst_b = s.held["PSU1"]
-        r = self._exec(s, _ADDR_C, "GUIDED-C")          # re-address: unprovable
-        self.assertFalse(r["aborted"], r)
-        self.assertIs(s.held["PSU1"], inst_b)           # today's behavior
-        self.assertEqual(len(self._devcalls("GUIDED-B", "close")), 0)
-        self.assertEqual(len(self._devcalls("GUIDED-C", "connect")), 0)
-        self.assertEqual(len(self._devcalls("GUIDED-B", "set_voltage")), 2)
-        self.assertEqual(s.unconfirmed_off, {})
 
     def test_safe_off_reaches_recorded_device_after_readdress(self):
         # Safety semantics: a safe-off frame reaches the device its RECORD

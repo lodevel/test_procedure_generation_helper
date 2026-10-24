@@ -595,7 +595,7 @@ def validate_response(
     # so the downstream validators see the corrected response.
     try:
         restore_issues = _auto_restore_operator_only_fields(response, current_artifacts)
-    except Exception as exc:  # noqa: BLE001 — never let auto-restore block validation
+    except Exception:  # noqa: BLE001 — never let auto-restore block validation
         log.exception("auto-restore crashed; falling back without restoration.")
         restore_issues = []
 

@@ -12,15 +12,13 @@ This replaces the centralized MainWindow.run_llm_task() approach.
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
 from pathlib import Path
 
 from . import reconstruction
 from .backend_base import LLMBackend, LLMRequest, LLMTask
 from .output_contracts import get_contract_for_tab, get_allowed_artifacts
-from .prompt_builder import PromptBuilder
-from .response_parser import ResponseParser
 from ..core.fileio import content_digest
 from ..core.project_manager import ATTACHED_NOTE, PROJECT_RULES_WIN, RuleDoc, attached_as_file
 from ..core.session_state import SessionState
@@ -620,11 +618,7 @@ class TabContext:
                     skipped.append("test_code")
                     log.debug(f"TabContext {self.tab_id}: skipping test_code (unchanged)")
         
-        # If artifacts were skipped, add a note to the user message
         if skipped:
-            skip_note = f"\n\n[Note: The following artifacts are unchanged and not included: {', '.join(skipped)}]"
-            # This note will be visible in the prompt but we'll handle it in the backend
-            # For now, just log it
             log.info(f"TabContext {self.tab_id}: {len(skipped)} artifacts skipped (unchanged)")
         
         return context

@@ -21,6 +21,7 @@ from procedo.ui.ui_kit import set_pill
 from ..core import ArtifactManager, ArtifactType, SessionState
 from ..core.proposal import discard_pending
 from ..shell import VIEWS
+from .project_controller import refresh_parser_buttons
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -289,9 +290,7 @@ class DocumentController:
         # user edited config.json externally, or a parser variant file was
         # added/removed). Re-evaluate visibility here so the Quick Parse
         # button state is consistent per-test.
-        mw.text_json_tab.refresh_parser_button()
-        mw.text_only_tab.refresh_parser_button()
-        mw.json_code_tab.refresh_parser_button()
+        refresh_parser_buttons(mw)
 
         # Update status indicators
         mw._update_status_indicators()

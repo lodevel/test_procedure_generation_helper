@@ -246,9 +246,8 @@ and it is driven by Procedo Bench's interactive/manual runner
 - Procedo Bench imports this package from its venv's editable install.
 - Bench and its shared core reach the engine processes through `procedo.engine_client`
   (`engine`, `bench_client`, `engine_replies` — `ManualRunResult` of `build_manual_run`).
-- Several main-GUI modules import from `procedo.studio` directly —
-  `pack_ops.bundle_capabilities` (`bench_fields`, `bench_constant_names`) and
-  `core.task_config`.
+- One main-GUI module imports from `procedo.studio` directly — `core.task_config`
+  (bench fields are read by the host's `procedo.core.bundle_registry`).
 - The interactive/manual runner (`guided_manual_execution_dialog.py`) uses
   `pack_parsers` and the per-op execution daemon to run ops against live equipment;
   its bench Console (per-op output, reconnects, safe-off, and terminal traffic) is

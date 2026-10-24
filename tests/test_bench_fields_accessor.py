@@ -1,10 +1,7 @@
-"""Unit tests for the bundle bench_fields accessor in pack_parsers.
-
-The pack declares its config variables (rich bench_fields) in rules_index.json;
-generate_all emits them into defaults.json:pack_dispatch.bench_fields. The GUI
-reads them here to build the equipment-config editor and to identify which
-generated constants are operator-editable bench config (replacing the project
-regex).
+"""Studio's editor mode reads the bundle's bench_fields through the host's one
+defaults reader (``procedo.core.bundle_registry.bench_fields``) at the path
+``bundle_capabilities.defaults_path`` resolves: ``PROCEDO_BUNDLE_DEFAULTS_PATH``
+when no project is open.
 
 Runs without PySide6:
     PYTHONPATH=. python3 -m pytest tests/test_bench_fields_accessor.py --noconftest -q
@@ -21,6 +18,7 @@ from tests._qt_stub import ensure_workflow_editor_importable
 
 ensure_workflow_editor_importable()
 
+from procedo.core import bundle_registry  # noqa: E402
 from procedo.studio.pack_ops import bundle_capabilities  # noqa: E402
 from procedo.studio.launch_env import BUNDLE_DEFAULTS_PATH  # noqa: E402
 
@@ -35,47 +33,19 @@ class TestBenchFieldsAccessor(unittest.TestCase):
         else:
             os.environ[BUNDLE_DEFAULTS_PATH] = self._saved
 
-    def _bundle(self, bench: dict) -> None:
+    def test_editor_mode_reads_the_env_bundle(self):
         d = self.enterContext(tempfile.TemporaryDirectory())
-        (Path(d) / "defaults.json").write_text(
-            json.dumps({"pack_dispatch": {"bench_fields": bench}}), encoding="utf-8"
-        )
+        (Path(d) / "defaults.json").write_text(json.dumps({"pack_dispatch": {"bench_fields": {
+            "controller": [{"name": "baud", "type": "enum", "default": 115200, "choices": [9600, 115200]}],
+        }}}), encoding="utf-8")
         os.environ[BUNDLE_DEFAULTS_PATH] = str(Path(d) / "defaults.json")
-
-    def test_reads_bench_fields(self):
-        self._bundle({"controller": [
-            {"name": "baud", "type": "enum", "default": 115200, "choices": [9600, 115200]},
-        ]})
-        bf = bundle_capabilities.bench_fields()
-        self.assertEqual(bf["controller"][0]["type"], "enum")
+        bf = bundle_registry.bench_fields(bundle_capabilities.defaults_path(None))
         self.assertEqual(bf["controller"][0]["choices"], [9600, 115200])
-
-    def test_constant_names_match_codegen_naming(self):
-        self._bundle({
-            "psu": [{"name": "visa"}, {"name": "remote"}, {"name": "channels"}],
-            "controller": [{"name": "port"}, {"name": "baud"}],
-        })
-        self.assertEqual(
-            bundle_capabilities.bench_constant_names("psu", "PSU1"),
-            ["PSU1_VISA", "PSU1_REMOTE", "PSU1_CHANNELS"],
-        )
-        self.assertEqual(
-            bundle_capabilities.bench_constant_names("controller", "FNCORE_DSC"),
-            ["FNCORE_DSC_PORT", "FNCORE_DSC_BAUD"],
-        )
 
     def test_empty_when_no_bundle(self):
         os.environ.pop(BUNDLE_DEFAULTS_PATH, None)
-        self.assertEqual(bundle_capabilities.bench_fields(), {})
-        self.assertEqual(bundle_capabilities.bench_constant_names("psu", "PSU1"), [])
-
-    def test_empty_when_pre_benchfields_bundle(self):
-        d = self.enterContext(tempfile.TemporaryDirectory())
-        (Path(d) / "defaults.json").write_text(
-            json.dumps({"pack_dispatch": {"capabilities": {}}}), encoding="utf-8"
-        )
-        os.environ[BUNDLE_DEFAULTS_PATH] = str(Path(d) / "defaults.json")
-        self.assertEqual(bundle_capabilities.bench_fields(), {})
+        self.assertIsNone(bundle_capabilities.defaults_path(None))
+        self.assertEqual(bundle_registry.bench_fields(None), {})
 
 
 if __name__ == "__main__":

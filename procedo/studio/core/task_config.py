@@ -47,8 +47,8 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Callable, Dict, List, Optional, Union
 
-from procedo.core import config_manager
-from procedo.core.workflow_defaults import read_editor_defaults
+from procedo.core import bundle_registry, config_manager
+from procedo.core.workflow_defaults import merge_workflows, read_editor_defaults
 
 from .. import launch_env
 from ..llm.backend_base import LLMTask
@@ -265,7 +265,7 @@ class TaskConfigManager:
             return f"file:{self._fallback_path}"
         proj = self._project_config_path()
         if proj and proj.exists():
-            data = _safe_read_json(proj)
+            data = config_manager.read_unified_config(proj.parent)
             if isinstance(data, dict) and isinstance(data.get("workflows"), dict):
                 return f"project:{proj}"
         return f"fallback:{self._fallback_path}"
@@ -327,12 +327,12 @@ class TaskConfigManager:
             self._project_workflow_snapshot = deepcopy(project_workflows)
 
             if pack_defaults or project_workflows:
-                # Three-layer merge mirroring the parent app's
-                # ``workflow_defaults.merged_layered_view``:
-                # editor_baked_in < pack < project. Reuses ``editor_plus_pack``
-                # (built above for the stamp filter) so both paths see the
-                # same baseline.
-                merged = _merge_workflows(editor_plus_pack, project_workflows)
+                # The host's merge (editor_baked_in < pack < project), on a base
+                # that holds the bundle-declared tasks only — unlike the host's
+                # ``merged_layered_view``, which keeps the editor-only tasks too.
+                # Reuses ``editor_plus_pack`` (built above for the stamp filter)
+                # so both paths see the same baseline.
+                merged = merge_workflows(editor_plus_pack, project_workflows)
                 # Run button-label migration on the merged dict so older
                 # per-project configs upgrade cleanly. Also migrate the
                 # snapshot so future saves persist the upgraded labels.
@@ -424,12 +424,7 @@ class TaskConfigManager:
             if not path_str:
                 return {}
             defaults_path = Path(path_str)
-        if not defaults_path.is_file():
-            return {}
-        data = _safe_read_json(defaults_path)
-        if not isinstance(data, dict):
-            return {}
-        workflows = data.get("workflows")
+        workflows = (bundle_registry.read_defaults(defaults_path) or {}).get("workflows")
         return workflows if isinstance(workflows, dict) else {}
 
     def _populate_from_workflows(
@@ -615,7 +610,7 @@ class TaskConfigManager:
             return
 
         # Read-back verification before unlinking the legacy file.
-        verify = _safe_read_json(project_cfg_path)
+        verify = config_manager.read_unified_config(project_cfg_path.parent)
         if not (isinstance(verify, dict)
                 and isinstance(verify.get("workflows"), dict)
                 and verify["workflows"]):
@@ -1104,18 +1099,8 @@ class TaskConfigManager:
 
 
 # ---------------------------------------------------------------------------
-# Small JSON helpers — module-private.
+# Module-private helpers.
 # ---------------------------------------------------------------------------
-
-
-def _safe_read_json(path: Path) -> Any:
-    """Read JSON, returning ``{}`` on any failure. Diagnostics are logged."""
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        log.warning("Could not read JSON from %s: %s — treating as empty.", path, e)
-        return {}
 
 
 def _clone_selected_rules(value: SelectedRules) -> SelectedRules:
@@ -1171,98 +1156,3 @@ def _apply_editor_field_fallback(pack: Dict[str, Any]) -> Dict[str, Any]:
                     merged[k] = v
             pack_tasks[i] = merged
     return enriched
-
-
-def _merge_workflows(base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:
-    """Per-tab merge: ``overlay`` (e.g. project) wins per-entry within
-    each section, NOT wholesale per section.
-
-    Phase 4.2 deepens the merge so overriding one task no longer drops
-    the pack/editor's other tasks. Per-section semantics:
-
-    * ``tasks`` and ``validators``: list-of-dicts merged by ``id``.
-      Overlay entries override matching ids; base entries with ids not
-      in overlay are kept. Result order is overlay-first then base
-      tail (overlay-declared entries surface to the user first).
-    * ``chat_config``: dict; overlay wins shallow (sub-keys preserved
-      from base when overlay omits them, e.g. project sets ``enabled``
-      but leaves ``system_prompt`` to pack/editor).
-    * Unknown keys: overlay wins on conflict, otherwise base value
-      survives.
-
-    Project tasks lists with ids not in any base are appended verbatim
-    (the user has added something new).
-    """
-    merged: Dict[str, Any] = {}
-    for tab_id in set(base) | set(overlay):
-        b = base.get(tab_id, {})
-        o = overlay.get(tab_id, {})
-        if not isinstance(b, dict):
-            b = {}
-        if not isinstance(o, dict):
-            o = {}
-        merged[tab_id] = _merge_tab(b, o)
-    return merged
-
-
-def _merge_tab(base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:
-    """Helper: merge a single tab's dict per the Phase-4.2 rules."""
-    out: Dict[str, Any] = {}
-    # Start from base; overlay overwrites per-key below.
-    for k, v in base.items():
-        out[k] = v
-    for k, v in overlay.items():
-        if k in ("tasks", "validators") and isinstance(v, list) and isinstance(out.get(k), list):
-            out[k] = _merge_list_by_id(out[k], v)
-        elif k == "chat_config" and isinstance(v, dict) and isinstance(out.get(k), dict):
-            out[k] = {**out[k], **v}
-        else:
-            out[k] = v
-    return out
-
-
-def _merge_list_by_id(base: list, overlay: list) -> list:
-    """Per-id, per-field merge for list-of-dicts.
-
-    For ids present in both lists, fields are merged at the field
-    level: overlay's value wins ONLY when it's not ``None``. ``None``
-    in the overlay means "fall through to the base value" — required
-    so projects that save a task with ``prompt_template: null``
-    (because the user only edited button_label) don't stomp the
-    editor's default prompt.
-
-    Result order: overlay-id first, then base ids not in overlay.
-    Orphans (entries without an id) tail-appended.
-    """
-    base_by_id: Dict[str, Dict[str, Any]] = {}
-    for entry in base:
-        if isinstance(entry, dict) and isinstance(entry.get("id"), str):
-            base_by_id[entry["id"]] = entry
-
-    out: list = []
-    seen_ids: set = set()
-    for entry in overlay:
-        if isinstance(entry, dict) and isinstance(entry.get("id"), str):
-            eid = entry["id"]
-            if eid in seen_ids:
-                continue
-            base_entry = base_by_id.get(eid, {})
-            merged = dict(base_entry)
-            for k, v in entry.items():
-                if v is not None:
-                    merged[k] = v
-            out.append(merged)
-            seen_ids.add(eid)
-    for entry in base:
-        if isinstance(entry, dict) and isinstance(entry.get("id"), str):
-            if entry["id"] not in seen_ids:
-                out.append(entry)
-                seen_ids.add(entry["id"])
-    # Orphans (no id) — overlay first then base.
-    for entry in overlay:
-        if not (isinstance(entry, dict) and isinstance(entry.get("id"), str)):
-            out.append(entry)
-    for entry in base:
-        if not (isinstance(entry, dict) and isinstance(entry.get("id"), str)):
-            out.append(entry)
-    return out

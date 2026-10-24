@@ -40,7 +40,7 @@ _SKIP_DIRS = {"__pycache__", "build", "dist", ".venv"}
 # carve the file, then lower or delete its entry.
 
 FILE_BUDGET: dict[str, int] = {
-    "studio/core/task_config.py": 1288,
+    "studio/core/task_config.py": 1159,
     "studio/llm/opencode_backend.py": 1251,  # +9: bare-except cleanup log lines
 }
 

@@ -1,4 +1,4 @@
-"""Tests for the bundle-defaults hand-off + merge helper.
+"""Tests for the bundle-defaults hand-off and the sparse-task layering.
 
 The legacy manifest-walk (drivers_registry → rules_index →
 pack_workflow_defaults.json) is gone. The parent app resolves the
@@ -8,20 +8,15 @@ bundle's pre-merged ``defaults.json`` via the
 
 * ``_load_pack_workflow_defaults`` reading from that env var (happy
   path + fallbacks).
-* ``_merge_workflows`` per-tab overlay semantics.
+* editor < pack < project layering of sparse bundle tasks (the merge
+  itself is the host's ``workflow_defaults.merge_workflows``, tested there).
 """
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
-import pytest
-
-from procedo.studio.core.task_config import (
-    TaskConfigManager,
-    _merge_workflows,
-)
+from procedo.studio.core.task_config import TaskConfigManager
 from procedo.studio.launch_env import BUNDLE_DEFAULTS_PATH
 
 
@@ -82,41 +77,6 @@ def test_bundle_env_var_no_workflows_block_returns_empty(monkeypatch, tmp_path):
     monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(defaults_path))
     mgr = TaskConfigManager(fallback_path=tmp_path / "no_fallback.json")
     assert mgr._load_pack_workflow_defaults() == {}
-
-
-# ---------------------------------------------------------------------------
-# _merge_workflows
-# ---------------------------------------------------------------------------
-
-
-def test_merge_workflows_overlay_overrides_per_key():
-    base = {"text_json": {"a": 1, "b": 2}}
-    overlay = {"text_json": {"a": 9}}
-    merged = _merge_workflows(base, overlay)
-    assert merged == {"text_json": {"a": 9, "b": 2}}
-
-
-def test_merge_workflows_new_tab_from_overlay():
-    base = {"text_json": {"a": 1}}
-    overlay = {"json_code": {"x": 7}}
-    merged = _merge_workflows(base, overlay)
-    assert merged == {"text_json": {"a": 1}, "json_code": {"x": 7}}
-
-
-def test_merge_workflows_empty_base():
-    assert _merge_workflows({}, {"text_json": {"a": 1}}) == {"text_json": {"a": 1}}
-
-
-def test_merge_workflows_empty_overlay():
-    assert _merge_workflows({"text_json": {"a": 1}}, {}) == {"text_json": {"a": 1}}
-
-
-def test_merge_workflows_non_dict_tab_value_tolerated():
-    """Defensive: a malformed tab payload (non-dict) shouldn't crash the
-    merge — it's treated as an empty dict so the other side wins."""
-    base = {"text_json": "not-a-dict"}
-    overlay = {"text_json": {"a": 1}}
-    assert _merge_workflows(base, overlay) == {"text_json": {"a": 1}}
 
 
 def test_sparse_pack_tasks_inherit_name_from_editor_defaults(monkeypatch, tmp_path):

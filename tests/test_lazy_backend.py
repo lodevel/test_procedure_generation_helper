@@ -10,6 +10,8 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from PySide6.QtCore import QObject
+from PySide6.QtWidgets import QApplication
 
 from procedo.studio.llm.backend_base import NoneBackend
 from procedo.studio.llm.backend_factory import start_backend
@@ -49,17 +51,32 @@ def test_start_backend_creates_for_the_tab_id_and_starts_it():
     assert factory.asked == ["skill_chat"] and backend.started == 1
 
 
+class _Answers(QObject):
+    """Takes the answers of a backend request (a QObject's bound method, as the tab's is)."""
+
+    def __init__(self):
+        super().__init__()
+        self.got = []
+
+    def take(self, answer):
+        self.got.append(answer)
+
+    def first(self):
+        deadline = time.monotonic() + 5
+        while not self.got and time.monotonic() < deadline:
+            QApplication.processEvents()
+            time.sleep(0.005)
+        return self.got[0]
+
+
 def _started(tab):
     """The tab's backend start, its answer adopted (as the tab does on the GUI thread)."""
-    answers = []
-    tab.start_backend(answers.append)
-    deadline = time.monotonic() + 5
-    while not answers and time.monotonic() < deadline:
-        time.sleep(0.005)
-    return tab.adopt_backend(answers[0])
+    answers = _Answers()
+    tab.request_backend(answers.take)
+    return tab.adopt_backend(answers.first())
 
 
-def test_a_tab_keeps_a_real_backend():
+def test_a_tab_keeps_a_real_backend(qapp):
     backend = _Backend()
     tab = _tab(_Factory(backend))
     assert tab.backend is None
@@ -67,7 +84,7 @@ def test_a_tab_keeps_a_real_backend():
     assert backend.started == 1
 
 
-def test_a_tab_retries_after_a_fallback_none_backend():
+def test_a_tab_retries_after_a_fallback_none_backend(qapp):
     fallback, real = NoneBackend(reason="server down"), _Backend()
     factory = _Factory(fallback, real)
     tab = _tab(factory)
@@ -76,32 +93,31 @@ def test_a_tab_retries_after_a_fallback_none_backend():
     assert factory.asked == ["text_json", "text_json"]
 
 
-def test_a_tab_keeps_the_none_backend_it_was_configured_with():
+def test_a_tab_keeps_the_none_backend_it_was_configured_with(qapp):
     """No server involved: answered at once."""
     chosen = NoneBackend()
     factory = _Factory(chosen, backend_type="none")
     tab = _tab(factory)
-    answers = []
-    tab.start_backend(answers.append)
-    assert tab.adopt_backend(answers[0]) is chosen and tab.backend is chosen
+    answers = _Answers()
+    tab.request_backend(answers.take)
+    assert answers.got and tab.adopt_backend(answers.got[0]) is chosen and tab.backend is chosen
     assert len(factory.asked) == 1
 
 
-def test_a_tab_without_a_factory_has_a_none_backend():
+def test_a_tab_without_a_factory_has_a_none_backend(qapp):
     tab = _tab(None)
-    answers = []
-    tab.start_backend(answers.append)
-    assert isinstance(tab.adopt_backend(answers[0]), NoneBackend) and tab.backend is answers[0][1]
+    backend = _started(tab)
+    assert isinstance(backend, NoneBackend) and tab.backend is backend
 
 
-def test_a_backend_started_for_a_replaced_factory_serves_its_send_only():
+def test_a_backend_started_for_a_replaced_factory_serves_its_send_only(qapp):
     """A settings swap during the start: the tab's next send starts on the new factory."""
     backend = _Backend()
     tab = _tab(_Factory(backend, backend_type="none"))
-    answers = []
-    tab.start_backend(answers.append)
+    answers = _Answers()
+    tab.request_backend(answers.take)
     tab.update_backend_factory(_Factory(_Backend()))
-    assert tab.adopt_backend(answers[0]) is backend and tab.backend is None
+    assert tab.adopt_backend(answers.first()) is backend and tab.backend is None
 
 
 @pytest.fixture
@@ -128,10 +144,10 @@ def test_a_skill_chat_retries_after_a_fallback_none_backend(skill_chat):
     """It kept the fallback: "server down" on every send until Restart."""
     fallback, real, later = NoneBackend(reason="server down"), _Backend(), _Backend()
     widget = skill_chat(_Factory())
-    widget._on_backend_started((fallback, False))
+    widget._on_backend_started((None, fallback, False))
     assert widget._llm.backend is None
-    widget._on_backend_started((real, True))
-    widget._on_backend_started((later, True))  # a second start meanwhile never replaces it
+    widget._on_backend_started((None, real, True))
+    widget._on_backend_started((None, later, True))  # a second start meanwhile never replaces it
     assert widget._llm.backend is real
 
 

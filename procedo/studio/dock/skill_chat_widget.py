@@ -47,7 +47,6 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QTextEdit, QPushButton, QCheckBox, QComboBox,
 )
 
-from procedo.core.off_gui import answer_to
 from procedo.ui import fluent_qss, theme, ui_kit
 
 from ..authoring import ContextBundle, SkillChatSession, assemble
@@ -535,7 +534,7 @@ class SkillChatWidget(QWidget):
         across turns (reused per send via ``ensure_session``, not recreated); the queued turn
         fires on it (on a fallback ``NoneBackend`` its reply is the server's failure). Nothing
         fires once the chat was cleared or shut down meanwhile."""
-        backend, keep = started
+        _factory, backend, keep = started
         self._loading.done()
         self._loading.set_label(_WORKING)
         self._llm.adopt(backend, keep)
@@ -595,8 +594,7 @@ class SkillChatWidget(QWidget):
         if backend is None:
             self._queued = (prompt, files)
             self._loading.start(SERVER_STARTING_TEXT)
-            request_backend(self._llm.factory, self._llm.tab_id,
-                            answer_to(self._on_backend_started))
+            request_backend(self._llm.factory, self._llm.tab_id, self._on_backend_started)
             return
         self._llm.ensure_session()
 

@@ -21,6 +21,7 @@ from procedo.studio.llm.backend_factory import BACKEND_TYPE_OPENCODE, BackendCon
 from procedo.studio.llm.opencode_backend import OpenCodeConfig
 from procedo.studio.tabs import llm_tab_mixin
 
+from .test_lazy_backend import _Answers
 from .test_lazy_backend import skill_chat as skill_chat
 from .test_main_window_characterization import make_window as make_window
 from .test_main_window_characterization import mbox as mbox
@@ -205,7 +206,7 @@ def test_a_skill_chat_s_failed_start_is_its_reply(skill_chat, monkeypatch):
     assert chat._llm.backend is None and not chat._loading.active
 
 
-def test_studio_closed_during_a_start_leaves_no_server_and_no_pid_file(tmp_path):
+def test_studio_closed_during_a_start_leaves_no_server_and_no_pid_file(qapp, tmp_path):
     """The exit hook stops the manager while the shared start still waits for the server: the
     start gives up, and the server it spawned is stopped, its pid file removed."""
     from procedo.studio.controllers.llm_server_controller import LLMServerController
@@ -216,24 +217,23 @@ def test_studio_closed_during_a_start_leaves_no_server_and_no_pid_file(tmp_path)
     proc = _fake_spawn(["__OC_PID__31337\n"])
     healthy = MagicMock()
     healthy.ok = True
-    answers = []
+    answers = _Answers()
     with patch.object(mgr, "_diagnose_installation", return_value=healthy), \
          patch("procedo.studio.llm.server_manager.find_free_port", return_value=5005), \
          patch("procedo.studio.llm.server_manager.subprocess.Popen", return_value=proc), \
          patch("procedo.studio.llm.server_manager.subprocess.run", return_value=MagicMock()), \
          patch("procedo.studio.llm.server_manager.requests.get",
                side_effect=requests.exceptions.ConnectionError()):
-        backend_factory.request_backend(factory, "text_json", answers.append)
+        backend_factory.request_backend(factory, "text_json", answers.take)
         deadline = time.monotonic() + 10
         while mgr._read_pid_file() is None and time.monotonic() < deadline:
             time.sleep(0.01)
         assert mgr._read_pid_file()["pid"] == 31337  # spawned, still starting
 
         LLMServerController._stop_current_server(SimpleNamespace(server_manager=mgr))
-        while not answers and time.monotonic() < deadline:
-            time.sleep(0.01)
+        _spin(lambda: answers.got)
 
-    (backend, keep), = answers
+    (_factory_, backend, keep), = answers.got
     assert isinstance(backend, NoneBackend) and not keep
     proc.terminate.assert_called()
     assert mgr._server_process is None and not mgr.is_running

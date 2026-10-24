@@ -17,6 +17,8 @@ from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import Optional
 
+from procedo.core.off_gui import run_off_gui
+
 from .backend_base import LLMBackend, NoneBackend
 from .lifecycle_adapters import ManagerLifecycle, make_wsl_lifecycle
 from .opencode_backend import OpenCodeBackend, OpenCodeConfig
@@ -48,24 +50,23 @@ def start_backend(factory, tab_id: str) -> tuple[LLMBackend, bool]:
     return backend, keep
 
 
-def request_backend(factory, tab_id: str, send) -> None:
-    """``send(start_backend(factory, tab_id))`` without the GUI thread ever waiting on a server
-    start: at once when no server is involved (no factory, or the backend is off), else from a
-    worker thread (the factory shares one server start among the threads asking meanwhile).
-    A start that raised answers a fallback ``NoneBackend`` carrying what it raised."""
-    if factory is None or factory.backend_type == BACKEND_TYPE_NONE:
-        send(start_backend(factory, tab_id))
-        return
-
-    def _start() -> None:
+def request_backend(factory, tab_id: str, on_answer) -> None:
+    """``on_answer((factory, *start_backend(factory, tab_id)))`` (a QObject's bound method)
+    without the GUI thread ever waiting on a server start: at once when no server is involved
+    (no factory, or the backend is off), else from a worker (``run_off_gui``; the factory
+    shares one server start among the threads asking meanwhile). A start that raised answers
+    a fallback ``NoneBackend`` carrying what it raised."""
+    def _start() -> tuple:
         try:
-            started = start_backend(factory, tab_id)
+            return (factory, *start_backend(factory, tab_id))
         except Exception as exc:
             log.exception(f"Starting the backend for '{tab_id}' failed")
-            started = (NoneBackend(reason=str(exc) or type(exc).__name__), False)
-        send(started)
+            return factory, NoneBackend(reason=str(exc) or type(exc).__name__), False
 
-    threading.Thread(target=_start, name=f"start-backend-{tab_id}", daemon=True).start()
+    if factory is None or factory.backend_type == BACKEND_TYPE_NONE:
+        on_answer(_start())
+    else:
+        run_off_gui(_start, on_answer, name=f"start-backend-{tab_id}")
 
 
 # Backend type constants

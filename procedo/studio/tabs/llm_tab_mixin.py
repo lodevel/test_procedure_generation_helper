@@ -18,8 +18,6 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from procedo.core.off_gui import answer_to
-
 from ..core.proposal import current_test
 from ..llm import LLMTask, ChatMessage
 from ..llm.backend_factory import SERVER_STARTING_TEXT
@@ -73,7 +71,7 @@ class LLMTabMixin:
         chat = self.main_window.dock.chat_panel
         chat.set_llm_active(True, cancellable=False)
         chat.loading.start(SERVER_STARTING_TEXT)
-        self.tab_context.start_backend(answer_to(self._on_backend_started))
+        self.tab_context.request_backend(self._on_backend_started)
 
     def _on_backend_started(self, answer) -> None:
         """The backend start answered (GUI thread): the queued send runs on that backend (on a

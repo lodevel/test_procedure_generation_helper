@@ -110,7 +110,7 @@ class TabContext:
         self.board_data_enabled = False
         self.board_data_project = None
         self._backend_factory = backend_factory
-        self._backend: Optional[LLMBackend] = None  # started on first use: start_backend
+        self._backend: Optional[LLMBackend] = None  # started on first use: request_backend
         self.project_manager = project_manager
         self.task_config_manager = task_config_manager
         self.artifact_manager = artifact_manager
@@ -147,18 +147,18 @@ class TabContext:
     
     @property
     def backend(self) -> Optional[LLMBackend]:
-        """The tab's backend once one was started and kept (:meth:`start_backend`), else None."""
+        """The tab's backend once one was started and kept (:meth:`request_backend`), else
+        None."""
         return self._backend
 
-    def start_backend(self, send) -> None:
+    def request_backend(self, on_answer) -> None:
         """Start a backend for this tab, the GUI thread never waiting on the server
-        (``request_backend``): ``send`` gets ``(factory, backend, keep)``, for
-        :meth:`adopt_backend`."""
-        factory = self._backend_factory
-        request_backend(factory, self.tab_id, lambda started: send((factory, *started)))
+        (``backend_factory.request_backend``): *on_answer* gets ``(factory, backend, keep)``,
+        for :meth:`adopt_backend`."""
+        request_backend(self._backend_factory, self.tab_id, on_answer)
 
     def adopt_backend(self, answer) -> LLMBackend:
-        """The backend :meth:`start_backend` answered: kept as the tab's as ``start_backend``
+        """The backend :meth:`request_backend` answered: kept as the tab's as ``start_backend``
         says, unless the tab's factory changed meanwhile (a settings swap): then it serves the
         one send that waited for it."""
         factory, backend, keep = answer
@@ -240,7 +240,7 @@ class TabContext:
         
         This is the preferred way to change backend configuration.
         The existing backend is discarded and a new one will be created
-        on the next send (:meth:`start_backend`).
+        on the next send (:meth:`request_backend`).
         
         Args:
             new_factory: The new BackendFactory instance

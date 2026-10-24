@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Signal
 
-from procedo.bench.theme import error_color, success_color
+from procedo.ui.theme import error_color, success_color
 
 from ..theme import status_warning
 

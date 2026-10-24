@@ -25,7 +25,7 @@ from PySide6.QtCore import Qt
 # Dev-convenience shim (deprecated): only for STANDALONE runs launched from
 # inside a host checkout — walks up to the host's src/ so `procedo.core`
 # resolves. Embedded runs get it from the host venv's editable installs. The host is
-# required: Studio wears Bench's theme (procedo.bench.theme).
+# required: Studio wears Bench's theme (procedo.ui.theme).
 _BOOTSTRAPPED_SRC: str | None = None
 
 
@@ -51,7 +51,7 @@ _bootstrap_procedo_core()
 
 
 from .main_window import MainWindow
-from procedo.bench.theme import apply_app_theme
+from procedo.ui.theme import apply_app_theme
 
 
 def parse_args() -> argparse.Namespace:
@@ -143,7 +143,7 @@ def main() -> int:
     applied_theme = apply_app_theme(os.environ.get(launch_env.APP_THEME), app)
     log.debug("Applied application theme: %s", applied_theme)
     # Every error and warning box gets a Copy button (title, text, details to the clipboard).
-    from procedo.core import error_copy
+    from procedo.ui import error_copy
     error_copy.install_error_copy(app)
 
     # Create and show main window

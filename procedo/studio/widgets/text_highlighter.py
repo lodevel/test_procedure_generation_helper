@@ -7,7 +7,7 @@ import re
 
 from PySide6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat
 
-from procedo.bench.theme import muted_color
+from procedo.ui.theme import muted_color
 
 from .. import theme
 

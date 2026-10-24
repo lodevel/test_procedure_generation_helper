@@ -413,7 +413,7 @@ def test_an_answer_for_a_button_destroyed_meanwhile_still_lands(qapp, tmp_path):
     import shiboken6
     from PySide6.QtWidgets import QPushButton
     from procedo.studio.pack_ops import engine_async
-    from procedo.core.ui_kit import LoadingCue
+    from procedo.ui.ui_kit import LoadingCue
     button, cue, go, answered = QPushButton("Sync"), LoadingCue(), threading.Event(), []
 
     engine_async.call(tmp_path, lambda: go.wait(5), answered.append, button=button, cue=cue)
@@ -459,7 +459,7 @@ def test_each_engine_call_says_it_runs_where_its_answer_will_show(opened, monkey
 
 
 def test_a_failed_engine_call_takes_its_cue_away(qapp, tmp_path):
-    from procedo.core.ui_kit import LoadingCue
+    from procedo.ui.ui_kit import LoadingCue
     from procedo.studio.pack_ops import engine_async
     cue, answered = LoadingCue(), []
 

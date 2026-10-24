@@ -11,8 +11,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QTreeWidget, QTreeWidgetItem, QVBoxLayout
 
-from procedo.core import ui_kit
-from procedo.bench import theme
+from procedo.ui import theme, ui_kit
 
 
 @dataclass(frozen=True)

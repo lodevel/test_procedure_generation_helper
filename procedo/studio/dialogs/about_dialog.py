@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QDialog, QLabel, QPushButton
 
-from procedo.core import ui_kit
+from procedo.ui import ui_kit
 
 from ..shell import mark_label
 

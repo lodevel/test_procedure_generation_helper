@@ -21,8 +21,8 @@ from PySide6.QtWidgets import (
     QToolButton, QVBoxLayout, QWidget,
 )
 
-from procedo.core import ui_kit
-from procedo.core.segmented import segment, segmented
+from procedo.ui import ui_kit
+from procedo.ui.segmented import segment, segmented
 
 
 class FindReplaceBar(QFrame):

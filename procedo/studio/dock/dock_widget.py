@@ -7,7 +7,7 @@ Session / Findings N / Raw, and the chat's composer under every tab.
 from PySide6.QtWidgets import QMessageBox, QPushButton, QTabWidget, QVBoxLayout, QWidget
 from typing import TYPE_CHECKING
 
-from procedo.core import ui_kit
+from procedo.ui import ui_kit
 
 from ..widgets.rule_selector import RuleSelectorDialog, current_selection
 from .chat_panel import ChatPanel

@@ -15,7 +15,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox, QPushButton
 
-from procedo.core import ui_kit
+from procedo.ui import ui_kit
 
 from ..core.project_manager import RuleDocError, kilobytes, rule_doc_detail, warn_above
 

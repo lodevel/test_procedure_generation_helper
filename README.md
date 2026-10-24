@@ -124,7 +124,7 @@ live in each *project's* venv and are invoked there by the engine process
 python -m procedo.studio [options]
 ```
 
-Studio needs the host app installed (it wears Bench's theme, `procedo.bench.theme`); there
+Studio needs the host app installed (it wears Bench's theme, `procedo.ui.theme`); there
 is no degraded mode without it. The consumed surface is Contract C (`../../docs/contract_c_editor_host_services.md`).
 
 Command-line options (see `procedo/studio/__main__.py`):

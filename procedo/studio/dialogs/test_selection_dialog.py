@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QDialog, QPushButton
 
-from procedo.core import ui_kit
+from procedo.ui import ui_kit
 
 #: What the selection exports, by the artifact it requires (the window's subtitle).
 _EXPORTS = {"json": "Procedure to Word", "text": "Procedure to Markdown"}

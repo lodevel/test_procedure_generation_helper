@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QDialog, QFrame, QLabel, QPlainTextEdit, QPushButton, QSizePolicy, QSplitter, QVBoxLayout,
 )
 
-from procedo.core import ui_kit
+from procedo.ui import ui_kit
 
 from .. import theme
 from ..core.proposal import ADDED, HEADER, REMOVED, changed_lines, count_changes, diff_lines, diff_rows

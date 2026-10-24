@@ -19,9 +19,10 @@ from PySide6.QtWidgets import (
     QTreeWidget, QCheckBox, QSplitter, QApplication,
 )
 
-from procedo.core import board_view, ui_kit
+from procedo.core import board_view
+from procedo.ui import ui_kit
 from procedo.core.board_netlist import filter_components, filter_nets, read_hide_prefixes
-from procedo.bench.board_viewer import (
+from procedo.ui.board_viewer import (
     ROLE_COPY, BoardImageWell, component_item, net_item, selected_target,
 )
 

@@ -18,8 +18,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QDialog, QPushButton
 
-from procedo.core import ui_kit
-from procedo.core.page_nav import MarkdownPages
+from procedo.ui import ui_kit
+from procedo.ui.page_nav import MarkdownPages
 
 from ..core import cheatsheet
 

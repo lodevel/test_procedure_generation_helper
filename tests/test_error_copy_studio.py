@@ -1,5 +1,5 @@
 """Studio's error and warning boxes have the Copy button too: Studio installs the same host filter
-(``procedo.core.error_copy``) at start, and its tabs' ``show_error`` / ``show_warning`` boxes get
+(``procedo.ui.error_copy``) at start, and its tabs' ``show_error`` / ``show_warning`` boxes get
 the button, copy their whole text and stay open until the user answers them."""
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import pytest
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 
-from procedo.core import error_copy
+from procedo.ui import error_copy
 from procedo.studio.tabs.base_tab import BaseTab
 
 from .test_main_window_characterization import qapp as qapp

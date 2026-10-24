@@ -19,7 +19,7 @@ from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QKeySequence, QShortcut
 from typing import TYPE_CHECKING, Optional
 
-from procedo.core import ui_kit
+from procedo.ui import ui_kit
 
 from ..widgets import issue_cards
 

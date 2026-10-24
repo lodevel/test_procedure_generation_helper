@@ -6,7 +6,7 @@ from typing import Callable, Optional
 
 from PySide6.QtWidgets import QToolButton
 
-from procedo.core import ui_kit
+from procedo.ui import ui_kit
 
 from ..llm.backend_base import LLMTask
 from ..widgets.action_bar import set_task_label, task_button

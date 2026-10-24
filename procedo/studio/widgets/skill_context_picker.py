@@ -23,7 +23,7 @@ from PySide6.QtCore import QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QPushButton, QTabWidget, QVBoxLayout, QWidget
 
-from procedo.core import ui_kit
+from procedo.ui import ui_kit
 
 from ..authoring import ContextSource, assemble
 

@@ -10,10 +10,10 @@ from PySide6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QCheckBox, QPushButton, QLabel, QMessageBox,
 )
 from PySide6.QtCore import Qt
-from procedo.core import ui_kit
+from procedo.ui import ui_kit
 from procedo.core.board_netlist import read_hide_prefixes, write_hide_prefixes
 from procedo.core.off_gui import answer_to
-from procedo.core.page_nav import PagedArea, field_row, heading, page_form
+from procedo.ui.page_nav import PagedArea, field_row, heading, page_form
 
 from ..core.task_config import TaskConfigManager
 from ..core.studio_settings import load_settings, read_settings, save_settings

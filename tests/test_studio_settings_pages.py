@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from procedo.core import ui_kit
+from procedo.ui import ui_kit
 from procedo.core.board_netlist import read_hide_prefixes
 from procedo.studio.dialogs import settings_dialog
 from procedo.studio.core.studio_settings import load_settings, save_settings

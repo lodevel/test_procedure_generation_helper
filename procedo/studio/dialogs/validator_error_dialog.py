@@ -26,7 +26,7 @@ from typing import Optional
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QDialog, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
-from procedo.core import ui_kit
+from procedo.ui import ui_kit
 
 from ..core.validation_outcome import ValidationOutcome
 from ..widgets import issue_cards

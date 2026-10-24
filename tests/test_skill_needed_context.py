@@ -178,7 +178,7 @@ def test_sizing_a_slow_default_item_does_not_freeze_the_window(chat, qapp):
 def test_the_conversation_says_working_while_the_skill_runs(chat):
     """Owner 2026-10-23: a request in flight shows — the Conversation card's cue follows the
     chat's busy state (sent, answered or stopped)."""
-    from procedo.core.ui_kit import LoadingCue
+    from procedo.ui.ui_kit import LoadingCue
 
     make, _sent = chat
     widget = make(_skill())

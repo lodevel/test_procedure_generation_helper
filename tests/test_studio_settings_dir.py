@@ -8,7 +8,8 @@ import argparse
 import re
 from pathlib import Path
 
-from procedo.core import app_identity, app_identity_migration, error_copy, temp_root
+from procedo.core import app_identity, app_identity_migration, temp_root
+from procedo.ui import error_copy
 
 from procedo.studio import __main__ as studio_main
 from procedo.studio import main_window

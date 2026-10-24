@@ -17,9 +17,8 @@ from PySide6.QtWidgets import (
     QMenu, QMessageBox, QPushButton, QVBoxLayout,
 )
 
-from procedo.core import ui_kit
-from procedo.bench import ui_indicators
-from procedo.bench.badge_delegate import BADGES_ROLE, BadgeDelegate
+from procedo.ui import ui_indicators, ui_kit
+from procedo.ui.badge_delegate import BADGES_ROLE, BadgeDelegate
 
 from .base_tab import BaseTab
 from .. import launch_env

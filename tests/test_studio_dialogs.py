@@ -17,7 +17,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QComboBox, QFrame, QLabel, QPushButton
 
-from procedo.core import ui_kit
+from procedo.ui import ui_kit
 from procedo.studio.authoring import ContextItem, ContextSource
 from procedo.studio.core import project_manager
 from procedo.studio import shell
@@ -29,8 +29,8 @@ from procedo.studio.dialogs.validator_error_dialog import ValidatorErrorDialog
 from procedo.studio.dock.skill_chat_dialog import SkillChatDialog
 from procedo.studio.dock.skill_chat_widget import SkillChatWidget
 from procedo.studio.core.validation_outcome import ValidationIssueView, ValidationOutcome
-from procedo.bench import board_viewer
-from procedo.bench.image_popup import ImagePopup
+from procedo.ui import board_viewer
+from procedo.ui.image_popup import ImagePopup
 from procedo.core import board_view, config_manager
 from procedo.studio.widgets.netlist_panel import NetlistPanel
 from procedo.studio.widgets.rule_selector import RuleSelectorDialog

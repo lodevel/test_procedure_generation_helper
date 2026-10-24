@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from procedo.core.authoring_api import ProjectChanged
-from procedo.bench import theme as bench_theme
+from procedo.ui import theme as bench_theme
 
 from ..core import odb_inspect
 from ..core.artifact_manager import ArtifactManager, ArtifactType

@@ -271,3 +271,15 @@ def test_the_run_skill_universe_file_is_written_atomically(tmp_path, monkeypatch
     universe = launch_files.launch_file_path(tmp_path / "launch", launch_files.UNIVERSE_FILE)
     assert written == [universe]
     assert json.loads(universe.read_text(encoding="utf-8")) == {"srv": ["tool"]}
+
+
+def test_the_master_blueprint_is_written_atomically(config_dir, monkeypatch, tmp_path):
+    """Another Studio reading master.json never sees a half-written blueprint."""
+    seed = tmp_path / "opencode.json"
+    seed.write_text(json.dumps({"theme": "dark"}), encoding="utf-8")
+    written = []
+    real = lc.atomic_write_text
+    monkeypatch.setattr(lc, "atomic_write_text", lambda path, text: (written.append(path), real(path, text)))
+    master = lc.ensure_master_config(seed_from=seed)
+    assert written == [master]
+    assert json.loads(master.read_text(encoding="utf-8")) == {"theme": "dark"}

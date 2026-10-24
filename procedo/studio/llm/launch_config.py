@@ -83,7 +83,7 @@ def ensure_master_config(seed_from: Optional[Path] = None) -> Path:
                     data.pop("model", None)
                     data.pop("small_model", None)
                     data.pop("mcp", None)
-                    master.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                    atomic_write_text(master, json.dumps(data, indent=2))
                     log.info("Generated editor OpenCode master blueprint from %s", src)
         except Exception:
             log.exception("Failed to generate editor OpenCode master blueprint")

@@ -884,14 +884,6 @@ def test_the_studio_exit_stops_the_server_and_removes_its_launch_files(tmp_path)
     assert [p.exists() for p in own] == [True, False, False]
 
 
-def test_the_self_spawned_server_is_pointed_at_this_studio_s_config(tmp_path):
-    from procedo.studio.llm.lifecycle_adapters import make_wsl_lifecycle
-    cfg = OpenCodeConfig(working_directory=str(tmp_path / "launch test"))
-    command = shlex.split(make_wsl_lifecycle(cfg)._command()[-1])
-    assert f"OPENCODE_CONFIG={_mgr(tmp_path / 'launch test')._orphans.our_config_wsl_path()}" in command
-    assert "OPENCODE_DISABLE_PROJECT_CONFIG=1" in command
-
-
 def test_an_old_manager_s_stop_keeps_the_new_manager_s_record(tmp_path):
     # A manager swap in one Studio: the retired manager's (async) stop must not
     # delete the record its successor already wrote in the same file.
@@ -1355,6 +1347,38 @@ def test_the_launch_test_sweep_kills_a_dead_studio_s_test_server_and_spares_a_li
     assert [c for c in ident.call_args_list if c.args[0] != 5150] == []
     assert not any(p.exists() for p in dead_files)
     assert all(p.exists() for p in live_files)
+
+
+def _sweep_launch_test_dir_with_own_record(tmp_path, started_at):
+    """Sweep launch_test/ holding a record of THIS Studio's pid written at *started_at*: the
+    commands sent to WSL, and this pid's launch files."""
+    from procedo.studio.llm import launch_files
+    from procedo.studio.llm import opencode_orphan_sweep as sweep
+    own = _launch_files(tmp_path, os.getpid())
+    launch_files.launch_file_path(tmp_path, launch_files.PID_FILE).write_text(
+        json.dumps({"pid": 5150, "port": 6060, "started_at": started_at}), encoding="utf-8")
+    calls = []
+    with patch.object(sweep, "get_opencode_launch_test_dir", return_value=tmp_path), \
+         patch.object(sweep.OrphanSweeper, "pid_is_our_opencode",
+                      side_effect=[PidIdentity.OURS, PidIdentity.NOT_OURS]), \
+         patch("procedo.studio.llm.server_manager.time.sleep"), \
+         patch("procedo.studio.llm.server_manager.subprocess.run",
+               side_effect=lambda cmd, *a, **k: calls.append(" ".join(cmd)) or MagicMock()):
+        sweep.sweep_launch_test_dir(OpenCodeConfig(working_directory=r"C:\live\launch"))
+    return calls, own
+
+
+def test_the_launch_test_sweep_leaves_this_studio_s_own_test_server_alone(tmp_path):
+    # A Test click in Studio's first seconds: the startup sweep still running must not kill its server.
+    calls, own = _sweep_launch_test_dir_with_own_record(tmp_path, started_at=time.time())
+    assert calls == []
+    assert all(p.exists() for p in own)
+
+
+def test_the_launch_test_sweep_kills_an_earlier_process_s_server_that_had_this_pid(tmp_path):
+    calls, own = _sweep_launch_test_dir_with_own_record(tmp_path, started_at=0)  # long before us
+    assert any("kill -TERM" in c and "t 5150" in c for c in calls)
+    assert not own[0].exists()  # its record went with it
 
 
 def test_prewarm_sweeps_the_launch_test_dir_once_before_the_server_starts(monkeypatch):

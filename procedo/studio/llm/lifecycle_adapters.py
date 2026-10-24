@@ -1,64 +1,24 @@
-"""Desktop server-lifecycle adapters for the shared ``opencode_client`` backend.
+"""Desktop server-lifecycle adapter for the shared ``opencode_client`` backend.
 
 ``opencode_client.OpenCodeBackend`` only ever reads a URL — it never spawns a
 server. HOW an ``opencode serve`` comes to exist behind that URL is a
-:class:`~opencode_client.lifecycle.ServerLifecycle`. The desktop has two shapes,
-both preserved here byte-for-byte from the pre-migration ``OpenCodeBackend``:
+:class:`~opencode_client.lifecycle.ServerLifecycle`. On the desktop the ONE spawner is
+:class:`OpenCodeServerManager`: it alone knows the Linux pid of the server it started in
+WSL and stops exactly that (terminating ``wsl.exe`` alone can leave the server running).
+:class:`ManagerLifecycle` binds the seam to a manager; each backend just reads its URL and
+mints its own session. ``stop()`` is a no-op — the manager's owner stops it (the same
+reasoning as :class:`RemoteServerLifecycle`).
 
-* **Shared manager (normal chat).** :class:`OpenCodeServerManager` owns ONE
-  ``opencode serve`` shared across all tabs (free-port pick, install
-  classification, health / orphan sweep). :class:`ManagerLifecycle` binds the
-  seam to it; each per-tab backend just reads its URL and mints its own session.
-  ``stop()`` is a no-op — the tabs share the server and the manager owns
-  teardown (the same reasoning as :class:`RemoteServerLifecycle`).
-* **Self-spawn (no manager / the Settings "Test Connection" probe).**
-  :func:`make_wsl_lifecycle` reproduces the desktop's historical
-  ``wsl bash -ic "OPENCODE_ENABLE_EXA=1 opencode serve --port P --hostname H"``
-  spawn in the launch dir, polling ``/health``, pointed at this Studio process's
-  launch config with ``OPENCODE_CONFIG``.
-
-These live in the desktop app (not the package) on purpose: the migration rule
-is to express a host-only need as an adapter in that host, never by forking the
-shared package module.
+This lives in the desktop app (not the package) on purpose: the migration rule is to
+express a host-only need as an adapter in that host, never by forking the shared package
+module.
 """
 
 from __future__ import annotations
 
-import shlex
 from typing import Optional
 
-from opencode_client.lifecycle import (
-    ServerLifecycle,
-    ServerUnavailable,
-    SubprocessServerLifecycle,
-)
-
-from .opencode_backend import OpenCodeConfig, safe_wsl_cwd
-from .launch_files import config_env
-
-
-def make_wsl_lifecycle(config: OpenCodeConfig) -> SubprocessServerLifecycle:
-    """A lifecycle that self-spawns ``opencode serve`` inside WSL, exactly as the
-    pre-migration desktop backend did.
-
-    Produces the argv ``[wsl, "bash", "-ic", "OPENCODE_ENABLE_EXA=1
-    [OPENCODE_CONFIG=<this process's launch config>] opencode serve --port <port>
-    --hostname <host>"]`` with ``cwd`` = the launch dir, polling ``/health`` for
-    readiness — the endpoint the desktop has always used. The config is named
-    explicitly (``config_env``): each Studio process's has its own name, which
-    OpenCode never discovers in the cwd.
-    """
-    env = {"OPENCODE_ENABLE_EXA": "1"}
-    env.update((name, shlex.quote(value)) for name, value in config_env(config.working_directory).items())
-    return SubprocessServerLifecycle(
-        project_cwd=config.working_directory or safe_wsl_cwd(),
-        host=config.server_hostname,
-        port=config.server_port,
-        command_prefix=[config.wsl_path, "bash", "-ic"],
-        shell_wrap=True,
-        env_inline=env,
-        health_path="/health",
-    )
+from opencode_client.lifecycle import ServerLifecycle, ServerUnavailable
 
 
 class ManagerLifecycle(ServerLifecycle):

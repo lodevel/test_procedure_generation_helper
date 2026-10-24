@@ -331,7 +331,7 @@ class _SlowBackend:
 
 def _slow_test_connection(monkeypatch, tmp_path):
     from procedo.studio.dialogs import settings_backend_probe as probe
-    from procedo.studio.llm import lifecycle_adapters, opencode_backend, server_manager
+    from procedo.studio.llm import opencode_backend, server_manager
     shown, cleaned = [], []
     monkeypatch.setattr(probe, "ensure_master_config", lambda seed_from=None: None)
     monkeypatch.setattr(probe, "build_launch_config", lambda root, launch_dir=None: tmp_path)
@@ -339,7 +339,6 @@ def _slow_test_connection(monkeypatch, tmp_path):
     monkeypatch.setattr(probe, "remove_launch_files", lambda d: cleaned.append(d))
     monkeypatch.setattr(server_manager, "OpenCodeServerManager", _SlowManager)
     monkeypatch.setattr(opencode_backend, "OpenCodeBackend", _SlowBackend)
-    monkeypatch.setattr(lifecycle_adapters, "make_wsl_lifecycle", lambda config: None)
     for kind in ("information", "warning", "critical"):
         monkeypatch.setattr(probe.QMessageBox, kind,
                             staticmethod(lambda parent, title, text, kind=kind: shown.append((kind, title, text))))
@@ -445,3 +444,106 @@ def test_test_connection_does_nothing_while_a_start_server_poll_runs(qapp, no_ne
         time.sleep(0.005)
     assert len(shown) == 1
     dlg.reject()
+
+
+class _RecordingManager:
+    """A server manager that records what the Test connection asks of it (never a real server)."""
+
+    def __init__(self, config, events):
+        self.config, self.events, self.last_status = config, events, None
+        self.server_url = "http://127.0.0.1:5005"
+        self.is_alive = True
+
+    def is_available(self):
+        return True
+
+    def start(self):
+        self.events.append("start")
+        return True
+
+    def health_check(self):
+        return True
+
+    def ensure_running(self):
+        return True
+
+    def stop(self):
+        self.events.append("stop")
+
+
+class _LifecycleBackend:
+    """A backend that, like the real client, asks its lifecycle for the server's URL on start."""
+
+    def __init__(self, config, lifecycle, events):
+        self._lifecycle, self.events = lifecycle, events
+        self.is_running = False  # as the real one: no session until started
+
+    def start(self):
+        from opencode_client.lifecycle import ServerUnavailable
+        try:
+            self.events.append(self._lifecycle.ensure_running())
+        except ServerUnavailable:
+            return False
+        self.is_running = True
+        return True
+
+    def send_request(self, request):
+        self.events.append("request")
+        return type("R", (), {"error_message": ""})()
+
+
+def test_the_chat_test_runs_on_the_manager_s_server_and_the_manager_stops_it_after(
+        monkeypatch, tmp_path):
+    """No second server: one only the manager can stop by its Linux pid (stopping wsl.exe
+    alone can leave it running)."""
+    import opencode_client.lifecycle as package_lifecycle
+    from procedo.studio.dialogs import settings_backend_probe as probe
+    from procedo.studio.llm import opencode_backend, server_manager
+    events, spawned = [], []
+    monkeypatch.setattr(probe, "ensure_master_config", lambda seed_from=None: None)
+    monkeypatch.setattr(probe, "build_launch_config", lambda root, launch_dir=None: tmp_path)
+    monkeypatch.setattr(probe, "get_opencode_launch_test_dir", lambda: tmp_path)
+    monkeypatch.setattr(probe, "remove_launch_files", lambda d: None)
+    monkeypatch.setattr(server_manager, "OpenCodeServerManager",
+                        lambda config: _RecordingManager(config, events))
+    monkeypatch.setattr(opencode_backend, "OpenCodeBackend",
+                        lambda config, lifecycle: _LifecycleBackend(config, lifecycle, events))
+    monkeypatch.setattr(package_lifecycle, "_health_ok", lambda *a, **k: False)
+
+    def popen(*args, **kwargs):
+        spawned.append(args)
+        raise OSError("no second server")
+
+    monkeypatch.setattr(package_lifecycle.subprocess, "Popen", popen)
+    answer = probe.SettingsBackendProbe._run_test("opencode", None, "127.0.0.1", 5005, None)
+    assert spawned == []
+    assert answer[0] == "information", answer
+    assert events == ["start", "http://127.0.0.1:5005", "request", "stop"]
+
+
+def test_studio_exiting_while_a_test_connection_runs_stops_its_server(monkeypatch, tmp_path):
+    """The test runs on a daemon thread: the manager's stop is an exit hook while it runs,
+    and only then."""
+    from types import SimpleNamespace
+
+    from procedo.studio.dialogs import settings_backend_probe as probe
+    from procedo.studio.llm import opencode_backend, server_manager
+    hooks, seen = [], []
+    monkeypatch.setattr(probe, "atexit", SimpleNamespace(register=hooks.append, unregister=hooks.remove),
+                        raising=False)
+    monkeypatch.setattr(probe, "ensure_master_config", lambda seed_from=None: None)
+    monkeypatch.setattr(probe, "build_launch_config", lambda root, launch_dir=None: tmp_path)
+    monkeypatch.setattr(probe, "get_opencode_launch_test_dir", lambda: tmp_path)
+    monkeypatch.setattr(probe, "remove_launch_files", lambda d: None)
+
+    class _Booting(_RecordingManager):
+        def start(self):
+            seen.append(self.stop in hooks)  # Studio exits during the boot
+            return False
+
+    monkeypatch.setattr(server_manager, "OpenCodeServerManager", lambda config: _Booting(config, []))
+    monkeypatch.setattr(opencode_backend, "OpenCodeBackend", _LifecycleBackend)
+    answer = probe.SettingsBackendProbe._run_test("opencode", None, "127.0.0.1", 5005, None)
+    assert seen == [True]
+    assert hooks == []
+    assert answer[0] == "warning"

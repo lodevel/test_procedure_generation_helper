@@ -52,7 +52,7 @@ def board(tmp_path, monkeypatch):
         assert args == ["--list-nets"]
         return deepcopy(data)
 
-    monkeypatch.setattr(server, "_run_cli", cli)
+    monkeypatch.setattr(server._board_images, "run_cli", cli)
     return server._Board(str(archive)), archive, data, calls
 
 
@@ -195,7 +195,7 @@ def test_removed_archive_does_not_return_cached_data(board, monkeypatch):
 
 @pytest.mark.parametrize("path", ["", "missing.tgz"])
 def test_missing_archive_returns_clear_error_without_cli(path, monkeypatch):
-    monkeypatch.setattr(server, "_run_cli", lambda *_: pytest.fail("no archive"))
+    monkeypatch.setattr(server._board_images, "run_cli", lambda *_: pytest.fail("no archive"))
     result = _call(server._Board(path), monkeypatch)
     assert result["isError"]
     assert "archive unavailable" in _text(result)
@@ -207,8 +207,8 @@ def test_failed_or_incomplete_board_has_no_success_marker(board, monkeypatch, pr
     cached, _, data, _ = board
     if problem == "cli":
         def fail(*_):
-            raise server._CliError("synthetic CLI failed")
-        monkeypatch.setattr(server, "_run_cli", fail)
+            raise server._board_images.CliError("synthetic CLI failed")
+        monkeypatch.setattr(server._board_images, "run_cli", fail)
     elif problem == "identities":
         data["components"][0].pop("properties")
     elif problem == "nets":
@@ -230,7 +230,7 @@ def test_archive_changed_during_parse_is_not_reported_as_complete(board, monkeyp
         archive.write_bytes(b"changed during parse")
         return deepcopy(data)
 
-    monkeypatch.setattr(server, "_run_cli", changing_cli)
+    monkeypatch.setattr(server._board_images, "run_cli", changing_cli)
     result = _call(cached, monkeypatch)
     assert result["isError"]
     assert "changed while being read" in _text(result)
@@ -247,7 +247,7 @@ def test_concurrent_requests_share_one_parse(board, monkeypatch):
         assert release.wait(5)
         return deepcopy(data)
 
-    monkeypatch.setattr(server, "_run_cli", cli)
+    monkeypatch.setattr(server._board_images, "run_cli", cli)
     results = []
     threads = [threading.Thread(target=lambda: results.append(cached.snapshot()))
                for _ in range(2)]
@@ -288,7 +288,7 @@ def stdio_board_server(tmp_path):
         "    assert args == ['--list-nets']\n"
         f"    with open({str(reads)!r}, 'a') as log: log.write('read\\n')\n"
         "    return json.loads(Path(path).read_text(encoding='utf-8'))\n"
-        "server._run_cli = cli\n"
+        "server._board_images.run_cli = cli\n"
         "server.main()\n", encoding="utf-8")
     proc = subprocess.Popen(
         [sys.executable, str(launcher), "--odb-tgz", str(old_archive),

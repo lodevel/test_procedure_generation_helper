@@ -32,9 +32,9 @@ reader.start()
 time.sleep(0.1)
 if mode == 'panel':
     from PySide6.QtWidgets import QApplication
-    from procedo.studio.core import odb_inspect
+    from procedo.core import board_images
     from procedo.studio.widgets.netlist_panel import NetlistPanel, _LIVE_WORKERS
-    odb_inspect.odb_cli_path = lambda: root / 'cli.py'
+    board_images.ODB_CLI_PATH = root / 'cli.py'
     app = QApplication([])
     panel = NetlistPanel()
     panel.load(root)
@@ -45,11 +45,11 @@ if mode == 'panel':
     panel.close()
 else:
     from procedo.studio.authoring import _project_tools_mcp as server
-    server._CLI_PATH = str(root / 'cli.py')
+    server._board_images.ODB_CLI_PATH = root / 'cli.py'
     result = {}
     def work():
         try:
-            result.update(server._run_cli(str(root / 'board.tgz'), ['--list-nets']))
+            result.update(server._Board(str(root / 'board.tgz')).netlist())
         except Exception as exc:
             result['error'] = str(exc)
     worker = threading.Thread(target=work)

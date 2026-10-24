@@ -7,10 +7,13 @@ This is tool-generated and can be cleaned.
 """
 
 import json
+import logging
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import Optional, Any
+
+log = logging.getLogger(__name__)
 
 # The session file of a test folder.
 SESSION_FILE_NAME = ".llm_session.json"
@@ -167,7 +170,7 @@ class SessionState:
         for q in delta.get("open_questions", []):
             # Validate that q is a dict, not a string
             if not isinstance(q, dict):
-                print(f"[WARNING] Skipping malformed open_question (expected dict, got {type(q).__name__}): {q}")
+                log.warning(f"Skipping malformed open_question (expected dict, got {type(q).__name__}): {q}")
                 continue
             question = Question(
                 id=q["id"],
@@ -182,7 +185,7 @@ class SessionState:
         for rq in delta.get("resolved_questions", []):
             # Validate that rq is a dict, not a string
             if not isinstance(rq, dict):
-                print(f"[WARNING] Skipping malformed resolved_question (expected dict, got {type(rq).__name__}): {rq}")
+                log.warning(f"Skipping malformed resolved_question (expected dict, got {type(rq).__name__}): {rq}")
                 continue
             for i, oq in enumerate(self.open_questions):
                 if oq.id == rq["id"]:
@@ -195,7 +198,7 @@ class SessionState:
         for d in delta.get("decisions_added", []):
             # Validate that d is a dict, not a string
             if not isinstance(d, dict):
-                print(f"[WARNING] Skipping malformed decision (expected dict, got {type(d).__name__}): {d}")
+                log.warning(f"Skipping malformed decision (expected dict, got {type(d).__name__}): {d}")
                 continue
             decision = Decision(
                 id=d["id"],

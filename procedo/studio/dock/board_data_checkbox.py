@@ -3,7 +3,7 @@ read the board (see ``llm.board_chat``)."""
 
 from PySide6.QtWidgets import QCheckBox
 
-from ..core.odb_inspect import find_odb_tgz
+from procedo.core import odb_archive
 
 
 _TIP = (
@@ -29,7 +29,7 @@ class BoardDataCheckBox(QCheckBox):
         self._context = context
         is_text = context is not None and context.tab_id == "text_only"
         root = context.project_manager.project_root if is_text else None
-        available = root is not None and find_odb_tgz(root) is not None
+        available = root is not None and odb_archive.find(root) is not None
         selected = bool(
             available and getattr(context, "board_data_enabled", False)
             and getattr(context, "board_data_project", None) == root

@@ -11,8 +11,9 @@ project/filter only the columns and rows it wants.
 Every tool is a thin wrapper around the ODB++ CLI
 (``external/odb_image_generator/cli.py``) inspection modes
 (``--list-property-fields`` / ``--list`` ``--fields`` ``--filter`` /
-``--list-nets``), invoked with the SAME interpreter running this server
-(``sys.executable``) and its JSON stdout parsed. The parsed board (components +
+``--list-nets``), run by the host's ``procedo/core/board_images.run_cli`` (loaded by
+path) with the SAME interpreter running this server (``sys.executable``) and its
+JSON stdout parsed. The parsed board (components +
 nets) is cached per process because the tgz parse takes seconds.
 
 Protocol handling mirrors the verified ``_pdf_tool_mcp`` skeleton: ``initialize``
@@ -21,7 +22,7 @@ response; ``tools/list``; ``tools/call`` returns
 ``{"content":[{"type":"text",...}]}``; ``ping``.
 
 Runs as a standalone script (launched by absolute path from an arbitrary cwd),
-so it resolves the CLI path relative to its own location, not the launch cwd.
+so it finds the host's modules relative to its own location, not the launch cwd.
 Wizard queries discover arbitrary property names and project requested columns.
 The aggregate chat snapshot selects common semantic property names locally;
 unrecognized fields are explicitly listed as omitted.
@@ -30,61 +31,39 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 import threading
 
 
-# --- locate the ODB++ CLI relative to THIS file --------------------------------
-# This file lives at:
-#   <repo>/external/test_procedure_generation_helper/procedo/studio/authoring/_project_tools_mcp.py
-# Four dirs up from authoring/ lands on <repo>/external/; the CLI is its sibling
-# package odb_image_generator/cli.py. Resolving from __file__ (not cwd) keeps the
-# server launch-location-independent, exactly like _pdf_tool_mcp's import boot.
-_AUTHORING_DIR = os.path.dirname(os.path.abspath(__file__))
-_EXTERNAL_DIR = os.path.dirname(
-    os.path.dirname(os.path.dirname(os.path.dirname(_AUTHORING_DIR)))
-)
-# Default: the sibling odb_image_generator package's CLI. ``_PROJECT_TOOLS_CLI``
-# overrides it (tests point this at a fake CLI so no real .tgz is needed); the
-# default is board-agnostic and used in production.
-_CLI_PATH = os.environ.get("_PROJECT_TOOLS_CLI") or os.path.join(
-    _EXTERNAL_DIR, "odb_image_generator", "cli.py"
-)
+# This file lives at
+#   <host>/external/test_procedure_generation_helper/procedo/studio/authoring/_project_tools_mcp.py
+# so the host's core modules are found from it, not from the launch cwd.
+_AUTHORING_DIR = Path(os.path.abspath(__file__)).parent
+_HOST_CORE_DIR = _AUTHORING_DIR.parents[4] / "src" / "procedo" / "core"
 
 
-def _load_netlist_text():
-    """Load the sibling ``netlist_text.py`` as a standalone module.
+def _load(path, name):
+    """Load a standard-library-only module by its file path.
 
-    This server runs as a bare script (no ``procedo.studio`` package on the
-    path — see ``mcp_config.build_project_tools_mcp_block``), so neither a
-    relative (``from .netlist_text``) nor an absolute package import works.
-    ``netlist_text`` is pure stdlib (``re`` / ``typing``), so loading it by file
-    path from this file's own directory is safe and launch-location-independent,
-    mirroring how ``_CLI_PATH`` is resolved from ``__file__``. This is the SAME
-    formatter the editor's PUSH context uses, so the ``netlist`` tool returns
-    connectivity identical to the pushed netlist.
+    This server runs as a bare script (no ``procedo`` package on the path — see
+    ``mcp_config.build_project_tools_mcp_block``), so a package import does not
+    work; paths resolved from ``__file__`` keep the server launch-location-independent.
     """
-    path = os.path.join(_AUTHORING_DIR, "netlist_text.py")
-    spec = importlib.util.spec_from_file_location("_project_netlist_text", path)
+    spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
 
 
-_netlist_text = _load_netlist_text()
-
-
-def _load_board_source():
-    """Share the GUI's archive selection without importing its Qt package."""
-    path = os.path.join(os.path.dirname(_AUTHORING_DIR), "board_source.py")
-    spec = importlib.util.spec_from_file_location("_project_board_source", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_board_source = _load_board_source()
+# The SAME formatter the editor's PUSH context uses, so the ``netlist`` tool
+# returns connectivity identical to the pushed netlist.
+_netlist_text = _load(_AUTHORING_DIR / "netlist_text.py", "_project_netlist_text")
+# The host's archive selection and ODB CLI client: the ones both GUIs use.
+_odb_archive = _load(_HOST_CORE_DIR / "odb_archive.py", "_project_odb_archive")
+_board_images = _load(_HOST_CORE_DIR / "board_images.py", "_project_board_images")
+# Tests point the CLI at a fake one, so no real .tgz is needed.
+if os.environ.get("_PROJECT_TOOLS_CLI"):
+    _board_images.ODB_CLI_PATH = Path(os.environ["_PROJECT_TOOLS_CLI"])
 
 
 SERVER_INFO = {"name": "project-tools", "version": "1.0.0"}
@@ -292,39 +271,7 @@ def _components_result(rows):
     return _text_result(note + "\n" + body)
 
 
-# --- CLI shelling + per-process board cache -----------------------------------
-
-class _CliError(Exception):
-    """The ODB++ CLI failed (non-zero exit, missing file, or bad JSON)."""
-
-
-def _run_cli(odb_tgz, extra_args):
-    """Invoke ``cli.py`` with ``--odb-tgz`` + *extra_args*, return parsed JSON.
-
-    Uses ``sys.executable`` (the same interpreter running this server) so the
-    CLI gets the editor's venv. Raises :class:`_CliError` on non-zero exit or
-    unparseable stdout — the caller turns that into a graceful tool message.
-    """
-    cmd = [sys.executable, _CLI_PATH, "--odb-tgz", odb_tgz] + list(extra_args)
-    try:
-        proc = subprocess.run(
-            cmd,
-            # The MCP input loop owns stdin; the noninteractive CLI must not share it.
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-    except OSError as exc:
-        raise _CliError(f"could not launch ODB++ CLI: {exc}") from exc
-    if proc.returncode != 0:
-        err = (proc.stderr or "").strip() or "(no stderr)"
-        raise _CliError(f"ODB++ CLI exited {proc.returncode}: {err}")
-    try:
-        return json.loads(proc.stdout)
-    except (ValueError, TypeError) as exc:
-        raise _CliError(f"ODB++ CLI returned non-JSON output: {exc}") from exc
-
+# --- per-process board cache -------------------------------------------------
 
 class _Board:
     """Per-process cache of the parsed board (the tgz parse is slow).
@@ -345,13 +292,13 @@ class _Board:
     def _identity(self):
         try:
             if self.project_root:
-                source = _board_source.find_odb_tgz(Path(self.project_root))
+                source = _odb_archive.find(Path(self.project_root))
                 self.odb_tgz = str(source) if source is not None else ""
             if not self.odb_tgz:
                 raise OSError("No ODB++ archive configured for this project.")
             return _netlist_text.board_revision(self.odb_tgz)
         except OSError as exc:
-            raise _CliError(f"ODB++ archive unavailable: {exc}") from exc
+            raise _board_images.CliError(f"ODB++ archive unavailable: {exc}") from exc
 
     def _refresh(self):
         identity = self._identity()
@@ -365,7 +312,7 @@ class _Board:
         with self._lock:
             self._refresh()
             if self._property_fields is None:
-                self._property_fields = _run_cli(
+                self._property_fields = _board_images.run_cli(
                     self.odb_tgz, ["--list-property-fields"]
                 )
             return self._property_fields
@@ -378,9 +325,9 @@ class _Board:
         with self._lock:
             identity = self._refresh()
             if self._netlist is None:
-                data = _run_cli(self.odb_tgz, ["--list-nets"])
+                data = _board_images.run_cli(self.odb_tgz, ["--list-nets"])
                 if self._identity() != identity:
-                    raise _CliError("ODB++ archive changed while being read; request it again.")
+                    raise _board_images.CliError("ODB++ archive changed while being read; request it again.")
                 self._netlist = data
             return self._netlist, identity
 
@@ -394,7 +341,7 @@ class _Board:
             args += ["--fields", ",".join(fields)]
         if refdes_prefix:
             args += ["--refdes-prefix", refdes_prefix]
-        return _run_cli(self.odb_tgz, args)
+        return _board_images.run_cli(self.odb_tgz, args)
 
 
 # --- tool implementations ------------------------------------------------------
@@ -408,7 +355,7 @@ def _err_result(exc):
 def _tool_list_property_fields(board, _args):
     try:
         return _text_result(board.property_fields())
-    except _CliError as exc:
+    except _board_images.CliError as exc:
         return _err_result(exc)
 
 
@@ -434,7 +381,7 @@ def _tool_list_components(board, args):
         rows = board.components(
             fields=fields, filter_kv=filter_kv, refdes_prefix=refdes_prefix)
         return _components_result(rows)
-    except _CliError as exc:
+    except _board_images.CliError as exc:
         return _err_result(exc)
 
 
@@ -448,7 +395,7 @@ def _tool_get_component(board, args):
         return _text_result("get_component: 'fields' must be a list of strings.")
     try:
         components = board.components(fields=fields)
-    except _CliError as exc:
+    except _board_images.CliError as exc:
         return _err_result(exc)
     for comp in components:
         if comp.get("refdes") == refdes:
@@ -463,7 +410,7 @@ def _tool_query_net(board, args):
     name = name.strip()
     try:
         data = board.netlist()
-    except _CliError as exc:
+    except _board_images.CliError as exc:
         return _err_result(exc)
     for entry in data.get("nets", []):
         if entry.get("net") == name:
@@ -480,7 +427,7 @@ def _tool_netlist(board, _args):
     query_net(name); for the BOM / part numbers use list_components."""
     try:
         data = board.netlist()
-    except _CliError as exc:
+    except _board_images.CliError as exc:
         return _err_result(exc)
     return _text_result(_netlist_text.format_netlist(data))
 
@@ -497,7 +444,7 @@ def _tool_board_context(board, _args):
                 "The complete board cannot fit in one response. Reduce the board "
                 "context at its source; retrying or paging will not provide it here.")
         return _text_result(text)
-    except (_CliError, ValueError) as exc:
+    except (_board_images.CliError, ValueError) as exc:
         result = _err_result(exc)
         result["isError"] = True
         return result
@@ -536,7 +483,7 @@ def _tool_list_test_points(board, _args):
     """
     try:
         data = board.netlist()
-    except _CliError as exc:
+    except _board_images.CliError as exc:
         return _err_result(exc)
     points = []
     for comp in data.get("components", []):

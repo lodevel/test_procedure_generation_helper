@@ -139,13 +139,13 @@ def _build_project_tools_block(project_root: Optional[Path]) -> Optional[dict]:
     with the shared root-level ``*.tgz`` fallback, via ``--odb-tgz``. No
     project -> return ``None``. The server resolves the archive again when
     queried, so replacing the configured board does not require a restart."""
-    from ..llm.mcp_config import build_project_tools_mcp_block
+    from procedo.core import odb_archive
 
-    from ..core.odb_inspect import find_odb_tgz
+    from ..llm.mcp_config import build_project_tools_mcp_block
 
     if project_root is None:
         return None
-    archive = find_odb_tgz(project_root)
+    archive = odb_archive.find(project_root)
     return build_project_tools_mcp_block(
         venv_python_win=_python_win(),
         mcp_script_win=_mcp_script_win("_project_tools_mcp.py"),

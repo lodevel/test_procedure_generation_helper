@@ -100,7 +100,7 @@ def labscpi_psu_reconstruct_available() -> bool:
 
 # Replicates the project-tools MCP server's structure: a child process whose
 # stdin is a never-written pipe blocks its main thread on stdin while a worker
-# thread spawns a grandchild interpreter (the server's ``_run_cli`` shell-out).
+# thread spawns a grandchild interpreter (the server's ``board_images.run_cli`` shell-out).
 # In some environments (observed: Windows venv python driven from WSL) the
 # grandchild spawn deadlocks until killed; on a native console it is instant.
 _NESTED_SPAWN_CHILD = r"""
@@ -133,7 +133,7 @@ NESTED_SPAWN_SKIP_REASON = (
 @functools.lru_cache(maxsize=1)
 def nested_interpreter_spawn_works() -> bool:
     """True iff a stdio-piped child process can itself spawn a grandchild
-    interpreter from a worker thread (the MCP server's ``_run_cli`` pattern)."""
+    interpreter from a worker thread (the MCP server's ``board_images.run_cli`` pattern)."""
     try:
         proc = subprocess.Popen(
             [sys.executable, "-c", _NESTED_SPAWN_CHILD],

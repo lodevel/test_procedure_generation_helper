@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from procedo.core import studio_launch_env
+from procedo.core.starter_test import sanitize_test_id
 from procedo.ui import ui_indicators, ui_kit
 from procedo.ui.badge_delegate import BADGES_ROLE, BadgeDelegate
 
@@ -273,8 +274,6 @@ class WorkspaceTab(BaseTab):
         """Rename a test folder; the id, its sync state and the project's
         references follow (core.test_folder_ops). Only offered for a test that
         is not open — the context menu disables it for the open one."""
-        from ..core.test_id import sanitize_test_id
-
         raw, ok = QInputDialog.getText(
             self, "Rename Test", "New test name:", text=path.name,
         )

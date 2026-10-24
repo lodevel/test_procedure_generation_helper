@@ -1,28 +1,13 @@
-"""Test-id sanitization + folder-sync helpers.
+"""Test-id folder-sync helpers.
 
 The procedure test id MUST always equal the (sanitized) test FOLDER
-name. The folder is the single source of truth; the ``# <id>`` header
-line of ``procedure_text.md`` and the top-level ``"id"`` of
-``procedure.json`` are kept in sync automatically at save time.
-
-Sanitize rule (matches ``^[A-Za-z][A-Za-z0-9_-]{0,63}$``):
-- every char outside ``[A-Za-z0-9_-]`` becomes ``_``
-- the id must start with a letter (prefix ``T`` if it does not)
-- truncate to 64 chars
+name — ``procedo.core.starter_test.sanitize_test_id``. The folder is the
+single source of truth; the ``# <id>`` header line of
+``procedure_text.md`` and the top-level ``"id"`` of ``procedure.json``
+are kept in sync automatically at save time.
 """
 
 import json
-import re
-
-_ALLOWED = re.compile(r"[^A-Za-z0-9_-]")
-
-
-def sanitize_test_id(name: str) -> str:
-    """Return ``name`` coerced to a valid test id (== folder rule)."""
-    s = _ALLOWED.sub("_", name or "")
-    if not s or not s[0].isascii() or not s[0].isalpha():
-        s = "T" + s
-    return s[:64]
 
 
 def force_text_id_line(content: str, test_id: str) -> str:

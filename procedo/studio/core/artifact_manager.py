@@ -20,10 +20,12 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from procedo.core.starter_test import sanitize_test_id
+
 from .fileio import atomic_write_text
 from .session_state import read_sync_baseline
 from .sync_utils import normalize_for_hash
-from .test_id import force_json_id, force_text_id_line, sanitize_test_id
+from .test_id import force_json_id, force_text_id_line
 
 
 class ArtifactType(Enum):

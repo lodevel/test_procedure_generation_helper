@@ -1,7 +1,7 @@
 """Optional, lazy board access for the Text tab's conversation (no Qt; the
 chat panel's checkbox is ``dock.board_data_checkbox``)."""
 
-from ..core.odb_inspect import find_odb_tgz
+from procedo.core import odb_archive
 
 
 def allow_complete_board_output(config):
@@ -22,7 +22,8 @@ def configure_board_request(request, context):
         return
     from ..authoring.netlist_text import board_revision
 
-    archive = find_odb_tgz(context.project_manager.project_root)
+    root = context.project_manager.project_root
+    archive = odb_archive.find(root) if root is not None else None
     try:
         revision = board_revision(archive) if archive is not None else None
     except OSError:

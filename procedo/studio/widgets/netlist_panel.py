@@ -19,14 +19,13 @@ from PySide6.QtWidgets import (
     QTreeWidget, QCheckBox, QSplitter, QApplication,
 )
 
-from procedo.core import board_view
+from procedo.core import board_view, odb_archive
 from procedo.ui import ui_kit
 from procedo.core.board_netlist import filter_components, filter_nets, read_hide_prefixes
 from procedo.ui.board_viewer import (
     ROLE_COPY, BoardImageWell, component_item, net_item, selected_target,
 )
 
-from ..board_source import find_odb_tgz
 from ..core import odb_inspect
 
 # Keep worker threads referenced until they finish, so a fast close doesn't
@@ -178,7 +177,7 @@ class NetlistPanel(ui_kit.Card):
         self._project_root = project_root
         if project_root is not None:
             board_view.forget(project_root)  # a project (re)loaded reads its angle again
-        tgz = find_odb_tgz(project_root) if project_root is not None else None
+        tgz = odb_archive.find(project_root) if project_root is not None else None
         self.set_hint(tgz.name if tgz is not None else "")
         self._viewer.board = project_root
         self._viewer.subtitle = tgz.name if tgz is not None else ""

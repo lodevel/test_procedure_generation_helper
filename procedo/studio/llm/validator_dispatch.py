@@ -583,9 +583,9 @@ def validate_response(
     validated document uses the same LLM-owned set as the prompt emit-list
     and the at-apply reconstruction.
     """
-    if project_root is None:
-        return skipped_outcome("no active project")
     from ..pack_ops import pack_parsers
+    if project_root is None:
+        return skipped_outcome(pack_parsers.NO_PROJECT)
     import functools
     available, reason = pack_parsers.is_available(project_root)
     if not available:
@@ -613,7 +613,11 @@ def validate_response(
                 "validator handler %s crashed; falling back to operator review.",
                 handler.__name__,
             )
-            outcome = skipped_outcome(f"validator crashed: {type(exc).__name__}: {exc}")
+            outcome = skipped_outcome(
+                f"Validator could not run: parser not available ({exc})"
+                if isinstance(exc, pack_parsers.ParserUnavailable)
+                else f"validator crashed: {type(exc).__name__}: {exc}"
+            )
         if outcome is not None:
             outcomes.append(outcome)
     merged = merge_outcomes(outcomes)
@@ -642,14 +646,14 @@ def is_loop_available(project_root: Optional[Path]) -> tuple[bool, str]:
       2. Probe the per-project text_renderer + the pack's bijective
          handler. Either missing → "validator unavailable" reason.
     """
+    from ..pack_ops import pack_parsers
     if project_root is None:
-        return False, "no active project"
+        return False, pack_parsers.NO_PROJECT
     # 1. Per-project explicit opt-out.
     from .validator_loop_settings import is_enabled as _is_enabled
     if not _is_enabled(project_root):
         return False, "disabled in project settings (validator_loop.enabled=false)"
     # 2. Wheel-import probe via the project's own venv Python.
-    from ..pack_ops import pack_parsers
     available, reason = pack_parsers.is_available(project_root)
     if not available:
         return False, f"deterministic validator unavailable — {reason}"

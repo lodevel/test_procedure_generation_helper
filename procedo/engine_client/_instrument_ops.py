@@ -152,18 +152,20 @@ def _capture_remote_lines(procedure_json: dict, target_op: dict):
     the remote driver call(s).
     """
     from rules_packager_base.rules.v2_0_2.parser.codegen import _Generator
+    from rules_packager_base.rules.v2_0_2.parser.codegen_context import CodegenContext
     from rules_packager_base.rules.v2_0_2.parser._default_registry import (
         get_default_pack_parsers,
     )
 
-    gen = _Generator(procedure_json, None)
+    state = _Generator(procedure_json, None).state
+    ctx = CodegenContext(state)
     lines: list = []
     meta = {"ref": None, "unit": "", "has_result": False}
 
-    # Mirror _Generator.emit's indentation: a pack that emits a BLOCK via
-    # ctx.emit_block("try:")/end_block bumps gen.indent, and the body lines must
+    # Mirror CodegenState.emit's indentation: a pack that emits a BLOCK via
+    # ctx.emit_block("try:")/end_block bumps state.indent, and the body lines must
     # be indented or the captured snippet won't compile (bodyless 'try:').
-    gen.emit = lambda line="": lines.append(("    " * gen.indent + line) if line else "")
+    state.emit = lambda line="": lines.append(("    " * state.indent + line) if line else "")
 
     def _cap_action(eid, remote_line, manual_msg):
         lines.append(remote_line)
@@ -181,24 +183,24 @@ def _capture_remote_lines(procedure_json: dict, target_op: dict):
 
     def _cap_block_measure(eid, ref_key, manual_msg, unit, label, remote_emitter):
         meta.update(ref=ref_key, unit=unit, has_result=True)
-        remote_emitter()  # emits via gen.emit, incl. record_measurement(...)
+        remote_emitter()  # emits via state.emit, incl. record_measurement(...)
 
-    gen._emit_remote_or_manual_action = _cap_action
-    gen._emit_remote_or_manual_measure = _cap_measure
-    gen._emit_remote_or_manual_query = _cap_query
-    gen._emit_remote_or_manual_block = _cap_block
-    gen._emit_remote_or_manual_block_measure = _cap_block_measure
+    ctx.remote_or_manual_action = _cap_action
+    ctx.remote_or_manual_measure = _cap_measure
+    ctx.remote_or_manual_query = _cap_query
+    ctx.remote_or_manual_block = _cap_block
+    ctx.remote_or_manual_block_measure = _cap_block_measure
 
     op_const = target_op.get("op") or ""
     etype = op_const.split(".", 1)[0]
     pack = get_default_pack_parsers().get(etype)
     emit_python = getattr(pack, "emit_python", None) if pack else None
-    if emit_python is None or not emit_python(target_op, gen._ctx):
+    if emit_python is None or not emit_python(target_op, ctx):
         raise _NoCodegen(
             f"pack for {etype!r} did not emit a driver call for op {op_const!r}."
         )
 
-    var_name = gen.device_vars.get(target_op.get("device"), target_op.get("device"))
+    var_name = state.device_vars.get(target_op.get("device"), target_op.get("device"))
     return var_name, lines, meta
 
 

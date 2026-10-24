@@ -12,7 +12,6 @@ from procedo.core import bundle_registry, project_bundle, studio_launch_env
 from procedo.engine_client.engine_session import ParserUnavailable
 
 
-
 def load_bundle_equipment_profiles(
     project_root: Optional[Path] = None,
 ) -> list[dict]:
@@ -48,6 +47,7 @@ def load_bundle_equipment_profiles(
 # All four concerns a pack may provide for an equipment type.
 CAPABILITIES = ("parse", "emit", "schema", "codegen")
 
+
 def defaults_path(project_root: Optional[Path]) -> Optional[Path]:
     """Resolve the bundle defaults.json: a project's ``<root>/bundle/defaults.json``
     when a project is open, else ``PROCEDO_BUNDLE_DEFAULTS_PATH`` (editor mode)."""
@@ -60,8 +60,7 @@ def defaults_path(project_root: Optional[Path]) -> Optional[Path]:
 def pack_capabilities(project_root: Optional[Path] = None) -> dict[str, dict]:
     """Return the bundle's per-equipment-type capability map
     ``{etype: {parse, schema, emit, codegen, pack}}``. Empty dict when no bundle
-    / no capabilities block (pre-capability bundle) — callers treat 'absent' as
-    'unknown', see :func:`can_for_types`."""
+    / no capabilities block, which :func:`can_for_types` reads as 'no pack'."""
     data = bundle_registry.read_defaults(defaults_path(project_root))
     if data is None:
         return {}
@@ -85,8 +84,6 @@ def can_for_types(
 
     Rules:
     - Base-native types (dmm) always satisfy every capability.
-    - When the bundle declares NO capabilities block (pre-capability bundle),
-      assume everything is available (back-compat — preserves today's behavior).
     - An equipment type absent from the capabilities map → no pack provides it
       → missing as ``(etype, "no pack")``.
     - A type present but with the capability flag false → missing as
@@ -95,8 +92,6 @@ def can_for_types(
     if capability not in CAPABILITIES:
         raise ValueError(f"unknown capability {capability!r}; expected one of {CAPABILITIES}")
     caps = pack_capabilities(project_root)
-    if not caps:
-        return True, []  # pre-capability bundle: don't gate
     missing: list[tuple[str, str]] = []
     for etype in equipment_types:
         if etype in _BASE_NATIVE_TYPES:

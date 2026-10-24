@@ -68,6 +68,7 @@ class SyntaxReferenceDialog(QDialog):
         # beside the editor.
         self.setWindowFlags(Qt.WindowType.Window)
         self.setModal(False)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)  # a closed reference is freed
         self.resize(1240, 820)
         self._build_ui()
 

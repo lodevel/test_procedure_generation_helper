@@ -390,3 +390,38 @@ def test_a_row_picked_while_one_renders_renders_next_and_a_cached_one_shows_at_o
     panel._on_rendered("", "", "R2", "1")
     assert started == [("R1", None), ("R2", "1")]
     panel.close()
+
+
+def _flush_deletes():
+    from PySide6.QtCore import QEvent
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_a_closed_modeless_authoring_dialog_is_deleted_and_dropped_from_the_main_window(qapp):
+    import shiboken6
+    from PySide6.QtWidgets import QDialog
+    from procedo.studio.authoring.skill_menu import _hold_modeless
+
+    main = SimpleNamespace()
+    first, second = QDialog(), QDialog()
+    _hold_modeless(main, "_wizard_dialogs", first)
+    _hold_modeless(main, "_wizard_dialogs", second)
+    first.show()
+    first.close()
+    _flush_deletes()
+    assert not shiboken6.isValid(first)
+    assert main._wizard_dialogs == [second]
+    second.close()
+    _flush_deletes()
+    assert main._wizard_dialogs == []
+
+
+def test_a_closed_syntax_reference_is_deleted(qapp, rules_root):
+    import shiboken6
+
+    SyntaxReferenceDialog._instance = None
+    dlg = SyntaxReferenceDialog.show_reference(rules_root, None, "b")
+    dlg.close()
+    _flush_deletes()
+    assert SyntaxReferenceDialog._instance is None
+    assert not shiboken6.isValid(dlg)

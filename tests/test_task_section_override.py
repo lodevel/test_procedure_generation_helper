@@ -28,7 +28,7 @@ from __future__ import annotations
 import types
 import unittest
 
-from procedo.studio.core.task_config import TaskConfig
+from procedo.studio.core.task_config_model import TaskConfig
 
 
 # --------------------------------------------------------------------------- #

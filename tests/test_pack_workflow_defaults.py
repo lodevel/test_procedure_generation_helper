@@ -6,7 +6,7 @@ project's active bundle and hands the editor the path to the
 bundle's pre-merged ``defaults.json`` via the
 ``PROCEDO_BUNDLE_DEFAULTS_PATH`` env var. This test module covers:
 
-* ``_load_pack_workflow_defaults`` reading from that env var (happy
+* ``load_pack_workflow_defaults`` reading from that env var (happy
   path + fallbacks).
 * editor < pack < project layering of sparse bundle tasks (the merge
   itself is the host's ``workflow_defaults.merge_workflows``, tested there).
@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 
 from procedo.studio.core.task_config import TaskConfigManager
+from procedo.studio.core.task_config_defaults import load_pack_workflow_defaults
 from procedo.core.studio_launch_env import BUNDLE_DEFAULTS_PATH
 
 
@@ -38,8 +39,7 @@ def test_bundle_env_var_loads_workflows(monkeypatch, tmp_path):
     }), encoding="utf-8")
     monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(defaults_path))
 
-    mgr = TaskConfigManager(fallback_path=tmp_path / "no_fallback.json")
-    result = mgr._load_pack_workflow_defaults()
+    result = load_pack_workflow_defaults(None)
     assert result == {"text_json": {"validators": [{"id": "bundle.v"}]}}
 
 
@@ -47,15 +47,13 @@ def test_bundle_env_var_unset_returns_empty(monkeypatch, tmp_path):
     """No env var → empty dict. The editor's merge with its baked-in
     defaults degrades to editor-defaults-only."""
     monkeypatch.delenv(BUNDLE_DEFAULTS_PATH, raising=False)
-    mgr = TaskConfigManager(fallback_path=tmp_path / "no_fallback.json")
-    assert mgr._load_pack_workflow_defaults() == {}
+    assert load_pack_workflow_defaults(None) == {}
 
 
 def test_bundle_env_var_missing_file_returns_empty(monkeypatch, tmp_path):
     """A stale env var pointing at a deleted file must not crash."""
     monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(tmp_path / "gone.json"))
-    mgr = TaskConfigManager(fallback_path=tmp_path / "no_fallback.json")
-    assert mgr._load_pack_workflow_defaults() == {}
+    assert load_pack_workflow_defaults(None) == {}
 
 
 def test_bundle_env_var_malformed_file_returns_empty(monkeypatch, tmp_path):
@@ -64,8 +62,7 @@ def test_bundle_env_var_malformed_file_returns_empty(monkeypatch, tmp_path):
     bad = tmp_path / "bad.json"
     bad.write_text("[]", encoding="utf-8")
     monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(bad))
-    mgr = TaskConfigManager(fallback_path=tmp_path / "no_fallback.json")
-    assert mgr._load_pack_workflow_defaults() == {}
+    assert load_pack_workflow_defaults(None) == {}
 
 
 def test_bundle_env_var_no_workflows_block_returns_empty(monkeypatch, tmp_path):
@@ -75,8 +72,7 @@ def test_bundle_env_var_no_workflows_block_returns_empty(monkeypatch, tmp_path):
     defaults_path = tmp_path / "defaults.json"
     defaults_path.write_text(json.dumps({"extractors": {}}), encoding="utf-8")
     monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(defaults_path))
-    mgr = TaskConfigManager(fallback_path=tmp_path / "no_fallback.json")
-    assert mgr._load_pack_workflow_defaults() == {}
+    assert load_pack_workflow_defaults(None) == {}
 
 
 def test_sparse_pack_tasks_inherit_name_from_editor_defaults(monkeypatch, tmp_path):
@@ -126,7 +122,7 @@ def test_editor_default_workflows_ship_no_prompts():
     re-introduces a prompt here, bundle vs editor origin attribution
     will lie (the GUI shows a row as 'editor default' when in fact
     the user is reading text the bundle would have replaced)."""
-    from procedo.studio.core.task_config import _DEFAULT_WORKFLOWS_RAW
+    from procedo.studio.core.task_config_defaults import _DEFAULT_WORKFLOWS_RAW
 
     for tab_id, tab_cfg in _DEFAULT_WORKFLOWS_RAW.items():
         if not isinstance(tab_cfg, dict):

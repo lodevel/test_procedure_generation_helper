@@ -42,16 +42,18 @@ import json
 import logging
 import shutil
 from copy import deepcopy
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, fields
 from pathlib import Path
 from threading import RLock
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional
 
-from procedo.core import bundle_registry, config_manager, studio_launch_env
-from procedo.core.workflow_defaults import merge_workflows, read_editor_defaults
+from procedo.core import config_manager
+from procedo.core.workflow_defaults import merge_workflows
 
-from ..llm.backend_base import LLMTask
+from . import task_config_defaults, task_config_migrations
 from .fileio import atomic_write_text
+from .task_config_defaults import DEFAULT_CHAT_CONFIG, DEFAULT_TASK_CONFIGS
+from .task_config_model import ChatConfig, SelectedRules, TaskConfig, clone_selected_rules
 
 log = logging.getLogger(__name__)
 
@@ -61,114 +63,6 @@ log = logging.getLogger(__name__)
 # = 3 total — empirically ~95% of fixable validator failures resolve in one
 # retry; 3 total is the sweet spot before token cost dominates.
 DEFAULT_MAX_VALIDATOR_ATTEMPTS: int = 3
-
-
-# Either a list of rule filenames, the sentinel string ``"all"``, or ``None``
-# (inherit from tab-level legacy ``selected_rules`` field at load time).
-SelectedRules = Union[List[str], str, None]
-
-
-@dataclass
-class TaskConfig:
-    """Configuration for a single LLM task.
-
-    ``selected_rules`` resolves at load time: if a task has its own value
-    it wins; otherwise the loader copies the deprecated tab-level
-    ``selected_rules`` onto each task. ``None`` after load means "use all
-    available rules" (consumer-side expansion).
-    """
-    id: str
-    name: str
-    button_label: str
-    prompt_template: Optional[str] = None
-    enabled: bool = True
-    max_validator_attempts: Optional[int] = None
-    selected_rules: SelectedRules = None
-    # Per-task section-ownership override: the section names the LLM may
-    # author for this task. ``None`` → use the bundle/wheel default
-    # (current behavior). A list (incl. ``[]`` = LLM authors nothing) is
-    # the authoritative LLM-owned set. Threaded into both the prompt
-    # emit-list and reconstruction so they stay consistent.
-    llm_owned_sections: Optional[list[str]] = None
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "TaskConfig":
-        """Tolerant constructor — unknown keys are dropped so older configs
-        (without newer fields) keep loading."""
-        valid_keys = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in data.items() if k in valid_keys})
-
-
-@dataclass
-class ChatConfig:
-    """Per-tab configuration for the AD_HOC_CHAT feature (chat panel)."""
-    enabled: bool = True
-    system_prompt: Optional[str] = None
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "ChatConfig":
-        return cls(**{k: v for k, v in data.items() if k in ("enabled", "system_prompt")})
-
-
-# ---------------------------------------------------------------------------
-# Workflow editor defaults
-# ---------------------------------------------------------------------------
-#
-# DEFAULT_TASK_CONFIGS / DEFAULT_CHAT_CONFIG are built at import time from
-# the host's ``procedo/core/default_workflows.json``, read by its one reader
-# (``procedo.core.workflow_defaults.read_editor_defaults``) — the same file the
-# Project Configuration → Workflows tab shows. An unreadable file reads as
-# empty defaults.
-
-
-def _build_default_task_configs(
-    raw: Dict[str, Any]
-) -> Dict[str, List[TaskConfig]]:
-    out: Dict[str, List[TaskConfig]] = {}
-    for tab_id, tab_cfg in raw.items():
-        if not isinstance(tab_cfg, dict):
-            continue
-        tasks = tab_cfg.get("tasks")
-        if not isinstance(tasks, list):
-            continue
-        out[tab_id] = [
-            TaskConfig.from_dict(t) for t in tasks if isinstance(t, dict)
-        ]
-    return out
-
-
-def _build_default_chat_config(raw: Dict[str, Any]) -> Dict[str, ChatConfig]:
-    out: Dict[str, ChatConfig] = {}
-    for tab_id, tab_cfg in raw.items():
-        if not isinstance(tab_cfg, dict):
-            continue
-        chat = tab_cfg.get("chat_config")
-        if isinstance(chat, dict):
-            out[tab_id] = ChatConfig.from_dict(chat)
-    return out
-
-
-_DEFAULT_WORKFLOWS_RAW: Dict[str, Any] = read_editor_defaults()
-DEFAULT_TASK_CONFIGS: Dict[str, List[TaskConfig]] = _build_default_task_configs(
-    _DEFAULT_WORKFLOWS_RAW
-)
-DEFAULT_CHAT_CONFIG: Dict[str, ChatConfig] = _build_default_chat_config(
-    _DEFAULT_WORKFLOWS_RAW
-)
-
-
-# Keys we model directly on the tab dict. Everything else (including the
-# legacy ``selected_rules`` field, which we lift onto each task) gets stashed
-# in ``_raw_extras`` and round-tripped untouched (Codex Q3). In project mode
-# the migration step pops ``selected_rules`` from extras so it doesn't get
-# rewritten — see ``_populate_from_workflows``'s ``drop_tab_selected_rules``.
-_KNOWN_TAB_KEYS: frozenset[str] = frozenset({"tasks", "chat_config", "button_labels"})
 
 
 class TaskConfigManager:
@@ -205,7 +99,7 @@ class TaskConfigManager:
         self._chat_configs: Dict[str, ChatConfig] = {}
 
         # Per-tab unknown keys preserved verbatim across load/save (Q3).
-        # Only ``workflows.<tab>.*`` keys outside ``_KNOWN_TAB_KEYS`` end up
+        # Only ``workflows.<tab>.*`` keys outside the known tab keys end up
         # here (e.g. ``validators``).
         self._raw_extras: Dict[str, Dict[str, Any]] = {}
 
@@ -221,7 +115,7 @@ class TaskConfigManager:
         # task identical to its pack default is a no-op (no leak via
         # bulk callers like SettingsDialog's set_all_tasks_for_tab,
         # Codex Q1). Populated at load time from
-        # ``_load_pack_workflow_defaults``.
+        # ``task_config_defaults.load_pack_workflow_defaults``.
         self._pack_task_dicts_by_tab: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
         # Subscribers notified after ``reload()``. Lets the main window
@@ -252,12 +146,6 @@ class TaskConfigManager:
             return None
         return self._project_root / "config" / "config.json"
 
-    def _project_tab_contexts_path(self) -> Optional[Path]:
-        """Legacy per-project tab_contexts.json (pre-Phase-1 layout)."""
-        if self._project_root is None:
-            return None
-        return self._project_root / "config" / "tab_contexts.json"
-
     def _active_source(self) -> str:
         """Label for the data source currently feeding the caches. Diagnostic."""
         if self._project_root is None:
@@ -287,16 +175,16 @@ class TaskConfigManager:
         # Project mode: first migrate any legacy tab_contexts.json, then
         # load pack defaults + project workflows and merge them.
         if self._project_root is not None:
-            self._migrate_project_tab_contexts()
+            task_config_migrations.migrate_project_tab_contexts(self._project_root)
 
-            pack_defaults = self._load_pack_workflow_defaults()
+            pack_defaults = task_config_defaults.load_pack_workflow_defaults(self._project_root)
             # Pack defines the runtime task universe. Editor provides
             # per-field fallback ONLY for tasks pack declares (so sparse
             # {id, prompt_template} bundle entries inherit name/button_label
             # from the editor's baked-in defaults). Editor-only tasks are
             # NOT pulled into the runtime — pack omitting a task means it
             # doesn't exist at runtime.
-            editor_plus_pack = _apply_editor_field_fallback(pack_defaults)
+            editor_plus_pack = task_config_defaults.apply_editor_field_fallback(pack_defaults)
             self._pack_task_dicts_by_tab = {}
             for tab_id, tab_cfg in editor_plus_pack.items():
                 if not isinstance(tab_cfg, dict):
@@ -335,10 +223,10 @@ class TaskConfigManager:
                 # Run button-label migration on the merged dict so older
                 # per-project configs upgrade cleanly. Also migrate the
                 # snapshot so future saves persist the upgraded labels.
-                self._migrate_button_labels_in_place(merged)
-                self._migrate_button_labels_in_place(self._project_workflow_snapshot)
-                self._populate_from_workflows(merged, drop_tab_selected_rules=True)
-                self._fill_missing_defaults()
+                task_config_migrations.migrate_button_labels_in_place(merged)
+                task_config_migrations.migrate_button_labels_in_place(self._project_workflow_snapshot)
+                self._populate_caches(merged, drop_tab_selected_rules=True)
+                task_config_defaults.fill_missing_defaults(self._task_configs, self._chat_configs)
                 return
 
         # Fall back to the repo-shared tab_contexts file.
@@ -346,15 +234,15 @@ class TaskConfigManager:
             try:
                 with open(self._fallback_path, "r", encoding="utf-8") as f:
                     raw = json.load(f)
-                migrated = self._migrate_button_labels_in_place(raw)
+                migrated = task_config_migrations.migrate_button_labels_in_place(raw)
                 # In legacy mode (no project_root) we own the fallback file,
                 # so we want round-trip fidelity for the tab-level
                 # ``selected_rules`` field. In project mode we lift+drop.
                 drop_tab_selected = self._project_root is not None
-                self._populate_from_workflows(
+                self._populate_caches(
                     raw, drop_tab_selected_rules=drop_tab_selected
                 )
-                self._fill_missing_defaults()
+                task_config_defaults.fill_missing_defaults(self._task_configs, self._chat_configs)
                 # Persist the in-place migration only when we own the file
                 # (legacy single-file mode). In project mode the shared
                 # fallback is read-only.
@@ -391,118 +279,19 @@ class TaskConfigManager:
     # Pack discovery (Phase 3)
     # ------------------------------------------------------------------
 
-    def _load_pack_workflow_defaults(self) -> Dict[str, Any]:
-        """Return the workflows-block defaults injected by the parent.
-
-        Phase 5h: the legacy manifest-walk path (resolve
-        ``packs.selected_packs`` + read each pack's
-        ``pack_workflow_defaults.json``) was removed. The parent app
-        owns bundle resolution; the bundle's ``defaults.json`` lives at
-        ``<project>/bundle/defaults.json``.
-
-        Task #39: resolve the ACTIVE project's bundle first, so a
-        bundle imported while the editor runs is picked up by a plain
-        ``reload()``. The ``PROCEDO_BUNDLE_DEFAULTS_PATH`` env var is a
-        launch-time snapshot (unset when no bundle existed at editor
-        launch, or in standalone launches) — kept only as the legacy
-        fallback for no-project mode.
-
-        Returns ``{}`` when no bundle resolves, the file is missing
-        or malformed, or the bundle ships no workflows block. The
-        editor's merge with its baked-in defaults degrades gracefully
-        to editor-defaults-only.
-        """
-        import os
-        defaults_path: Optional[Path] = None
-        if self._project_root is not None:
-            candidate = self._project_root / "bundle" / "defaults.json"
-            if candidate.is_file():
-                defaults_path = candidate
-        if defaults_path is None:
-            path_str = os.environ.get(studio_launch_env.BUNDLE_DEFAULTS_PATH)
-            if not path_str:
-                return {}
-            defaults_path = Path(path_str)
-        workflows = (bundle_registry.read_defaults(defaults_path) or {}).get("workflows")
-        return workflows if isinstance(workflows, dict) else {}
-
-    def _populate_from_workflows(
-        self,
-        workflows: Dict[str, Any],
-        *,
-        drop_tab_selected_rules: bool,
+    def _populate_caches(
+        self, workflows: Dict[str, Any], *, drop_tab_selected_rules: bool
     ) -> None:
-        """Fill caches from a ``workflows``-shaped dict.
-
-        Args:
-            workflows: ``workflows`` section or legacy fallback root.
-            drop_tab_selected_rules: When True (project mode), tab-level
-                ``selected_rules`` is lifted onto each task AND removed
-                from ``_raw_extras`` so subsequent saves don't write it
-                back — completes the migration. When False (legacy
-                single-file mode), the tab-level field is kept in
-                ``_raw_extras`` and round-trips through save.
-        """
-        for tab_id, tab_config in workflows.items():
-            if not isinstance(tab_config, dict):
-                continue
-
-            tab_level_selected: SelectedRules = tab_config.get("selected_rules")
-
-            tasks_data = tab_config.get("tasks")
-            tasks: List[TaskConfig] = []
-            if isinstance(tasks_data, list) and tasks_data:
-                for entry in tasks_data:
-                    if not isinstance(entry, dict):
-                        continue
-                    task = TaskConfig.from_dict(entry)
-                    if task.selected_rules is None and tab_level_selected is not None:
-                        task.selected_rules = _clone_selected_rules(tab_level_selected)
-                    tasks.append(task)
-            elif tab_level_selected is not None and tab_id in DEFAULT_TASK_CONFIGS:
-                # Tab declares selected_rules but no tasks: fill in defaults
-                # so the rules propagate (was a silent drop pre-Codex review).
-                for d in DEFAULT_TASK_CONFIGS[tab_id]:
-                    t = TaskConfig(**asdict(d))
-                    t.selected_rules = _clone_selected_rules(tab_level_selected)
-                    tasks.append(t)
-            self._task_configs[tab_id] = tasks
-
-            chat_data = tab_config.get("chat_config")
-            if isinstance(chat_data, dict):
-                self._chat_configs[tab_id] = ChatConfig.from_dict(chat_data)
-
-            # Preserve unknown keys verbatim (Codex Q3). ``selected_rules``
-            # lives in extras (not ``_KNOWN_TAB_KEYS``) so legacy round-trip
-            # is intact; project mode pops it below.
-            extras = {k: v for k, v in tab_config.items() if k not in _KNOWN_TAB_KEYS}
-            if drop_tab_selected_rules:
-                extras.pop("selected_rules", None)
-            if extras:
-                self._raw_extras[tab_id] = extras
-
-    def _fill_missing_defaults(self) -> None:
-        """Add baked-in defaults for any tabs the loaded data didn't cover."""
-        for tab_id, defaults in DEFAULT_TASK_CONFIGS.items():
-            if tab_id not in self._task_configs or not self._task_configs[tab_id]:
-                self._task_configs[tab_id] = [TaskConfig(**asdict(t)) for t in defaults]
-        for tab_id, default_chat in DEFAULT_CHAT_CONFIG.items():
-            if tab_id not in self._chat_configs:
-                self._chat_configs[tab_id] = ChatConfig(
-                    enabled=default_chat.enabled,
-                    system_prompt=default_chat.system_prompt,
-                )
+        tasks, chats, extras = task_config_defaults.workflows_to_caches(
+            workflows, drop_tab_selected_rules=drop_tab_selected_rules
+        )
+        self._task_configs.update(tasks)
+        self._chat_configs.update(chats)
+        self._raw_extras.update(extras)
 
     def _initialize_defaults(self) -> None:
         with self._lock:
-            self._task_configs = {
-                tab_id: [TaskConfig(**asdict(t)) for t in default_tasks]
-                for tab_id, default_tasks in DEFAULT_TASK_CONFIGS.items()
-            }
-            self._chat_configs = {
-                tab_id: ChatConfig(enabled=c.enabled, system_prompt=c.system_prompt)
-                for tab_id, c in DEFAULT_CHAT_CONFIG.items()
-            }
+            self._task_configs, self._chat_configs = task_config_defaults.default_caches()
             self._raw_extras = {}
 
     def _auto_recover_config(self) -> None:
@@ -519,145 +308,6 @@ class TaskConfigManager:
         except Exception as e:
             log.error("Failed to auto-recover config: %s", e, exc_info=True)
             self._initialize_defaults()
-
-    # ------------------------------------------------------------------
-    # Migration helpers
-    # ------------------------------------------------------------------
-
-    def _migrate_project_tab_contexts(self) -> None:
-        """Lift ``<project>/config/tab_contexts.json`` into the project's
-        ``config.json:workflows`` (then delete the orphan).
-
-        Strict-read both files; abort migration on read failure or
-        type-mismatch so a corrupt project config cannot be silently
-        replaced. Verifies the post-write file before deleting the legacy
-        orphan so a failed write doesn't leave both files stale.
-        """
-        legacy = self._project_tab_contexts_path()
-        if legacy is None or not legacy.exists():
-            return
-        project_cfg_path = self._project_config_path()
-        if project_cfg_path is None:
-            return
-
-        # Strict read of legacy.
-        try:
-            legacy_data = json.loads(legacy.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as e:
-            log.warning("Could not migrate %s (unreadable): %s — leaving in place.", legacy, e)
-            return
-        if not isinstance(legacy_data, dict):
-            log.warning("Legacy %s is not a JSON object; skipping migration.", legacy)
-            return
-
-        # Strict read of project config — corrupt project config must not be
-        # silently overwritten with `{"workflows": ...}` that loses the rest.
-        if project_cfg_path.exists():
-            try:
-                existing_full = json.loads(project_cfg_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as e:
-                log.error("Project config %s is unreadable (%s); aborting migration to "
-                          "avoid clobbering. Repair config.json or remove tab_contexts.json.",
-                          project_cfg_path, e)
-                return
-            if not isinstance(existing_full, dict):
-                log.error("Project config %s is not a JSON object; aborting migration.",
-                          project_cfg_path)
-                return
-            # If workflows section already exists, the migration already
-            # happened on a prior load (or a user wrote one manually) —
-            # don't overwrite it from a stale legacy file.
-            if isinstance(existing_full.get("workflows"), dict) and existing_full["workflows"]:
-                log.info("Project %s already has a workflows section; deleting legacy %s.",
-                         project_cfg_path, legacy)
-                try:
-                    legacy.unlink()
-                except OSError as e:
-                    log.warning("Could not delete legacy %s: %s", legacy, e)
-                return
-        else:
-            existing_full = {}
-
-        # Run button-label migration on the legacy data first.
-        self._migrate_button_labels_in_place(legacy_data)
-
-        # Lift tab-level selected_rules onto each task so the persisted
-        # ``workflows`` section is already in the per-task shape.
-        migrated_workflows: Dict[str, Any] = {}
-        for tab_id, tab_cfg in legacy_data.items():
-            if not isinstance(tab_cfg, dict):
-                continue
-            cleaned = dict(tab_cfg)
-            tab_level = cleaned.pop("selected_rules", None)
-            tasks = cleaned.get("tasks")
-            if isinstance(tasks, list) and tab_level is not None:
-                new_tasks = []
-                for t in tasks:
-                    if isinstance(t, dict) and t.get("selected_rules") is None:
-                        t = {**t, "selected_rules": _clone_selected_rules(tab_level)}
-                    new_tasks.append(t)
-                cleaned["tasks"] = new_tasks
-            migrated_workflows[tab_id] = cleaned
-
-        # Preserve-and-overlay write.
-        existing_full["workflows"] = migrated_workflows
-        try:
-            atomic_write_text(project_cfg_path, json.dumps(existing_full, indent=2, ensure_ascii=False))
-        except OSError as e:
-            log.error("Failed to write migrated workflows to %s: %s — leaving %s in place.",
-                      project_cfg_path, e, legacy)
-            return
-
-        # Read-back verification before unlinking the legacy file.
-        verify = config_manager.read_unified_config(project_cfg_path.parent)
-        if not (isinstance(verify, dict)
-                and isinstance(verify.get("workflows"), dict)
-                and verify["workflows"]):
-            log.error("Read-back verification failed for %s; leaving %s untouched.",
-                      project_cfg_path, legacy)
-            return
-
-        try:
-            legacy.unlink()
-            log.info("Migrated %s → %s:workflows", legacy, project_cfg_path)
-        except OSError as e:
-            log.warning("Migrated workflows but could not delete %s: %s", legacy, e)
-
-    def _migrate_button_labels_in_place(self, raw: Dict[str, Any]) -> bool:
-        """Migrate old ``button_labels`` map into ``tasks`` list, mutating ``raw``."""
-        migrated = False
-        task_name_to_value = {task.name: task.value for task in LLMTask}
-
-        for tab_id, tab_config in raw.items():
-            if not isinstance(tab_config, dict):
-                continue
-            if "button_labels" not in tab_config or "tasks" in tab_config:
-                continue
-            button_labels = tab_config.get("button_labels", {})
-            defaults = DEFAULT_TASK_CONFIGS.get(tab_id, [])
-            if not defaults:
-                continue
-            new_tasks = []
-            for default_task in defaults:
-                name = next(
-                    (n for n, v in task_name_to_value.items() if v == default_task.id),
-                    None,
-                )
-                custom = button_labels.get(name) if name else None
-                if not custom:
-                    custom = button_labels.get(default_task.id)
-                new_tasks.append(TaskConfig(
-                    id=default_task.id,
-                    name=default_task.name,
-                    button_label=custom if custom else default_task.button_label,
-                    prompt_template=default_task.prompt_template,
-                    enabled=default_task.enabled,
-                ))
-            tab_config["tasks"] = [t.to_dict() for t in new_tasks]
-            del tab_config["button_labels"]
-            migrated = True
-            log.info("Migrated tab '%s' from button_labels to tasks format", tab_id)
-        return migrated
 
     # ------------------------------------------------------------------
     # Snapshot stamping (Codex H2: pack defaults never round-trip through save)
@@ -910,7 +560,7 @@ class TaskConfigManager:
         validators configured.
 
         The list comes from the layered merge of pack defaults + project
-        overrides (see ``_load_pack_workflow_defaults``). Validator
+        overrides (see ``task_config_defaults.load_pack_workflow_defaults``). Validator
         specs live in ``_raw_extras`` since the Phase-1 schema treats
         ``validators`` as an unknown-to-Phase-1 key preserved verbatim.
         """
@@ -930,7 +580,7 @@ class TaskConfigManager:
         task = self.get_task_config(tab_id, task_id)
         if task is None:
             return None
-        return _clone_selected_rules(task.selected_rules)
+        return clone_selected_rules(task.selected_rules)
 
     # ------------------------------------------------------------------
     # Public write API
@@ -1078,7 +728,7 @@ class TaskConfigManager:
                 log.warning("set_selected_rules_for_tab: unknown tab '%s'", tab_id)
                 return
             for task in tasks:
-                task.selected_rules = _clone_selected_rules(selected)
+                task.selected_rules = clone_selected_rules(selected)
                 # Persist intent: a rule-set edit applies to every task
                 # in this tab, so every task gets stamped (including
                 # previously-pack-only tasks the user is implicitly
@@ -1102,13 +752,6 @@ class TaskConfigManager:
 # ---------------------------------------------------------------------------
 
 
-def _clone_selected_rules(value: SelectedRules) -> SelectedRules:
-    """Defensive copy so callers can't mutate cached state."""
-    if isinstance(value, list):
-        return list(value)
-    return value
-
-
 def _task_dicts_equal(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
     """True iff two task dicts represent the same TaskConfig values.
 
@@ -1118,40 +761,3 @@ def _task_dicts_equal(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
     """
     keys = {f.name for f in fields(TaskConfig)}
     return all(a.get(k) == b.get(k) for k in keys)
-
-
-def _apply_editor_field_fallback(pack: Dict[str, Any]) -> Dict[str, Any]:
-    """Fill None fields in pack-declared tasks from the editor's same-id
-    task. Pack still defines the task universe — editor-only tasks/tabs
-    are not pulled in. Returns a deep copy; ``pack`` is left untouched.
-
-    Lets the bundle ship sparse ``{id, prompt_template}`` tasks while
-    still satisfying ``TaskConfig.__init__`` (which needs ``name`` and
-    ``button_label``).
-    """
-    enriched = deepcopy(pack) if isinstance(pack, dict) else {}
-    for tab_id, tab_cfg in enriched.items():
-        if not isinstance(tab_cfg, dict):
-            continue
-        pack_tasks = tab_cfg.get("tasks")
-        if not isinstance(pack_tasks, list):
-            continue
-        editor_tab = _DEFAULT_WORKFLOWS_RAW.get(tab_id, {})
-        editor_tasks = (
-            editor_tab.get("tasks", [])
-            if isinstance(editor_tab, dict) else []
-        )
-        editor_by_id: Dict[str, Dict[str, Any]] = {}
-        for et in editor_tasks:
-            if isinstance(et, dict) and isinstance(et.get("id"), str):
-                editor_by_id[et["id"]] = et
-        for i, t in enumerate(pack_tasks):
-            if not isinstance(t, dict):
-                continue
-            editor_t = editor_by_id.get(t.get("id"), {})
-            merged = dict(editor_t)
-            for k, v in t.items():
-                if v is not None:
-                    merged[k] = v
-            pack_tasks[i] = merged
-    return enriched

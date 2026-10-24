@@ -12,7 +12,7 @@ EXCEPT units that already exceed a cap today; those are grandfathered at their
 current measurement (a ceiling they may only shrink under, never grow past).
 A new 1500-line non-allowlisted module fails immediately.
 
-The god files (``core/task_config.py``, ...) are intentionally NOT
+The god files (``llm/opencode_backend.py``, ...) are intentionally NOT
 carved here; this only freezes their size so the debt cannot compound.
 
 Pure ``pathlib`` + ``ast`` — imports nothing, so it runs headless with no
@@ -40,7 +40,6 @@ _SKIP_DIRS = {"__pycache__", "build", "dist", ".venv"}
 # carve the file, then lower or delete its entry.
 
 FILE_BUDGET: dict[str, int] = {
-    "studio/core/task_config.py": 1159,
     "studio/llm/opencode_backend.py": 1251,  # +9: bare-except cleanup log lines
 }
 

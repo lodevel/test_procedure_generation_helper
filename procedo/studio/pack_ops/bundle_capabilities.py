@@ -23,7 +23,7 @@ def _load_bundle_equipment_profiles(
     (``<project_root>/bundle/defaults.json`` when a project is open, so
     a bundle imported mid-session is seen immediately), falling back to
     ``PROCEDO_BUNDLE_DEFAULTS_PATH`` — the same convention as
-    ``TaskConfigManager._load_pack_workflow_defaults``.
+    ``task_config_defaults.load_pack_workflow_defaults``.
     Returns ``[]`` when no bundle resolves or the file is missing /
     malformed (no bundle context). A readable bundle defaults.json
     WITHOUT the ``equipment_profiles`` key is a pre-bundle/2 artifact —

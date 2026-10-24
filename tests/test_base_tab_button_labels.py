@@ -101,7 +101,7 @@ class TestBaseTabButtonLabels:
         """Test that create_task_button uses TaskConfigManager for labels."""
         # Add the task to base tab if not exists (since "base" is not in defaults)
         if not mock_main_window.task_config_manager.get_task_config("base", LLMTask.REVIEW_JSON.value):
-            from procedo.studio.core.task_config import TaskConfig
+            from procedo.studio.core.task_config_model import TaskConfig
             task = TaskConfig(
                 id=LLMTask.REVIEW_JSON.value,
                 name="Review JSON",
@@ -128,7 +128,7 @@ class TestBaseTabButtonLabels:
     def test_refresh_button_labels_updates_existing_buttons(self, base_tab, mock_main_window):
         """Test that refresh_button_labels updates all task buttons."""
         # Add the tasks to base tab if not exists (since "base" is not in defaults)
-        from procedo.studio.core.task_config import TaskConfig
+        from procedo.studio.core.task_config_model import TaskConfig
         
         if not mock_main_window.task_config_manager.get_task_config("base", LLMTask.REVIEW_JSON.value):
             task1 = TaskConfig(
@@ -284,7 +284,7 @@ class TestLLMButtonCapabilityGating:
         """A bundle-declared CUSTOM task's button is enabled and clicking
         runs AD_HOC_CHAT with custom_task_id (gpt-5.5 finding)."""
         from unittest.mock import MagicMock
-        from procedo.studio.core.task_config import TaskConfig
+        from procedo.studio.core.task_config_model import TaskConfig
 
         base_tab.tab_id = "text_json"
         mock_main_window.task_config_manager.add_task(

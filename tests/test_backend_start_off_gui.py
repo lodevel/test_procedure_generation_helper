@@ -28,7 +28,7 @@ from .test_main_window_characterization import make_window as make_window
 from .test_main_window_characterization import mbox as mbox
 from .test_main_window_characterization import qapp as qapp
 from .test_proposal_cards import opened as opened
-from .test_server_lifecycle import _fake_spawn, _mgr, _pid_file
+from .test_server_lifecycle import _fake_spawn, _mgr, _pid_file, _write_record
 
 STARTING = "Starting the AI server…"
 DOWN = "The OpenCode server did not start in time."
@@ -226,15 +226,17 @@ def test_studio_closed_during_a_start_leaves_no_server_and_no_pid_file(qapp, tmp
     answers = _Answers()
     with patch.object(mgr, "_diagnose_installation", return_value=healthy), \
          patch("procedo.studio.llm.server_manager.find_free_port", return_value=5005), \
-         patch("procedo.studio.llm.server_manager.subprocess.Popen", return_value=proc), \
+         patch("procedo.studio.llm.server_manager.subprocess.Popen",
+               side_effect=lambda *a, **k: _write_record(mgr, 31337) or proc), \
          patch("procedo.studio.llm.server_manager.subprocess.run", return_value=MagicMock()), \
          patch("procedo.studio.llm.server_manager.requests.get",
                side_effect=requests.exceptions.ConnectionError()):
         request_backend(factory, "text_json", answers.take)
         deadline = time.monotonic() + 10
-        while mgr._orphans.read_pid_file() is None and time.monotonic() < deadline:
+        while mgr._spawned is None and time.monotonic() < deadline:
             time.sleep(0.01)
-        assert mgr._orphans.read_pid_file()["pid"] == 31337  # spawned, still starting
+        assert mgr._await_spawned() == (31337, 5005)  # spawned, still starting
+        assert mgr._orphans.read_pid_file()["pid"] == 31337
 
         LLMServerController._stop_current_server(SimpleNamespace(server_manager=mgr))
         _spin(lambda: answers.got)

@@ -17,7 +17,7 @@ from .mcp_config import win_to_wsl_path
 
 log = logging.getLogger(__name__)
 
-PID_FILE = "pid"  # its server's Linux pid + port (the orphan sweep's record)
+PID_FILE = "pid"  # its server's Linux pid + port (the orphan sweep's record, written by the launch)
 CONFIG_FILE = "json"  # its derived opencode.json, the server's OPENCODE_CONFIG
 UNIVERSE_FILE = "universe.json"  # its run_skill gate universe
 _PREFIX = "opencode-"
@@ -39,11 +39,16 @@ def launch_file_owners(launch_dir) -> list[int]:
     return sorted(owners)
 
 
+def launch_file_wsl_path(launch_dir, kind: str, owner: Optional[int] = None) -> str:
+    """The WSL path of *owner*'s launch file *kind* in *launch_dir* (a Windows path)."""
+    name = launch_file_path(launch_dir, kind, owner).name
+    return win_to_wsl_path(str(launch_dir)).rstrip("/") + "/" + name
+
+
 def config_wsl_path(launch_dir, owner: Optional[int] = None) -> str:
     """The WSL path of *owner*'s launch config in *launch_dir* (a Windows path): the
     ``OPENCODE_CONFIG`` its server is launched with, and so that server's identity."""
-    name = launch_file_path(launch_dir, CONFIG_FILE, owner).name
-    return win_to_wsl_path(str(launch_dir)).rstrip("/") + "/" + name
+    return launch_file_wsl_path(launch_dir, CONFIG_FILE, owner)
 
 
 def config_env(launch_dir) -> dict[str, str]:

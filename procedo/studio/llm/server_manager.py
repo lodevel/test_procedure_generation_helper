@@ -326,8 +326,7 @@ class OpenCodeServerManager:
                     port = find_free_port(0, self._config.server_hostname)
                     self._config.server_port = port
 
-                    cmd = [self._config.wsl_path, "bash", "-ic",
-                           self._build_serve_command(port)]
+                    cmd = self._serve_argv(port)
                     log.debug(f"Server command (attempt {attempt}): {' '.join(cmd)}")
 
                     # stdout discarded; stderr PIPE is drained by a thread so the
@@ -344,9 +343,9 @@ class OpenCodeServerManager:
                         # be a non-translatable drive (e.g. L:).
                         cwd=self._config.working_directory or safe_wsl_cwd(),
                     )
-                    # The drain also records OUR Linux pid (pid file) as soon as
-                    # the serve command prints it, so a crashed next session can
-                    # sweep it.
+                    # The drain reads OUR Linux pid from the serve command's
+                    # marker (what a stop signals); the launch itself already
+                    # wrote the record a crashed next session sweeps by.
                     self._start_stderr_drain(port)
                     log.debug(f"Server process started, PID: {self._server_process.pid}")
 
@@ -389,17 +388,30 @@ class OpenCodeServerManager:
             return False
 
     # The serve command prints this marker + its Linux pid on stderr, then
-    # ``exec``s ``opencode serve`` — so that pid IS the server (or, if the login
-    # shell wsl.exe runs expanded ``$$`` without exec'ing bash, its ancestor).
+    # ``exec``s ``opencode serve`` — so that pid IS the server (the launch's sh
+    # ``exec``s bash too, so it is also the pid of the record).
     # wsl.exe's own pid is a Windows pid and names nothing on the Linux side.
     _PID_MARKER = "__OC_PID__"
     # How long a stop waits for that marker when it lands mid-boot (bash still
     # sourcing .bashrc), before it falls back to stopping wsl.exe alone.
     _LINUX_PID_WAIT = 3.0
 
+    def _serve_argv(self, port: int) -> list[str]:
+        """The wsl.exe argv that launches OUR server. ``-e`` runs ``sh`` itself (no
+        login shell re-expanding a ``$`` of the command), which first writes the
+        server's record (``record_command``), before ``bash -i`` sources the user's
+        .bashrc (seconds), so a Studio killed meanwhile still leaves a record the
+        next sweep finds; then it ``exec``s ``bash -ic`` on the serve command
+        (``-i`` so the user's PATH resolves ``opencode``). ``exec`` keeps the pid,
+        so the recorded pid IS the server's. Two quoting levels: sh parses the
+        whole, bash the serve command, each value quoted at its own level."""
+        launch = (f"{self._orphans.record_command(port)}"
+                  f"exec bash -ic {shlex.quote(self._build_serve_command(port))}")
+        return [self._config.wsl_path, "-e", "sh", "-c", launch]
+
     def _build_serve_command(self, port: int) -> str:
-        """Build the ``opencode serve`` shell command (run via ``bash -ic`` so
-        the user's PATH resolves ``opencode``). It first prints
+        """Build the ``opencode serve`` shell command ``bash -ic`` runs (see
+        ``_serve_argv``). It first prints
         ``_PID_MARKER<pid>`` on stderr, then ``exec``s the server so the
         printed pid stays the server's for its whole life.
 
@@ -535,8 +547,8 @@ class OpenCodeServerManager:
         """Drain the server's stderr into a bounded tail on a daemon thread —
         keeps the pipe from filling (which would deadlock the server) and keeps
         the last lines available as a failure reason. The ``_PID_MARKER`` line
-        is taken out of the stream: its Linux pid goes to the pid file and to
-        ``self._spawned`` (what ``_stop_process`` kills)."""
+        is taken out of the stream: its Linux pid goes to ``self._spawned`` (what
+        ``_stop_process`` kills)."""
         self._spawned = None  # never a previous spawn's pid
         proc = self._server_process
         if proc is None or proc.stderr is None:
@@ -555,7 +567,6 @@ class OpenCodeServerManager:
                     pid = text[len(self._PID_MARKER):]
                     if (not spawned.done() and text.startswith(self._PID_MARKER)
                             and pid.isdigit()):
-                        self._orphans.write_pid_file(int(pid), port)
                         spawned.set_result((int(pid), port))
                         continue
                     tail.append(line)

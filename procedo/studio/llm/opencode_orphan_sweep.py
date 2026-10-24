@@ -3,10 +3,11 @@ OpenCode orphan sweep - the pid file and the leftover-server sweep.
 
 On a clean exit ``OpenCodeServerManager.stop()`` tears the process down. But a
 crash / hard kill of the editor can leave the Linux-side ``opencode serve``
-alive. Each Studio process records ITS server's Linux pid+port in its pid file
-(``launch_file_path``, one per Studio process) as soon as the spawn prints it,
-and at the START of the next ``start()`` the records of DEAD Studio processes
-(and our own) are read back and that process killed - NEVER a live Studio's
+alive. Each Studio process's launch records ITS server's Linux pid+port in its
+pid file (``launch_file_path``, one per Studio process) as its first command,
+before bash sources the user's .bashrc, and at the START of the next
+``start()`` the records of DEAD Studio processes (and our own) are read back
+and that process killed - NEVER a live Studio's
 server, and ONLY after confirming the live pid is an ``opencode serve``
 launched with that process's ``OPENCODE_CONFIG`` (``config_wsl_path``), checked
 against /proc cmdline+environ. We NEVER pkill-by-name blindly: the recorded pid
@@ -18,6 +19,7 @@ import dataclasses
 import json
 import logging
 import os
+import shlex
 import subprocess
 import time
 from enum import Enum
@@ -31,6 +33,7 @@ from .launch_files import (
     config_wsl_path,
     launch_file_owners,
     launch_file_path,
+    launch_file_wsl_path,
     remove_launch_files,
     unlink_quietly,
 )
@@ -106,21 +109,20 @@ class OrphanSweeper:
             return None
         return launch_file_path(launch_dir, PID_FILE)
 
-    def write_pid_file(self, pid: int, port: int) -> None:
-        """Record OUR spawned server as JSON ``{pid, port, started_at}`` so a
-        crashed next session can sweep it. Best-effort — a write failure must
-        not abort an otherwise-healthy launch."""
-        path = self.pid_file_path()
-        if path is None:
-            return
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                json.dumps({"pid": pid, "port": port, "started_at": time.time()}),
-                encoding="utf-8",
-            )
-        except Exception as e:  # noqa: BLE001 — best-effort bookkeeping
-            log.debug(f"Could not write pid file {path}: {e}")
+    def record_command(self, port: int) -> str:
+        """The shell command that writes OUR server's record (``pid_file_path``) as JSON
+        ``{pid, port, started_at}``, or ``""`` without a launch dir. The serve launch runs
+        it first, before bash sources the user's .bashrc (seconds), so a Studio killed
+        meanwhile still leaves a record the next sweep finds. The Linux shell is the file's
+        one writer and owns ``pid`` (its ``$$``, which ``exec`` hands on to ``opencode
+        serve``); this Studio owns ``port`` and ``started_at`` (number literals). A failed
+        write only prints on the server's stderr: it never aborts the launch."""
+        launch_dir = self._config.working_directory
+        if not launch_dir:
+            return ""
+        path = launch_file_wsl_path(launch_dir, PID_FILE)
+        fields = f'"port": {int(port)}, "started_at": {time.time()!r}'
+        return f"printf '{{\"pid\": %d, {fields}}}' $$ > {shlex.quote(path)}; "
 
     def remove_pid_file(self, pid: int, path: Optional[Path] = None) -> None:
         """Delete the pid file (*path*, default OUR own) unless it now records a
@@ -224,6 +226,11 @@ class OrphanSweeper:
         # Must be an `opencode serve` — adjacent exact argv tokens, not a
         # substring of some unrelated command line.
         if not self._is_opencode_serve(cmd_tokens):
+            # Still our launch's sh / bash before its `exec opencode serve` (bash
+            # sourcing .bashrc takes seconds; the record is written before): not
+            # the server yet, so keep the record for the next sweep.
+            if any("exec opencode serve --port " in t for t in cmd_tokens):
+                return PidIdentity.UNKNOWN
             return PidIdentity.NOT_OURS
         if our_cfg is None:
             # No config identity to assert — the serve check is the marker.

@@ -13,9 +13,9 @@ off:
 The flag defaults to True so existing projects keep their current
 behavior.
 
-Qt ownership note: the validator-button rows below are built as
-``QHBoxLayout(tab)`` — installed on the tab — never as a bare
-``QHBoxLayout()``.  A parentless row of ``QPushButton``s is torn down in
+Qt ownership note: the tabs' action bars below (their validator buttons
+included) are installed on the tab (``QVBoxLayout(tab)``) — never left
+without a parent.  A parentless row of ``QPushButton``s is torn down in
 arbitrary order at interpreter shutdown and kills the process with an
 access violation after pytest has already reported success.  Full
 explanation in ``test_tab_registry_integration.py``'s module docstring.
@@ -206,7 +206,7 @@ def test_validate_procedure_button_hidden_when_wheel_unavailable(monkeypatch, tm
     cleanly. When the wheel is missing, the pack-shipped validator must
     hide; the pack-independent `core.check_python_syntax` keeps showing.
     """
-    from PySide6.QtWidgets import QApplication, QHBoxLayout
+    from PySide6.QtWidgets import QApplication, QVBoxLayout
     from types import SimpleNamespace
     from unittest.mock import MagicMock
     app = QApplication.instance() or QApplication([])  # noqa: F841
@@ -249,8 +249,8 @@ def test_validate_procedure_button_hidden_when_wheel_unavailable(monkeypatch, tm
     mw.project_manager = SimpleNamespace(project_root=tmp)
     tab = BaseTab(mw)
     tab.tab_id = "text_json"
-    layout = QHBoxLayout(tab)
-    tab._build_validator_buttons(layout)
+    QVBoxLayout(tab).addWidget(tab._create_action_bar())
+    layout = tab.action_bar.file_layout
 
     button_ids = []
     from PySide6.QtWidgets import QPushButton
@@ -270,7 +270,7 @@ def test_all_validator_buttons_hidden_when_master_toggle_off(tmp_path):
     """Master toggle OFF (validator_loop.enabled=false) hides ALL
     validator buttons regardless of which specific validator is
     listed."""
-    from PySide6.QtWidgets import QApplication, QHBoxLayout, QPushButton
+    from PySide6.QtWidgets import QApplication, QVBoxLayout
     from types import SimpleNamespace
     from unittest.mock import MagicMock
     from procedo.studio.core.task_config import TaskConfigManager
@@ -305,9 +305,8 @@ def test_all_validator_buttons_hidden_when_master_toggle_off(tmp_path):
     mw.project_manager = SimpleNamespace(project_root=tmp)
     tab = BaseTab(mw)
     tab.tab_id = "text_json"
-    layout = QHBoxLayout(tab)
-    added = tab._build_validator_buttons(layout)
-    assert added == 0
+    QVBoxLayout(tab).addWidget(tab._create_action_bar())
+    assert tab.validator_buttons.rebuild() == 0
 
 
 def test_chat_panel_toggle_writes_auto_correct_not_enabled(tmp_path):

@@ -125,7 +125,7 @@ class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
             [self.save_both_btn, self.format_json_btn], [self.quick_code_btn]))
         self.json_card.changed.connect(self._regate_pack_buttons)  # gates Quick Code above
 
-    # Task callback maps for dynamic LLM button building (see TaskButtonsMixin._build_llm_buttons)
+    # Task callback maps for dynamic LLM button building (see TaskButtonRow.rebuild)
     
     def _get_task_callback_map(self) -> dict:
         """Return mapping of task_id -> (callback, tooltip)."""

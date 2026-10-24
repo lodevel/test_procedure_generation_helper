@@ -124,7 +124,7 @@ class TextJsonTab(TextActionsMixin, LLMTabMixin, BaseTab):
             [self.quick_parse_btn, self.quick_render_btn, self.parse_and_generate_btn]))
         self.text_card.changed.connect(self._regate_pack_buttons)  # gates the ⚡ buttons above
 
-    # Task callback maps for dynamic LLM button building (see TaskButtonsMixin._build_llm_buttons)
+    # Task callback maps for dynamic LLM button building (see TaskButtonRow.rebuild)
 
     def _get_task_callback_map(self) -> dict:
         """Return mapping of task_id -> (callback, tooltip)."""

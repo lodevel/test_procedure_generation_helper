@@ -1,33 +1,59 @@
 """A view's validator buttons: one per registered validator its tab configures, and running
-one (the outcome goes to the dock's findings panel and the chat). Mixed into ``BaseTab``."""
+one (the outcome goes to the dock's findings panel and the chat). Held by ``BaseTab`` as
+``validator_buttons``."""
 
 import logging
-from typing import Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from PySide6.QtWidgets import QLayout, QPushButton
+
+if TYPE_CHECKING:
+    from ..core.task_config import TaskConfigManager
 
 log = logging.getLogger(__name__)
 
 
-class ValidatorButtonsMixin:
-    """The validator buttons of a ``BaseTab`` (registry-driven, Phase 2/3)."""
+def _derive_label(validator_id: str) -> str:
+    """Fallback label for a validator without an explicit ``label`` —
+    e.g. ``rules_packager_base.validate_procedure`` → ``Validate Procedure``."""
+    short = validator_id.rsplit(".", 1)[-1]
+    return short.replace("_", " ").title()
 
-    def _build_validator_buttons(self, parent_layout: QLayout) -> int:
-        # Remember the layout so ``rebuild_validator_buttons`` can refresh
-        # it when the active project (and therefore the validator config)
-        # changes.
-        self._validator_button_layout = parent_layout
-        return self._populate_validator_buttons(parent_layout)
 
-    def rebuild_validator_buttons(self) -> None:
-        """Rebuild this tab's validator buttons against the current
-        TaskConfigManager state. Called by
-        ``MainWindow.refresh_all_button_labels`` after
-        ``task_config_manager.reload(project_root)`` so that opening a
-        project surfaces its configured validators."""
-        layout = getattr(self, "_validator_button_layout", None)
-        if layout is None:
-            return
+class ValidatorButtonRow:
+    """The validator buttons of a view (registry-driven, Phase 2/3), in *layout*."""
+
+    def __init__(
+        self,
+        layout: QLayout,
+        *,
+        main_window,
+        tab_id: Optional[str],
+        config: Optional["TaskConfigManager"],
+        make_button: Callable[..., QPushButton],
+        artifact_for: Callable[[str], Optional[str]],
+        sync_editors: Callable[[], None],
+        status: Callable[[str], None],
+    ) -> None:
+        """*main_window* gives the project and the dock; *tab_id* names the tab's validators
+        (None: no buttons); *make_button* is the tab's ``create_button``; *artifact_for* the
+        live content a validator checks (by artifact name); *sync_editors* pushes the editors
+        to the artifact manager before a run; *status* shows the one-line summary."""
+        self._layout = layout
+        self._main_window = main_window
+        self._tab_id = tab_id
+        self._config = config
+        self._make_button = make_button
+        self._artifact_for = artifact_for
+        self._sync_editors = sync_editors
+        self._status = status
+
+    def rebuild(self) -> int:
+        """Rebuild the validator buttons against the current TaskConfigManager state. Called
+        once by the tab, then by ``MainWindow.refresh_all_button_labels`` after
+        ``task_config_manager.reload(project_root)`` so that opening a project surfaces its
+        configured validators. Returns the count of buttons added."""
+        layout = self._layout
         # Remove existing validator buttons (tagged with the validator_id
         # property). Leave any non-validator widgets the tab put in the
         # same row (e.g. Format JSON) in place.
@@ -37,10 +63,10 @@ class ValidatorButtonsMixin:
             if isinstance(widget, QPushButton) and widget.property("validator_id"):
                 layout.removeWidget(widget)
                 widget.deleteLater()
-        self._populate_validator_buttons(layout)
+        return self._populate()
 
-    def _populate_validator_buttons(self, parent_layout: QLayout) -> int:
-        """Populate *parent_layout* with one button per registered validator
+    def _populate(self) -> int:
+        """Populate the layout with one button per registered validator
         listed in ``workflows.<tab>.validators``.
 
         Returns the count of buttons actually added. Skips disabled
@@ -58,8 +84,8 @@ class ValidatorButtonsMixin:
             is_registered,
         )
 
-        manager = self.task_config_manager
-        tab_id = getattr(self, "tab_id", None)
+        manager = self._config
+        tab_id = self._tab_id
         if manager is None or tab_id is None:
             return 0
         if not hasattr(manager, "get_validator_specs_for_tab"):
@@ -75,7 +101,7 @@ class ValidatorButtonsMixin:
         #     validators (python_syntax) are stateless and
         #     keep showing — they only "skip" if the relevant artifact
         #     is empty at click time.
-        project_root = getattr(self.project_manager, "project_root", None)
+        project_root = getattr(self._main_window.project_manager, "project_root", None)
         hide_procedure_button = False
         try:
             if project_root is not None:
@@ -107,46 +133,20 @@ class ValidatorButtonsMixin:
             # available — config-issue case (Phase 4.6 fix).
             if hide_procedure_button and vid.endswith(".validate_procedure"):
                 continue
-            label = spec.get("label") or self._derive_validator_label(vid)
+            label = spec.get("label") or _derive_label(vid)
             tooltip = spec.get("tooltip") or f"Run validator: {vid}"
-            btn = self.create_button(
+            btn = self._make_button(
                 f"✓ {label}",
                 # default-arg capture so the loop variable isn't late-bound.
-                callback=lambda _checked=False, _vid=vid: self._run_validator(_vid),
+                callback=lambda _checked=False, _vid=vid: self.run(_vid),
                 tooltip=tooltip,
             )
             btn.setProperty("validator_id", vid)
-            parent_layout.addWidget(btn)
+            self._layout.addWidget(btn)
             added += 1
         return added
 
-    def _derive_validator_label(self, validator_id: str) -> str:
-        """Fallback label for a validator without an explicit ``label`` —
-        e.g. ``rules_packager_base.validate_procedure`` → ``Validate Procedure``."""
-        short = validator_id.rsplit(".", 1)[-1]
-        return short.replace("_", " ").title()
-
-    def _get_artifact_for_validation(self, name: str) -> Optional[str]:
-        """Return the *current* (live editor) content for a validator: the
-        view's editor for that artifact when it has one, else the artifact
-        manager's copy.
-        """
-        card = self.card_for(name)
-        if card is not None:
-            return card.editor.toPlainText() or None
-        am = getattr(self.main_window, "artifact_manager", None)
-        if am is None:
-            return None
-        artifact = None
-        if name == "procedure_text":
-            artifact = getattr(am, "procedure_text", None)
-        elif name == "procedure_json":
-            artifact = getattr(am, "procedure_json", None)
-        elif name == "test_code":
-            artifact = getattr(am, "test_code", None)
-        return artifact.content if artifact else None
-
-    def _run_validator(self, validator_id: str) -> None:
+    def run(self, validator_id: str) -> None:
         """Look up *validator_id*, build a ``ValidatorContext`` from the
         tab's live state, dispatch, and route the outcome to the dock."""
         from ..core.validators_registry import (
@@ -156,9 +156,9 @@ class ValidatorButtonsMixin:
         from ..core.validation_outcome import render_validation_outcome_summary
 
         # Push editor → artifact_manager so live content is visible to
-        # validators reading via the default ``_get_artifact_for_validation``.
+        # validators reading via the tab's artifact lookup.
         try:
-            self.sync_editors_to_artifacts()
+            self._sync_editors()
         except Exception:
             log.debug("sync_editors_to_artifacts raised; continuing", exc_info=True)
 
@@ -166,29 +166,29 @@ class ValidatorButtonsMixin:
             validator = get_validator(validator_id)
         except KeyError:
             log.error("Validator %r not registered at click time", validator_id)
-            self.status_message.emit(
+            self._status(
                 f"Validator {validator_id!r} is not registered (see logs)."
             )
             return
 
         ctx = ValidatorContext(
-            artifact_text=self._get_artifact_for_validation("procedure_text"),
-            artifact_json=self._get_artifact_for_validation("procedure_json"),
-            artifact_code=self._get_artifact_for_validation("test_code"),
-            project_root=self.project_manager.project_root,
-            tab_id=getattr(self, "tab_id", ""),
+            artifact_text=self._artifact_for("procedure_text"),
+            artifact_json=self._artifact_for("procedure_json"),
+            artifact_code=self._artifact_for("test_code"),
+            project_root=self._main_window.project_manager.project_root,
+            tab_id=self._tab_id if self._tab_id is not None else "",
         )
 
         try:
             outcome = validator(ctx)
         except Exception as exc:
             log.exception("Validator %s raised: %s", validator_id, exc)
-            self.status_message.emit(f"Validator {validator_id} crashed; see logs.")
+            self._status(f"Validator {validator_id} crashed; see logs.")
             return
 
-        dock = getattr(self.main_window, "dock", None)
+        dock = getattr(self._main_window, "dock", None)
         chat_panel = getattr(dock, "chat_panel", None) if dock else None
-        label = self._derive_validator_label(validator_id)
+        label = _derive_label(validator_id)
 
         if outcome.skipped:
             # Surface the skip reason in the dock's findings panel so
@@ -203,7 +203,7 @@ class ValidatorButtonsMixin:
                     "message": reason_text,
                     "location": validator_id,
                 }])
-            self.status_message.emit(reason_text)
+            self._status(reason_text)
             # Post a system message in the chat so the operator sees
             # that the click did something — the findings panel can be
             # hidden / off-screen.
@@ -216,7 +216,7 @@ class ValidatorButtonsMixin:
                 [issue.to_dock_dict() for issue in outcome.issues]
             )
         summary = render_validation_outcome_summary(outcome)
-        self.status_message.emit(summary)
+        self._status(summary)
         # Chat-panel echo: makes it obvious the button fired and
         # whether the run passed / found issues. Without this, a clean
         # pass clears the findings panel silently and users assume the

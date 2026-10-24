@@ -348,7 +348,7 @@ def on_config_file_changed(mw, path: str) -> None:
     running workflow editor's button labels + validator rows
     reflect the change without restart. The reload-callback chain
     fires ``refresh_all_button_labels``, which itself calls
-    ``rebuild_validator_buttons`` on every tab (registered in
+    ``validator_buttons.rebuild()`` on every tab (registered in
     Phase 2/3).
     """
     handle_config_change(mw)

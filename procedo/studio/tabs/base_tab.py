@@ -12,14 +12,14 @@ from ..core.proposal import FileChange, Proposal, current_test
 from ..llm.backend_base import LLMTask
 from ..widgets.action_bar import ActionBar
 from ..widgets.editor_card import EditorCard
-from .task_buttons import TaskButtonsMixin
-from .validator_buttons import ValidatorButtonsMixin
+from .task_buttons import TaskButtonRow
+from .validator_buttons import ValidatorButtonRow
 
 if TYPE_CHECKING:
     from ..main_window import MainWindow
 
 
-class BaseTab(ValidatorButtonsMixin, TaskButtonsMixin, QWidget):
+class BaseTab(QWidget):
     """
     Base class for all editor tabs.
     
@@ -29,8 +29,9 @@ class BaseTab(ValidatorButtonsMixin, TaskButtonsMixin, QWidget):
     - Status updates
     - Error handling
 
-    Its validator buttons (``ValidatorButtonsMixin``) and LLM task buttons
-    (``TaskButtonsMixin``) live in their own modules.
+    A view with an action bar holds its LLM task buttons (``task_buttons``, a
+    ``TaskButtonRow``) and its validator buttons (``validator_buttons``, a
+    ``ValidatorButtonRow``); a view without one has None for both.
     """
     
     # Signals
@@ -43,6 +44,8 @@ class BaseTab(ValidatorButtonsMixin, TaskButtonsMixin, QWidget):
         self.main_window = main_window
         #: The view's editor cards (``add_card``): loaded, synced and saved together.
         self.cards: list[EditorCard] = []
+        self.task_buttons: Optional[TaskButtonRow] = None
+        self.validator_buttons: Optional[ValidatorButtonRow] = None
         self._setup_ui()
     
     def _setup_ui(self):
@@ -271,12 +274,58 @@ class BaseTab(ValidatorButtonsMixin, TaskButtonsMixin, QWidget):
                        if proposed is not None else str(proposal.content))
         self.propose_edit(self.json_card, content_str, test=self._ensure_run_state().test)
 
+    def _get_task_callback_map(self) -> dict:
+        """Return mapping of task_id -> (callback, tooltip).
+
+        Overridden by the views to provide their task callbacks.
+        Keys are LLMTask enum values (strings), values are (callable, str) tuples.
+        """
+        return {}
+
+    def _get_force_callback_map(self) -> dict:
+        """Return mapping of task_id -> (force_callback, tooltip) for force-mode buttons.
+
+        Override in views that support force-mode for specific tasks.
+        """
+        return {}
+
+    def _get_artifact_for_validation(self, name: str) -> Optional[str]:
+        """Return the *current* (live editor) content for a validator: the
+        view's editor for that artifact when it has one, else the artifact
+        manager's copy.
+        """
+        card = self.card_for(name)
+        if card is not None:
+            return card.editor.toPlainText() or None
+        am = getattr(self.main_window, "artifact_manager", None)
+        if am is None:
+            return None
+        artifact = None
+        if name == "procedure_text":
+            artifact = getattr(am, "procedure_text", None)
+        elif name == "procedure_json":
+            artifact = getattr(am, "procedure_json", None)
+        elif name == "test_code":
+            artifact = getattr(am, "test_code", None)
+        return artifact.content if artifact else None
+
     def _create_action_bar(self, file_buttons: Iterable[QWidget] = (),
                            pack_buttons: Iterable[QWidget] = ()) -> ActionBar:
         """The view's action bar (``self.action_bar``): the assistant row built
         from TaskConfigManager, the FILE row with *file_buttons*, a divider,
         *pack_buttons* (⚡) and the validator buttons."""
         self.action_bar = ActionBar(file_buttons, pack_buttons)
-        self._build_validator_buttons(self.action_bar.file_layout)
-        self._build_llm_buttons()
+        tab_id = getattr(self, "tab_id", None)
+        self.validator_buttons = ValidatorButtonRow(
+            self.action_bar.file_layout, main_window=self.main_window, tab_id=tab_id,
+            config=self.task_config_manager, make_button=self.create_button,
+            artifact_for=self._get_artifact_for_validation,
+            sync_editors=self.sync_editors_to_artifacts, status=self.status_message.emit)
+        self.validator_buttons.rebuild()
+        self.task_buttons = TaskButtonRow(
+            self.action_bar, tab_id=tab_id, owner_name=type(self).__name__,
+            config=self.task_config_manager, callbacks=self._get_task_callback_map(),
+            force_callbacks=self._get_force_callback_map(),
+            run_task=getattr(self, "_run_task_async", None))
+        self.task_buttons.rebuild()
         return self.action_bar

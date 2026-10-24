@@ -282,29 +282,23 @@ class StudioWorkspace(QWidget):
         """
         log.info("Refreshing button labels across all tabs")
         
-        # Iterate through all tabs and refresh labels if supported
+        # Iterate through all tabs and rebuild their buttons; a view without an
+        # action bar (Traceability) has none.
         for i in range(self.view_stack.count()):
             tab = self.view_stack.widget(i)
-            # Rebuild dynamic buttons if supported (for text_json, json_code tabs)
-            if hasattr(tab, 'rebuild_llm_buttons'):
+            if tab.task_buttons is not None:
                 try:
-                    tab.rebuild_llm_buttons()
+                    tab.task_buttons.rebuild()
                     log.debug(f"Rebuilt LLM buttons for {tab.__class__.__name__}")
                 except Exception as e:
                     log.error(f"Error rebuilding buttons in {tab.__class__.__name__}: {e}")
-            elif hasattr(tab, 'refresh_button_labels'):
-                try:
-                    tab.refresh_button_labels()
-                    log.debug(f"Refreshed button labels for {tab.__class__.__name__}")
-                except Exception as e:
-                    log.error(f"Error refreshing labels in {tab.__class__.__name__}: {e}")
             # Rebuild validator buttons (Phase 2/3 registry-driven). Tabs
             # build them once at __init__ when the manager is still in
             # fallback mode — without this rebuild, opening a project
             # would never surface the project's configured validators.
-            if hasattr(tab, 'rebuild_validator_buttons'):
+            if tab.validator_buttons is not None:
                 try:
-                    tab.rebuild_validator_buttons()
+                    tab.validator_buttons.rebuild()
                     log.debug(f"Rebuilt validator buttons for {tab.__class__.__name__}")
                 except Exception as e:
                     log.error(f"Error rebuilding validator buttons in {tab.__class__.__name__}: {e}")

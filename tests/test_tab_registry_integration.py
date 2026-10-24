@@ -4,9 +4,9 @@ Verifies the end-to-end wiring that the Phase 2/3 refactor introduced:
 
 * ``TaskConfigManager.get_validator_specs_for_tab`` returns the
   ``workflows.<tab>.validators`` block.
-* ``BaseTab._populate_validator_buttons`` consumes that list and adds
-  one ``QPushButton`` per registered, enabled validator.
-* ``rebuild_validator_buttons`` swaps the row when the active project
+* The tab's ``ValidatorButtonRow`` (``tab.validator_buttons``) consumes that
+  list and adds one ``QPushButton`` per registered, enabled validator.
+* ``validator_buttons.rebuild()`` swaps the row when the active project
   (and therefore the validator config) changes.
 * Clicking a button dispatches through ``validators_registry.get`` and
   routes the outcome to ``main_window.dock.show_validation_result_from_list``.
@@ -15,11 +15,10 @@ The tests use a real ``TaskConfigManager`` against ``tmp_path`` projects
 and a ``MagicMock`` main_window. The registry is reset before each test
 so built-in registrations don't bleed across cases.
 
-Qt ownership note: every validator-button row below is built as
-``QHBoxLayout(tab)`` — installed on the tab — never as a bare
-``QHBoxLayout()``.  ``BaseTab._build_validator_buttons`` stashes the
-layout on the tab and fills it with ``QPushButton``s; with no parent
-widget the tab, the layout and each button are owned by their own
+Qt ownership note: every tab's action bar below is installed on the tab
+(``_build_row``: ``QVBoxLayout(tab)``) — never left without a parent.
+The tab's validator row fills the bar's file layout with ``QPushButton``s;
+with no parent widget the tab, the layout and each button are owned by their own
 Python wrapper, so CPython frees them in an arbitrary order during
 interpreter shutdown and Qt's teardown then walks freed memory.  The
 process dies of an access violation (0xC0000005) *after* pytest has
@@ -38,7 +37,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from PySide6.QtWidgets import QApplication, QHBoxLayout, QPushButton
+from PySide6.QtWidgets import QApplication, QPushButton, QVBoxLayout
 
 from procedo.studio.core.task_config import TaskConfigManager
 from procedo.studio.core.validators_registry import (
@@ -114,6 +113,13 @@ def _make_tab(qapp, main_window, tab_id: str = "text_json") -> BaseTab:
     return tab
 
 
+def _build_row(tab: BaseTab):
+    """Build *tab*'s action bar, installed on the tab (see the ownership note), and return
+    the layout its validator buttons are in."""
+    QVBoxLayout(tab).addWidget(tab._create_action_bar())
+    return tab.action_bar.file_layout
+
+
 def _register_stub_validator(vid: str = "pack_test.validate_stub") -> str:
     """Register a no-op validator for button-mechanics tests; returns its id."""
     register(vid, lambda _ctx: ValidationOutcome(ok=True, skipped=False, issues=[]))
@@ -145,13 +151,14 @@ def test_validator_run_posts_chat_message(tmp_path, qapp):
     mw.dock.chat_panel = MagicMock()
     tab = _make_tab(qapp, mw, tab_id="text_json")
 
-    tab._run_validator("core.check_python_syntax")
+    _build_row(tab)
+    tab.validator_buttons.run("core.check_python_syntax")
 
     # Either an error during validation (validator may not be importable
     # in CI without rules_packager_base) or a clean result both must
     # post a system message — operator never sees a silent click.
     assert mw.dock.chat_panel.add_system_message.called, (
-        "_run_validator must echo a system message in the chat panel; "
+        "a validator run must echo a system message in the chat panel; "
         "the dock's findings panel can be hidden/off-screen."
     )
     args = mw.dock.chat_panel.add_system_message.call_args[0]
@@ -173,9 +180,8 @@ def test_buttons_built_from_project_validators(tmp_path, qapp):
     mw = _mock_main_window(tmp_path, manager, project_root)
     tab = _make_tab(qapp, mw)
 
-    layout = QHBoxLayout(tab)
-    added = tab._build_validator_buttons(layout)
-    assert added == 2
+    layout = _build_row(tab)
+    assert _count_validator_buttons(layout) == 2
 
     labels = [
         layout.itemAt(i).widget().text()
@@ -196,9 +202,8 @@ def test_disabled_spec_skipped(tmp_path, qapp):
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     tab = _make_tab(qapp, _mock_main_window(tmp_path, manager, project_root))
 
-    layout = QHBoxLayout(tab)
-    added = tab._build_validator_buttons(layout)
-    assert added == 1
+    layout = _build_row(tab)
+    assert _count_validator_buttons(layout) == 1
 
 
 def test_unregistered_id_skipped_with_warning(tmp_path, qapp, caplog):
@@ -213,15 +218,14 @@ def test_unregistered_id_skipped_with_warning(tmp_path, qapp, caplog):
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     tab = _make_tab(qapp, _mock_main_window(tmp_path, manager, project_root))
 
-    layout = QHBoxLayout(tab)
     with caplog.at_level("WARNING"):
-        added = tab._build_validator_buttons(layout)
-    assert added == 1
+        layout = _build_row(tab)
+    assert _count_validator_buttons(layout) == 1
     assert any("made.up.never_registered" in rec.message for rec in caplog.records)
 
 
 def test_rebuild_validator_buttons_swaps_set(tmp_path, qapp):
-    """After ``rebuild_validator_buttons``, the row reflects the new
+    """After ``validator_buttons.rebuild()``, the row reflects the new
     validator list — even if the project's config is mutated and the
     manager is reloaded."""
     project_root = tmp_path / "proj"
@@ -232,8 +236,7 @@ def test_rebuild_validator_buttons_swaps_set(tmp_path, qapp):
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     tab = _make_tab(qapp, _mock_main_window(tmp_path, manager, project_root))
 
-    layout = QHBoxLayout(tab)
-    tab._build_validator_buttons(layout)
+    layout = _build_row(tab)
     assert _count_validator_buttons(layout) == 1
 
     # Rewrite the project config and reload — the new validators list
@@ -243,12 +246,12 @@ def test_rebuild_validator_buttons_swaps_set(tmp_path, qapp):
         {"id": stub_id, "enabled": True},
     ])
     manager.reload(project_root)
-    tab.rebuild_validator_buttons()
+    tab.validator_buttons.rebuild()
     assert _count_validator_buttons(layout) == 2
 
 
 def test_rebuild_preserves_non_validator_widgets(tmp_path, qapp):
-    """``rebuild_validator_buttons`` only removes widgets tagged with the
+    """``validator_buttons.rebuild()`` only removes widgets tagged with the
     ``validator_id`` property — sibling widgets (e.g. a Format JSON button
     a tab put in the same row) survive."""
     project_root = tmp_path / "proj"
@@ -258,12 +261,11 @@ def test_rebuild_preserves_non_validator_widgets(tmp_path, qapp):
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     tab = _make_tab(qapp, _mock_main_window(tmp_path, manager, project_root))
 
-    layout = QHBoxLayout(tab)
-    tab._build_validator_buttons(layout)
+    layout = _build_row(tab)
     sibling = QPushButton("Format JSON")  # no validator_id property
     layout.addWidget(sibling)
 
-    tab.rebuild_validator_buttons()
+    tab.validator_buttons.rebuild()
     widgets = [layout.itemAt(i).widget() for i in range(layout.count())]
     assert sibling in widgets, "non-validator sibling should survive rebuild"
 
@@ -293,8 +295,7 @@ def test_click_dispatches_through_registry_to_dock(tmp_path, qapp):
 
     register("pack.under_test.recording_validator", _recording)
 
-    layout = QHBoxLayout(tab)
-    tab._build_validator_buttons(layout)
+    layout = _build_row(tab)
     button = next(
         layout.itemAt(i).widget() for i in range(layout.count())
         if isinstance(layout.itemAt(i).widget(), QPushButton)
@@ -334,8 +335,7 @@ def test_click_skipped_outcome_surfaces_info_row_in_dock(tmp_path, qapp):
     status_msgs: list[str] = []
     tab.status_message.connect(status_msgs.append)
 
-    layout = QHBoxLayout(tab)
-    tab._build_validator_buttons(layout)
+    layout = _build_row(tab)
     button = next(
         layout.itemAt(i).widget() for i in range(layout.count())
         if isinstance(layout.itemAt(i).widget(), QPushButton)
@@ -371,8 +371,7 @@ def test_validator_crash_is_reported_not_propagated(tmp_path, qapp, caplog):
     status_msgs: list[str] = []
     tab.status_message.connect(status_msgs.append)
 
-    layout = QHBoxLayout(tab)
-    tab._build_validator_buttons(layout)
+    layout = _build_row(tab)
     button = next(
         layout.itemAt(i).widget() for i in range(layout.count())
         if isinstance(layout.itemAt(i).widget(), QPushButton)
@@ -389,7 +388,7 @@ def test_validator_crash_is_reported_not_propagated(tmp_path, qapp, caplog):
 # ---------------------------------------------------------------------------
 
 
-def _count_validator_buttons(layout: QHBoxLayout) -> int:
+def _count_validator_buttons(layout) -> int:
     return sum(
         1 for i in range(layout.count())
         if isinstance(layout.itemAt(i).widget(), QPushButton)

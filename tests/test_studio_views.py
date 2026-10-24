@@ -66,7 +66,8 @@ def test_traceability_has_no_action_bar_and_its_code_card_saves(opened):
     tt = w.traceability_tab
     w.view_stack.setCurrentWidget(tt)
     assert not hasattr(tt, "action_bar") and not tt.findChildren(ActionBar)
-    tt.rebuild_llm_buttons()  # settings saved: nothing to rebuild, no error
+    assert tt.task_buttons is None and tt.validator_buttons is None
+    w.refresh_all_button_labels()  # settings saved: nothing to rebuild here, no error
     assert tt.status_label.objectName() == "viewBanner"
 
     tt.code_editor.setPlainText("# Step 1\nx = 1\n")
@@ -139,5 +140,5 @@ def test_validator_buttons_follow_the_projects_switch(opened, monkeypatch):
         return [b for b in widgets if b is not None and b.property("validator_id")]
 
     monkeypatch.setattr(validator_loop_settings, "is_enabled", lambda root: False)
-    tab.rebuild_validator_buttons()
+    tab.validator_buttons.rebuild()
     assert validators() == []

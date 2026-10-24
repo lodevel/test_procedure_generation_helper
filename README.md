@@ -78,7 +78,7 @@ test_procedure_generation_helper/
     │   ├── backend_factory.py     # Per-tab backend instances (BackendConfig)
     │   ├── opencode_backend.py    # OpenCode backend (re-exports the opencode_client client)
     │   ├── prompt_builder.py / reconstruction.py / response_parser.py
-    │   ├── section_ownership.py / output_contracts.py / validator_dispatch.py
+    │   ├── output_contracts.py / validator_dispatch.py
     │   ├── server_manager.py      # OpenCode server lifecycle
     │   └── worker.py              # Async LLM worker thread
     ├── pack_ops/                  # The bridge into the project venv
@@ -239,7 +239,7 @@ and it is driven by Procedo Bench's interactive/manual runner
   multi-line drain) or legacy `_write_readline`, with defensive `.s`/`._session` and
   raw-resource fallbacks. This powers Procedo Bench's per-equipment raw-command
   terminal; a new pack's driver becomes terminal-addressable just by exposing those
-  surfaces, with no per-driver branch (`_raw_send`, `_execute_op_subprocess.py:174-227`).
+  surfaces, with no per-driver branch (`_raw_send` in `engine_client/_instrument_ops.py`).
 
 ## How it ties into Procedo Bench
 

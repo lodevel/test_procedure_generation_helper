@@ -24,7 +24,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-from procedo.core.evidence_tree import pid_alive
+from procedo.core.process_alive import pid_alive
 
 from .launch_files import (
     PID_FILE,

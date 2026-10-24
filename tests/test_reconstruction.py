@@ -11,6 +11,7 @@ Runs without PySide6:
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 import pytest
 
@@ -221,6 +222,14 @@ class ReconstructedOrErrorTests(unittest.TestCase):
         self.assertIsInstance(err, str)
         self.assertTrue(err)  # non-empty
         self.assertIn("RECON_UNSUPPORTED_OWNER", err)
+
+    def test_parser_unavailable_gives_the_bare_reason(self) -> None:
+        # The chat warning adds "Could not reconstruct procedure_text.md:" itself.
+        def _unavailable(*args, **kwargs):
+            raise pack_parsers.ParserUnavailable("no venv here")
+
+        with mock.patch("procedo.studio.llm.reconstruction.reconstruct_for_pipeline", _unavailable):
+            self.assertEqual(reconstructed_or_error(FRAGMENT, PRIOR), (None, None, "no venv here"))
 
 
 if __name__ == "__main__":

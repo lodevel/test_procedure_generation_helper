@@ -116,7 +116,7 @@ def reconstructed_or_error(
             project_root=project_root,
         )
     except engine_session.ParserUnavailable as exc:
-        return None, None, f"Could not reconstruct procedure_text.md: {exc}"
+        return None, None, str(exc)
     if not recon.success:
         details = "; ".join(
             f"[{i.code}] {i.message}" for i in recon.errors

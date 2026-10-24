@@ -135,8 +135,8 @@ class TextActionsMixin(PackGatingMixin):
     # ---- ⚡ gating ------------------------------------------------------------------------
 
     def _gated_equipment_types(self, project_root) -> list[str]:
-        from ..pack_ops import bundle_capabilities
-        return bundle_capabilities.equipment_types_in(self.text_card.editor.toPlainText(), project_root)
+        from ..pack_ops import equipment_scan
+        return equipment_scan.equipment_types_in(self.text_card.editor.toPlainText(), project_root)
 
     def refresh_parser_button(self) -> bool:
         """Gate the ⚡ buttons (:class:`PackGatingMixin`); Sync Meta shows with them."""

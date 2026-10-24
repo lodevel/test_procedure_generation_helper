@@ -1,7 +1,7 @@
 """Tests for the bundle ``equipment_profiles`` bridge in
 ``procedo.studio.pack_ops.pack_parsers`` (Phase B, D4 hard cut).
 
-Covers ``_load_bundle_equipment_profiles`` (reads the bundle's
+Covers ``load_bundle_equipment_profiles`` (reads the bundle's
 defaults.json via ``PROCEDO_BUNDLE_DEFAULTS_PATH``) and the
 ``sync_equipment_from_steps`` fallback that filters the records to
 ``equipment_type == "controller"`` and shims them to the wheel shape
@@ -63,7 +63,7 @@ def _write_defaults(tmp_path, payload, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# _load_bundle_equipment_profiles
+# load_bundle_equipment_profiles
 # ---------------------------------------------------------------------------
 
 
@@ -75,7 +75,7 @@ def test_new_key_loads_all_records(monkeypatch, tmp_path):
         {"equipment_profiles": [CONTROLLER_PROFILE, PSU_PROFILE]},
         monkeypatch,
     )
-    assert bundle_capabilities._load_bundle_equipment_profiles() == [
+    assert bundle_capabilities.load_bundle_equipment_profiles() == [
         CONTROLLER_PROFILE, PSU_PROFILE,
     ]
 
@@ -86,26 +86,26 @@ def test_non_dict_entries_are_dropped(monkeypatch, tmp_path):
         {"equipment_profiles": ["junk", 7, CONTROLLER_PROFILE, None]},
         monkeypatch,
     )
-    assert bundle_capabilities._load_bundle_equipment_profiles() == [CONTROLLER_PROFILE]
+    assert bundle_capabilities.load_bundle_equipment_profiles() == [CONTROLLER_PROFILE]
 
 
 def test_env_unset_returns_empty(monkeypatch):
     """No bundle context (env unset) is not an error — degrade to []."""
     monkeypatch.delenv(BUNDLE_DEFAULTS_PATH, raising=False)
-    assert bundle_capabilities._load_bundle_equipment_profiles() == []
+    assert bundle_capabilities.load_bundle_equipment_profiles() == []
 
 
 def test_missing_file_returns_empty(monkeypatch, tmp_path):
     """A stale env var pointing at a deleted file degrades to []."""
     monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(tmp_path / "gone.json"))
-    assert bundle_capabilities._load_bundle_equipment_profiles() == []
+    assert bundle_capabilities.load_bundle_equipment_profiles() == []
 
 
 def test_malformed_json_returns_empty(monkeypatch, tmp_path):
     bad = tmp_path / "defaults.json"
     bad.write_text("{not json", encoding="utf-8")
     monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(bad))
-    assert bundle_capabilities._load_bundle_equipment_profiles() == []
+    assert bundle_capabilities.load_bundle_equipment_profiles() == []
 
 
 def test_old_key_only_bundle_raises_parser_unavailable(monkeypatch, tmp_path):
@@ -118,13 +118,13 @@ def test_old_key_only_bundle_raises_parser_unavailable(monkeypatch, tmp_path):
         monkeypatch,
     )
     with pytest.raises(engine_session.ParserUnavailable, match="equipment_profiles"):
-        bundle_capabilities._load_bundle_equipment_profiles()
+        bundle_capabilities.load_bundle_equipment_profiles()
 
 
 def test_key_missing_entirely_raises_parser_unavailable(monkeypatch, tmp_path):
     _write_defaults(tmp_path, {"workflows": {}}, monkeypatch)
     with pytest.raises(engine_session.ParserUnavailable):
-        bundle_capabilities._load_bundle_equipment_profiles()
+        bundle_capabilities.load_bundle_equipment_profiles()
 
 
 def test_non_list_value_raises_parser_unavailable(monkeypatch, tmp_path):
@@ -132,7 +132,7 @@ def test_non_list_value_raises_parser_unavailable(monkeypatch, tmp_path):
         tmp_path, {"equipment_profiles": {"oops": "dict"}}, monkeypatch,
     )
     with pytest.raises(engine_session.ParserUnavailable):
-        bundle_capabilities._load_bundle_equipment_profiles()
+        bundle_capabilities.load_bundle_equipment_profiles()
 
 
 # ---------------------------------------------------------------------------

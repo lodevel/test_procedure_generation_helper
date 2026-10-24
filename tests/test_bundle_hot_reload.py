@@ -6,7 +6,7 @@ Covers the three seams:
   (``<project>/bundle/defaults.json`` beats a stale
   ``PROCEDO_BUNDLE_DEFAULTS_PATH``), and ``reload()`` picks up a CHANGED
   defaults.json — tasks appear/disappear and prompt templates swap.
-* ``bundle_capabilities._load_bundle_equipment_profiles`` resolves
+* ``bundle_capabilities.load_bundle_equipment_profiles`` resolves
   project-root-first with the env var as legacy fallback.
 * The editor's bundle watcher plumbing (the real ``project_controller``
   functions driven on a light harness): bundle-dir / project-root events fire ONE
@@ -189,9 +189,9 @@ def test_equipment_profiles_project_first(tmp_path, monkeypatch):
     root = _make_project(tmp_path, [], name="proj_eq")
     _write_defaults(root, [], profiles=[proj_profile])
 
-    assert bundle_capabilities._load_bundle_equipment_profiles(root) == [proj_profile]
+    assert bundle_capabilities.load_bundle_equipment_profiles(root) == [proj_profile]
     # No project root → env fallback unchanged.
-    assert bundle_capabilities._load_bundle_equipment_profiles(None) == [env_profile]
+    assert bundle_capabilities.load_bundle_equipment_profiles(None) == [env_profile]
 
 
 # ---------------------------------------------------------------------------

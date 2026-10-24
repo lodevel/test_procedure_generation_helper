@@ -220,6 +220,9 @@ class LLMServerController(QObject):
         sm = getattr(self, 'server_manager', None)
         if sm is None or not getattr(self._mw, '_cli_args_processed', False):
             return
+        # A send waiting for the old server's start never goes to the new one: not sent, now.
+        for tab in self._mw._get_llm_tabs():
+            tab.drop_queued_send("the AI server is restarting.")
         # A manual restart (Restart backend / project switch) clears any
         # auto-recovery give-up state so the fresh manager is auto-recoverable.
         self.reset_recovery()

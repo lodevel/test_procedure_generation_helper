@@ -45,8 +45,7 @@ class SkillChatBackend(QObject):
     def await_backend(self, fire) -> None:
         """``fire(backend)`` now, or once the backend has started off the GUI thread
         (``request_backend``), the cue saying so meanwhile — mirrors the Studio tab's
-        ``_await_backend``. A second turn meanwhile replaces the queued one and waits for the
-        same start."""
+        ``_await_backend``; the chat sends no second turn meanwhile (``is_busy``)."""
         if self.backend is not None:
             fire(self.backend)
             return
@@ -55,6 +54,11 @@ class SkillChatBackend(QObject):
         if not self._requested:
             self._requested = True
             request_backend(self.factory, self.tab_id, self._on_started)
+
+    @property
+    def waiting(self) -> bool:
+        """A turn waits for the backend's start."""
+        return self._queued is not None
 
     def drop_queued(self) -> bool:
         """Drop the turn waiting for the backend (its start goes on): True when one was."""

@@ -42,6 +42,10 @@ class LLMTabMixin:
 
     #: The (LLMResponse attribute, contract field) of each artifact this tab may propose.
     _proposal_fields: tuple[tuple[str, str], ...] = ()
+    #: The send waiting for the backend's start: (task, retry, kwargs, its test, its line).
+    _queued_send = None
+    #: A backend start is out (one at a time: a send queued after a Cancel waits for it).
+    _backend_requested = False
 
     # ------------------------------------------------------------------ #
     # Task dispatch                                                        #
@@ -65,11 +69,12 @@ class LLMTabMixin:
     def _await_backend(self, task: LLMTask, retry: bool, kwargs: dict) -> None:
         """Queue the send until the tab's backend has started off the GUI thread (the AI
         server's start can take a minute); its line shows in the chat at once, and the chat is
-        locked and shows the loading cue meanwhile. A second send meanwhile replaces the queued
-        one (the chat says so) and waits for the same start."""
+        locked and shows the loading cue meanwhile; Cancel drops it (:meth:`drop_queued_send`).
+        A second send meanwhile replaces the queued one (the chat says so) and waits for the
+        same start."""
         chat = self.main_window.dock.chat_panel
         line = self._user_line(task, kwargs)
-        replaced = getattr(self, "_queued_send", None) is not None
+        replaced = self._queued_send is not None
         if replaced:
             what = ("a new message" if task == LLMTask.AD_HOC_CHAT
                     and not kwargs.get('custom_task_id') else line.content)
@@ -78,24 +83,34 @@ class LLMTabMixin:
         self._queued_send = (task, retry, kwargs, current_test(self.artifact_manager), line)
         if replaced:
             return
-        chat.set_llm_active(True, cancellable=False)
+        chat.set_llm_active(True)
         chat.loading.start(SERVER_STARTING_TEXT)
-        self._request_queued_backend()
+        if not self._backend_requested:
+            self._request_queued_backend()
+
+    def drop_queued_send(self, reason: str, tone: str = "warning") -> bool:
+        """Drop the send waiting for the backend's start (the start goes on, for the next
+        send): the chat unlocks and says ``Not sent: <reason>``. False when none waits."""
+        if self._queued_send is None:
+            return False
+        self._queued_send = None
+        chat = self.main_window.dock.chat_panel
+        chat.loading.done()
+        chat.set_llm_active(False)
+        self._post_not_sent(reason, tone)
+        return True
 
     def _request_queued_backend(self) -> None:
         """:meth:`_request_backend` for the queued send; a request that raises unlocks the
         chat and drops the send (the chat says so)."""
-        chat = self.main_window.dock.chat_panel
         try:
             self._request_backend()
         except Exception:
+            self._backend_requested = False
             if self._queued_send is None:  # answered at once: the failure is the send's own
                 raise
             log.exception("Requesting the tab's backend failed")
-            self._queued_send = None
-            chat.loading.done()
-            chat.set_llm_active(False)
-            self._post_not_sent("the AI server could not be started.", "danger")
+            self.drop_queued_send("the AI server could not be started.", "danger")
 
     def _post_not_sent(self, reason: str, tone: str) -> None:
         """The chat note that a send did not go out (not replayed to the model)."""
@@ -104,6 +119,7 @@ class LLMTabMixin:
 
     def _request_backend(self) -> None:
         """Start the tab's backend off the GUI thread; :meth:`_on_backend_started` answers."""
+        self._backend_requested = True
         request_backend(self.tab_context.backend_factory, self.tab_context.tab_id,
                         self._on_backend_started)
 
@@ -111,8 +127,12 @@ class LLMTabMixin:
         """The backend start answered (GUI thread): the queued send runs on that backend (on a
         fallback ``NoneBackend`` its reply is the server's failure), unless its test was closed
         meanwhile. Started for a factory a Settings save replaced meanwhile: the send waits
-        for a start on the new one."""
+        for a start on the new one. No send waits (dropped meanwhile): the backend is kept
+        for the next one."""
+        self._backend_requested = False
         backend = self.tab_context.adopt_backend(answer)
+        if self._queued_send is None:
+            return
         if backend is None:
             self._request_queued_backend()
             return

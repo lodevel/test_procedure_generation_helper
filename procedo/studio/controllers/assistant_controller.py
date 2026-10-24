@@ -94,10 +94,12 @@ class AssistantController(QObject):
         self._mw.llm_server.refresh_indicator()
 
     def on_cancel_llm(self):
-        """Handle LLM cancellation request."""
+        """Cancel the current tab's request: the one running, or the send waiting for the AI
+        server's start (not sent)."""
         # Check current tab for a running per-tab worker
         current_tab = self._mw.view_stack.currentWidget()
         worker = getattr(current_tab, '_worker', None)
+        drop_queued = getattr(current_tab, 'drop_queued_send', None)
         if worker and worker.isRunning():
             log.info("User requested LLM cancellation (per-tab worker)")
             worker.cancel()
@@ -107,6 +109,8 @@ class AssistantController(QObject):
             self._mw.dock.chat_panel.remove_thinking_message()
             self._mw.dock.chat_panel.add_system_message("Request cancelled by user")
             self._mw.footer.show_message("LLM request cancelled", 3000)
+        elif drop_queued is not None:
+            drop_queued("cancelled.", "neutral")
 
     def on_restart_backend(self):
         """Restart the shared OpenCode server to recover a hung / unresponsive

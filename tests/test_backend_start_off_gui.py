@@ -6,6 +6,7 @@ file. Never a real ``opencode`` server: the manager is a fake, or the real one o
 
 from __future__ import annotations
 
+import sys
 import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -24,6 +25,7 @@ from procedo.studio.tabs import llm_tab_mixin
 
 from .test_lazy_backend import _Answers
 from .test_lazy_backend import skill_chat as skill_chat
+from .test_main_window_characterization import _make_project, _open_project
 from .test_main_window_characterization import make_window as make_window
 from .test_main_window_characterization import mbox as mbox
 from .test_main_window_characterization import qapp as qapp
@@ -410,3 +412,67 @@ def test_a_re_request_that_fails_unlocks_the_chat_and_says_why(opened, monkeypat
     assert chat.send_btn.isEnabled() and not chat.loading.active
     assert view._queued_send is None
     assert _lines(view)[-2:] == ["check U5", "Not sent: the AI server could not be started."]
+
+
+# --- a waiting send: Cancel, a second programmatic turn, a project switch -----------------
+
+def test_cancel_while_the_server_starts_drops_the_send_and_the_next_waits_for_that_start(
+        opened, monkeypatch):
+    w = opened
+    view = w.text_only_tab
+    w.view_stack.setCurrentWidget(view)
+    server = _SlowServer()
+    view.tab_context.update_backend_factory(_factory(monkeypatch, server))
+    chat = w.dock.chat_panel
+
+    view._run_task_async(LLMTask.AD_HOC_CHAT, user_message="check U5")
+    assert chat.cancel_btn.isEnabled()
+    chat.cancel_btn.click()
+
+    assert _lines(view)[-2:] == ["check U5", "Not sent: cancelled."]
+    assert view._queued_send is None and not chat.loading.active
+    assert chat.send_btn.isEnabled() and not chat.cancel_btn.isEnabled()
+    view._run_task_async(LLMTask.AD_HOC_CHAT, user_message="check U6")  # the start still runs
+    _spin(lambda: _Worker.made)
+
+    assert server.starts == 1 and len(_Backend.made) == 1 and len(_Worker.made) == 1
+    assert _lines(view)[-3:] == ["check U5", "Not sent: cancelled.", "check U6"]
+
+
+def test_a_skill_chat_turn_waiting_for_the_server_is_never_replaced(skill_chat, monkeypatch):
+    """A second programmatic turn meanwhile is refused (False), as Send is locked for the
+    user: it replaced the waiting one silently, which then never went."""
+    chat = skill_chat(_factory(monkeypatch, _SlowServer()))
+    assert chat.send_user_turn("hello")
+
+    assert chat.is_busy
+    assert not chat.send_user_turn("again")
+    _spin(lambda: _Worker.made)
+
+    (worker,) = _Worker.made
+    assert worker.request.raw_prompt.endswith("hello")
+    assert ("You", "again") not in chat._blocks
+    assert [turn.content for turn in chat._session.turns] == ["hello"]
+
+
+def test_a_project_switch_drops_the_waiting_send_at_once(opened, monkeypatch, tmp_path):
+    w = opened
+    view = w.text_only_tab
+    w.view_stack.setCurrentWidget(view)
+    server = _SlowServer()
+    view.tab_context.update_backend_factory(_factory(monkeypatch, server))
+    w.llm_server.server_manager = server  # the server the switch restarts
+    w._cli_args_processed = True
+    chat = w.dock.chat_panel
+    raised = []  # what a slot raises reaches only sys.excepthook
+    monkeypatch.setattr(sys, "excepthook", lambda *exc: raised.append(exc))
+    view._run_task_async(LLMTask.AD_HOC_CHAT, user_message="check U5")
+
+    _open_project(w, _make_project(tmp_path / "other"))
+
+    assert _lines(view)[-2:] == ["check U5", "Not sent: the AI server is restarting."]
+    assert chat.send_btn.isEnabled() and not chat.loading.active
+    _spin(lambda: not view._backend_requested)  # the old start answers: nobody's, stopped
+    assert _Worker.made == [] and [b.stopped for b in _Backend.made] == [True]
+    assert raised == []
+    assert _lines(view)[-1] == "Not sent: the AI server is restarting."

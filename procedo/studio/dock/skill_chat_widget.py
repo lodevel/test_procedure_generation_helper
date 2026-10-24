@@ -371,8 +371,8 @@ class SkillChatWidget(QWidget):
 
     @property
     def is_busy(self) -> bool:
-        """True while a request is in flight."""
-        return self._worker is not None
+        """True while a turn runs or waits for the AI server's start."""
+        return self._worker is not None or self._llm.waiting
 
     def set_skill(self, skill) -> None:
         """Pin/switch the active skill (programmatic twin of ``_on_skill_changed``):
@@ -415,8 +415,8 @@ class SkillChatWidget(QWidget):
         """Start the skill with the resolved context (Run path). A non-empty
         ``priming`` is sent as the opening turn (e.g. "build the test for U86" so
         the skill jumps straight in); empty is the bare kickoff (context + skill
-        prompt only). No-op if a request is in flight or the session is started."""
-        if self._worker is not None or self._session.started:
+        prompt only). No-op if a turn is busy (:attr:`is_busy`) or the session is started."""
+        if self.is_busy or self._session.started:
             return
         if not self._stage_context():
             return
@@ -432,9 +432,9 @@ class SkillChatWidget(QWidget):
 
     def send_user_turn(self, text: str) -> bool:
         """Send a refine turn (programmatic twin of ``_on_send`` minus reading the
-        box). Not sent (False) if a request is in flight, ``text`` is blank or the
-        skill's needed context is missing."""
-        if self._worker is not None:
+        box). Not sent (False) if a turn is busy (:attr:`is_busy`: one waiting for the AI
+        server is never replaced), ``text`` is blank or the skill's needed context is missing."""
+        if self.is_busy:
             return False
         text = (text or "").strip()
         if not text:

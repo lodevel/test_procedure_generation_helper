@@ -287,8 +287,10 @@ class ChatPanel(QWidget):
         for row in (options, buttons, meter):
             column.addLayout(row)
         column.insertWidget(1, self.input_field)
-        # The shared "still loading" cue: a send waiting for the AI server to start.
-        self.loading = ui_kit.LoadingCue().add_to(column, 0)
+        # The shared "still loading" cue (a send waiting for the AI server to start): label and
+        # bar packed left, as in a card's title row.
+        self.loading = ui_kit.LoadingCue()
+        column.insertLayout(0, ui_kit.hbox(self.loading, None))
         return composer
 
     def eventFilter(self, obj, event):

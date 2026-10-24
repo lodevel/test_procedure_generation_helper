@@ -74,7 +74,7 @@ class TextOnlyTab(TextActionsMixin, LLMTabMixin, BaseTab):
             "⚡ Parse + Generate", self._on_parse_and_generate,
             "One click: Text → JSON → test.py (strict; aborts on any warning)",
         )
-        self.text_card.changed.connect(self._on_text_edited)
+        self.text_card.changed.connect(self._regate_pack_buttons)
 
         self.find_bar = FindReplaceBar(self)
         layout.addWidget(self.find_bar)

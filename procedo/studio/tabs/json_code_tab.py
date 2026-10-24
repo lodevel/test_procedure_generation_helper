@@ -20,6 +20,7 @@ from .base_tab import BaseTab
 from .llm_tab_mixin import LLMTabMixin
 from .json_tab import JsonSyntaxHighlighter
 from .code_tab import PythonSyntaxHighlighter
+from .pack_gating import PackGatingMixin
 from ..core import ArtifactType, StepMarkerParser
 from ..core.procedure_steps import numbered_steps
 from ..llm import TabContext, LLMTask
@@ -33,7 +34,7 @@ log = logging.getLogger(__name__)
 #: The steps card's width on board S3.
 _STEPS_WIDTH = 210
 
-class JsonCodeTab(LLMTabMixin, BaseTab):
+class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
     """
     JSON-Code tab showing both artifacts side-by-side.
     
@@ -49,6 +50,7 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
     
     # Tab identifier for button label management
     tab_id = "json_code"
+    _no_pack_tip = "No code generator for {names}. Use the LLM workflow."
     _proposal_fields = (("procedure_json", "procedure_json"), ("test_code", "test_code"))
     
     def __init__(self, main_window, parent=None):
@@ -116,14 +118,12 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         self.format_json_btn = self.create_button("Format JSON", self._on_format_json,
             tooltip="Auto-format JSON with proper indentation")
         # Quick Code — hidden until the project provides a code generator
-        self.quick_code_btn = self.create_button(
+        self.quick_code_btn = self._pack_button(
             "⚡ Quick Code", self._on_quick_code,
-            tooltip="Generate test code from JSON without LLM (rule-based, instant)"
-        )
-        self.quick_code_btn.setVisible(False)
+            "Generate test code from JSON without LLM (rule-based, instant)")
         layout.addWidget(self._create_action_bar(
             [self.save_both_btn, self.format_json_btn], [self.quick_code_btn]))
-        self.json_card.changed.connect(self._on_json_edited)  # gates Quick Code above
+        self.json_card.changed.connect(self._regate_pack_buttons)  # gates Quick Code above
 
     # Task callback maps for dynamic LLM button building (see TaskButtonsMixin._build_llm_buttons)
     
@@ -144,12 +144,13 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
             LLMTask.DERIVE_JSON_FROM_CODE.value: (self._on_force_derive_json, "Force derive JSON (bypass validation checks)"),
         }
     
-    def _on_json_edited(self):
-        """Re-gate Quick Code: the equipment set (hence codegen capability
-        needed) can change as the operator edits the JSON."""
-        if not self.quick_code_btn.isHidden():
-            project_root = getattr(self.project_manager, "project_root", None)
-            self._apply_codegen_gating(project_root)
+    def _pack_gates(self):
+        return [(self.quick_code_btn, "Deterministic JSON → Code", ("codegen",))]
+
+    def _gated_equipment_types(self, project_root) -> list[str]:
+        doc = json.loads(self.json_editor.toPlainText() or "{}")
+        return [e.get("type") for e in (doc.get("equipment") or [])
+                if isinstance(e, dict) and e.get("type")]
 
     def _on_generate_code(self):
         """JSON → Code transformation (strict mode)."""
@@ -256,42 +257,6 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
                         )
             self.propose_edit(self.code_card, content_str,
                               test=self._ensure_run_state().test)
-
-    def refresh_code_parser_button(self):
-        """Gate the Quick Code button in two tiers: visible iff the wheel
-        imports (else LLM-only), and enabled iff every equipment type in the
-        current JSON has a pack providing the ``codegen`` capability — else
-        disabled with a tooltip naming the missing pack."""
-        from ..pack_ops import pack_parsers
-        project_root = getattr(self.project_manager, "project_root", None)
-        available, _ = pack_parsers.is_available(project_root)
-        self.quick_code_btn.setVisible(available)
-        if available:
-            self._apply_codegen_gating(project_root)
-
-    def _apply_codegen_gating(self, project_root):
-        """Enable Quick Code only if every equipment type in the JSON has a
-        codegen-capable pack. Best-effort: any failure leaves it enabled. A running Quick Code
-        keeps it disabled until it answers."""
-        from ..pack_ops import bundle_capabilities
-        if engine_async.busy(self.quick_code_btn):
-            return
-        try:
-            doc = json.loads(self.json_editor.toPlainText() or "{}")
-            etypes = [e.get("type") for e in (doc.get("equipment") or [])
-                      if isinstance(e, dict) and e.get("type")]
-            ok, missing = bundle_capabilities.can_for_types("codegen", etypes, project_root)
-            if ok:
-                self.quick_code_btn.setEnabled(True)
-                self.quick_code_btn.setToolTip("Deterministic JSON → Code")
-            else:
-                names = ", ".join(f"{e} ({p})" for e, p in dict(missing).items())
-                self.quick_code_btn.setEnabled(False)
-                self.quick_code_btn.setToolTip(
-                    f"No code generator for {names}. Use the LLM workflow."
-                )
-        except Exception:
-            self.quick_code_btn.setEnabled(True)  # never break the editor over gating
 
     def _on_quick_code(self):
         """Deterministic JSON → Code without LLM (rule-based, instant)."""

@@ -1,9 +1,9 @@
 """What both Text views (Text, Text–JSON) do to procedure_text.md, built once: the FILE row's
-Renumber steps / Sync Equipment / Sync Meta, the ⚡ pack buttons' gating, Review Text, applying a
-text proposal, and ⚡ Parse + Generate.
+Renumber steps / Sync Equipment / Sync Meta, the ⚡ pack buttons' gating on the text's equipment,
+Review Text, applying a text proposal, and ⚡ Parse + Generate.
 
 The view keeps procedure_text.md in ``self.text_card`` (an ``EditorCard``) and lists its ⚡ pack
-buttons with what each needs in ``_pack_gates()``.
+buttons with what each needs in ``_pack_gates()`` (:mod:`.pack_gating`).
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from ..core.proposal import FileChange, FileText, PartlyApplied, Proposal, curre
 from ..llm import LLMTask
 from ..llm.reconstruction import reconstructed_or_error
 from ..pack_ops import engine_async
+from .pack_gating import PackGatingMixin
 
 log = logging.getLogger(__name__)
 
@@ -96,7 +97,7 @@ _RENUMBER_STEPS = _TextTransform(
     warns=False)
 
 
-class TextActionsMixin:
+class TextActionsMixin(PackGatingMixin):
     """The Text views' shared actions on ``self.text_card``."""
 
     # ---- the FILE row ---------------------------------------------------------------------
@@ -130,72 +131,17 @@ class TextActionsMixin:
         self.sync_meta_btn.setVisible(False)
         return [self.renumber_steps_btn, self.sync_equipment_btn, self.sync_meta_btn]
 
-    def _pack_button(self, text: str, callback, tooltip: str) -> QPushButton:
-        """A ⚡ pack button: hidden until the rules_packager_base wheel imports."""
-        button = self.create_button(text, callback, tooltip=tooltip)
-        button.setVisible(False)
-        return button
-
     # ---- ⚡ gating ------------------------------------------------------------------------
 
-    def _pack_gates(self) -> list[tuple[QPushButton, str, tuple[str, ...]]]:
-        """Each ⚡ button, its tooltip when usable, the pack capabilities it needs."""
-        raise NotImplementedError
-
-    def refresh_parser_button(self):
-        """Gate the deterministic ⚡ buttons in two tiers:
-
-        - install-tier (visibility): hidden unless the rules_packager_base
-          wheel imports cleanly — then the LLM workflow is the only path.
-        - capability-tier (enable + tooltip): when visible, each button is
-          enabled only if every equipment type the current procedure uses has
-          a pack providing that button's capability (parse / emit / codegen).
-          Otherwise it is disabled with a tooltip naming the missing pack, so
-          an unsupported-equipment procedure cannot dump a cryptic
-          EQP_TYPE_UNKNOWN / ValueError — the operator is told to use the LLM.
-        """
-        from ..pack_ops import pack_parsers
-        project_root = getattr(self.project_manager, "project_root", None)
-        available, _ = pack_parsers.is_available(project_root)
-        for button, _tip, _caps in self._pack_gates():
-            button.setVisible(available)
-        self.sync_meta_btn.setVisible(available)
-        if available:
-            self._apply_capability_gating(project_root)
-
-    def _apply_capability_gating(self, project_root):
-        """Enable/disable the ⚡ buttons per the current procedure's equipment
-        capabilities. Best-effort: any failure leaves buttons enabled (gating
-        is UX, never a correctness gate)."""
+    def _gated_equipment_types(self, project_root) -> list[str]:
         from ..pack_ops import bundle_capabilities
-        text = self.text_card.editor.toPlainText()
-        for button, tip, caps in self._pack_gates():
-            if engine_async.busy(button):
-                continue
-            try:
-                missing = []
-                for cap in caps:
-                    ok, miss = bundle_capabilities.can(cap, text, project_root)
-                    if not ok:
-                        missing.extend(miss)
-                if missing:
-                    names = ", ".join(f"{e} ({p})" for e, p in dict(missing).items())
-                    button.setEnabled(False)
-                    button.setToolTip(
-                        f"No deterministic support for {names}. Use the LLM workflow."
-                    )
-                else:
-                    button.setEnabled(True)
-                    button.setToolTip(tip)
-            except Exception:
-                button.setEnabled(True)  # never break the editor over gating
+        return bundle_capabilities.equipment_types_in(self.text_card.editor.toPlainText(), project_root)
 
-    def _on_text_edited(self) -> None:
-        """Re-gate the ⚡ buttons: the equipment set (hence the pack
-        capabilities needed) can change as the operator edits the text."""
-        gates = self._pack_gates()
-        if gates and not gates[0][0].isHidden():
-            self._apply_capability_gating(getattr(self.project_manager, "project_root", None))
+    def refresh_parser_button(self) -> bool:
+        """Gate the ⚡ buttons (:class:`PackGatingMixin`); Sync Meta shows with them."""
+        available = super().refresh_parser_button()
+        self.sync_meta_btn.setVisible(available)
+        return available
 
     # ---- deterministic text transforms ----------------------------------------------------
 

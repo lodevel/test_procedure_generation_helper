@@ -1,6 +1,6 @@
 """What Studio's three LLM views share, pinned once for all of them: how an assistant reply maps
 onto the output contract's fields; what each deterministic text transform (Renumber steps, Sync
-Equipment, Sync Meta) does with its answer and says."""
+Equipment, Sync Meta) does with its answer and says; how the ⚡ pack buttons are gated."""
 
 from types import SimpleNamespace
 
@@ -8,6 +8,7 @@ import pytest
 
 import procedo.studio.tabs.text_actions as text_actions
 from procedo.engine_client import engine
+from procedo.studio.pack_ops import bundle_capabilities, pack_parsers
 
 from .test_engine_async import _Tools, _pump
 
@@ -132,3 +133,93 @@ def test_a_text_transform_on_an_empty_text_asks_nothing(opened, monkeypatch, han
     monkeypatch.setattr(engine, "tools_op", tools)
     getattr(view, handler)()
     assert tools.ops == []
+
+
+# --- the ⚡ pack buttons: shown when the wheel imports, enabled when every type has a pack ----------
+
+_TEXT = "# t1\n\n## Equipment\nPSU1 : psu\nDMM1 : dmm\n"
+_JSON = '{"id": "t1", "equipment": [{"id": "PSU1", "type": "psu"}, {"id": "X"}], "steps": []}'
+
+
+@pytest.fixture
+def gated(opened, monkeypatch):
+    """The window with the wheel importable; ``asked`` records each (capability, types) gated,
+    and ``refuse`` names the capabilities no pack provides (for psu, by labscpi)."""
+    asked, refuse = [], set()
+
+    def can_for_types(cap, types, root=None):
+        asked.append((cap, list(types)))
+        if cap == "boom":
+            raise RuntimeError("gating broke")
+        return (False, [("psu", "labscpi")]) if cap in refuse else (True, [])
+
+    monkeypatch.setattr(pack_parsers, "is_available", lambda root=None: (True, ""))
+    monkeypatch.setattr(bundle_capabilities, "can_for_types", can_for_types)
+    return opened, asked, refuse
+
+
+def _state(button):
+    return not button.isHidden(), button.isEnabled(), button.toolTip()
+
+
+def test_the_text_views_gate_each_button_on_the_texts_equipment(gated):
+    w, asked, refuse = gated
+    tj, to = w.text_json_tab, w.text_only_tab
+    refuse.add("emit")
+    tj.text_editor.setPlainText(_TEXT)
+    asked.clear()
+    tj.refresh_parser_button()
+    to.refresh_parser_button()
+
+    assert _state(tj.quick_parse_btn) == (True, True, "Deterministic Text \u2192 JSON")
+    assert _state(tj.quick_render_btn) == (
+        True, False, "No deterministic support for psu (labscpi). Use the LLM workflow.")
+    assert _state(tj.parse_and_generate_btn) == (True, True, "Parse + generate code")
+    assert _state(to.parse_and_generate_btn) == (True, True, "Parse + generate code")
+    assert not tj.sync_meta_btn.isHidden() and not to.sync_meta_btn.isHidden()
+    assert ("emit", ["psu", "dmm"]) in asked and ("codegen", ["psu", "dmm"]) in asked
+
+
+def test_the_json_code_view_gates_quick_code_on_the_jsons_equipment(gated):
+    w, asked, refuse = gated
+    jc = w.json_code_tab
+    jc.json_editor.setPlainText(_JSON)
+    asked.clear()
+    jc.refresh_parser_button()
+    assert _state(jc.quick_code_btn) == (True, True, "Deterministic JSON \u2192 Code")
+    assert asked == [("codegen", ["psu"])]
+
+    refuse.add("codegen")
+    jc.json_editor.setPlainText(_JSON + " ")  # an edit re-gates
+    assert _state(jc.quick_code_btn) == (
+        True, False, "No code generator for psu (labscpi). Use the LLM workflow.")
+
+
+def test_a_gating_failure_leaves_the_buttons_enabled(gated, monkeypatch):
+    w, _asked, refuse = gated
+    jc, tj = w.json_code_tab, w.text_json_tab
+    refuse.update({"parse", "codegen"})
+    jc.json_editor.setPlainText("{not json")
+    jc.refresh_parser_button()
+    assert jc.quick_code_btn.isEnabled()
+
+    monkeypatch.setattr(type(tj), "_pack_gates", lambda self: [(tj.quick_parse_btn, "tip", ("boom",))])
+    tj.quick_parse_btn.setEnabled(False)
+    tj.refresh_parser_button()
+    assert tj.quick_parse_btn.isEnabled()
+
+
+def test_hidden_buttons_are_not_gated_on_an_edit(opened, monkeypatch):
+    w = opened
+    monkeypatch.setattr(pack_parsers, "is_available", lambda root=None: (False, "no wheel"))
+    for tab in (w.text_json_tab, w.text_only_tab):
+        tab.refresh_parser_button()
+    w.json_code_tab.refresh_parser_button()
+    asked = []
+    monkeypatch.setattr(bundle_capabilities, "can_for_types",
+                        lambda *a, **k: asked.append(a) or (True, []))
+    w.text_json_tab.text_editor.setPlainText(_TEXT)
+    w.text_only_tab.text_editor.setPlainText(_TEXT)
+    w.json_code_tab.json_editor.setPlainText(_JSON)
+    assert asked == []
+    assert w.json_code_tab.quick_code_btn.isHidden() and w.text_only_tab.sync_meta_btn.isHidden()

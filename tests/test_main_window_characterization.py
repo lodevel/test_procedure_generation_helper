@@ -1009,7 +1009,7 @@ def test_handle_config_change_funnel(make_window, monkeypatch, tmp_path):
     calls = []
     w.text_json_tab.refresh_parser_button = lambda: calls.append("tj")
     w.text_only_tab.refresh_parser_button = lambda: calls.append("to")
-    w.json_code_tab.refresh_code_parser_button = lambda: calls.append("jc")
+    w.json_code_tab.refresh_parser_button = lambda: calls.append("jc")
     monkeypatch.setattr(w.task_config_manager, "reload",
                         lambda r: calls.append(("reload", r)))
     monkeypatch.setattr(w.dock.chat_panel, "_refresh_validator_ui_for_context",

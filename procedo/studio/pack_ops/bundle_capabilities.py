@@ -67,7 +67,7 @@ def pack_capabilities(project_root: Optional[Path] = None) -> dict[str, dict]:
     """Return the bundle's per-equipment-type capability map
     ``{etype: {parse, schema, emit, codegen, pack}}``. Empty dict when no bundle
     / no capabilities block (pre-capability bundle) — callers treat 'absent' as
-    'unknown', see :func:`can`."""
+    'unknown', see :func:`can_for_types`."""
     data = bundle_registry.read_defaults(defaults_path(project_root))
     if data is None:
         return {}
@@ -160,13 +160,14 @@ def equipment_types_in(
 _BASE_NATIVE_TYPES = {"dmm"}
 
 
-def can(
+def can_for_types(
     capability: str,
-    procedure_text: str,
+    equipment_types,
     project_root: Optional[Path] = None,
 ) -> tuple[bool, list[tuple[str, str]]]:
-    """Whether *capability* is available for EVERY equipment type the procedure
-    uses. Returns ``(ok, missing)`` where ``missing`` is a list of
+    """Whether *capability* is available for EVERY one of *equipment_types* (from
+    :func:`equipment_types_in`, or a JSON procedure's ``equipment[*].type``).
+    Returns ``(ok, missing)`` where ``missing`` is a list of
     ``(equipment_type, pack_or_reason)`` pairs lacking it.
 
     Rules:
@@ -178,17 +179,6 @@ def can(
     - A type present but with the capability flag false → missing as
       ``(etype, pack_name)``.
     """
-    return can_for_types(
-        capability, equipment_types_in(procedure_text, project_root), project_root)
-
-
-def can_for_types(
-    capability: str,
-    equipment_types,
-    project_root: Optional[Path] = None,
-) -> tuple[bool, list[tuple[str, str]]]:
-    """Like :func:`can` but takes equipment types directly (e.g. from a JSON
-    procedure's ``equipment[*].type``) instead of parsing canonical text."""
     if capability not in CAPABILITIES:
         raise ValueError(f"unknown capability {capability!r}; expected one of {CAPABILITIES}")
     caps = pack_capabilities(project_root)

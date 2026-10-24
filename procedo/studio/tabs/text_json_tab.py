@@ -123,7 +123,7 @@ class TextJsonTab(TextActionsMixin, LLMTabMixin, BaseTab):
         layout.addWidget(self._create_action_bar(
             [self.save_both_btn, *self._text_file_buttons(), self.format_json_btn],
             [self.quick_parse_btn, self.quick_render_btn, self.parse_and_generate_btn]))
-        self.text_card.changed.connect(self._on_text_edited)  # gates the ⚡ buttons above
+        self.text_card.changed.connect(self._regate_pack_buttons)  # gates the ⚡ buttons above
 
     # Task callback maps for dynamic LLM button building (see TaskButtonsMixin._build_llm_buttons)
 

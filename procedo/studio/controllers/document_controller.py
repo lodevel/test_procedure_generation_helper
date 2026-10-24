@@ -292,7 +292,7 @@ class DocumentController:
         # button state is consistent per-test.
         mw.text_json_tab.refresh_parser_button()
         mw.text_only_tab.refresh_parser_button()
-        mw.json_code_tab.refresh_code_parser_button()
+        mw.json_code_tab.refresh_parser_button()
 
         # Refresh dock panels with session data
         mw.dock.refresh_session()

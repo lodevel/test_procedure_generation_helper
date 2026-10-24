@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt
 
 from .base_tab import BaseTab
 from .llm_tab_mixin import LLMTabMixin
-from .json_tab import JsonSyntaxHighlighter
+from ..widgets.json_highlighter import JsonSyntaxHighlighter
 from .text_actions import TextActionsMixin
 from ..core import ArtifactType
 from ..llm import TabContext, LLMTask

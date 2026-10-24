@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QSplitter, QVBoxLayout
 from procedo.ui import ui_kit
 
 from .base_tab import BaseTab
-from .code_tab import PythonSyntaxHighlighter
+from ..widgets.python_highlighter import PythonSyntaxHighlighter
 from ..core import ArtifactType, StepMarkerParser
 from ..core.procedure_steps import numbered_steps
 from ..widgets.editor_card import EditorCard

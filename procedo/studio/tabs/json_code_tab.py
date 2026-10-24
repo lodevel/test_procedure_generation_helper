@@ -18,8 +18,8 @@ from PySide6.QtGui import QTextCursor
 
 from .base_tab import BaseTab
 from .llm_tab_mixin import LLMTabMixin
-from .json_tab import JsonSyntaxHighlighter
-from .code_tab import PythonSyntaxHighlighter
+from ..widgets.json_highlighter import JsonSyntaxHighlighter
+from ..widgets.python_highlighter import PythonSyntaxHighlighter
 from .pack_gating import PackGatingMixin
 from .pinned_constants import keep_pinned_constants
 from ..core import ArtifactType, StepMarkerParser

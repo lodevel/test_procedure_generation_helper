@@ -22,8 +22,8 @@ from procedo.ui import ui_kit
 
 from .. import theme
 from ..core.proposal import ADDED, HEADER, REMOVED, changed_lines, count_changes, diff_lines, diff_rows
-from ..tabs.code_tab import PythonSyntaxHighlighter
-from ..tabs.json_tab import JsonSyntaxHighlighter
+from ..widgets.python_highlighter import PythonSyntaxHighlighter
+from ..widgets.json_highlighter import JsonSyntaxHighlighter
 from ..widgets.editor_card import CodeEditor, tint_lines
 from ..widgets.text_highlighter import ProcedureTextHighlighter
 

@@ -543,8 +543,8 @@ def _ensure_held(session: _Session, bench_map: dict, device: str, etype: str,
     different endpoint than the fold is stale and never returned — its
     energized channels are recorded unconfirmed-off under the OLD endpoint,
     the instance closes via the ``_close_held_device`` chokepoint, and the
-    name re-opens fresh here.  Unprovable staleness (old wheel, no address,
-    no record) keeps today's name-keyed reuse; every reuse REBINDS the
+    name re-opens fresh here.  Unprovable staleness (no address, no record)
+    keeps today's name-keyed reuse; every reuse REBINDS the
     namespace slot, so the instance returned is the instance executed.
     The F-H6 probe and one-rebuild always run on the routed reuse; the two
     flags select which refusals a context retains:

@@ -15,14 +15,13 @@ the real CLI produces for ``--list-property-fields`` / ``--list`` (with
 import json
 import re
 import os
-import subprocess
-import sys
 import textwrap
 
 import pytest
 
 # The server module file, found via the installed package (path-independent).
 import procedo.studio.authoring._project_tools_mcp as _mcp_mod
+from tests.mcp_client import McpServer
 
 SERVER_PATH = os.path.abspath(_mcp_mod.__file__)
 
@@ -165,80 +164,6 @@ _FAKE_CLI_SRC = textwrap.dedent(
 )
 
 
-class _Server:
-    """Line-oriented JSON-RPC client over a server subprocess."""
-
-    def __init__(self, odb_tgz, cli_path, cwd):
-        env = dict(os.environ)
-        env["_PROJECT_TOOLS_CLI"] = str(cli_path)
-        self.proc = subprocess.Popen(
-            [sys.executable, SERVER_PATH, "--odb-tgz", str(odb_tgz)],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            cwd=str(cwd),
-            env=env,
-        )
-
-    def send(self, obj):
-        self.proc.stdin.write(json.dumps(obj) + "\n")
-        self.proc.stdin.flush()
-
-    def read(self, timeout=15):
-        # readline() on a piped subprocess can block; guard with a watchdog
-        # thread that kills the process so the test fails fast instead of hanging.
-        import threading
-
-        result = {}
-
-        def _reader():
-            result["line"] = self.proc.stdout.readline()
-
-        t = threading.Thread(target=_reader, daemon=True)
-        t.start()
-        t.join(timeout)
-        if t.is_alive():
-            self.proc.kill()
-            raise AssertionError("timed out waiting for MCP server response")
-        line = result.get("line", "")
-        if not line:
-            err = self.proc.stderr.read()
-            raise AssertionError(f"server closed stdout; stderr:\n{err}")
-        return json.loads(line)
-
-    def request(self, rid, method, params=None):
-        msg = {"jsonrpc": "2.0", "id": rid, "method": method}
-        if params is not None:
-            msg["params"] = params
-        self.send(msg)
-        return self.read()
-
-    def notify(self, method, params=None):
-        msg = {"jsonrpc": "2.0", "method": method}
-        if params is not None:
-            msg["params"] = params
-        self.send(msg)
-
-    def call(self, rid, name, arguments=None):
-        params = {"name": name}
-        if arguments is not None:
-            params["arguments"] = arguments
-        resp = self.request(rid, "tools/call", params)
-        return resp
-
-    def close(self):
-        try:
-            self.proc.stdin.close()
-        except Exception:
-            pass
-        try:
-            self.proc.wait(timeout=5)
-        except Exception:
-            self.proc.kill()
-
-
 def _result_text(resp):
     return resp["result"]["content"][0]["text"]
 
@@ -279,7 +204,11 @@ def server(tmp_path):
     # Launch from an unrelated cwd to prove launch-location independence.
     other_cwd = tmp_path / "elsewhere"
     other_cwd.mkdir()
-    srv = _Server(board_file, cli_file, other_cwd)
+    srv = McpServer(
+        [SERVER_PATH, "--odb-tgz", board_file],
+        other_cwd,
+        {**os.environ, "_PROJECT_TOOLS_CLI": str(cli_file)},
+    )
     yield srv
     srv.close()
 

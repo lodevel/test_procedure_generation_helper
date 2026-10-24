@@ -6,12 +6,12 @@ import os
 import subprocess
 import sys
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
 import procedo.studio.authoring.rs_core as rs_core
+from tests.mcp_client import McpServer
 
 SECRET = b"unit-test-secret"
 AUTH_DIR = os.path.dirname(rs_core.__file__)
@@ -127,36 +127,7 @@ def test_mcp_serve_dispatches_calls_concurrently(tmp_path):
 # --------------------------------------------------------------------------- #
 # run_skill MCP server (subprocess)                                           #
 # --------------------------------------------------------------------------- #
-class _Server:
-    def __init__(self, extra_args, env_extra=None):
-        env = dict(os.environ)
-        env.update(env_extra or {})
-        self.p = subprocess.Popen(
-            [sys.executable, SERVER_PATH, *extra_args],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, env=env)
-
-    def rpc(self, obj, timeout=20):
-        self.p.stdin.write(json.dumps(obj) + "\n")
-        self.p.stdin.flush()
-        out = {"line": None}
-        t = threading.Thread(target=lambda: out.__setitem__("line", self.p.stdout.readline()),
-                             daemon=True)
-        t.start()
-        t.join(timeout)
-        assert out["line"], "no response (timeout / server died)"
-        return json.loads(out["line"])
-
-    def notify(self, obj):
-        self.p.stdin.write(json.dumps(obj) + "\n")
-        self.p.stdin.flush()
-
-    def close(self):
-        try:
-            self.p.stdin.close()
-            self.p.wait(timeout=5)
-        except Exception:
-            self.p.kill()
+_SERVER_ENV = {**os.environ, "RUN_SKILL_SECRET": SECRET.decode()}
 
 
 def _handshake(srv):
@@ -164,7 +135,7 @@ def _handshake(srv):
                  "params": {"protocolVersion": "2025-06-18"}})
     assert r["result"]["serverInfo"]["name"] == "run_skill"
     assert r["result"]["protocolVersion"] == "2025-06-18"
-    srv.notify({"jsonrpc": "2.0", "method": "notifications/initialized"})
+    srv.notify("notifications/initialized")
 
 
 def _call(srv, args, rid=9):
@@ -174,8 +145,8 @@ def _call(srv, args, rid=9):
 
 
 def test_protocol_handshake_list_ping_unknown(tmp_path):
-    srv = _Server(["--server-port-file", str(tmp_path / "opencode.pid"),
-                   "--skill-root", str(tmp_path)], {"RUN_SKILL_SECRET": SECRET.decode()})
+    srv = McpServer([SERVER_PATH, "--server-port-file", str(tmp_path / "opencode.pid"),
+                   "--skill-root", str(tmp_path)], env=_SERVER_ENV)
     try:
         _handshake(srv)
         r = srv.rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
@@ -191,8 +162,8 @@ def test_protocol_handshake_list_ping_unknown(tmp_path):
 
 
 def test_run_skill_refuses_forged_token(tmp_path):
-    srv = _Server(["--server-port-file", str(tmp_path / "opencode.pid"),
-                   "--skill-root", str(tmp_path)], {"RUN_SKILL_SECRET": SECRET.decode()})
+    srv = McpServer([SERVER_PATH, "--server-port-file", str(tmp_path / "opencode.pid"),
+                   "--skill-root", str(tmp_path)], env=_SERVER_ENV)
     try:
         _handshake(srv)
         out = _call(srv, {"skill_id": "greeter", "prompt": "hi",
@@ -255,10 +226,10 @@ def test_run_skill_spawns_scoped_child(tmp_path):
     pidfile = tmp_path / "opencode.pid"
     pidfile.write_text(json.dumps({"pid": 1, "port": port}), encoding="utf-8")
 
-    srv = _Server(["--server-port-file", str(pidfile),
+    srv = McpServer([SERVER_PATH, "--server-port-file", str(pidfile),
                    "--skill-root", str(tmp_path / "roots"),
                    "--universe-file", str(universe), "--max-depth", "3"],
-                  {"RUN_SKILL_SECRET": SECRET.decode()})
+                  env=_SERVER_ENV)
     try:
         _handshake(srv)
         token = rs_core.sign({"depth": 0, "visited": ["orchestrator"]}, SECRET)

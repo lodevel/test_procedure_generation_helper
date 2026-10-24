@@ -243,7 +243,7 @@ class SettingsBackendProbe(QObject):
             if backend == "opencode":
                 # Test OpenCode backend
                 from ..llm.opencode_backend import OpenCodeBackend, OpenCodeConfig
-                from ..llm.lifecycle_adapters import make_wsl_lifecycle
+                from ..llm.lifecycle_adapters import ManagerLifecycle
                 from ..llm.backend_base import LLMRequest, LLMTask
 
                 # Build the per-launch derived config (MCP built fresh) from the
@@ -280,10 +280,10 @@ class SettingsBackendProbe(QObject):
                 # C6: install OK is not enough — actually START a server and
                 # confirm /health is reachable, surfacing bind failures (the
                 # manager classifies PORT_IN_USE/START_TIMEOUT/START_FAILED).
-                # Then STOP it so the chat-test backend (which spawns its own
-                # `opencode serve`) doesn't collide on the port. try/finally so
-                # the probe server is ALWAYS torn down (and its launch_test pid
-                # file cleaned), even on an early-return warning path below.
+                # The chat test then runs on that same server; try/finally so it
+                # is ALWAYS stopped by the manager that started it (it alone
+                # knows the server's Linux pid) and its launch_test pid file
+                # cleaned, even on an early-return warning path below.
                 if not mgr.start():
                     st = mgr.last_status
                     why = f"\n\n{st.message}" if st and not st.ok else ""
@@ -292,28 +292,18 @@ class SettingsBackendProbe(QObject):
                         f"✗ Could not start OpenCode\n\nHost: {config.server_hostname}\nPort: {config.server_port}{why}"
                     )
                 try:
-                    reachable = mgr.health_check()
-                finally:
-                    mgr.stop()
-                if not reachable:
-                    return (
-                        "warning", "Test Connection",
-                        f"✗ Server started but /health was not reachable\n\n"
-                        f"Host: {config.server_hostname}\nPort: {config.server_port}"
-                    )
+                    if not mgr.health_check():
+                        return (
+                            "warning", "Test Connection",
+                            f"✗ Server started but /health was not reachable\n\n"
+                            f"Host: {config.server_hostname}\nPort: {config.server_port}"
+                        )
 
-                # Always run a real end-to-end chat test (Default = auto-pick
-                # included), so the button truly validates the model, not just
-                # that OpenCode is installed + reachable.
-                model_label = config.model or "auto-pick (Default)"
-                # The probe stopped the manager's server above so THIS backend
-                # spawns its own on that port — inject the WSL self-spawn
-                # lifecycle so start() actually launches (the package client
-                # otherwise only attaches to an already-running server).
-                backend_obj = OpenCodeBackend(
-                    config=config, lifecycle=make_wsl_lifecycle(config)
-                )
-                if not backend_obj.is_running:
+                    # Always run a real end-to-end chat test (Default = auto-pick
+                    # included), so the button truly validates the model, not just
+                    # that OpenCode is installed + reachable.
+                    model_label = config.model or "auto-pick (Default)"
+                    backend_obj = OpenCodeBackend(config=config, lifecycle=ManagerLifecycle(mgr))
                     if not backend_obj.start():
                         st = mgr.last_status
                         why = f"\n\n{st.message}" if st and not st.ok else ""
@@ -321,7 +311,6 @@ class SettingsBackendProbe(QObject):
                             "warning", "Test Connection",
                             f"✗ Could not start OpenCode\n\nHost: {config.server_hostname}\nPort: {config.server_port}{why}"
                         )
-                try:
                     test_request = LLMRequest(
                         task=LLMTask.AD_HOC_CHAT,
                         strict_mode=False,
@@ -342,9 +331,6 @@ class SettingsBackendProbe(QObject):
                     if thread.is_alive():
                         result["error"] = "Request timed out after 30 seconds"
 
-                    if backend_obj.is_running:
-                        backend_obj.stop()
-
                     hint = ("\n\nIf you picked a specific model, your account "
                             "may not support it — try leaving Model empty "
                             "(auto-pick).")
@@ -362,10 +348,8 @@ class SettingsBackendProbe(QObject):
                         "information", "Test Connection",
                         f"✓ OpenCode is working\n\nHost: {config.server_hostname}\nPort: {config.server_port}\nModel: {model_label}"
                     )
-                except Exception:
-                    if backend_obj.is_running:
-                        backend_obj.stop()
-                    raise
+                finally:
+                    mgr.stop()
 
         except Exception as e:
             return ("critical", "Test Connection Failed", f"Error testing connection:\n\n{str(e)}")

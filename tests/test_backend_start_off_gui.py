@@ -373,3 +373,15 @@ def test_a_request_that_fails_unlocks_the_chat_and_says_why(opened, monkeypatch)
     assert chat.send_btn.isEnabled() and not chat.loading.active
     assert view._queued_send is None
     assert _lines(view)[-2:] == ["check U5", "Not sent: the AI server could not be started."]
+
+
+def test_an_opencode_factory_without_a_server_manager_spawns_no_server():
+    """The server manager is the one spawner: only it stops the server it started by its
+    Linux pid, so a factory without one hands out the disabled backend instead."""
+    factory = BackendFactory(BackendConfig(backend_type=BACKEND_TYPE_OPENCODE, opencode=OpenCodeConfig()))
+    with patch("opencode_client.lifecycle._health_ok", return_value=False), \
+         patch("opencode_client.lifecycle.subprocess.Popen") as popen:
+        backend = factory.create_backend(tab_id="text_json")
+        backend.start()
+    assert isinstance(backend, NoneBackend)
+    popen.assert_not_called()

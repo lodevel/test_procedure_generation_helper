@@ -884,14 +884,6 @@ def test_the_studio_exit_stops_the_server_and_removes_its_launch_files(tmp_path)
     assert [p.exists() for p in own] == [True, False, False]
 
 
-def test_the_self_spawned_server_is_pointed_at_this_studio_s_config(tmp_path):
-    from procedo.studio.llm.lifecycle_adapters import make_wsl_lifecycle
-    cfg = OpenCodeConfig(working_directory=str(tmp_path / "launch test"))
-    command = shlex.split(make_wsl_lifecycle(cfg)._command()[-1])
-    assert f"OPENCODE_CONFIG={_mgr(tmp_path / 'launch test')._orphans.our_config_wsl_path()}" in command
-    assert "OPENCODE_DISABLE_PROJECT_CONFIG=1" in command
-
-
 def test_an_old_manager_s_stop_keeps_the_new_manager_s_record(tmp_path):
     # A manager swap in one Studio: the retired manager's (async) stop must not
     # delete the record its successor already wrote in the same file.

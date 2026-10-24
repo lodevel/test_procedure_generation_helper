@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .backend_base import LLMBackend, NoneBackend
-from .lifecycle_adapters import ManagerLifecycle, make_wsl_lifecycle
+from .lifecycle_adapters import ManagerLifecycle
 from .opencode_backend import OpenCodeBackend, OpenCodeConfig
 from .server_manager import OpenCodeServerManager
 
@@ -242,23 +242,10 @@ class BackendFactory:
         Returns:
             OpenCodeBackend instance or NoneBackend on error
         """
-        if self._config.opencode is None:
-            log.error("OpenCode config is None, cannot create backend")
+        # The server manager is the one spawner: it alone stops the server it started.
+        if self._config.opencode is None or self._server_manager is None:
+            log.error("OpenCode backend needs its config and the server manager")
             return NoneBackend()
-
-        if self._server_manager is None:
-            log.warning(
-                "No server_manager provided for OpenCode backend. "
-                "Backend will manage its own server (not recommended)."
-            )
-            # Create backend without shared server - it self-spawns its own
-            # `opencode serve` in WSL (the historical no-manager fallback).
-            return OpenCodeBackend(
-                config=self._config.opencode,
-                lifecycle=make_wsl_lifecycle(self._config.opencode),
-                custom_prompts=self._config.custom_prompts or None,
-                custom_output_format=self._config.custom_output_format or None,
-            )
 
         # Ensure server is running
         if not self._server_manager.is_running:

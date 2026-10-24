@@ -43,6 +43,7 @@ import importlib
 
 def _sibling(name: str):
     """A sibling module: by bare name in the daemon, by package when imported as one."""
+    # The package branch serves imports as procedo.engine_client._safe_off (e.g. test_imports_without_qt).
     return importlib.import_module(f"{__package__}.{name}" if __package__ else name)
 
 

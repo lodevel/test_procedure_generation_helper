@@ -132,7 +132,7 @@ def _sib(name: str):
 
 # The siblings load by BARE name (``_sib`` puts this folder on sys.path).  Every name below
 # is used here or read back through this module's ``globals()`` (``d``) by
-# _bench_session_runner / _guided_call — ``_safe_off_all_held`` only through that seam.
+# _bench_session_runner / _guided_call (tests/test_daemon_d_seam.py pins every key they read).
 _sib("_safe_off")
 from _instrument_ops import (  # noqa: E402
     _build_device, _exec_op, _instrument_error, _namespace_for, _NoCodegen, _NotRemote,
@@ -140,8 +140,9 @@ from _instrument_ops import (  # noqa: E402
 )
 from _safe_off import (  # noqa: E402
     _attach_unsafe, _bench, _close_held_device, _ensure_held, _is_state_changing,
-    _record_unconfirmed, _retry_unconfirmed, _safe_off, _safe_off_all_held, _Session, _teardown,
+    _record_unconfirmed, _retry_unconfirmed, _safe_off, _Session, _teardown,
 )
+from _safe_off import _safe_off_all_held  # noqa: E402, F401 -- read through d by _bench_session_runner
 
 
 # ---------------------------------------------------------------------------

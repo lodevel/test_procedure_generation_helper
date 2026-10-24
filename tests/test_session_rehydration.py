@@ -56,14 +56,16 @@ class TestSerializeTranscript:
         assert "User: x" in out2
 
     def test_header_present(self):
-        out = serialize_transcript([ChatMessage(role="user", content="hi", full_prompt="P")], 10_000)
+        msg = ChatMessage(role="user", content="hi", full_prompt="P")
+        out = serialize_transcript([msg], 10_000)
         assert out.startswith("Conversation so far")
         # model-facing instruction: must tell the model to re-call the tools
         assert "re-call" in out.lower()
 
     def test_newest_first_survival_under_truncation(self):
         # 10 numbered messages; a tiny budget that fits only the last couple.
-        msgs = [ChatMessage(role="user", content=f"message number {i:02d}", full_prompt="P") for i in range(10)]
+        msgs = [ChatMessage(role="user", content=f"message number {i:02d}", full_prompt="P")
+                for i in range(10)]
         # budget room for header + ~2 short blocks
         budget = len(
             "Conversation so far, replayed after the previous server session was lost. "
@@ -268,10 +270,6 @@ class TestRehydrateRetry:
         assert request.conversation_preamble == "PREAMBLE"
 
 
-if __name__ == "__main__":
-    raise SystemExit(pytest.main([__file__, "-q"]))
-
-
 class TestUnsentLinesAreNotReplayed:
     def test_a_never_sent_user_line_and_the_not_sent_notes_stay_out(self):
         msgs = [
@@ -287,3 +285,7 @@ class TestUnsentLinesAreNotReplayed:
         assert "Note: Server restarted" in out
         assert "replaced question" not in out
         assert "Not sent" not in out
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q"]))

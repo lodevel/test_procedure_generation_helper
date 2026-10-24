@@ -238,3 +238,46 @@ def test_studio_closed_during_a_start_leaves_no_server_and_no_pid_file(qapp, tmp
     proc.terminate.assert_called()
     assert mgr._server_process is None and not mgr.is_running
     assert mgr._read_pid_file() is None and not _pid_file(tmp_path).exists()
+
+
+# --- what the user sent always stays in the chat -------------------------------------------
+
+def _lines(view):
+    return [m.content for m in view.tab_context.messages]
+
+
+def test_a_send_a_test_switch_dropped_stays_in_the_chat_and_says_why(opened, monkeypatch):
+    w = opened
+    view = w.text_only_tab
+    w.view_stack.setCurrentWidget(view)
+    view.tab_context.update_backend_factory(_factory(monkeypatch, _SlowServer()))
+
+    view._run_task_async(LLMTask.AD_HOC_CHAT, user_message="check U5")
+    shown = _lines(view)  # at once, while the server starts
+    w.open_test(w.root / "tests" / "t2")
+    _spin(lambda: not w.dock.chat_panel.loading.active)
+
+    assert shown[-1] == "check U5"
+    assert _lines(view)[-2:] == [
+        "check U5", "Not sent: the test changed while the AI server was starting."]
+    assert _Worker.made == []
+
+
+def test_a_task_that_replaces_a_waiting_send_says_so_and_goes_once(opened, monkeypatch):
+    w = opened
+    view = w.text_only_tab
+    w.view_stack.setCurrentWidget(view)
+    server = _SlowServer()
+    view.tab_context.update_backend_factory(_factory(monkeypatch, server))
+    review = view._get_task_description(LLMTask.REVIEW_TEXT_PROCEDURE)
+
+    view._run_task_async(LLMTask.AD_HOC_CHAT, user_message="check U5")
+    view._run_task_async(LLMTask.REVIEW_TEXT_PROCEDURE)  # a task button, while it waits
+    shown = _lines(view)
+    _spin(lambda: _Worker.made)
+
+    assert shown[-3:] == ["check U5", f"Not sent: replaced by {review}.", review]
+    assert _lines(view)[-3:] == shown[-3:]  # the review's line is not added twice
+    assert server.starts == 1 and len(_Worker.made) == 1
+    assert _Worker.made[0].request.task == LLMTask.REVIEW_TEXT_PROCEDURE
+    assert view.tab_context.messages[-1].full_prompt == "PROMPT"

@@ -476,16 +476,16 @@ class ChatPanel(QWidget):
         if proposal.test != current_test(self.main_window.artifact_manager):
             log.warning("Discarded %s: its test was closed", proposal.summary())
             proposal.discard()
-            self._post(tab_context, ChatMessage(
+            self.post(tab_context, ChatMessage(
                 role="system", content=f"{proposal.summary()} · {CLOSED}", tone="neutral"))
             return
         if not proposal.changes:
             proposal.accept(reviewed=True)  # nothing to review
             return
-        self._post(tab_context, ProposalMessage(
+        self.post(tab_context, ProposalMessage(
             role="system", content=proposal.summary(), proposal=proposal))
 
-    def _post(self, tab_context: "TabContext", message: "ChatMessage") -> None:
+    def post(self, tab_context: "TabContext", message: "ChatMessage") -> None:
         """Add *message* to *tab_context*'s history, shown now if it is the current one."""
         tab_context.messages.append(message)
         if tab_context is self._current_tab_context:

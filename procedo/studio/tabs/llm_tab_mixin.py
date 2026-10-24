@@ -57,18 +57,30 @@ class LLMTabMixin:
         if backend is None:
             self._await_backend(task, retry, kwargs)
             return
-        self._run_task_on(backend, task, retry, kwargs)
+        self._run_task_on(backend, task, retry, kwargs, self._user_line(task, kwargs))
+
+    def _user_line(self, task: LLMTask, kwargs: dict) -> ChatMessage:
+        """The chat's user line for a send (its prompt is added when it goes)."""
+        return ChatMessage(role="user", content=self._get_task_description(
+            task, kwargs.get('user_message'), custom_task_id=kwargs.get('custom_task_id')))
 
     def _await_backend(self, task: LLMTask, retry: bool, kwargs: dict) -> None:
         """Queue the send until the tab's backend has started off the GUI thread (the AI
-        server's start can take a minute); the chat is locked and shows the loading cue
-        meanwhile. A second send meanwhile replaces the queued one and waits for the same
-        start."""
-        waiting = getattr(self, "_queued_send", None) is not None
-        self._queued_send = (task, retry, kwargs, current_test(self.artifact_manager))
-        if waiting:
-            return
+        server's start can take a minute); its line shows in the chat at once, and the chat is
+        locked and shows the loading cue meanwhile. A second send meanwhile replaces the queued
+        one (the chat says so) and waits for the same start."""
         chat = self.main_window.dock.chat_panel
+        line = self._user_line(task, kwargs)
+        replaced = getattr(self, "_queued_send", None) is not None
+        if replaced:
+            what = ("a new message" if task == LLMTask.AD_HOC_CHAT
+                    and not kwargs.get('custom_task_id') else line.content)
+            chat.post(self.tab_context, ChatMessage(
+                role="system", content=f"Not sent: replaced by {what}.", tone="warning"))
+        chat.post(self.tab_context, line)
+        self._queued_send = (task, retry, kwargs, current_test(self.artifact_manager), line)
+        if replaced:
+            return
         chat.set_llm_active(True, cancellable=False)
         chat.loading.start(SERVER_STARTING_TEXT)
         self.tab_context.request_backend(self._on_backend_started)
@@ -81,16 +93,21 @@ class LLMTabMixin:
         chat = self.main_window.dock.chat_panel
         chat.loading.done()
         chat.set_llm_active(False)
-        task, retry, kwargs, test = self._queued_send
+        task, retry, kwargs, test, line = self._queued_send
         self._queued_send = None
         if test != current_test(self.artifact_manager):
             log.warning("Dropped the send queued for %s: its test was closed",
                         test[1] if test else None)
+            chat.post(self.tab_context, ChatMessage(
+                role="system", content="Not sent: the test changed while the AI server was "
+                "starting.", tone="warning"))
             return
-        self._run_task_on(backend, task, retry, kwargs)
+        self._run_task_on(backend, task, retry, kwargs, line)
 
-    def _run_task_on(self, backend, task: LLMTask, retry: bool, kwargs: dict) -> None:
-        """:meth:`_run_task_async` on the tab's started *backend*."""
+    def _run_task_on(self, backend, task: LLMTask, retry: bool, kwargs: dict,
+                     line: ChatMessage) -> None:
+        """:meth:`_run_task_async` on the tab's started *backend*; *line* is the send's user
+        line (already in the chat when the send waited for the backend)."""
         # FSM bootstrap. Two entry paths:
         #   (a) Operator request — whatever the FSM holds (a finished run, or
         #       one a failed request left in LLM_REQUESTED) is reset, and a
@@ -132,15 +149,14 @@ class LLMTabMixin:
         # Replaying prior turns feeds the model earlier review turns + its own
         # "I preserved the steps" replies, which it then imitates. Retry feedback
         # rides request.user_message separately, so retries keep working.
-        if self.tab_context.messages and task != LLMTask.REVIEW_TEXT_PROCEDURE:
+        history = [m for m in self.tab_context.messages if m is not line]
+        if history and task != LLMTask.REVIEW_TEXT_PROCEDURE:
             try:
                 window = backend.get_context_window()
             except Exception:
                 window = None
             char_budget = int((window or 16000) * 4 * 0.25)
-            request.conversation_preamble = serialize_transcript(
-                self.tab_context.messages, char_budget
-            )
+            request.conversation_preamble = serialize_transcript(history, char_budget)
 
         prompt_builder = PromptBuilder(
             task_config_manager=self.task_config_manager,
@@ -172,13 +188,9 @@ class LLMTabMixin:
             self._worker.cancel()
             self._worker.wait()
 
-        user_msg_text = kwargs.get('user_message', None)
-        user_message = ChatMessage(
-            role="user",
-            content=self._get_task_description(task, user_msg_text, custom_task_id=custom_task_id),
-            full_prompt=full_prompt,
-        )
-        self.tab_context.messages.append(user_message)
+        line.full_prompt = full_prompt
+        if not any(m is line for m in self.tab_context.messages):
+            self.tab_context.messages.append(line)
         self.main_window.dock.chat_panel.switch_context(self.tab_context)
         self.main_window.dock.chat_panel.add_thinking_message()
 

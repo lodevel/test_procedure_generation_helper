@@ -39,19 +39,7 @@ def project(tmp_path) -> Path:
     return tmp_path
 
 
-@pytest.fixture
-def engine_here(monkeypatch):
-    """The project's TOOLS engine, answered by the op table in this process, over JSON."""
-    sent: list[dict] = []
-
-    def call(_root, spec, timeout=None):
-        sent.append(spec)
-        return json.loads(json.dumps(engine_ops.run(json.loads(json.dumps(spec)))))
-    monkeypatch.setattr(pp, "_engine_call", call)
-    return sent
-
-
-def test_validate_procedure_shows_the_call_warnings_on_their_line(project, engine_here):
+def test_validate_procedure_shows_the_call_warnings_on_their_line(project, engine_in_process):
     ensure_builtins_registered()
     outcome = get("rules_packager_base.validate_procedure")(
         ValidatorContext(artifact_text=TEXT, artifact_json=None, artifact_code=None, project_root=project, tab_id="t"))
@@ -64,7 +52,7 @@ def test_validate_procedure_shows_the_call_warnings_on_their_line(project, engin
          "step 2: analysis.rise_time declares it returns s, the step writes {30} in us"),
     ]
     assert all(d["suggested_fix"] for d in shown)
-    assert engine_here[-1]["project"] == str(project)
+    assert engine_in_process[-1]["project"] == str(project)
 
 
 def test_without_a_project_the_op_checks_no_functions(project):
@@ -109,10 +97,10 @@ def test_functions_check_lists_each_missing_package_for_bench(project):
         f"functions/analysis.py imports {ABSENT}; the bundle does not provide it: rebuild the bundle with {ABSENT}"]
 
 
-def test_function_signatures_answer_studio_s_call_tooltips(project, engine_here, monkeypatch):
+def test_function_signatures_answer_studio_s_call_tooltips(project, engine_in_process, monkeypatch):
     from procedo.studio.pack_ops import call_hints
 
     assert call_hints.function_signatures(project) == {"analysis.rise_time": "rise_time(x) returns s"}
-    assert engine_here[-1] == {"op": "function_signatures", "project": str(project)}
+    assert engine_in_process[-1] == {"op": "function_signatures", "project": str(project)}
     monkeypatch.setattr(pp, "_engine_call", lambda *a, **k: {"ok": False, "error": "Unknown op"})
     assert call_hints.function_signatures(project) == {}  # a wheel without the op: no tooltip

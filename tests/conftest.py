@@ -109,14 +109,17 @@ def available_backend():
 @pytest.fixture
 def engine_in_process(monkeypatch):
     """The project's engine, answered in this process (a test has no project venv): every
-    ``pack_parsers`` op, with or without a project open, is ``_engine_ops.run``'s answer,
-    its frame crossing a JSON boundary as on the pipe."""
-    import json
-
-    from procedo.engine_client import _engine_ops
+    ``pack_parsers`` op, with or without a project open, is ``_env.engine_answer``'s.
+    Yields the specs sent, in order."""
     from procedo.studio.pack_ops import pack_parsers
 
+    from . import _env
+
+    sent: list[dict] = []
+
     def answer(_root, spec, timeout=None):
-        return json.loads(json.dumps(_engine_ops.run(json.loads(json.dumps(spec)))))
+        sent.append(spec)
+        return _env.engine_answer(spec)
 
     monkeypatch.setattr(pack_parsers, "_engine_call", answer)
+    return sent

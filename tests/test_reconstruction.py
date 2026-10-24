@@ -1,8 +1,9 @@
 """Unit tests for ``procedo.studio.llm.reconstruction.reconstruct_for_pipeline``.
 
 This is the single seam where ownership resolution meets the ``pack_parsers``
-reconstruct bridge. Only the in-process (``project_root=None``) path is
-exercised; the subprocess path needs a project venv, out of scope here.
+reconstruct bridge. The project's engine is answered in this process (the
+``engine_in_process`` fixture); a real engine process needs a project venv,
+out of scope here.
 
 Runs without PySide6:
     PYTHONPATH=. python3 -m pytest tests/test_reconstruction.py --noconftest -q

@@ -9,9 +9,43 @@ console) the same tests RUN.
 from __future__ import annotations
 
 import functools
+import importlib.util
+import json
+import os
 import subprocess
 import sys
 import threading
+from pathlib import Path
+
+# --- the project's engine, answered in this process ---------------------------
+
+_DAEMON = Path(__file__).resolve().parent.parent / "procedo" / "engine_client" / "_execute_op_subprocess.py"
+
+
+@functools.lru_cache(maxsize=1)
+def _pack_load():
+    """The daemon's own pack load (``_load_bundle``, once per process) of the bundle
+    ``PROCEDO_BUNDLE_DEFAULTS_PATH`` names, as ``_engine_ops.run``'s ``registry``;
+    None when it is unset (the conftest registry alone)."""
+    from procedo.studio import launch_env
+
+    defaults = os.environ.get(launch_env.BUNDLE_DEFAULTS_PATH)
+    if not defaults:
+        return None
+    spec = importlib.util.spec_from_file_location("_exec_op_runner_env", _DAEMON)
+    daemon = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(daemon)
+    session, bundle_dir = daemon._Session(), str(Path(defaults).parent)
+    return lambda frame: daemon._load_bundle(session, {**frame, "_bundle_dir": bundle_dir})
+
+
+def engine_answer(spec: dict) -> dict:
+    """``spec`` answered by the engine's op table in this process, its packs loaded as the
+    daemon loads them, the frame crossing a JSON boundary as on the pipe."""
+    from procedo.engine_client import _engine_ops
+
+    return json.loads(json.dumps(_engine_ops.run(json.loads(json.dumps(spec)), _pack_load())))
+
 
 # --- probe 1: labscpi 'psu' reconstruction by the engine's op table ----------
 
@@ -36,17 +70,16 @@ labscpi_pack: old@1.0.0
 """
 
 LABSCPI_SKIP_REASON = (
-    "the engine's op table, run in this process, cannot reconstruct labscpi 'psu' grammar: the "
-    "editor venv has no bundle-matched rules_packager_base wheel + labscpi "
-    "grammar pack registered (probe reconstruct fails with EQP_TYPE_UNKNOWN "
-    "'psu'). Runs on a bench machine with the project bundle installed."
+    "the engine's op table, run in this process, cannot reconstruct labscpi 'psu' grammar "
+    "(EQP_TYPE_UNKNOWN 'psu'): no bundle's packs are loaded. Set PROCEDO_BUNDLE_DEFAULTS_PATH "
+    "to a bundle's defaults.json (a copy) to run them."
 )
 
 
 @functools.lru_cache(maxsize=1)
 def labscpi_psu_reconstruct_available() -> bool:
-    """True iff the engine's op table, run in this process (the
-    ``engine_in_process`` fixture's), reconstructs a minimal labscpi ``psu`` fragment.
+    """True iff :func:`engine_answer` (the ``engine_in_process`` fixture's)
+    reconstructs a minimal labscpi ``psu`` fragment.
 
     This is the shared precondition of every reconstruct/validate-dispatch
     test that feeds ``psu`` grammar through ``procedo.studio.llm``:
@@ -57,9 +90,7 @@ def labscpi_psu_reconstruct_available() -> bool:
         from tests._qt_stub import ensure_workflow_editor_importable
 
         ensure_workflow_editor_importable()
-        from procedo.engine_client import _engine_ops
-
-        answer = _engine_ops.run({"op": "reconstruct", "fragment": _PSU_FRAGMENT, "prior": _PSU_PRIOR})
+        answer = engine_answer({"op": "reconstruct", "fragment": _PSU_FRAGMENT, "prior": _PSU_PRIOR})
         return answer.get("success") is True
     except Exception:
         return False

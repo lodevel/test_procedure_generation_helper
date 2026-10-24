@@ -78,11 +78,6 @@ def _inputs(doc: dict) -> dict:
     return {"measurements": rows, "controls": {}, "operator_verdicts": {3: "PASS"}}
 
 
-def _in_process(spec: dict) -> dict:
-    """The op table run here, over the same JSON boundary the daemon's pipe is."""
-    return json.loads(json.dumps(engine_ops.run(json.loads(json.dumps(spec)))))
-
-
 @pytest.fixture(scope="module")
 def live_session():
     """A RemoteSession over the REAL daemon script, on this interpreter (no project venv)."""
@@ -107,7 +102,7 @@ def test_the_daemon_op_answers_what_the_op_table_answers(live_session, name):
     fields = {"procedure_json": doc, **_inputs(doc)}
     live = live_session.engine_op("build_manual_run", **fields)
     assert live["ok"] and live["steps"]
-    assert live == _in_process({"op": "build_manual_run", **fields})
+    assert live == _env.engine_answer({"op": "build_manual_run", **fields})
     assert any(s["verdict"] for s in live["steps"])   # the readings reached the verdicts
     if name == "linear":         # and the operator's verdict did (the observation 2.0 alone is no "lit")
         assert [s["verdict"] for s in live["steps"] if s["kind"] == "judge"] == ["PASS"]
@@ -118,7 +113,7 @@ def test_the_daemon_result_op_answers_what_the_op_table_answers(live_session):
     fields = {"procedure_json": doc, **_inputs(doc)}
     live = live_session.engine_op("build_manual_result", **fields)
     assert live["ok"] and live["result"]["verdicts"]
-    assert live == _in_process({"op": "build_manual_result", **fields})
+    assert live == _env.engine_answer({"op": "build_manual_result", **fields})
 
 
 def test_the_result_op_makes_each_bench_op_never_redone_an_outcome_detail():
@@ -127,7 +122,7 @@ def test_the_result_op_makes_each_bench_op_never_redone_an_outcome_detail():
             if s["op"] == "wait"][0]
     fields = {"procedure_json": doc, **_inputs(doc),
               "failures": {wait["node_path"]: {"error": "PSU1 at COM3: OSError: no reply", "then": "continued"}}}
-    result = _in_process({"op": "build_manual_result", **fields})["result"]
+    result = _env.engine_answer({"op": "build_manual_result", **fields})["result"]
     assert result["outcome_details"] == [{"code": "BENCH_OP_FAILED", "description": "PSU1 at COM3: OSError: no reply",
                                           "step": 4, "then": "continued"}]
     assert result["overall"] == "ERROR"
@@ -142,7 +137,7 @@ def test_the_run_op_says_a_refused_value_ended_the_run():
 
 def test_the_result_op_makes_an_operator_stop_aborted():
     doc = _document("if_else")
-    result = _in_process({"op": "build_manual_result", "procedure_json": doc, **_inputs(doc),
+    result = _env.engine_answer({"op": "build_manual_result", "procedure_json": doc, **_inputs(doc),
                           "operator_stop": True})["result"]
     assert (result["overall"], result["aborted"]) == ("ABORTED", True)
 

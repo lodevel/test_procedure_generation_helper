@@ -81,6 +81,7 @@ class _CapturingValidateFn:
         return _Report()
 
 
+@pytest.mark.usefixtures("engine_in_process")
 class ValidateProposedTextReconstructsAgainstPriorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.response = LLMResponse(success=True)
@@ -90,7 +91,7 @@ class ValidateProposedTextReconstructsAgainstPriorTests(unittest.TestCase):
         self.validate_fn = _CapturingValidateFn()
 
     def test_reconstructs_against_prior_not_placeholder(self) -> None:
-        # project_root=None → in-process reconstruction + name-fidelity gate
+        # project_root=None: the engine stand-in reconstructs; the name-fidelity gate
         # defaults to enabled (no config.json), original_text threaded through.
         outcome = validator_dispatch._validate_proposed_text(
             self.response, self.current, None, self.validate_fn,

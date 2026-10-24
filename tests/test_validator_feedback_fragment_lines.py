@@ -252,6 +252,7 @@ class _CapturingValidateFn:
         return _Report()
 
 
+@pytest.mark.usefixtures("engine_in_process")
 class ValidateProposedTextTranslationIntegrationTests(unittest.TestCase):
     @_skip_no_labscpi
     def test_issue_line_translated_to_fragment_coords(self) -> None:

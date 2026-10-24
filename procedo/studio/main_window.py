@@ -18,7 +18,7 @@ from procedo.core.config_manager_dialog import ProjectConfigDialog, TemplateMana
 from procedo.core.install_helper_dialog import InstallPackageDialog
 from procedo.core import project_seeding
 from procedo.core.paths import exists_quiet
-from procedo.core.scenario_dialog import ScenarioManagerDialog
+from procedo.ui.scenario_dialog import ScenarioManagerDialog
 
 from .core import ArtifactManager, SessionState, ProjectManager
 from .core.task_config import TaskConfigManager

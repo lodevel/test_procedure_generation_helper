@@ -17,6 +17,8 @@ import importlib.util
 import unittest
 from pathlib import Path
 
+from tests._daemon_seam import rebind
+
 try:  # the real registry is only present with an installed bundle
     import rules_packager_base.rules.v2_0_2.parser._default_registry as reg
     _HAVE_REG = True
@@ -92,14 +94,7 @@ class CmdRawTests(unittest.TestCase):
     injected ``_build_device`` so no bundle is needed."""
 
     def setUp(self):
-        self._orig_build = er._build_device
-        self._orig_safe = er._safe_name
-        er._safe_name = lambda d: str(d)   # avoid the bundle import in the drop path
-        self.addCleanup(self._restore)
-
-    def _restore(self):
-        er._build_device = self._orig_build
-        er._safe_name = self._orig_safe
+        rebind(self, er, "_safe_name", lambda d: str(d))   # avoid the bundle import in the drop path
 
     def _session(self, lifecycle):
         s = er._Session()
@@ -140,7 +135,7 @@ class CmdRawTests(unittest.TestCase):
             def reset(self): ev["reset"] += 1
             def close(self): ev["close"] += 1
             def raw_command(self, t): return "R[" + t + "]"
-        er._build_device = lambda bench, ns, lc, log: Dev()
+        rebind(self, er, "_build_device", lambda bench, ns, lc, log: Dev())
         r = er._cmd_raw(s, {"device": "FN1", "etype": "ctrl", "subtype": "",
                             "text": "help",
                             "bench_map": {"FN1": {"port": "COM1",
@@ -158,7 +153,7 @@ class CmdRawTests(unittest.TestCase):
             def connect(self): pass
             def close(self): pass
             def raw_command(self, t): raise TimeoutError("no reply prompt within 1.0 s")
-        er._build_device = lambda bench, ns, lc, log: Dev()
+        rebind(self, er, "_build_device", lambda bench, ns, lc, log: Dev())
         r = er._cmd_raw(s, {"device": "FN1", "etype": "ctrl", "subtype": "", "text": "help",
                             "bench_map": {"FN1": {"port": "COM28", "baud": 115200,
                                                   "session_policy": "per_step"}}})

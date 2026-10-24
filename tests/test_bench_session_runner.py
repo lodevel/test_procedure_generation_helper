@@ -28,6 +28,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._daemon_seam import rebind
+
 pytest.importorskip(
     "rules_packager_base",
     reason="needs the installed grammar wheel (bench/host venv); absent on CI",
@@ -299,8 +301,8 @@ def _claim(test_id, name, visa=_ADDR_A, etype="psu", dev=None, **extra):
 class _BenchBase(unittest.TestCase):
     def setUp(self):
         self.calls: list = []
-        er._build_device = lambda bench, etype, lifecycle, log: _Fake(
-            etype, bench.get("_dev", bench.get("visa", "?")), self.calls)
+        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _Fake(
+            etype, bench.get("_dev", bench.get("visa", "?")), self.calls))
         self.proto = _ProtoCapture()
         er._PROTO_OUT = self.proto
         self.addCleanup(lambda: setattr(er, "_PROTO_OUT", None))
@@ -423,7 +425,7 @@ class EndpointRekeyTests(_BenchBase):
     def test_acquire_that_cannot_open_names_the_instrument_and_address(self):
         def _unopenable(bench, etype, lifecycle, log):
             raise OSError("VI_ERROR_RSRC_NFOUND")
-        er._build_device = _unopenable
+        rebind(self, er, "_build_device", _unopenable)
         s = self._session()
         resp = self._acquire(s, [_claim("T-A", "PSU1", _ADDR_A)])
         self.assertFalse(resp["ok"])
@@ -445,8 +447,8 @@ class EndpointRekeyTests(_BenchBase):
     def test_identities_from_idn_attribute(self):
         class _IdnFake(_Fake):
             idn = "ACME PSU 9080,SN123"
-        er._build_device = lambda bench, etype, lifecycle, log: _IdnFake(
-            etype, bench.get("_dev", "?"), self.calls)
+        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _IdnFake(
+            etype, bench.get("_dev", "?"), self.calls))
         s = self._session()
         resp = self._acquire(s, [_claim("T-A", "PSU1")])
         self.assertTrue(resp["ok"])
@@ -632,8 +634,8 @@ class HealthCheckTests(_BenchBase):
             def __init__(self, *a):
                 super().__init__(*a)
                 self.idn = idn_box["idn"]
-        er._build_device = lambda bench, etype, lifecycle, log: _IdnFake(
-            etype, bench.get("_dev", "?"), self.calls)
+        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _IdnFake(
+            etype, bench.get("_dev", "?"), self.calls))
         s = self._session()
         self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
         self.assertEqual(s.bench.fingerprints, {_EP_A: "ACME PSU,SN1"})
@@ -656,8 +658,8 @@ class HealthCheckTests(_BenchBase):
                   _claim("T-A", "PSU2", _ADDR_B, dev="P-B")]
         self._held_acquire_release(s, claims)
         _kill_link(s.held[_EP_A])
-        er._build_device = lambda *a, **k: (_ for _ in ()).throw(
-            RuntimeError("no route to host"))
+        rebind(self, er, "_build_device", lambda *a, **k: (_ for _ in ()).throw(
+            RuntimeError("no route to host")))
         resp, stop = self._dispatch(s, {"cmd": "acquire_run", "claims": claims})
         self.assertTrue(stop)                       # respond then STOP
         self.assertFalse(resp["ok"])
@@ -783,8 +785,8 @@ class HealthCheckTests(_BenchBase):
         s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
         self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
         _kill_link(s.held[_EP_A])
-        er._build_device = lambda *a, **k: (_ for _ in ()).throw(
-            RuntimeError("no route to host"))
+        rebind(self, er, "_build_device", lambda *a, **k: (_ for _ in ()).throw(
+            RuntimeError("no route to host")))
         r = er._cmd_safe_off(s, {
             "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
             "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}]})
@@ -829,8 +831,8 @@ class HealthCheckTests(_BenchBase):
             def __init__(self, *a):
                 super().__init__(*a)
                 self.idn = idn_box["idn"]
-        er._build_device = lambda bench, etype, lifecycle, log: _IdnFake(
-            etype, bench.get("_dev", "?"), self.calls)
+        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _IdnFake(
+            etype, bench.get("_dev", "?"), self.calls))
         s = self._session()
         self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
         _kill_link(s.held[_EP_A])
@@ -889,8 +891,8 @@ class UnconfirmedOffTests(_BenchBase):
         """The reviewer's steps 1-2: dead link + failing rebuild at safe-off
         time -> unsafe response, endpoint gone from held, memory keeps it."""
         _kill_link(s.held[_EP_A])
-        er._build_device = lambda *a, **k: (_ for _ in ()).throw(
-            RuntimeError("no route to host"))
+        rebind(self, er, "_build_device", lambda *a, **k: (_ for _ in ()).throw(
+            RuntimeError("no route to host")))
         r = er._cmd_safe_off(s, {
             "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
             "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}]})
@@ -925,8 +927,8 @@ class UnconfirmedOffTests(_BenchBase):
         self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
         self._fail_safe_off(s)
         calls = self.calls
-        er._build_device = lambda bench, etype, lifecycle, log: _Fake(
-            etype, bench.get("_dev", bench.get("visa", "?")), calls)
+        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _Fake(
+            etype, bench.get("_dev", bench.get("visa", "?")), calls))
         r2 = er._cmd_safe_off(s, {
             "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED2"}},
             "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}]})
@@ -1100,8 +1102,8 @@ class StickyIdentityTests(_BenchBase):
             def __init__(self, *a):
                 super().__init__(*a)
                 self.idn = idn_box["idn"]
-        er._build_device = lambda bench, etype, lifecycle, log: _IdnFake(
-            etype, bench.get("_dev", "?"), calls)
+        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _IdnFake(
+            etype, bench.get("_dev", "?"), calls))
 
     def _set_v(self, device, volts=5.0):
         return {"node_path": "s", "op": {
@@ -1313,8 +1315,8 @@ class RunTestTests(_BenchBase):
         self.assertTrue(r2["ok"], r2)
 
     def test_error_ladder_safe_off_close_session_ends(self):
-        er._build_device = lambda bench, etype, lifecycle, log: _RaisingFake(
-            etype, bench.get("_dev", "?"), self.calls, "set_voltage")
+        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _RaisingFake(
+            etype, bench.get("_dev", "?"), self.calls, "set_voltage"))
         s = self._session()
         rid = self._acquired(s)
         cwd_before = os.getcwd()
@@ -1465,8 +1467,8 @@ class RunTestTests(_BenchBase):
         # daemon runs main(ctx) with CWD at the results dir, so the PNG
         # lands beside results.json (like the legacy subprocess path) — and
         # the prior CWD is restored afterwards.
-        er._build_device = lambda bench, etype, lifecycle, log: _ShotFake(
-            etype, bench.get("_dev", "?"), self.calls)
+        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _ShotFake(
+            etype, bench.get("_dev", "?"), self.calls))
         s = self._session()
         resp = self._acquire(s, [
             _claim("BENCH-S", "PSU1", dev="PHYS"),
@@ -1495,8 +1497,8 @@ class RunTestTests(_BenchBase):
         # folder; the daemon runs the batch there (the same switch run_test
         # makes into its results dir) and goes back after — a relative write
         # never lands in the daemon's own CWD.
-        er._build_device = lambda bench, etype, lifecycle, log: _ShotFake(
-            etype, bench.get("_dev", "?"), self.calls)
+        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _ShotFake(
+            etype, bench.get("_dev", "?"), self.calls))
         home, run_dir = Path(self.tmp.name) / "home", Path(self.tmp.name) / "run"
         home.mkdir()
         run_dir.mkdir()
@@ -1521,8 +1523,8 @@ class RunTestTests(_BenchBase):
         # No fallback: a batch whose frame names no work_dir, or a folder that
         # is gone, is answered with an error and no op runs (no device opened,
         # nothing written, the daemon's CWD untouched).
-        er._build_device = lambda bench, etype, lifecycle, log: _ShotFake(
-            etype, bench.get("_dev", "?"), self.calls)
+        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _ShotFake(
+            etype, bench.get("_dev", "?"), self.calls))
         home = Path(self.tmp.name) / "home"
         home.mkdir()
         cwd0 = os.getcwd()
@@ -1758,8 +1760,8 @@ class TimeoutRetargetTests(_BenchBase):
     def setUp(self):
         super().setUp()
         calls = self.calls
-        er._build_device = lambda bench, etype, lifecycle, log: _TimeoutFake(
-            etype, bench.get("_dev", bench.get("visa", "?")), calls)
+        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _TimeoutFake(
+            etype, bench.get("_dev", bench.get("visa", "?")), calls))
 
     def _session(self, cap=True):
         """Session whose psu lifecycle entry deterministically HAS (or has
@@ -1832,8 +1834,8 @@ class TimeoutRetargetTests(_BenchBase):
                               {"value": value}))
                 raise RuntimeError("firmware refuses")
 
-        er._build_device = lambda bench, etype, lifecycle, log: _Boom(
-            etype, bench.get("_dev", "?"), calls)
+        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _Boom(
+            etype, bench.get("_dev", "?"), calls))
         s = self._session()
         r = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
         self.assertTrue(r["ok"], r)                       # acquire SUCCEEDS
@@ -1967,8 +1969,8 @@ class TimeoutRetargetTests(_BenchBase):
                 super().__init__(*a)
                 self.idn = idn_box["idn"]
 
-        er._build_device = lambda bench, etype, lifecycle, log: (
-            _IdnTimeoutFake(etype, bench.get("_dev", "?"), calls))
+        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: (
+            _IdnTimeoutFake(etype, bench.get("_dev", "?"), calls)))
         s = self._session()
         r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
         self._release(s, r1)
@@ -2064,8 +2066,8 @@ class StaleNameHoldTests(_BenchBase):
     def setUp(self):
         super().setUp()
         calls = self.calls          # same retarget spy as TimeoutRetargetTests
-        er._build_device = lambda bench, etype, lifecycle, log: _TimeoutFake(
-            etype, bench.get("_dev", bench.get("visa", "?")), calls)
+        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _TimeoutFake(
+            etype, bench.get("_dev", bench.get("visa", "?")), calls))
 
     def _session(self, cap=True):
         s = super()._session()      # deterministic capability (see retarget tests)

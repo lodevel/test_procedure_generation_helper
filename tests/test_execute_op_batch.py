@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._daemon_seam import rebind
+
 pytest.importorskip(
     "rules_packager_base",
     reason="needs the installed grammar wheel (bench/host venv); absent on CI",
@@ -42,6 +44,7 @@ _RUNNER = (Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location("_exec_op_runner", _RUNNER)
 er = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(er)
+_ops = sys.modules["_instrument_ops"]   # the bare-name sibling the daemon just loaded
 
 _PROC = {"equipment": [{"id": "PSU1", "type": "psu"},
                        {"id": "ELOAD1", "type": "eload"}]}
@@ -85,8 +88,8 @@ class _Fake:
 class DaemonRunnerTests(unittest.TestCase):
     def setUp(self):
         self.calls: list = []
-        er._build_device = lambda bench, etype, lifecycle, log: _Fake(
-            etype, bench["_dev"], self.calls)
+        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _Fake(
+            etype, bench["_dev"], self.calls))
 
     def _session(self, proc: dict = _PROC):
         s = er._Session()
@@ -208,11 +211,9 @@ class DaemonRunnerTests(unittest.TestCase):
     # -- safe-off OP verb is metadata-driven (off_op), default "output" --------
     def test_safe_off_uses_pack_off_op_verb(self):
         recorded: list = []
-        orig = er._exec_op
-        er._exec_op = lambda proc, op, ns: (recorded.append(op["op"]),
-                                            (False, None, "", None))[1]
-        self.addCleanup(lambda: setattr(er, "_exec_op", orig))
-        res = er._ResStub()
+        rebind(self, er, "_exec_op", lambda proc, op, ns: (recorded.append(op["op"]),
+                                                          (False, None, "", None))[1])
+        res = _ops._ResStub()
         # a future state-holding pack whose off op-verb is NOT "output"
         lc = {"siggen": {"cleanup": {"off_op": "rf_off", "priority": 5}}}
         failures = er._safe_off({}, {}, {"SG1": {1}}, {"SG1": "siggen"}, lc, res)
@@ -229,10 +230,8 @@ class DaemonRunnerTests(unittest.TestCase):
     def test_safe_off_failure_returns_unsafe_and_logs(self):
         def _boom(*a, **k):
             raise RuntimeError("no comms")
-        orig = er._exec_op
-        er._exec_op = _boom
-        self.addCleanup(lambda: setattr(er, "_exec_op", orig))
-        res = er._ResStub()
+        rebind(self, er, "_exec_op", _boom)
+        res = _ops._ResStub()
         lc = {"psu": {"cleanup": {"off_op": "output", "priority": 20}}}
         failures = er._safe_off({}, {}, {"PSU1": {1}}, {"PSU1": "psu"}, lc, res)
         self.assertEqual(failures, ["PSU1 CH1"])
@@ -326,9 +325,7 @@ class DaemonRunnerTests(unittest.TestCase):
     def test_per_step_failure_still_closes_transient(self):
         def _boom(*a, **k):
             raise RuntimeError("boom")
-        orig = er._exec_op
-        er._exec_op = _boom
-        self.addCleanup(lambda: setattr(er, "_exec_op", orig))
+        rebind(self, er, "_exec_op", _boom)
         # no session_policy stamp: the fncore lifecycle (remote False) fallback
         # routes per_step; the DECLARED equipment type stays "controller".
         bench = {"CTRL1": {"port": "COM1", "_dev": "CTRL1"}}
@@ -346,9 +343,7 @@ class DaemonRunnerTests(unittest.TestCase):
     def test_a_failed_serial_op_names_the_port_and_baud(self):
         def _no_reply(*a, **k):
             raise TimeoutError("'writeAnalog DSC DAC#DSC0 1241': no reply prompt within 2.0 s")
-        orig = er._exec_op
-        er._exec_op = _no_reply
-        self.addCleanup(lambda: setattr(er, "_exec_op", orig))
+        rebind(self, er, "_exec_op", _no_reply)
         bench = {"FNCORE_DSC": {"port": "COM28", "baud": 115200, "_dev": "FNCORE_DSC"}}
         s = self._session({"equipment": [{"id": "FNCORE_DSC", "type": "controller"}]})
         r = er._cmd_exec_ops(s, {"bench_map": bench, "ops": [{"node_path": "a", "op": {
@@ -363,7 +358,8 @@ class DaemonRunnerTests(unittest.TestCase):
         class _Failing(_Fake):
             def set_voltage(self, **kwargs):
                 raise TimeoutError("VI_ERROR_TMO")
-        er._build_device = lambda bench, etype, lifecycle, log: _Failing(etype, "PSU1", calls)
+        rebind(self, er, "_build_device",
+               lambda bench, etype, lifecycle, log: _Failing(etype, "PSU1", calls))
         bench = {"PSU1": {"visa": "TCPIP0::10.0.0.5::INSTR", "timeout_ms": 5000}}
         r = er._cmd_exec_ops(self._session(), {"ops": [_set_v("PSU1")], "bench_map": bench})
         self.assertEqual(r["results"][0]["error"],
@@ -372,7 +368,7 @@ class DaemonRunnerTests(unittest.TestCase):
     def test_a_failed_connect_names_the_address_once(self):
         def _unopenable(bench, etype, lifecycle, log):
             raise OSError("could not open port 'COM28': FileNotFoundError")
-        er._build_device = _unopenable
+        rebind(self, er, "_build_device", _unopenable)
         bench = {"PSU1": {"port": "COM28", "baud": 9600}}
         r = er._cmd_exec_ops(self._session(), {"ops": [_set_v("PSU1")], "bench_map": bench})
         self.assertEqual(r["results"][0]["error"], "PSU1 (9600 baud): OSError: "
@@ -561,6 +557,6 @@ if __name__ == "__main__":
 def test_a_bus_read_line_runs_in_the_step_namespace():
     """A pack wraps a bus read in ``bytes_to_int`` (the base's one conversion):
     the namespace ⚡ executes step code in must provide it."""
-    ns = er._ns_base(None)
+    ns = _ops._ns_base(None)
     exec("value = bytes_to_int('FB 00', 2, signed=True)", ns)
     assert ns["value"] == -1280

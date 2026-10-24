@@ -104,34 +104,15 @@ PARENT is responsible for killing a wedged daemon and spawning a fresh
 
 Unconfirmed-off memory
 ----------------------
-The daemon is the only party that knows off-confirmation truth, so it keeps
-the memory: ``_Session.unconfirmed_off`` records every safe-off target whose
-OFF failed or errored — recorded AT the failure site (a per-channel off
-failure in ``_safe_off``, an open/rebuild failure in ``_cmd_safe_off``, a
-held-endpoint rebuild failure in ``check_held``) BEFORE any handle drop can
-hide the target, keyed by the canonical endpoint when the bench session
-routed the name (``BenchState.alias``).  An entry carries the channels plus
-the admission bench data needed to reconnect and is removed ONLY when a
-later off of its recorded channels is CONFIRMED (the off op executed without
-error) — never by a handle drop, a failed rebuild, or a rebuild that merely
-succeeded.  Every later safe-off pass retries: ``safe_off`` retries ALL
-recorded targets first (restoring held routing before the frame's own
-targets run), and the teardown/shutdown sweep retries every recorded target
-its held pass did not attempt — reconnecting from the stored bench when the
-target is no longer held — so shutdown reports a still-unconfirmed target in
-``unsafe`` even when nothing holds it, instead of false-clean, and the
-host's persistent UNSAFE latch survives ``BenchSession.fatal()`` until those
-exact targets are confirmed off.  Responses surface the memory in BOTH
-forms — display strings in ``unsafe`` plus the structured ``unsafe_targets``
-records (:func:`_attach_unsafe`) — so the host recovery receives the exact
-endpoint/channel set with its stored reconnect data, never a parsed string.
+The held/energized state, every safe-off pass and the unconfirmed-off memory behind ``unsafe``
+live in the sibling ``_safe_off.py`` (its module docstring is the contract); op execution
+lives in ``_instrument_ops.py``.  Both load by bare name next to this file.
 """
 from __future__ import annotations
 
 import argparse
 import atexit
 import json
-import numbers
 import os
 import signal
 import sys
@@ -139,649 +120,28 @@ import traceback
 from pathlib import Path
 
 
-class _ResStub:
-    """Minimal stand-in for the generated test.py ``Result`` object."""
-
-    def __init__(self) -> None:
-        self.log: list = []
-        self.operator_verdicts: dict = {}
-
-    def add_evidence(self, *args, **kwargs) -> None:  # scope.screenshot
-        pass
-
-
-class _NotRemote(Exception):
-    """Device is not remote-capable (no address / in manual mode)."""
-
-
-class _NoCodegen(Exception):
-    """The owning pack produced no remote driver call for the op."""
-
-
-def _build_device(bench: dict, etype: str, lifecycle: dict, log: list):
-    """Construct the driver instance for ``etype`` from resolved bench values.
-
-    The driver CLASS and its import come from the pack's own LIFECYCLE
-    ``prelude_import`` block + ``driver_class`` name — so a new pack's driver
-    works with no change here.  Connection params follow the two transports we
-    support: VISA (psu/eload/scope) and serial (fncore controller).
-    """
-    lc = lifecycle.get(etype) or {}
-    class_name = lc.get("driver_class")
-    if not class_name:
-        raise RuntimeError(f"no driver_class declared for equipment type {etype!r}")
-    ns: dict = {}
-    prelude = ((lc.get("prelude_import") or {}).get("block")) or ""
-    if prelude:
-        exec(prelude, ns)  # noqa: S102 — pack-declared import block, not user input
-    cls = ns.get(class_name)
-    if cls is None:
-        raise RuntimeError(
-            f"driver class {class_name!r} for {etype!r} not importable in the "
-            f"project venv (prelude import failed)."
-        )
-    if "visa" in bench:  # VISA transport: psu / eload / scope
-        visa = bench.get("visa")
-        if not visa:
-            raise _NotRemote(f"{etype} has no VISA address set; cannot execute remotely.")
-        timeout_ms = int(bench.get("timeout_ms") or 3000)
-        return cls(visa, timeout_ms=timeout_ms)
-    if "port" in bench:  # serial transport (fncore controller)
-        port = bench.get("port")
-        if not port:
-            raise _NotRemote(f"{etype} has no serial PORT set; cannot execute remotely.")
-        return cls(
-            port=port,
-            baud=int(bench.get("baud") or 115200),
-            timeout_s=float(bench.get("timeout_s") or 2.0),
-            log_list=log,
-            manual_override=bool(bench.get("manual_override")),
-        )
-    raise _NotRemote(f"no usable connection parameters for {etype!r}.")
-
-
-def _open_no_reset(dev) -> None:
-    """Open a session WITHOUT resetting: connect()/open() + initialize() only.
-
-    Deliberately never calls ``reset()`` — that is the sole ``*RST`` path and
-    the whole point of this runner.  ``initialize()`` is required (it binds the
-    SCPI adapter the op methods assert on) and itself issues no reset.
-    """
-    if hasattr(dev, "connect"):
-        dev.connect()
-    elif hasattr(dev, "open"):
-        dev.open()
-    if hasattr(dev, "initialize"):
-        dev.initialize()
-    # NOTE: intentionally NO dev.reset() — leave device state as-is.
-
-
-def _raw_send(dev, text: str) -> str:
-    """Send ONE raw command line to an already-open device and return its reply.
-
-    A line containing ``?`` is a QUERY (returns the instrument's response); any
-    other line is a WRITE (returns ``""``).  This is the single raw-command
-    adapter seam, dispatching on the FIRST interface a driver exposes, in the
-    same order as the code below:
-
-    1. a public raw passthrough — ``query_raw`` / ``write_raw`` (psu/eload/scope
-       all expose these);
-    2. the fncore line protocol — the public ``raw_command`` (the full reply,
-       one line or many);
-    3. (defensive) an SCPI-session wrapper ``.s`` / ``._session``;
-    4. (defensive) a bare pyvisa ``_resource`` / ``resource``.
-
-    Tiers 3-4 are fallbacks for a driver exposing neither public surface; every
-    SHIPPED driver resolves at tier 1 or 2.  Dispatch is by attribute presence
-    only — no driver class or pack-namespace names — so a new pack's driver is
-    terminal-addressable by exposing the public ``query_raw``/``write_raw`` (or a
-    multi-line ``raw_command``), and the seam needs no per-driver branch here.
-    """
-    is_query = "?" in text
-    # 1. public raw passthrough (psu/eload/scope: query_raw / write_raw)
-    if is_query and hasattr(dev, "query_raw"):
-        return str(dev.query_raw(text))
-    if (not is_query) and hasattr(dev, "write_raw"):
-        dev.write_raw(text)
-        return ""
-    # 2. fncore line protocol: raw_command reads up to the board's prompt, so a
-    #    terminal command like 'help'/'listPins' comes back whole.
-    if hasattr(dev, "raw_command"):
-        return str(dev.raw_command(text))
-    # 3. SCPI-session wrapper (psu/eload: .s ; scope: ._session) — handles
-    #    read/write terminations + error checking the bare resource would not.
-    sess = getattr(dev, "s", None) or getattr(dev, "_session", None)
-    if sess is not None and hasattr(sess, "query") and hasattr(sess, "write"):
-        if is_query:
-            return str(sess.query(text))
-        sess.write(text)
-        return ""
-    # 4. last resort: the raw pyvisa resource
-    res = getattr(dev, "_resource", None) or getattr(dev, "resource", None)
-    if res is not None and hasattr(res, "query") and hasattr(res, "write"):
-        if is_query:
-            return str(res.query(text))
-        res.write(text)
-        return ""
-    raise RuntimeError(
-        f"{type(dev).__name__} exposes no raw-command interface "
-        f"(query_raw/write_raw, raw_command, .s/._session, or a resource).")
-
-
-def _capture_remote_lines(procedure_json: dict, target_op: dict):
-    """Drive the owning pack's ``emit_python`` through a capture-context.
-
-    Returns ``(var_name, lines, meta)`` where ``lines`` is the remote branch's
-    driver call(s) and ``meta`` carries ``ref``/``unit``/``has_result`` for a
-    measuring op.  No test.py scaffolding (if/else, prompts) is emitted — only
-    the remote driver call(s).
-    """
-    from rules_packager_base.rules.v2_0_2.parser.codegen import _Generator
-    from rules_packager_base.rules.v2_0_2.parser._default_registry import (
-        get_default_pack_parsers,
-    )
-
-    gen = _Generator(procedure_json, None)
-    lines: list = []
-    meta = {"ref": None, "unit": "", "has_result": False}
-
-    # Mirror _Generator.emit's indentation: a pack that emits a BLOCK via
-    # ctx.emit_block("try:")/end_block bumps gen.indent, and the body lines must
-    # be indented or the captured snippet won't compile (bodyless 'try:').
-    gen.emit = lambda line="": lines.append(("    " * gen.indent + line) if line else "")
-
-    def _cap_action(eid, remote_line, manual_msg):
-        lines.append(remote_line)
-
-    def _cap_measure(eid, ref_key, remote_expr, manual_msg, default_unit="V", label=""):
-        meta.update(ref=ref_key, unit=default_unit, has_result=True)
-        lines.append(f"__RESULT__ = ({remote_expr})")
-
-    def _cap_query(eid, ref_key, remote_expr, manual_msg):
-        meta.update(ref=ref_key, unit="", has_result=True)
-        lines.append(f"__RESULT__ = ({remote_expr})")
-
-    def _cap_block(eid, manual_msg, remote_emitter):
-        remote_emitter()
-
-    def _cap_block_measure(eid, ref_key, manual_msg, unit, label, remote_emitter):
-        meta.update(ref=ref_key, unit=unit, has_result=True)
-        remote_emitter()  # emits via gen.emit, incl. record_measurement(...)
-
-    gen._emit_remote_or_manual_action = _cap_action
-    gen._emit_remote_or_manual_measure = _cap_measure
-    gen._emit_remote_or_manual_query = _cap_query
-    gen._emit_remote_or_manual_block = _cap_block
-    gen._emit_remote_or_manual_block_measure = _cap_block_measure
-
-    op_const = target_op.get("op") or ""
-    etype = op_const.split(".", 1)[0]
-    pack = get_default_pack_parsers().get(etype)
-    emit_python = getattr(pack, "emit_python", None) if pack else None
-    if emit_python is None or not emit_python(target_op, gen._ctx):
-        raise _NoCodegen(
-            f"pack for {etype!r} did not emit a driver call for op {op_const!r}."
-        )
-
-    var_name = gen.device_vars.get(target_op.get("device"), target_op.get("device"))
-    return var_name, lines, meta
-
-
-# ---------------------------------------------------------------------------
-# State-changing / safe-off helpers.
-# ---------------------------------------------------------------------------
-
-_READ_VERBS = {"measure_voltage", "measure_current", "measure_power",
-               "get_voltage", "get_current", "get_power"}
-# NB: query_raw / write_raw are deliberately NOT reads here — a raw SCPI command
-# MAY assert an output, so they count as state-changing for energized-tracking.
-# Over-tracking is harmless: it only adds a redundant safe-off on a failed batch.
-
-
-def _is_state_changing(op: dict, lifecycle: dict) -> bool:
-    """True iff this op can leave a held instrument energized: a non-read verb on
-    a device whose pack declares a ``cleanup`` (i.e. holds physical output).
-
-    Driven by lifecycle METADATA, not a hardcoded type list — so a new
-    state-holding instrument (e.g. a signal generator) is tracked automatically
-    once its pack declares a ``cleanup``, with no edit here.  Unknown verbs
-    default to state-changing (errs toward a redundant, harmless safe-off)."""
-    etype, _, verb = (op.get("op") or "").partition(".")
-    if not (lifecycle.get(etype) or {}).get("cleanup"):
-        return False        # scope/fncore (no output) — never energizing
-    return verb not in _READ_VERBS
-
-
-def _device_channels(procedure_json: dict, device: str) -> list:
-    """Declared channel numbers for a device (from the procedure equipment), so a
-    channel-less state-changer (raw SCPI / tracking) can be safe-off'd on every
-    channel rather than just CH1. Falls back to [1] when undeterminable."""
-    for eq in (procedure_json.get("equipment") or []):
-        if eq.get("id") != device:
-            continue
-        out = []
-        for c in (eq.get("channels") or []):
-            if isinstance(c, int):
-                out.append(c)
-            elif isinstance(c, dict):
-                cid = c.get("id", c.get("channel", c.get("n")))
-                if isinstance(cid, int):
-                    out.append(cid)
-        return sorted(set(out)) or [1]
-    return [1]
-
-
-def _ns_base(res) -> dict:
-    from rules_packager_base import bytes_to_int   # a pack's bus read binds its bytes through it
-    return {
-        "results": {}, "res": res, "manual_flags": {}, "_stats": None,
-        "float": float, "int": int, "str": str, "bool": bool,
-        "abs": abs, "round": round, "min": min, "max": max,
-        "bytes_to_int": bytes_to_int,
-    }
-
-
-def _jsonable(value):
-    """Coerce a measured value to a JSON-native type so it round-trips through
-    the frame (a numpy scalar / Decimal would otherwise be stringified by
-    json.dumps(default=str) and silently mis-compare against a float verdict)."""
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, numbers.Real) and not isinstance(value, (int, float)):
-        try:
-            return float(value)
-        except Exception:  # noqa: BLE001
-            return str(value)
-    return value
-
-
-def _exec_op(procedure_json: dict, op: dict, ns: dict):
-    """Capture + exec one op's remote driver line(s) in the shared namespace
-    (all opened device vars stay bound across ops). Returns (has, value, unit,
-    ref). A fresh per-op holder + cleared ``__RESULT__`` prevent cross-op bleed."""
-    holder: dict = {}
-
-    def _record_measurement(results, ref, value, *, unit="", label="", res=None):
-        holder["value"] = value
-        holder["unit"] = unit
-        holder["ref"] = ref
-
-    ns["record_measurement"] = _record_measurement
-    ns.pop("__RESULT__", None)
-    _var, lines, meta = _capture_remote_lines(procedure_json, op)
-    exec("\n".join(lines), ns)  # noqa: S102 — pack-generated driver call(s)
-    if "__RESULT__" in ns:
-        return True, _jsonable(ns["__RESULT__"]), meta["unit"], meta["ref"]
-    if "value" in holder:
-        ref = meta["ref"] if meta["ref"] is not None else holder.get("ref")
-        return True, _jsonable(holder["value"]), holder.get("unit", ""), ref
-    return False, None, "", meta["ref"]
-
-
-def _safe_off(procedure_json, ns, energized, etype_of, lifecycle, res,
-              session=None, bench_map=None) -> list:
-    """Drive energized PSU/ELOAD outputs OFF in cleanup-priority order (ELOAD
-    priority 10 before PSU priority 20).  Reuses the pack emit by synthesizing an
-    ``<etype>.<off_verb> … on=False`` op per touched channel.  Best-effort — a
-    failure to turn one off is logged AND returned (the caller surfaces it as
-    ``unsafe`` so a bench left energized is never silent).
-
-    With ``session`` set, this is also the unconfirmed-off chokepoint (module
-    docstring): a per-channel failure is RECORDED at this site — before any
-    handle drop can hide the target — and a per-channel success CONFIRMS
-    (removes) the matching record.  ``bench_map`` supplies the reconnect data
-    for name-keyed devices the record would otherwise lack.
-
-    ``off_verb`` is the OP-LEVEL verb (default "output", the convention psu/eload
-    follow), pack-overridable via ``cleanup.off_op``.  It is NOT the same as
-    ``cleanup.off_method`` — that is the *driver method* name used by codegen
-    (eload's is ``set_output``), which is not a valid op verb here."""
-    items = []
-    for device, channels in energized.items():
-        etype = etype_of.get(device, "")
-        cleanup = (lifecycle.get(etype) or {}).get("cleanup")
-        if not cleanup:                # scope/fncore: nothing to power down
-            continue
-        off_verb = cleanup.get("off_op", "output")
-        items.append((cleanup.get("priority", 100), etype, device, channels, off_verb))
-    failures: list = []
-    for _prio, etype, device, channels, off_verb in sorted(items, key=lambda t: t[0]):
-        known = sorted(c for c in channels if c is not None)
-        if None in channels:   # a channel-less state-changer (raw SCPI / tracking)
-            known = sorted(set(known) | set(_device_channels(procedure_json, device)))
-        for ch in (known or [1]):
-            off_op = {"op": f"{etype}.{off_verb}", "device": device,
-                      "channel": ch, "on": False}
-            try:
-                _exec_op(procedure_json, off_op, ns)
-                res.log.append(f"safe-off {device} CH{ch}")
-                if session is not None:
-                    _confirm_off(session, device, ch)
-            except Exception as exc:  # noqa: BLE001
-                failures.append(f"{device} CH{ch}")
-                res.log.append(f"UNSAFE: safe-off {device} CH{ch} FAILED: {exc}")
-                if session is not None:
-                    _record_unconfirmed(session, device, etype, {ch},
-                                        (bench_map or {}).get(device))
-    return failures
-
-
-# ---------------------------------------------------------------------------
-# Session: persists across commands for the whole guided-manual run.
-# ---------------------------------------------------------------------------
-
-
-def _policy_for(bench: dict, namespace: str, lifecycle: dict) -> str:
-    """Resolved connection-lifecycle policy for a device.  The GUI-stamped
-    ``session_policy`` is authoritative; the fallback is lifecycle metadata, not
-    a hardcoded namespace list: a pack declaring ``remote: False`` (serial, e.g.
-    fncore) drops safely between steps -> per_step; every other (or unknown)
-    namespace may hold physical state -> per_session."""
-    p = (bench or {}).get("session_policy")
-    if p in ("per_step", "per_session"):
-        return p
-    if (lifecycle.get(namespace) or {}).get("remote") is False:
-        return "per_step"
-    return "per_session"
-
-
-def _namespace_for(etype: str, subtype: str = "") -> str:
-    """Map a DECLARED equipment type to its pack op-NAMESPACE — the key the
-    lifecycle / driver_class is registered under (e.g. ``controller`` -> the
-    ``fncore`` namespace).  The exec path derives this from the op-const prefix;
-    a raw terminal command has no op, so resolve it via the equipment dispatch.
-    Falls back to the type itself, correct for packs where namespace == type
-    (psu/eload/scope)."""
+def _sib(name: str):
+    """Lazy sibling import, never through the procedo package (it is
+    absent from project venvs); sys.modules is the cache."""
     try:
-        from rules_packager_base.rules.v2_0_2.parser._default_registry import (
-            get_namespace,
-        )
-        return get_namespace(etype, subtype) or etype
-    except Exception:  # noqa: BLE001 — pre-dispatch bundle / unclaimed type
-        return etype
+        return sys.modules[name]
+    except KeyError:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        return __import__(name)
 
 
-class _Session:
-    def __init__(self) -> None:
-        self.res = _ResStub()
-        self.ns = _ns_base(self.res)
-        self.held: dict = {}        # device -> driver instance (per_session)
-        self.etype_of: dict = {}    # device -> equipment type (held only)
-        self.energized: dict = {}   # device -> {channels} touched (held only)
-        self.lifecycle: dict = {}
-        self.bundle_loaded = False
-        self.procedure_json: dict | None = None   # the last document a frame carried
-        self.bench = None           # BenchState (bench-session runs; sibling-owned)
-        # device/endpoint -> {"etype","channels","bench"}: safe-off targets
-        # whose OFF was never confirmed (module docstring: unconfirmed-off
-        # memory).  Removed ONLY by _confirm_off; survives handle drops.
-        self.unconfirmed_off: dict = {}
-        self._in_teardown = False   # run-once latch (also signal re-entrancy guard)
-
-
-def _safe_name(device: str) -> str:
-    from rules_packager_base.rules.v2_0_2.parser.codegen_helpers import _safe_name as _sn
-    return _sn(device)
-
-
-def _instrument_error(device, bench, exc) -> str:
-    """``PSU1 at ASRL3::INSTR: <ExcType>: <message>`` — the engine's one formatter."""
-    from rules_packager_base.bench_endpoints import instrument_error
-    return instrument_error(str(device), bench, exc)
-
-
-def _ensure_held(session: _Session, bench_map: dict, device: str, etype: str,
-                 probe_refuse: bool = True, identity_gate: bool = True) -> str:
-    """Open a per_session device ONCE (no reset) into ``held`` + bind it in the
-    shared namespace.  Idempotent — a held device is reused across commands.
-    RETURNS the hold key the instance lives under in ``held`` — the routed
-    canonical endpoint on the reuse path, else ``device`` (Seam B's key).
-    Resolution rule (owner ruling 2026-08-27, sibling ``_hold_resolution``):
-    ``device`` is whatever its CURRENT bench dict resolves to — the dict is
-    folded to its canonical endpoint FIRST; a held endpoint (active run-view
-    claim, or the fold) reuses that instance; a name-keyed hold PROVABLY at a
-    different endpoint than the fold is stale and never returned — its
-    energized channels are recorded unconfirmed-off under the OLD endpoint,
-    the instance closes via the ``_close_held_device`` chokepoint, and the
-    name re-opens fresh here.  Unprovable staleness (no address, no record)
-    keeps today's name-keyed reuse; every reuse REBINDS the
-    namespace slot, so the instance returned is the instance executed.
-    The F-H6 probe and one-rebuild always run on the routed reuse; the two
-    flags select which refusals a context retains:
-    * ``probe_refuse=False`` (safe-off / raw-terminal contexts) suppresses
-      StateLost — the caller proceeds on the rebuilt instance (keep_state
-      semantics apply to neither a safety action nor a terminal line);
-    * ``identity_gate=False`` (safe-off context ONLY) additionally ignores
-      IdentityChanged, sticky or fresh — a safety action offs whatever
-      instrument answers.  The raw context keeps the gate ON: a raw line
-      still refuses, typed, on an unresolved identity mismatch.
-    A rebuild failure still propagates as the ordinary error it always was."""
-    key = _hold().resolve(globals(), session, bench_map, device, etype,
-                          probe_refuse, identity_gate)
-    if key is not None:
-        return key
-    if device not in bench_map:
-        raise _NotRemote(f"no connection parameters for {device!r}.")
-    dev = _build_device(bench_map[device], etype, session.lifecycle, session.res.log)
-    _open_no_reset(dev)
-    session.held[device] = dev
-    session.etype_of[device] = etype
-    session.ns[_safe_name(device)] = dev
-    _hold().record_open(session, device, bench_map[device], etype)
-    return device
-
-
-def _exec_transient(session: _Session, bench_map: dict, device: str, etype: str,
-                    procedure_json: dict, op: dict):
-    """per_step path: open the device, run the single op, CLOSE it immediately.
-    The device never enters ``held`` (chokepoint: a device is per_step XOR
-    per_session — enforced with an explicit raise, not an assert, so it survives
-    ``python -O``).  The namespace slot is also guarded against a _safe_name
-    collision evicting a HELD device's binding."""
-    if device in session.held:
-        raise RuntimeError(f"{device!r} routed both per_step and per_session")
-    safe = _safe_name(device)
-    held_safe = {_safe_name(d) for d in session.held}
-    if safe in held_safe:
-        raise RuntimeError(
-            f"per_step device {device!r} collides (safe-name {safe!r}) with a "
-            f"held device — refusing to evict the held binding")
-    if device not in bench_map:
-        raise _NotRemote(f"no connection parameters for {device!r}.")
-    dev = _build_device(bench_map[device], etype, session.lifecycle, session.res.log)
-    _open_no_reset(dev)
-    session.ns[safe] = dev
-    try:
-        return _exec_op(procedure_json, op, session.ns)
-    finally:
-        try:
-            if hasattr(dev, "close"):
-                dev.close()
-        except Exception as exc:  # noqa: BLE001
-            session.res.log.append(f"close() failed: {exc}")
-        session.ns.pop(safe, None)
-
-
-def _record_unconfirmed(session: _Session, device, etype: str, channels,
-                        bench: dict | None = None) -> None:
-    """Record one safe-off target whose OFF failed or errored (unconfirmed-off
-    memory, module docstring).  Called AT the failure site so a later handle
-    drop can never hide the target.  A bench-session name is folded onto its
-    claimed canonical endpoint (``alias``) so the endpoint-keyed and
-    name-keyed failure sites merge into ONE reconnectable record; only
-    cleanup-bearing (power) equipment is recorded — a scope/controller has
-    nothing to confirm off."""
-    if not (session.lifecycle.get(etype) or {}).get("cleanup"):
-        return
-    bench = dict(bench) if bench else None
-    if session.bench is not None:
-        routed = session.bench.alias.get(device)
-        if routed is not None:
-            device = routed
-            bench = dict(session.bench.bench_of.get(routed) or bench or {}) or None
-    entry = session.unconfirmed_off.setdefault(
-        device, {"etype": etype, "channels": set(), "bench": None})
-    entry["channels"] |= {c for c in channels if c is not None} or {1}
-    if bench and entry["bench"] is None:
-        entry["bench"] = bench
-    elif entry["bench"] is None and session.bench is not None:
-        stored = session.bench.bench_of.get(device)
-        if stored:
-            entry["bench"] = dict(stored)
-
-
-def _confirm_off(session: _Session, device, ch) -> None:
-    """A safe-off of ``device`` CH``ch`` executed without error: that channel
-    is CONFIRMED off — the ONLY event that shrinks/removes an
-    unconfirmed-off record (exact key: a confirmation never guesses across
-    name/endpoint aliases)."""
-    entry = session.unconfirmed_off.get(device)
-    if entry is None:
-        return
-    entry["channels"].discard(ch)
-    if not entry["channels"]:
-        del session.unconfirmed_off[device]
-
-
-def _retry_unconfirmed(session: _Session, devices) -> list:
-    """Second-chance OFF for recorded unconfirmed-off targets in ``devices``:
-    a still-held target is driven directly; one no longer held is RECONNECTED
-    from its stored admission/bench data first (never refusing — safe-off
-    context flags).  Success confirms and removes the record (inside
-    ``_safe_off``); anything still unconfirmed comes back as the usual
-    ``"device CHn"`` unsafe strings so no caller can report false-clean."""
-    unsafe: list = []
-    for device in sorted(devices):
-        entry = session.unconfirmed_off.get(device)
-        if entry is None:
-            continue
-        chans = set(entry["channels"]) or {1}
-        if device not in session.held:
-            bench = entry.get("bench")
-            if not bench:
-                session.res.log.append(
-                    f"UNSAFE: {device} off never confirmed and no stored "
-                    "connection data to retry")
-                unsafe.extend(f"{device} CH{ch}" for ch in sorted(chans))
-                continue
-            try:
-                _ensure_held(session, {device: bench}, device, entry["etype"],
-                             probe_refuse=False, identity_gate=False)
-            except Exception as exc:  # noqa: BLE001
-                session.res.log.append(
-                    f"UNSAFE: retry reconnect {device} FAILED: {exc}")
-                unsafe.extend(f"{device} CH{ch}" for ch in sorted(chans))
-                continue
-        unsafe.extend(_safe_off(
-            session.procedure_json or {}, session.ns, {device: chans},
-            {**session.etype_of, device: entry["etype"]},
-            session.lifecycle, session.res, session=session))
-    return unsafe
-
-
-def _attach_unsafe(session: _Session, resp: dict, unsafe: list) -> dict:
-    """Attach a nonempty unsafe report to a response in BOTH forms: the
-    display strings (``unsafe``) plus ``unsafe_targets`` — the structured
-    snapshot of the unconfirmed-off memory (endpoint/device, etype,
-    channels, stored reconnect bench or None) that the host recovery
-    consumes without parsing strings.  The snapshot is the memory's CURRENT
-    truth, so it may name residuals older than this pass's strings."""
-    if unsafe:
-        resp["unsafe"] = unsafe
-        resp["unsafe_targets"] = [
-            {"device": device, "etype": rec["etype"],
-             "channels": sorted(rec["channels"]) or [1],
-             "bench": dict(rec["bench"]) if rec["bench"] else None}
-            for device, rec in sorted(session.unconfirmed_off.items())]
-    return resp
-
-
-def _safe_off_all_held(session: _Session) -> list:
-    """Safe-off EVERY held psu/eload by its DECLARED channels (a superset of the
-    tracked energized set), ELOAD-before-PSU.  Returns the ``unsafe`` list of
-    devices that could not be powered down.  Used by shutdown / atexit / signal.
-
-    Also RETRIES every recorded unconfirmed-off target the held sweep did not
-    attempt — reconnecting from stored bench data when nothing holds it — so
-    a shutdown after a failed-and-dropped off still reports that target in
-    ``unsafe`` (never false-clean), and a retry that genuinely confirms the
-    off makes the clean report legitimate."""
-    prior = set(session.unconfirmed_off)
-    declared: dict = {}
-    for device, etype in list(session.etype_of.items()):
-        if device not in session.held:
-            continue
-        cleanup = (session.lifecycle.get(etype) or {}).get("cleanup")
-        if cleanup:
-            chans = set(_device_channels(session.procedure_json or {}, device))
-            if session.bench is not None:  # + UNION of channels seen across runs
-                chans |= session.bench.channels_for(session, device)
-            declared[device] = chans
-    unsafe: list = []
-    if declared:
-        try:
-            unsafe = _safe_off(session.procedure_json or {}, session.ns, declared,
-                               session.etype_of, session.lifecycle, session.res,
-                               session=session)
-        except Exception as exc:  # noqa: BLE001
-            session.res.log.append(f"UNSAFE: safe-off-all FAILED: {exc}")
-            for device, chans in declared.items():
-                _record_unconfirmed(session, device,
-                                    session.etype_of.get(device, ""), chans)
-            unsafe = sorted(declared)
-    session.energized.clear()
-    unsafe.extend(_retry_unconfirmed(session, prior - set(declared)))
-    # Backstop: NEVER report clean while any off is unconfirmed — e.g. a
-    # still-held device with a recorded channel outside its declared set
-    # was neither swept nor retried above.
-    leftover = [f"{d} CH{c}"
-                for d, rec in sorted(session.unconfirmed_off.items())
-                for c in sorted(rec["channels"])]
-    unsafe.extend(x for x in leftover if x not in unsafe)
-    return unsafe
-
-
-def _close_held_device(session: _Session, device) -> None:
-    """Close + forget ONE held device so a later op re-opens it fresh. The single
-    chokepoint where a held device is actually closed — used by the full teardown
-    AND after a per_session op error (a broken handle must not be reused)."""
-    dev = session.held.pop(device, None)
-    if dev is not None:
-        try:
-            if hasattr(dev, "close"):
-                dev.close()
-        except Exception as exc:  # noqa: BLE001
-            session.res.log.append(f"close() failed: {exc}")
-    session.ns.pop(_safe_name(device), None)
-    session.etype_of.pop(device, None)
-    session.energized.pop(device, None)
-    if session.bench is not None:
-        # Timeout-retarget bookkeeping only (safe inside shared/safety
-        # paths): the live instance for this key is gone — a rebuilt one
-        # opens from bench_of, so the next retarget seam must RE-APPLY
-        # instead of skipping stale.  Endpoint keys reach here ONLY via the
-        # check_held rebuild (per-op-error/_cmd_raw drops are NAME-keyed).
-        session.bench.applied_timeout.pop(device, None)
-
-
-def _close_held(session: _Session) -> None:
-    """Close (and on EA, unlock via the driver's shutdown) every held device."""
-    for device in list(session.held.keys()):
-        _close_held_device(session, device)
-
-
-def _teardown(session: _Session | None) -> list:
-    """Idempotent, run-once full teardown: safe-off all held outputs, then
-    close+unlock.  The per-session ``_in_teardown`` latch makes it run exactly
-    once and lets a signal landing mid-teardown bail without re-entering VISA
-    I/O.  Per-session (not module-global) so a reused process — i.e. the test
-    suite — tears down each session independently."""
-    if session is None or session._in_teardown:
-        return []
-    session._in_teardown = True
-    unsafe = _safe_off_all_held(session)
-    _close_held(session)
-    return unsafe
+# The siblings load by BARE name (``_sib`` puts this folder on sys.path).  Every name below
+# is used here or read back through this module's ``globals()`` (``d``) by
+# _bench_session_runner / _guided_call — ``_safe_off_all_held`` only through that seam.
+_sib("_safe_off")
+from _instrument_ops import (  # noqa: E402
+    _build_device, _exec_op, _instrument_error, _namespace_for, _NoCodegen, _NotRemote,
+    _open_no_reset, _policy_for, _raw_send, _safe_name,
+)
+from _safe_off import (  # noqa: E402
+    _attach_unsafe, _bench, _close_held_device, _ensure_held, _is_state_changing,
+    _record_unconfirmed, _retry_unconfirmed, _safe_off, _safe_off_all_held, _Session, _teardown,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -825,6 +185,37 @@ def _live_verdict(procedure_json, inputs: dict, node_path: str) -> str:
     except Exception:  # noqa: BLE001 — verdict is a visual nicety, never fatal
         return ""
     return ""
+
+
+def _exec_transient(session: _Session, bench_map: dict, device: str, etype: str,
+                    procedure_json: dict, op: dict):
+    """per_step path: open the device, run the single op, CLOSE it immediately.
+    The device never enters ``held`` (chokepoint: a device is per_step XOR
+    per_session — enforced with an explicit raise, not an assert, so it survives
+    ``python -O``).  The namespace slot is also guarded against a _safe_name
+    collision evicting a HELD device's binding."""
+    if device in session.held:
+        raise RuntimeError(f"{device!r} routed both per_step and per_session")
+    safe = _safe_name(device)
+    held_safe = {_safe_name(d) for d in session.held}
+    if safe in held_safe:
+        raise RuntimeError(
+            f"per_step device {device!r} collides (safe-name {safe!r}) with a "
+            f"held device — refusing to evict the held binding")
+    if device not in bench_map:
+        raise _NotRemote(f"no connection parameters for {device!r}.")
+    dev = _build_device(bench_map[device], etype, session.lifecycle, session.res.log)
+    _open_no_reset(dev)
+    session.ns[safe] = dev
+    try:
+        return _exec_op(procedure_json, op, session.ns)
+    finally:
+        try:
+            if hasattr(dev, "close"):
+                dev.close()
+        except Exception as exc:  # noqa: BLE001
+            session.res.log.append(f"close() failed: {exc}")
+        session.ns.pop(safe, None)
 
 
 def _cmd_exec_ops(session: _Session, req: dict) -> dict:
@@ -1046,7 +437,7 @@ def _cmd_safe_off(session: _Session, req: dict) -> dict:
     unconfirmed-off memory so the host latches UNSAFE, exactly as a
     pre-F-H6 dead-link off failure did.
 
-    Recorded unconfirmed-off targets are retried FIRST (module docstring) —
+    Recorded unconfirmed-off targets are retried FIRST (``_safe_off`` module docstring) —
     restoring a dropped endpoint into ``held`` before this frame's targets
     route — so every safe-off pass gives the bench a second chance and a
     target is forgotten only once its off is confirmed."""
@@ -1113,22 +504,6 @@ _PROTO_OUT = None
 # _bench_session_runner.py; this file only dispatches.  "end_session" is
 # deliberately NOT in this set: it IS the existing "shutdown" frame.
 _BENCH_CMDS = ("acquire_run", "release_run", "run_test", "cancel_run", "prompt_response")
-def _sib(name: str):
-    """Lazy sibling import, never through the procedo package (it is
-    absent from project venvs); sys.modules is the cache."""
-    try:
-        return sys.modules[name]
-    except KeyError:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        return __import__(name)
-
-
-def _bench():
-    return _sib("_bench_session_runner")
-
-
-def _hold():
-    return _sib("_hold_resolution")
 
 
 def _write_frame(out, obj: dict) -> None:

@@ -41,35 +41,6 @@ _SKIP_DIRS = {"__pycache__", "build", "dist", ".venv"}
 
 FILE_BUDGET: dict[str, int] = {
     "studio/core/task_config.py": 1288,
-    "engine_client/_execute_op_subprocess.py": 1283,  # -15: the per-path procedure latch went (engine_process slice 3)
-    # +50: bench-session S3 — frame dispatch,
-    # reader-thread wiring, and the held-rekey seams (_ensure_held routing,
-    # channel-union safe-off fallback, per-path procedure docs); ALL new logic
-    # lives in the new sibling engine_client/_bench_session_runner.py.
-    # +12: F-H6 boundary health check — the guided-op probe seam in
-    # _ensure_held plus the typed HealthRefusal passthrough in _cmd_exec_ops
-    # +8: R2 backstop — shutdown folds any leftover unconfirmed_off record
-    # into unsafe (residual channel outside the declared sweep).
-    # (the check itself lives in _bench_session_runner.check_held).
-    # +51: F-H6 safety-never-refuses — probe_refuse seam on _ensure_held,
-    # _cmd_safe_off proceed-after-rebuild + open-failures land in unsafe,
-    # _cmd_raw typed refusal passthrough, exec_ops partial-batch results.
-    # +136: R2 unconfirmed-off memory — _record_unconfirmed / _confirm_off /
-    # _retry_unconfirmed, the _safe_off record/confirm chokepoint, retry
-    # sweeps in _cmd_safe_off + _safe_off_all_held, and the module-docstring
-    # contract (shutdown can no longer report false-clean after a failed off
-    # whose handle dropped out of held).
-    # +18: R3 structured unsafe — _attach_unsafe builds the parallel
-    # "unsafe_targets" records from the unconfirmed-off memory on every
-    # unsafe-carrying response (host recovery no longer parses strings).
-    # +20 (cap 1280 -> 1300): per-run timeout retargeting — Seam B (guided
-    # per_session ops call the sibling's _retarget_timeout) in _cmd_exec_ops
-    # plus the applied_timeout invalidation bookkeeping in _close_held_device;
-    # the helper itself lives in _bench_session_runner.py.
-    # -2 (cap 1300 -> 1298): stale-name-hold fix (owner ruling 2026-08-27) —
-    # _ensure_held's resolution CARVED into the new sibling
-    # engine_client/_hold_resolution.py (fold-first rule, stale drop, ns rebind); the
-    # daemon file only delegates and records the open.
     "studio/llm/opencode_backend.py": 1251,  # +9: bare-except cleanup log lines
 }
 

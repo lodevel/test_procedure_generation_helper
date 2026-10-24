@@ -22,7 +22,7 @@ from tests._qt_stub import ensure_workflow_editor_importable
 ensure_workflow_editor_importable()
 
 from procedo.studio.core.project_manager import ProjectManager  # noqa: E402
-from procedo.studio.launch_env import BUNDLE_DEFAULTS_PATH  # noqa: E402
+from procedo.core.studio_launch_env import BUNDLE_DEFAULTS_PATH  # noqa: E402
 
 
 class TestEquipmentPatternsFromBenchFields(unittest.TestCase):

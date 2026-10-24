@@ -27,9 +27,9 @@ def _pack_load():
     """The daemon's own pack load (``_load_bundle``, once per process) of the bundle
     ``PROCEDO_BUNDLE_DEFAULTS_PATH`` names, as ``_engine_ops.run``'s ``registry``;
     None when it is unset (the conftest registry alone)."""
-    from procedo.studio import launch_env
+    from procedo.core import studio_launch_env
 
-    defaults = os.environ.get(launch_env.BUNDLE_DEFAULTS_PATH)
+    defaults = os.environ.get(studio_launch_env.BUNDLE_DEFAULTS_PATH)
     if not defaults:
         return None
     spec = importlib.util.spec_from_file_location("_exec_op_runner_env", _DAEMON)

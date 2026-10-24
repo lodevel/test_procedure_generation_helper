@@ -139,8 +139,8 @@ def main() -> int:
     
     # Enable high DPI scaling
     app.setAttribute(Qt.AA_UseHighDpiPixmaps)
-    from . import launch_env
-    applied_theme = apply_app_theme(os.environ.get(launch_env.APP_THEME), app)
+    from procedo.core import studio_launch_env
+    applied_theme = apply_app_theme(os.environ.get(studio_launch_env.APP_THEME), app)
     log.debug("Applied application theme: %s", applied_theme)
     # Every error and warning box gets a Copy button (title, text, details to the clipboard).
     from procedo.ui import error_copy

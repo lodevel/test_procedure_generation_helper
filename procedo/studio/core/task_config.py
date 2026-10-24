@@ -47,10 +47,9 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Callable, Dict, List, Optional, Union
 
-from procedo.core import bundle_registry, config_manager
+from procedo.core import bundle_registry, config_manager, studio_launch_env
 from procedo.core.workflow_defaults import merge_workflows, read_editor_defaults
 
-from .. import launch_env
 from ..llm.backend_base import LLMTask
 from .fileio import atomic_write_text
 
@@ -420,7 +419,7 @@ class TaskConfigManager:
             if candidate.is_file():
                 defaults_path = candidate
         if defaults_path is None:
-            path_str = os.environ.get(launch_env.BUNDLE_DEFAULTS_PATH)
+            path_str = os.environ.get(studio_launch_env.BUNDLE_DEFAULTS_PATH)
             if not path_str:
                 return {}
             defaults_path = Path(path_str)

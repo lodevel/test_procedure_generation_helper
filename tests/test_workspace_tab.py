@@ -15,8 +15,8 @@ from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QFont  # noqa: E402
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QLabel, QMenu  # noqa: E402
 
+from procedo.core import studio_launch_env  # noqa: E402
 from procedo.ui.badge_delegate import BADGES_ROLE  # noqa: E402
-from procedo.studio import launch_env  # noqa: E402
 from procedo.studio.core.project_manager import TestFolderInfo as FolderInfo  # noqa: E402
 from procedo.studio.tabs import workspace_tab  # noqa: E402
 from procedo.studio.tabs.workspace_tab import LEGEND, WorkspaceTab, artifact_states  # noqa: E402
@@ -52,7 +52,7 @@ def tab(qapp, tmp_path, monkeypatch):
 
 
 def _load(tab, monkeypatch, indicators: str) -> dict:
-    monkeypatch.setenv(launch_env.APP_INDICATORS, indicators)
+    monkeypatch.setenv(studio_launch_env.APP_INDICATORS, indicators)
     tab.pm.project_root = tab.tmp
     tab.refresh()
     return {tab.test_list.item(i).data(Qt.UserRole).name: tab.test_list.item(i)

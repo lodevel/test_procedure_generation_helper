@@ -17,11 +17,12 @@ from PySide6.QtWidgets import (
     QMenu, QMessageBox, QPushButton, QVBoxLayout,
 )
 
+from procedo.core import studio_launch_env
+from procedo.core.starter_test import sanitize_test_id
 from procedo.ui import ui_indicators, ui_kit
 from procedo.ui.badge_delegate import BADGES_ROLE, BadgeDelegate
 
 from .base_tab import BaseTab
-from .. import launch_env
 from ..core import test_folder_ops, test_sync
 from ..core.artifact_manager import ArtifactManager
 from ..core.project_manager import TestFolderInfo
@@ -63,7 +64,7 @@ def _show_state(item: QListWidgetItem, info, stale: tuple[str, ...], badges: boo
 
 
 def _uses_badges() -> bool:
-    return ui_indicators.uses_badges(os.environ.get(launch_env.APP_INDICATORS))
+    return ui_indicators.uses_badges(os.environ.get(studio_launch_env.APP_INDICATORS))
 
 
 def _padded(widget, left: int, top: int, right: int, bottom: int) -> QVBoxLayout:
@@ -273,8 +274,6 @@ class WorkspaceTab(BaseTab):
         """Rename a test folder; the id, its sync state and the project's
         references follow (core.test_folder_ops). Only offered for a test that
         is not open — the context menu disables it for the open one."""
-        from ..core.test_id import sanitize_test_id
-
         raw, ok = QInputDialog.getText(
             self, "Rename Test", "New test name:", text=path.name,
         )

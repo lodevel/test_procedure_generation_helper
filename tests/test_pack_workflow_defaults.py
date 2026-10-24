@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 
 from procedo.studio.core.task_config import TaskConfigManager
-from procedo.studio.launch_env import BUNDLE_DEFAULTS_PATH
+from procedo.core.studio_launch_env import BUNDLE_DEFAULTS_PATH
 
 
 # ---------------------------------------------------------------------------

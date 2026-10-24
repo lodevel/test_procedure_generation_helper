@@ -9,7 +9,7 @@ import os
 import re
 from pathlib import Path
 
-from procedo.core.paths import exists_quiet, is_dir_quiet, is_link, rmtree, unreachable
+from procedo.core.paths import is_link, rmtree, unreachable
 
 from . import test_sync
 from .fileio import atomic_write_text, retry_while_busy
@@ -96,7 +96,9 @@ def rename_test(project_root: Path, tests_dir: Path, test_dir: Path, new_name: s
     warnings: list[str] = []
     for fname, fixer in (("procedure_text.md", force_text_id_line), ("procedure.json", force_json_id)):
         fpath = new_dir / fname
-        if exists_quiet(fpath):
+        if reason := unreachable(fpath):
+            warnings.append(f"{fname}: {reason}")
+        elif fpath.exists():
             try:
                 atomic_write_text(fpath, fixer(fpath.read_text(encoding="utf-8"), new_name))
             except (OSError, ValueError) as e:
@@ -137,12 +139,16 @@ def _swap_references(project_root: Path, old: str, new: str) -> list[str]:
             warnings.append(f"{label}: {e}")
 
     config_file = project_root / "config" / "config.json"
-    if exists_quiet(config_file):
+    if reason := unreachable(config_file):
+        warnings.append(f"config.json test_order: {reason}")
+    elif config_file.exists():
         rewrite(config_file, "config.json test_order",
                 lambda d: d.get("test_order", {}).get("order"),
                 lambda d, v: d["test_order"].__setitem__("order", v))
     scenarios_dir = project_root / "scenarios"
-    if is_dir_quiet(scenarios_dir):
+    if reason := unreachable(scenarios_dir):
+        warnings.append(f"scenarios: {reason}")
+    elif scenarios_dir.is_dir():
         for sc_file in sorted(scenarios_dir.glob("*.json")):
             rewrite(sc_file, f"scenarios/{sc_file.name}",
                     lambda d: d.get("tests"), lambda d, v: d.__setitem__("tests", v))

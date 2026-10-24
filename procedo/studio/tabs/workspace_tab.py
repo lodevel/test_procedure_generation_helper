@@ -330,7 +330,7 @@ class WorkspaceTab(BaseTab):
             test_folder_ops.delete_test(pm.get_tests_dir(), path)
         except test_folder_ops.TestFolderError as e:
             QMessageBox.critical(self, "Delete Failed", str(e))
-            if not exists_quiet(path):  # moved aside, partly deleted: it is gone as a test
+            if not exists_quiet(path) and unreachable(path) is None:  # moved aside, partly deleted: it is gone as a test
                 self.test_deleted.emit(path)
                 self.refresh()
             return

@@ -22,10 +22,8 @@ from pathlib import Path
 
 import pytest
 
-from procedo.studio.core.task_config import (
-    DEFAULT_TASK_CONFIGS,
-    TaskConfigManager,
-)
+from procedo.studio.core.task_config_defaults import DEFAULT_TASK_CONFIGS
+from procedo.studio.core.task_config import TaskConfigManager
 
 
 # ---------------------------------------------------------------------------

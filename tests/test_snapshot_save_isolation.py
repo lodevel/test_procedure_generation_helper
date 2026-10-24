@@ -18,11 +18,9 @@ from typing import Any
 
 import pytest
 
-from procedo.studio.core.task_config import (
-    ChatConfig,
-    TaskConfig,
-    TaskConfigManager,
-)
+from procedo.studio.core import task_config_defaults
+from procedo.studio.core.task_config_model import ChatConfig, TaskConfig
+from procedo.studio.core.task_config import TaskConfigManager
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +56,7 @@ def _read_project_config(root: Path) -> dict:
 
 @pytest.fixture
 def stub_pack_workflows(monkeypatch):
-    """Force ``_load_pack_workflow_defaults`` to return a synthetic
+    """Force ``load_pack_workflow_defaults`` to return a synthetic
     payload — bypasses the manifest-path discovery entirely so the test
     doesn't depend on which packs the project declares."""
     payload: dict[str, Any] = {
@@ -91,11 +89,11 @@ def stub_pack_workflows(monkeypatch):
         },
     }
 
-    def _patched(self):  # noqa: ANN001 — patching a bound method
-        return payload
-
     monkeypatch.setattr(
-        TaskConfigManager, "_load_pack_workflow_defaults", _patched, raising=True
+        task_config_defaults,
+        "load_pack_workflow_defaults",
+        lambda project_root: payload,
+        raising=True,
     )
     return payload
 

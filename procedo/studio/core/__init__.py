@@ -5,7 +5,9 @@ from .session_state import SessionState
 from .validators import CodeValidator, ValidationResult
 from .step_marker_parser import StepMarkerParser, StepBlock
 from .project_manager import ProjectManager
-from .task_config import TaskConfigManager, TaskConfig, DEFAULT_TASK_CONFIGS
+from .task_config import TaskConfigManager
+from .task_config_defaults import DEFAULT_TASK_CONFIGS
+from .task_config_model import TaskConfig
 
 __all__ = [
     "ArtifactManager",

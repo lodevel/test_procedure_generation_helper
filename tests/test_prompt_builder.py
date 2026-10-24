@@ -15,7 +15,8 @@ from procedo.studio.llm import (
     TaskPromptNotDeclaredError,
 )
 from procedo.studio.llm.prompt_builder import AD_HOC_CHAT_DEFAULT_PROMPT
-from procedo.studio.core.task_config import ChatConfig, TaskConfig, TaskConfigManager
+from procedo.studio.core.task_config_model import ChatConfig, TaskConfig
+from procedo.studio.core.task_config import TaskConfigManager
 
 
 def _manager_with_prompt(tmp_path, tab_id, task_id, prompt):

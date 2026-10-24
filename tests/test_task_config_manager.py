@@ -16,7 +16,9 @@ import pytest
 import threading
 import time
 from pathlib import Path
-from procedo.studio.core.task_config import TaskConfigManager, TaskConfig, DEFAULT_TASK_CONFIGS
+from procedo.studio.core.task_config_defaults import DEFAULT_TASK_CONFIGS
+from procedo.studio.core.task_config_model import TaskConfig
+from procedo.studio.core.task_config import TaskConfigManager
 from procedo.studio.llm.backend_base import LLMTask
 
 

@@ -85,7 +85,8 @@ def test_task_config_writes_readable_indented_json(tmp_path):
     """The workflows config keeps its format: indented, µ/Ω as characters."""
     import json
 
-    from procedo.studio.core.task_config import TaskConfig, TaskConfigManager
+    from procedo.studio.core.task_config_model import TaskConfig
+    from procedo.studio.core.task_config import TaskConfigManager
 
     config_path = tmp_path / "tab_contexts.json"
     manager = TaskConfigManager(config_path)

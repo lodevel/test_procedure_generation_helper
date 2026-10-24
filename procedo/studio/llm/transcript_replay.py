@@ -8,11 +8,6 @@ the giant full_prompt/full_response), matching the text-only contract.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from .tab_context import ChatMessage
-
 # Model-FACING preamble (not just a user disclaimer): the prior tool results are
 # genuinely gone from the fresh session, so the model is instructed to re-call
 # the relevant tools before trusting ANY value quoted from the replayed text.

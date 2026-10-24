@@ -4,10 +4,7 @@ Speaks newline-delimited JSON-RPC over the server's stdin/stdout, exactly as
 OpenCode would, and verifies: tools/list advertises read_pdf, a local crafted
 PDF round-trips, and a path-traversal source is denied (not leaked).
 """
-import json
 import os
-import subprocess
-import sys
 
 import pytest
 
@@ -15,72 +12,9 @@ from tests.test_pdf_text import make_pdf
 
 # The server module file, found via the installed package (path-independent).
 import procedo.studio.authoring._pdf_tool_mcp as _mcp_mod
+from tests.mcp_client import McpServer
 
 SERVER_PATH = os.path.abspath(_mcp_mod.__file__)
-
-
-class _Server:
-    """Line-oriented JSON-RPC client over a server subprocess."""
-
-    def __init__(self, documents_dir, cwd):
-        self.proc = subprocess.Popen(
-            [sys.executable, SERVER_PATH, "--documents-dir", str(documents_dir)],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            cwd=str(cwd),
-        )
-
-    def send(self, obj):
-        self.proc.stdin.write(json.dumps(obj) + "\n")
-        self.proc.stdin.flush()
-
-    def read(self, timeout=15):
-        # readline() on a piped subprocess can block; guard with a watchdog
-        # thread that kills the process so the test fails fast instead of hanging.
-        import threading
-
-        result = {}
-
-        def _reader():
-            result["line"] = self.proc.stdout.readline()
-
-        t = threading.Thread(target=_reader, daemon=True)
-        t.start()
-        t.join(timeout)
-        if t.is_alive():
-            self.proc.kill()
-            raise AssertionError("timed out waiting for MCP server response")
-        line = result.get("line", "")
-        if not line:
-            err = self.proc.stderr.read()
-            raise AssertionError(f"server closed stdout; stderr:\n{err}")
-        return json.loads(line)
-
-    def request(self, rid, method, params=None):
-        msg = {"jsonrpc": "2.0", "id": rid, "method": method}
-        if params is not None:
-            msg["params"] = params
-        self.send(msg)
-        return self.read()
-
-    def notify(self, method, params=None):
-        msg = {"jsonrpc": "2.0", "method": method}
-        if params is not None:
-            msg["params"] = params
-        self.send(msg)
-
-    def close(self):
-        try:
-            self.proc.stdin.close()
-        except Exception:
-            pass
-        try:
-            self.proc.wait(timeout=5)
-        except Exception:
-            self.proc.kill()
 
 
 @pytest.fixture
@@ -90,7 +24,7 @@ def server(tmp_path):
     # Launch from an unrelated cwd to prove the import bootstrap is cwd-independent.
     other_cwd = tmp_path / "elsewhere"
     other_cwd.mkdir()
-    srv = _Server(docs, other_cwd)
+    srv = McpServer([SERVER_PATH, "--documents-dir", docs], other_cwd)
     yield srv, docs
     srv.close()
 

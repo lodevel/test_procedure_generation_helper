@@ -413,7 +413,7 @@ def _cmd_raw(session: _Session, req: dict) -> dict:
         # cannot know it energized an output and does not track it in
         # session.energized. Safe-off of a raw-energized device is the GUI's
         # job: _on_raw_send adds the device to self._auto_energized BEFORE the
-        # send, and finish / dialog-close / session-lost drive _recovery_safe_off
+        # send, and finish / dialog-close / session-lost drive bench_recovery.recovery_safe_off
         # over that set (which re-opens the device fresh). NOTE the latent gap a
         # future change must respect: after this drop the device leaves
         # session.held, so the daemon's HELD-only shutdown safe-off will NOT

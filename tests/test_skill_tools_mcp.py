@@ -11,16 +11,15 @@ Drives the server over newline-delimited JSON-RPC and verifies:
 - drift guard: tools.json listing a tool NOT in tools.py makes the server exit
   non-zero (fail-closed) before it serves any request.
 """
-import json
 import os
 import subprocess
 import sys
-import threading
 from pathlib import Path
 
 import pytest
 
 import procedo.studio.authoring._skill_tools_mcp as _mcp_mod
+from tests.mcp_client import McpServer
 
 SERVER_PATH = os.path.abspath(_mcp_mod.__file__)
 
@@ -31,72 +30,6 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "tooldir"
 DRIFT_DIR = Path(__file__).parent / "fixtures" / "tooldir_drift"
 
 
-class _Server:
-    """Line-oriented JSON-RPC client over a server subprocess."""
-
-    def __init__(self, tools_dir, cwd):
-        self.proc = subprocess.Popen(
-            [sys.executable, SERVER_PATH, "--tools-dir", str(tools_dir)],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            cwd=str(cwd),
-        )
-
-    def send(self, obj):
-        self.proc.stdin.write(json.dumps(obj) + "\n")
-        self.proc.stdin.flush()
-
-    def read(self, timeout=15):
-        result = {}
-
-        def _reader():
-            result["line"] = self.proc.stdout.readline()
-
-        t = threading.Thread(target=_reader, daemon=True)
-        t.start()
-        t.join(timeout)
-        if t.is_alive():
-            self.proc.kill()
-            raise AssertionError("timed out waiting for MCP server response")
-        line = result.get("line", "")
-        if not line:
-            err = self.proc.stderr.read()
-            raise AssertionError(f"server closed stdout; stderr:\n{err}")
-        return json.loads(line)
-
-    def request(self, rid, method, params=None):
-        msg = {"jsonrpc": "2.0", "id": rid, "method": method}
-        if params is not None:
-            msg["params"] = params
-        self.send(msg)
-        return self.read()
-
-    def notify(self, method, params=None):
-        msg = {"jsonrpc": "2.0", "method": method}
-        if params is not None:
-            msg["params"] = params
-        self.send(msg)
-
-    def call(self, rid, name, arguments=None):
-        params = {"name": name}
-        if arguments is not None:
-            params["arguments"] = arguments
-        return self.request(rid, "tools/call", params)
-
-    def close(self):
-        try:
-            self.proc.stdin.close()
-        except Exception:
-            pass
-        try:
-            self.proc.wait(timeout=5)
-        except Exception:
-            self.proc.kill()
-
-
 def _result_text(resp):
     return resp["result"]["content"][0]["text"]
 
@@ -105,7 +38,7 @@ def _result_text(resp):
 def server(tmp_path):
     other_cwd = tmp_path / "elsewhere"
     other_cwd.mkdir()
-    srv = _Server(FIXTURE_DIR, other_cwd)
+    srv = McpServer([SERVER_PATH, "--tools-dir", FIXTURE_DIR], other_cwd)
     yield srv
     srv.close()
 

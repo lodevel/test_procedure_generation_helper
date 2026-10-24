@@ -4,7 +4,7 @@
 app-data root. This bridge used to compose that path AND read the project root back
 out of it (``python.parents[2] / "bundle"``). Both are pinned here — including the
 one that matters on a bench: ``safe_off_remote``, the recovery safe-off the host
-reaches through ``bench_session._recovery_safe_off``, must not refuse merely because
+reaches through ``bench_recovery.recovery_safe_off``, must not refuse merely because
 the venv moved.
 
 Since one venv per BUNDLE, it moved again — into a pool shared by every project on
@@ -250,7 +250,7 @@ class _FakeDaemon:
 def test_safe_off_does_not_refuse_merely_because_the_venv_moved(
     venvs_root, tmp_path, monkeypatch
 ):
-    """``bench_session._recovery_safe_off`` reaches exactly this. Before the fix it
+    """``bench_recovery.recovery_safe_off`` reaches exactly this. Before the fix it
     answered ``{"ok": False, "kind": "ParserUnavailable"}`` for every project on the
     bench, because it looked for a venv inside the project folder."""
     project = _project(tmp_path)

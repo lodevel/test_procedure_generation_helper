@@ -75,18 +75,21 @@ Ops:
 """
 from __future__ import annotations
 
-import functools
 import importlib
 import json
 import logging
-import re
 import traceback
 from dataclasses import asdict
 from pathlib import Path
 
-# The manual_reading op lives beside this module; imported however this one was loaded: as
+# The guided-run and extractor ops live beside this module; imported however this one was loaded: as
 # procedo.engine_client's (the app) or by path, its folder on sys.path (the daemon's ``_sib``).
-_manual_reading = importlib.import_module(f"{__package__}._manual_reading" if __package__ else "_manual_reading")
+def _sibling(name: str):
+    return importlib.import_module(f"{__package__}.{name}" if __package__ else name)
+
+
+_manual = _sibling("_engine_ops_manual")
+_extract = _sibling("_engine_ops_extract")
 
 log = logging.getLogger(__name__)
 
@@ -318,7 +321,7 @@ def _bundle_label(spec: dict) -> str:
     """``<id> <version>`` of the frame's bundle, as a message names it; "" when its
     bundle.json cannot say."""
     try:
-        meta = json.loads((_bundle_dir_of(spec) / "bundle.json").read_text(encoding="utf-8"))
+        meta = json.loads((_extract.bundle_dir_of(spec) / "bundle.json").read_text(encoding="utf-8"))
         return f"{meta['id']} {meta['version']}"
     except (OSError, ValueError, KeyError, TypeError):
         return ""
@@ -342,199 +345,6 @@ def _op_reconstruct(spec: dict) -> dict:
         "json": r.json,
         "findings": [_finding_to_dict(f) for f in r.findings],
     }
-
-
-def _document(spec: dict):
-    """The procedure document the spec carries (``procedure_json``), never read
-    from disk: the caller sends what it shows.
-
-    Returns ``(procedure_json, None)`` or ``(None, error_result)`` — the error
-    result is the uniform ``{"ok": false, ...}`` shape so the op can return it
-    directly instead of dying with a bare traceback."""
-    doc = spec.get("procedure_json")
-    if not isinstance(doc, dict):
-        return None, {"ok": False, "kind": "Other",
-                      "error": "the procedure document is not a JSON object"}
-    return doc, None
-
-
-def run_inputs(spec: dict) -> dict:
-    """A guided run's inputs as the wheel takes them, from an op spec or an
-    exec_ops frame: ``measurements`` and ``controls`` keyed by row node_path,
-    ``operator_verdicts`` by ``{N}`` ref — every engine call of the run reads
-    them here; JSON keeps a key as text, read back by the wheel's ref_key_from_json."""
-    from rules_packager_base.Result import ref_key_from_json
-
-    return {"measurements": spec.get("measurements") or {}, "controls": spec.get("controls") or {},
-            "operator_verdicts": {ref_key_from_json(k): v for k, v in (spec.get("operator_verdicts") or {}).items()}}
-
-
-def _op_build_manual_run(spec: dict) -> dict:
-    procedure_json, err = _document(spec)
-    if err:
-        return err
-    inputs = run_inputs(spec)
-    session = _shown_session()(procedure_json)
-    run = session.materialize(**inputs)
-    return {
-        "ok": True,
-        "test_name": run.test_name,
-        "steps": _shown_steps(session, run, inputs["measurements"]),
-        "skipped": [_step_payload(s) for s in run.skipped],
-        "aborted": run.aborted,
-        "error": run.error,
-        "channels": _declared_channels(procedure_json),
-        "constants": _procedure_names(session.macros),
-    }
-
-
-def _declared_channels(procedure_json: dict) -> dict:
-    """Each instrument's declared power channels — what a safe-off of it turns
-    off — by the wheel's equipment extractor; a device declaring none is the
-    single-channel default, [1]."""
-    from rules_packager_base.rules.v2_0_2 import extractors
-
-    return {eq.id: sorted({ch.channel for ch in eq.channels if isinstance(ch.channel, int)}) or [1]
-            for eq in extractors.extract_equipment_requirements(procedure_json)}
-
-
-def _step_payload(step) -> dict:
-    """A StepDescriptor as the guided run takes it; a Wait's delay read here by
-    the one setpoint reader: ``wait_s`` (seconds, none below 0, as test.py
-    waits), or ``wait_refused`` — test.py's message for a value it refuses
-    (`${t}` = MAX), never a silent 0 s."""
-    d = asdict(step)
-    op = d.get("resolved_op") or {}
-    if d.get("op") == "wait" and op.get("duration") is not None:
-        from rules_packager_base.test_helpers import setpoint
-        try:
-            d["wait_s"] = max(setpoint(op["duration"], op.get("duration_unit") or "s"), 0)
-        except ValueError as exc:
-            d["wait_refused"] = str(exc)
-    return d
-
-
-# -- what the guided run's Values panel shows, read from the wheel's own walk ----
-
-_TURN_RE = re.compile(r"\.body\[\d+\]#(?:iter|run)=(\d+)")   # a loop's turn, after its node_path
-
-
-@functools.cache
-def _shown_session():
-    """The wheel's StepperSession noting, as it walks, the ``${…}`` names of each
-    row's loop turns and each Bind's value or why it has none, as its row says
-    it — the walk's own, never worked out again here."""
-    from rules_packager_base.rules.v2_0_2.parser._macro_eval import for_turns
-    from rules_packager_base.rules.v2_0_2.parser.manual_run import StepperSession
-
-    class ShownSession(StepperSession):
-        def __init__(self, procedure_json: dict):
-            super().__init__(procedure_json)
-            self.loops: list = []   # the loops the walk is in: (node_path, origin, variables, " of N")
-            self.names: dict = {}   # row node_path -> its turns' names
-            self.binds: dict = {}   # Bind row node_path -> (value text, note)
-
-        def _expand_for(self, block, block_path, bindings, ctx, skip):
-            turns = for_turns(block, self.macros, bindings) or ()
-            self.loops.append((block_path, "@FOR", block.get("vars") or [], f" of {len(turns)}"))
-            super()._expand_for(block, block_path, bindings, ctx, skip)
-            self.loops.pop()
-
-        def _runtime_do(self, block, do_path, bindings, ctx, skip):
-            var = block.get("var")
-            self.loops.append((do_path, "@DO", [var] if isinstance(var, str) else [], ""))
-            super()._runtime_do(block, do_path, bindings, ctx, skip)
-            self.loops.pop()
-
-        def _concrete(self, raw, node_path, bindings, status="pending", texts=None):
-            self.names[node_path] = _turn_names(self.loops, node_path, bindings)
-            return super()._concrete(raw, node_path, bindings, status, texts)
-
-        def _compute(self, row, raw, bindings, ctx):
-            said = len(row.text)
-            super()._compute(row, raw, bindings, ctx)   # its row says " → <value>" or " → <why none>"
-            text = row.text[said:].removeprefix(" → ")
-            self.binds[row.node_path] = (text, "") if row.ref in ctx.measurements else ("", text)
-
-    return ShownSession
-
-
-def _turn_names(loops: list, node_path: str, bindings: dict) -> list:
-    """The ``${…}`` names of a row's loop turns, outermost first: each as written
-    (``name``) and bare (``var``), its value as the row shows it and its turn
-    (``@FOR turn 2 of 3``); a table row's columns each."""
-    from rules_packager_base.test_helpers import shown_value
-
-    names = []
-    for path, kind, variables, of in loops:
-        turn = _TURN_RE.match(node_path, len(path))
-        origin = f"{kind} turn {int(turn.group(1)) + 1}{of}" if turn else kind
-        for var in variables:
-            value = bindings.get(var)
-            cells = value.items() if isinstance(value, dict) else ((None, value),)
-            bare = [var if key is None else f"{var}.{key}" for key, _cell in cells]
-            names += [{"name": f"${{{b}}}", "var": b, "value": shown_value(cell), "origin": origin}
-                      for b, (_key, cell) in zip(bare, cells, strict=True)]
-    return names
-
-
-def _shown_steps(session, run, readings: dict) -> list:
-    """The plan's step payloads with what the Values panel shows of each:
-    ``value_text`` (a reading in its criterion's unit, as the report shows a
-    measured value; a Bind as its row says it), ``value_note`` (why a Bind has
-    none) and ``names`` (its loop turns' ``${…}``); a Call row's own
-    ``outputs`` say each of its readings (its reading is the call's outcome)."""
-    from rules_packager_base.test_helpers import entry_refs, value_text
-
-    units: dict = {}
-    for entry in session._build_rules(run.measurements, []).values():   # the RULES test.py judges now
-        for ref in entry_refs(entry):
-            if entry.get("units"):
-                units.setdefault(ref, entry["units"])
-    out = []
-    for step in run.steps:
-        text, note = session.binds.get(step.node_path, ("", ""))
-        if step.op != "call" and readings.get(step.node_path) is not None:
-            text = value_text(readings[step.node_path], units.get(step.ref, ""))
-        out.append({**_step_payload(step), "value_text": text, "value_note": note,
-                    "names": session.names.get(step.node_path, [])})
-    return out
-
-
-def _procedure_names(macros: dict) -> list:
-    """The procedure's own names, read-only in a run, as the engine binds them:
-    each @LET's value, each @ALLOC's first ``{N}``, each @TABLE's rows."""
-    from rules_packager_base.rules.v2_0_2.parser._macro_eval import initial_static_bindings
-    from rules_packager_base.test_helpers import shown_value
-
-    bound = initial_static_bindings(macros)
-    names = [{"name": name, "value": shown_value(bound[name]), "origin": origin}
-             for key, origin in (("lets", "@LET"), ("allocations", "@ALLOC"))
-             for name in macros.get(key) or {} if name in bound]
-    return names + [{"name": name, "value": f"{len(rows)} rows", "origin": "@TABLE"}
-                    for name, rows in (macros.get("tables") or {}).items() if isinstance(rows, list)]
-
-
-def _op_build_manual_result(spec: dict) -> dict:
-    procedure_json, err = _document(spec)
-    if err:
-        return err
-    result = _import_wheel().build_manual_result(procedure_json, **run_inputs(spec),
-                                                 failures=spec.get("failures") or {},
-                                                 operator_stop=bool(spec.get("operator_stop")))
-    return {"ok": True, "result": result}
-
-
-# -- a guided run's typed readings ----------------------------------------------
-
-def _op_criterion_refs(spec: dict) -> dict:
-    """The readings each results.json criterion judges (``spec["criteria"]``: key ->
-    criterion), as the wheel's entry_refs reads them (test.py's reads), each ref
-    as a string — what a report's units map and Measured column list."""
-    from rules_packager_base.test_helpers import entry_refs
-
-    criteria = spec.get("criteria") or {}
-    return {"ok": True, "refs": {key: [str(r) for r in entry_refs(crit)] for key, crit in criteria.items()}}
 
 
 def _op_bench_identity(spec: dict) -> dict:
@@ -595,197 +405,6 @@ def _rules_index(module_name: str) -> dict | None:
     return None
 
 
-# The four DISPLAY domains snapshotted for the app. The validate_* twins are
-# asked per document (``extract``): an on-demand banner, not the paint path.
-_DISPLAY_KEYS = ("meta", "steps", "expected", "equipment")
-
-
-def _load_extractor_decls(bundle_dir: Path) -> dict:
-    """Return the bundle's ``defaults.json:extractors`` block ({} when
-    missing/malformed) — the same declaration pack_extractors uses."""
-    defaults = bundle_dir / "defaults.json"
-    try:
-        doc = json.loads(defaults.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    extractors = doc.get("extractors")
-    return extractors if isinstance(extractors, dict) else {}
-
-
-def _resolve_extractors(bundle_dir: Path, keys=_DISPLAY_KEYS) -> tuple[dict, dict, dict]:
-    """Resolve the extractors of ``keys`` exactly the way the bundle declares
-    them (``{module, function}`` per key), importing INSIDE this (project)
-    venv. Returns ``(callables, errors, wheel_info)``; a missing or
-    unimportable key lands in ``errors``, never raises."""
-    decls = _load_extractor_decls(bundle_dir)
-    fns: dict = {}
-    errors: dict = {}
-    wheel_info: dict = {"module": "", "file": "", "version": ""}
-    for key in keys:
-        entry = decls.get(key)
-        if not isinstance(entry, dict):
-            errors[key] = f"bundle declares no {key!r} extractor"
-            continue
-        module_name = entry.get("module")
-        function_name = entry.get("function")
-        if not isinstance(module_name, str) or not isinstance(function_name, str):
-            errors[key] = f"extractor {key!r} lacks module/function strings"
-            continue
-        try:
-            mod = importlib.import_module(module_name)
-        except Exception as exc:  # noqa: BLE001 — import errors of any shape
-            errors[key] = f"module {module_name} not importable: {exc}"
-            continue
-        fn = mod
-        for part in function_name.split("."):
-            fn = getattr(fn, part, None)
-            if fn is None:
-                break
-        if not callable(fn):
-            errors[key] = f"{module_name}.{function_name} is not callable"
-            continue
-        fns[key] = fn
-        if not wheel_info["module"]:
-            wheel_info["module"] = module_name
-            wheel_info["file"] = getattr(mod, "__file__", "") or ""
-            wheel_info["version"] = _wheel_version(module_name)
-    return fns, errors, wheel_info
-
-
-def _wheel_version(module_name: str) -> str:
-    """Best-effort distribution version of the wheel providing
-    ``module_name`` (its top-level package)."""
-    top = module_name.split(".")[0]
-    try:
-        from importlib import metadata
-
-        return metadata.version(top)
-    except Exception:  # noqa: BLE001
-        return ""
-
-
-def _meta_payload(meta) -> dict:
-    """ProcedureMeta -> plain dict carrying EVERY wheel field PLUS the
-    wheel-computed ``display_name`` (a property, so asdict misses it)."""
-    try:
-        d = dict(asdict(meta))
-    except TypeError:
-        d = {k: v for k, v in vars(meta).items() if not k.startswith("_")}
-    display_name = getattr(meta, "display_name", "")
-    d["display_name"] = display_name if isinstance(display_name, str) else ""
-    return d
-
-
-def _items_payload(items) -> list:
-    """list[dataclass] -> list[dict] (asdict recurses media/channels)."""
-    return [asdict(item) for item in items]
-
-
-def _text_newer(procedure_json: Path) -> bool:
-    """Same mtime compare as pack_extractors.canonical_text_is_newer,
-    computed in the sweep so the LIST can show the stale badge."""
-    text_path = procedure_json.parent / "procedure_text.md"
-    try:
-        text_mtime = text_path.stat().st_mtime
-        json_mtime = procedure_json.stat().st_mtime
-    except OSError:
-        return False
-    return text_mtime > json_mtime
-
-
-def _extract_test(folder: str, proc_path: Path, fns: dict, resolve_errors: dict) -> dict:
-    """Extract one test. Per-key failures become error markers."""
-    entry: dict = {"folder": folder, "data": {}, "errors": dict(resolve_errors)}
-    # Stat BEFORE reading: if the file is rewritten mid-read, the entry
-    # carries the OLD mtime, so the app's freshness check (current stat
-    # vs entry mtime) fails safe: that test is not served from the snapshot.
-    try:
-        _st = proc_path.stat()
-        entry["mtime_ns"] = _st.st_mtime_ns
-        entry["size"] = _st.st_size
-    except OSError as exc:
-        entry["mtime_ns"] = 0
-        for key in _DISPLAY_KEYS:
-            entry["errors"][key] = f"cannot stat {proc_path.name}: {exc}"
-        entry["text_newer"] = False
-        return entry
-    entry["text_newer"] = _text_newer(proc_path)
-    try:
-        doc = json.loads(proc_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        for key in _DISPLAY_KEYS:
-            entry["errors"][key] = f"cannot read {proc_path.name}: {exc}"
-        return entry
-    _extract_into(entry, doc, fns)
-    return entry
-
-
-def _extract_into(entry: dict, doc, fns: dict) -> None:
-    """Each extractor of ``fns`` run on ``doc``, its JSON payload in
-    ``entry["data"]``; one that raises is explained in ``entry["errors"]``."""
-    for key, fn in fns.items():
-        try:
-            if key == "meta":
-                entry["data"][key] = _meta_payload(fn(doc))
-            else:
-                entry["data"][key] = _items_payload(fn(doc))
-        except Exception as exc:  # noqa: BLE001 — one bad test/key must not kill the sweep
-            entry["errors"][key] = f"{type(exc).__name__}: {exc}"
-
-
-def _op_display_snapshot(spec: dict) -> dict:
-    """The main window's display data for the tests of ``spec["project"]``
-    (``spec["tests"]``: null = every test folder), extracted by the bundle's
-    PINNED wheel with the extractors ``defaults.json`` declares. The pack
-    registry is the daemon's, loaded from the frame's ``_bundle_dir``.
-    Per-test / per-key failures never fail the sweep: the key is absent from
-    ``data`` and explained in ``errors``."""
-    project_root = Path(spec["project"])
-    requested = spec.get("tests")
-
-    fns, resolve_errors, wheel_info = _resolve_extractors(_bundle_dir_of(spec))
-
-    tests_dir = project_root / "tests"
-    if requested is None:
-        try:
-            folders = sorted(d.name for d in tests_dir.iterdir() if d.is_dir())
-        except OSError as exc:
-            return {"ok": False, "kind": "Other", "error": f"cannot list {tests_dir}: {exc}"}
-    else:
-        folders = [f for f in requested if isinstance(f, str)]
-
-    out = []
-    for folder in folders:
-        proc_path = tests_dir / folder / "procedure.json"
-        if not proc_path.exists():
-            # Deleted/never-compiled test: omit it — the store drops
-            # requested-but-absent folders from the snapshot.
-            continue
-        out.append(_extract_test(folder, proc_path, fns, resolve_errors))
-    return {"ok": True, "wheel": wheel_info, "tests": out}
-
-
-def _bundle_dir_of(spec: dict) -> Path:
-    """The bundle a frame's extractors come from: the frame's ``_bundle_dir``,
-    else the project's ``bundle/``."""
-    return Path(spec.get("_bundle_dir") or (Path(spec["project"]) / "bundle"))
-
-
-def _op_extract(spec: dict) -> dict:
-    """``spec["keys"]`` of each document of ``spec["procedures"]``, by the
-    extractors the bundle declares — what the display snapshot does not
-    hold: an untagged or just-edited document, and the validators. A key
-    that cannot be run is explained in that result's ``errors``, never
-    fails the op."""
-    fns, errors, _wheel = _resolve_extractors(_bundle_dir_of(spec), tuple(spec.get("keys") or ()))
-    results = []
-    for doc in spec.get("procedures") or []:
-        entry: dict = {"data": {}, "errors": dict(errors)}
-        _extract_into(entry, doc, fns)  # any shape: a validator reports PROC_NOT_OBJECT
-        results.append(entry)
-    return {"ok": True, "results": results}
-
-
 def _op_write_not_started(spec: dict) -> dict:
     """The ERROR result of a run that could not start, written by its test's own engine into
     the run's folder (``module_path``, ``results_dir``, ``code``, ``description``)."""
@@ -810,14 +429,14 @@ _OPS = {
     "function_signatures": _op_function_signatures,
     "section_ownership": _op_section_ownership,
     "reconstruct": _op_reconstruct,
-    "build_manual_run": _op_build_manual_run,
-    "build_manual_result": _op_build_manual_result,
-    "manual_reading": _manual_reading.op_manual_reading,
-    "criterion_refs": _op_criterion_refs,
+    "build_manual_run": _manual.op_build_manual_run,
+    "build_manual_result": _manual.op_build_manual_result,
+    "manual_reading": _manual.op_manual_reading,
+    "criterion_refs": _manual.op_criterion_refs,
     "pack_contract": _op_pack_contract,
     "bench_identity": _op_bench_identity,
-    "display_snapshot": _op_display_snapshot,
-    "extract": _op_extract,
+    "display_snapshot": _extract.op_display_snapshot,
+    "extract": _extract.op_extract,
     "write_not_started": _op_write_not_started,
 }
 

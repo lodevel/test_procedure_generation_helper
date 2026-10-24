@@ -230,7 +230,7 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
     # earlier batches) seed the accumulator; each reading this batch produces is
     # folded in as it executes, then materialized into the progress frame so a
     # PASS/FAIL lands the instant the op completes — not at batch end.
-    inputs = _sib("_engine_ops").run_inputs(req)
+    inputs = _sib("_engine_ops_manual").run_inputs(req)
     acc_meas = inputs["measurements"] = dict(inputs["measurements"])   # node_path keys, as the controls'
     log_mark = len(session.res.log)
     results: list = []

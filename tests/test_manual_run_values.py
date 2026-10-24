@@ -16,6 +16,7 @@ from tests._qt_stub import ensure_workflow_editor_importable
 ensure_workflow_editor_importable()
 
 from procedo.engine_client import _engine_ops as engine_ops  # noqa: E402
+from procedo.engine_client import _engine_ops_manual as engine_ops_manual  # noqa: E402
 from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
 from procedo.engine_client import engine_replies  # noqa: E402
 
@@ -98,10 +99,10 @@ def test_the_display_data_changes_nothing_of_the_wheels_plan():
     wheel = engine_ops._import_wheel().build_manual_run(doc, readings, {}, {})
     shown = ("value_text", "value_note", "names")
     assert [{k: v for k, v in s.items() if k not in shown} for s in out["steps"]] == [
-        engine_ops._step_payload(s) for s in wheel.steps]
+        engine_ops_manual._step_payload(s) for s in wheel.steps]
 
 
-# What _engine_ops' ShownSession relies on in the wheel's StepperSession: the
+# What _engine_ops_manual's ShownSession relies on in the wheel's StepperSession: the
 # private walk hooks it overrides or calls (parameters, in order, with defaults).
 _HOOKS = {
     "_expand_for": "(self, block, block_path, bindings, ctx, skip)",
@@ -110,7 +111,7 @@ _HOOKS = {
     "_compute": "(self, row, raw, bindings, ctx)",
     "_build_rules": "(self, measurements, notes)",
 }
-_DRIFT = "wheel drift: move display data into the wheel (manual_run.py) instead of _engine_ops' ShownSession"
+_DRIFT = "wheel drift: move display data into the wheel (manual_run.py) instead of _engine_ops_manual's ShownSession"
 
 
 def _manual_run():
@@ -140,5 +141,5 @@ def test_the_wheel_still_walks_as_the_values_panel_reads_it():
     steps = {s.ref: s for s in manual_run.build_manual_run(doc, readings).steps if s.ref is not None}
     assert steps[12].text.endswith(" → 0 V") and " → waiting for {13}" in steps[15].text, (
         f"{_DRIFT}: a Bind's row no longer ends ' → <value or why>': {steps[12].text!r}, {steps[15].text!r}")
-    assert all(engine_ops._TURN_RE.search(steps[r].node_path) for r in (10, 13, 30)), (
+    assert all(engine_ops_manual._TURN_RE.search(steps[r].node_path) for r in (10, 13, 30)), (
         f"{_DRIFT}: loop turns are no longer tagged #iter=/#run=: {[steps[r].node_path for r in (10, 13, 30)]}")

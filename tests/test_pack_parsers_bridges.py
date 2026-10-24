@@ -24,6 +24,7 @@ from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
 from procedo.engine_client import engine_session  # noqa: E402
 from procedo.engine_client import engine_replies  # noqa: E402
 from procedo.engine_client import _engine_ops as engine_ops  # noqa: E402
+from procedo.engine_client import _engine_ops_manual as engine_ops_manual  # noqa: E402
 
 from tests import _env
 
@@ -262,9 +263,9 @@ class BuildManualRunOpTests(unittest.TestCase):
 
     def test_run_inputs_read_operator_verdict_keys_back_as_readings(self) -> None:
         verdicts = {"1": "PASS", "Vout": "FAIL", "Vrail[3]": "SKIP", "-1": "PASS"}
-        self.assertEqual(engine_ops.run_inputs({"operator_verdicts": verdicts})["operator_verdicts"],
+        self.assertEqual(engine_ops_manual.run_inputs({"operator_verdicts": verdicts})["operator_verdicts"],
                          {1: "PASS", "Vout": "FAIL", "Vrail[3]": "SKIP", "-1": "PASS"})
-        self.assertEqual(engine_ops.run_inputs({})["operator_verdicts"], {})
+        self.assertEqual(engine_ops_manual.run_inputs({})["operator_verdicts"], {})
 
     def test_a_document_that_is_not_an_object_is_an_error_result(self) -> None:
         for doc in (None, [1, 2]):
@@ -294,7 +295,7 @@ class ManualRunEngineReadsTests(unittest.TestCase):
 
     def _wait(self, duration, unit="s", op="wait") -> dict:
         from rules_packager_base.rules.v2_0_2.parser.manual_run import StepDescriptor
-        return engine_ops._step_payload(StepDescriptor(
+        return engine_ops_manual._step_payload(StepDescriptor(
             node_path="steps[0]", n=1, op=op, text="", resolved_op={"duration": duration, "duration_unit": unit}))
 
     def test_a_wait_carries_its_seconds_or_why_they_are_refused(self) -> None:

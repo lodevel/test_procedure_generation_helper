@@ -5,8 +5,8 @@ one (:mod:`.engine_session`), the RUN frames (:mod:`.bench_client`), the reply s
 (:mod:`.engine_replies`) and where the project's venv is (:mod:`.project_venv`).
 
 Engine side: the daemon ``_execute_op_subprocess.py`` and its siblings (``_engine_ops``,
-``_instrument_ops``, ``_safe_off``, ``_bench_session_runner``, ``_manual_reading``,
-``_guided_call``, ``_hold_resolution``),
+``_engine_ops_manual``, ``_engine_ops_extract``, ``_instrument_ops``, ``_safe_off``,
+``_bench_session_runner``, ``_guided_call``),
 run by FILE PATH in the project venv, which has no ``procedo`` package.
 
 No LLM code and no Qt. This package has no imports of its own.

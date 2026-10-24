@@ -25,6 +25,8 @@ _HEADER = (
     "quoted below, you MUST re-call the relevant tools to re-verify it -- treat "
     "the quoted text as a memory aid, not as a trusted source:"
 )
+#: Starts the chat note of a send that never went out; with its user line it is not history.
+NOT_SENT = "Not sent: "
 _ROLE_LABEL = {"user": "User", "assistant": "Assistant", "system": "Note"}
 
 
@@ -32,7 +34,8 @@ def serialize_transcript(messages, char_budget: int) -> str:
     """Render messages (list[ChatMessage]) as a preamble bounded to char_budget.
 
     Accrues NEWEST-first so the most recent turns survive truncation, emits
-    oldest-first. Skips empty turns. Returns '' when nothing to replay.
+    oldest-first. Skips empty turns, the user lines that were never sent (no full prompt)
+    and the "Not sent" notes. Returns '' when nothing to replay.
     """
     if not messages or char_budget <= 0:
         return ""
@@ -41,6 +44,8 @@ def serialize_transcript(messages, char_budget: int) -> str:
     for msg in reversed(messages):
         content = (getattr(msg, "content", "") or "").strip()
         if not content:
+            continue
+        if _never_sent(msg, content):
             continue
         label = _ROLE_LABEL.get(getattr(msg, "role", ""), "User")
         block = f"{label}: {content}"
@@ -52,3 +57,11 @@ def serialize_transcript(messages, char_budget: int) -> str:
         return ""
     blocks.reverse()
     return _HEADER + "\n\n" + "\n\n".join(blocks)
+
+
+def _never_sent(msg, content: str) -> bool:
+    """A user line whose prompt never went out, or the note saying so."""
+    role = getattr(msg, "role", "")
+    if role == "user":
+        return not getattr(msg, "full_prompt", None)
+    return role == "system" and content.startswith(NOT_SENT)

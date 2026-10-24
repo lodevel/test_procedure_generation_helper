@@ -385,3 +385,26 @@ def test_an_opencode_factory_without_a_server_manager_spawns_no_server():
         backend.start()
     popen.assert_not_called()
     assert isinstance(backend, NoneBackend)
+
+
+def test_a_re_request_that_fails_unlocks_the_chat_and_says_why(opened, monkeypatch):
+    w = opened
+    view = w.text_only_tab
+    w.view_stack.setCurrentWidget(view)
+    view.tab_context.update_backend_factory(_factory(monkeypatch, _SlowServer()))
+    calls = []
+
+    def refuse_second(factory, tab_id, on_answer):
+        calls.append(on_answer)
+        if len(calls) > 1:
+            raise RuntimeError("no QApplication")
+    monkeypatch.setattr(llm_tab_mixin, "request_backend", refuse_second)
+    view._run_task_async(LLMTask.AD_HOC_CHAT, user_message="check U5")
+    monkeypatch.setattr(view.tab_context, "adopt_backend", lambda answer: None)  # factory replaced
+
+    view._on_backend_started(object())
+
+    chat = w.dock.chat_panel
+    assert chat.send_btn.isEnabled() and not chat.loading.active
+    assert view._queued_send is None
+    assert _lines(view)[-2:] == ["check U5", "Not sent: the AI server could not be started."]

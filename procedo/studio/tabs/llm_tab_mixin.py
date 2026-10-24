@@ -31,7 +31,7 @@ from ..llm.backend_base import ValidationIssue
 from ..llm.run_state import LLMRunState
 from ..llm.tab_context import ChatMessage as _ChatMessage
 from ..llm.worker import LLMWorker
-from ..llm.transcript_replay import serialize_transcript
+from ..llm.transcript_replay import NOT_SENT, serialize_transcript
 from .llm_validator_loop import ValidatorLoop
 
 log = logging.getLogger(__name__)
@@ -73,14 +73,19 @@ class LLMTabMixin:
         if replaced:
             what = ("a new message" if task == LLMTask.AD_HOC_CHAT
                     and not kwargs.get('custom_task_id') else line.content)
-            chat.post(self.tab_context, ChatMessage(
-                role="system", content=f"Not sent: replaced by {what}.", tone="warning"))
+            self._post_not_sent(f"replaced by {what}.", "warning")
         chat.post(self.tab_context, line)
         self._queued_send = (task, retry, kwargs, current_test(self.artifact_manager), line)
         if replaced:
             return
         chat.set_llm_active(True, cancellable=False)
         chat.loading.start(SERVER_STARTING_TEXT)
+        self._request_queued_backend()
+
+    def _request_queued_backend(self) -> None:
+        """:meth:`_request_backend` for the queued send; a request that raises unlocks the
+        chat and drops the send (the chat says so)."""
+        chat = self.main_window.dock.chat_panel
         try:
             self._request_backend()
         except Exception:
@@ -90,9 +95,12 @@ class LLMTabMixin:
             self._queued_send = None
             chat.loading.done()
             chat.set_llm_active(False)
-            chat.post(self.tab_context, ChatMessage(
-                role="system", content="Not sent: the AI server could not be started.",
-                tone="danger"))
+            self._post_not_sent("the AI server could not be started.", "danger")
+
+    def _post_not_sent(self, reason: str, tone: str) -> None:
+        """The chat note that a send did not go out (not replayed to the model)."""
+        self.main_window.dock.chat_panel.post(
+            self.tab_context, ChatMessage(role="system", content=NOT_SENT + reason, tone=tone))
 
     def _request_backend(self) -> None:
         """Start the tab's backend off the GUI thread; :meth:`_on_backend_started` answers."""
@@ -106,7 +114,7 @@ class LLMTabMixin:
         for a start on the new one."""
         backend = self.tab_context.adopt_backend(answer)
         if backend is None:
-            self._request_backend()
+            self._request_queued_backend()
             return
         chat = self.main_window.dock.chat_panel
         chat.loading.done()
@@ -116,9 +124,7 @@ class LLMTabMixin:
         if test != current_test(self.artifact_manager):
             log.warning("Dropped the send queued for %s: its test was closed",
                         test[1] if test else None)
-            chat.post(self.tab_context, ChatMessage(
-                role="system", content="Not sent: the test changed while the AI server was "
-                "starting.", tone="warning"))
+            self._post_not_sent("the test changed while the AI server was starting.", "warning")
             return
         self._run_task_on(backend, task, retry, kwargs, line)
 

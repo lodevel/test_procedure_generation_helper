@@ -68,6 +68,10 @@ def _load_tool_folder(tools_dir):
     except Exception as exc:  # noqa: BLE001
         _die(f"cannot read {manifest_path}: {exc}")
 
+    # No bytecode: a __pycache__ written beside the project's bundle tool would be a trace
+    # in the project (and change a bundle-integrity hash).
+    keep_bytecode_off = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
     try:
         spec = importlib.util.spec_from_file_location(
             f"skilltools_{declared_server}", tools_py)
@@ -75,6 +79,8 @@ def _load_tool_folder(tools_dir):
         spec.loader.exec_module(mod)
     except Exception as exc:  # noqa: BLE001
         _die(f"cannot import {tools_py}: {exc}")
+    finally:
+        sys.dont_write_bytecode = keep_bytecode_off
 
     server_name = getattr(mod, "SERVER_NAME", None) or declared_server
     tools = list(getattr(mod, "TOOLS", []))

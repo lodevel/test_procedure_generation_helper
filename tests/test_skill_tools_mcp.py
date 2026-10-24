@@ -163,3 +163,14 @@ def test_drift_guard_exits_nonzero():
         proc.kill()
         proc.wait()
     assert proc.returncode != 0
+
+
+def test_loading_a_tool_folder_leaves_no_bytecode_in_it(tmp_path, monkeypatch):
+    """The project's bundle tool folder gets no __pycache__ from the server's load."""
+    import shutil
+    monkeypatch.setattr(sys, "dont_write_bytecode", False)
+    tools_dir = tmp_path / "tooldir"
+    shutil.copytree(FIXTURE_DIR, tools_dir, ignore=shutil.ignore_patterns("__pycache__"))
+    _mcp_mod._load_tool_folder(str(tools_dir))
+    assert not (tools_dir / "__pycache__").exists()
+    assert sys.dont_write_bytecode is False

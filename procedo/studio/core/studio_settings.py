@@ -20,6 +20,11 @@ def get_settings_path() -> Path:
     return settings_dir / "settings.json"
 
 
+def get_log_path() -> Path:
+    """Studio's log file: in the same folder as its settings."""
+    return get_settings_path().with_name("studio.log")
+
+
 def read_settings() -> dict:
     """The settings as stored ({} when there is no file yet); raises OSError when the file
     cannot be read and ValueError when it is not a JSON object. A writer that keeps the keys

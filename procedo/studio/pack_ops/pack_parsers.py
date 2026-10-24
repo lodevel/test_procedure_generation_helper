@@ -213,38 +213,6 @@ def refresh_media(
     return result["json"]
 
 
-def export_rows(
-    procedure_json: dict[str, Any],
-    project_root: Optional[Path] = None,
-) -> tuple[list[dict], list[dict]]:
-    """Document-export rows (steps, expected) computed by the project
-    venv's wheel — the only environment guaranteed to have every bundle
-    pack importable, so pack ops render their canonical clause instead
-    of blank. Raises :class:`ParserUnavailable` when the engine cannot
-    answer."""
-    if project_root is None:
-        raise ParserUnavailable("export_rows requires a project venv")
-
-    result = _engine_call(
-        project_root, {"op": "export_rows", "procedure_json": procedure_json})
-    if not result.get("ok"):
-        raise ParserUnavailable(result.get("error", "engine error"))
-    return result.get("steps", []), result.get("expected", [])
-
-
-def export_rows_batch(
-    procedures: list[dict[str, Any]],
-    project_root: Path,
-) -> list[dict]:
-    """Batched :func:`export_rows` — one engine op for a whole export run.
-    Returns one ``{"steps": [...], "expected": [...]}`` per input procedure.
-    Raises :class:`ParserUnavailable` when the engine cannot answer."""
-    result = _engine_call(project_root, {"op": "export_rows", "procedures": procedures})
-    if not result.get("ok"):
-        raise ParserUnavailable(result.get("error", "engine error"))
-    return result.get("results", [])
-
-
 def renumber_steps_text(
     text: str,
     project_root: Optional[Path] = None,

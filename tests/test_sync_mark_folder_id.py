@@ -6,8 +6,8 @@ Save then rewrote the id (``ArtifactManager._enforce_folder_id``, task
 #30) and the pair immediately showed NOT in sync. The id correction is
 not a real divergence — the acknowledged state must survive it.
 
-Root cause: the mark-in-sync flow (main_window ``_on_sync_indicator_clicked``
-/ ``_check_artifact_coherence``) stores ``compute_hashes()`` of the raw
+Root cause: the mark-in-sync flow (DocumentController ``on_sync_indicator_clicked``
+/ ``mark_in_sync``) stores ``compute_hashes()`` of the raw
 buffer content BEFORE save applies the id rewrite, so the post-save
 hash no longer matches the acknowledged baseline.
 

@@ -5,7 +5,7 @@ Verifies the master = providers-only blueprint + derived opencode.json with the
 3 MCP blocks built FRESH at runtime:
 
 - master.json carries providers/general only — NO model/small_model/mcp.
-- build_launch_config(project_root) writes launch/opencode.json with pdf_tools +
+- build_launch_config(project_root) writes launch/opencode-<pid>.json with pdf_tools +
   dcdc_tools always present and project_tools present ONLY when the project has a
   ``*.tgz`` board archive (dropped otherwise).
 - every MCP command path is computed at runtime (venv python via sys.executable,
@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from procedo.studio.llm import launch_config as lc
+from procedo.studio.llm import launch_files
 from procedo.studio.llm.mcp_config import win_to_wsl_path
 
 
@@ -31,6 +32,11 @@ def config_dir(tmp_path, monkeypatch):
     cfg.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(lc, "get_opencode_config_dir", lambda: cfg)
     return cfg
+
+
+def _config(launch_dir: Path) -> Path:
+    """THIS Studio process's derived config in *launch_dir*."""
+    return launch_files.launch_file_path(launch_dir, launch_files.CONFIG_FILE)
 
 
 def _expected_python_win() -> str:
@@ -87,7 +93,7 @@ def test_build_launch_config_master_has_no_mcp(config_dir):
     }), encoding="utf-8")
 
     launch_dir = lc.build_launch_config(project_root=None)
-    derived = json.loads((launch_dir / "opencode.json").read_text(encoding="utf-8"))
+    derived = json.loads(_config(launch_dir).read_text(encoding="utf-8"))
 
     # Master itself is unchanged (still no mcp).
     master_data = json.loads(master.read_text(encoding="utf-8"))
@@ -101,7 +107,7 @@ def test_build_launch_config_no_project_drops_project_tools(config_dir):
     master.write_text(json.dumps({"provider": {"a": {}}}), encoding="utf-8")
 
     launch_dir = lc.build_launch_config(project_root=None)
-    derived = json.loads((launch_dir / "opencode.json").read_text(encoding="utf-8"))
+    derived = json.loads(_config(launch_dir).read_text(encoding="utf-8"))
 
     mcp = derived["mcp"]
     # pdf_tools always present; project_tools dropped (no project / no tgz).
@@ -136,7 +142,7 @@ def test_build_launch_config_fresh_mcp_paths_with_project(config_dir, tmp_path):
     )
 
     launch_dir = lc.build_launch_config(project_root=project)
-    derived = json.loads((launch_dir / "opencode.json").read_text(encoding="utf-8"))
+    derived = json.loads(_config(launch_dir).read_text(encoding="utf-8"))
     mcp = derived["mcp"]
 
     # pdf_tools + project_tools + at least myfix_tools (BUNDLED) must be present.
@@ -182,14 +188,14 @@ def test_build_launch_config_atomic_write_in_launch_dir(config_dir):
 
     launch_dir = lc.build_launch_config(project_root=None)
     leftovers = [p.name for p in launch_dir.iterdir()]
-    assert leftovers == ["opencode.json"]
+    assert leftovers == [_config(launch_dir).name]
 
 
 def test_build_launch_config_missing_master_still_writes(config_dir):
     """No master.json yet -> derive from an empty config (mcp still built)."""
     assert not lc.get_opencode_master_path().exists()
     launch_dir = lc.build_launch_config(project_root=None)
-    derived = json.loads((launch_dir / "opencode.json").read_text(encoding="utf-8"))
+    derived = json.loads(_config(launch_dir).read_text(encoding="utf-8"))
     # pdf_tools is always present; skill-tool blocks discovered dynamically.
     assert "pdf_tools" in derived["mcp"]
 
@@ -206,7 +212,7 @@ def test_build_launch_config_strips_model_defensively(config_dir):
     }), encoding="utf-8")
 
     launch_dir = lc.build_launch_config(project_root=None)
-    derived = json.loads((launch_dir / "opencode.json").read_text(encoding="utf-8"))
+    derived = json.loads(_config(launch_dir).read_text(encoding="utf-8"))
     assert "model" not in derived
     assert "small_model" not in derived
 
@@ -223,9 +229,8 @@ def test_build_launch_config_honours_launch_dir_override(config_dir):
 
     # Written into the override dir, NOT the live launch/ dir.
     assert out == test_dir
-    assert (test_dir / "opencode.json").exists()
-    live = config_dir / "launch" / "opencode.json"
-    assert not live.exists()
+    assert _config(test_dir).exists()
+    assert not _config(config_dir / "launch").exists()
 
 
 def test_launch_test_dir_is_separate_from_live(config_dir):
@@ -234,3 +239,22 @@ def test_launch_test_dir_is_separate_from_live(config_dir):
     assert lc.get_opencode_launch_test_dir() != lc.get_opencode_launch_dir()
     assert lc.get_opencode_launch_test_dir().name == "launch_test"
     assert lc.get_opencode_launch_dir().name == "launch"
+
+
+def test_each_studio_process_builds_its_own_launch_config(config_dir, monkeypatch, tmp_path):
+    """Two Studios on two projects: the second one's build never overwrites the first one's
+    config (its MCP paths), which the first one's next server relaunch reads."""
+    import os
+
+    lc.get_opencode_master_path().write_text(json.dumps({"provider": {"a": {}}}), encoding="utf-8")
+    first_project, second_project = tmp_path / "first", tmp_path / "second"
+    monkeypatch.setattr(os, "getpid", lambda: 1111)
+    first = _config(lc.build_launch_config(project_root=first_project))
+    built_first = first.read_bytes()
+    monkeypatch.setattr(os, "getpid", lambda: 2222)
+    second = _config(lc.build_launch_config(project_root=second_project))
+    assert (first.name, second.name) == ("opencode-1111.json", "opencode-2222.json")
+    assert first.read_bytes() == built_first
+    second_in_json = json.dumps(str(second_project))[1:-1]  # its documents dir, its rules
+    assert second_in_json in second.read_text(encoding="utf-8")
+    assert second_in_json not in built_first.decode("utf-8")

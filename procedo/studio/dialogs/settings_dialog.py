@@ -21,6 +21,7 @@ from ..llm.launch_config import (
     build_launch_config, ensure_master_config, get_opencode_launch_test_dir,
     get_opencode_master_path,
 )
+from ..llm.launch_files import remove_launch_files
 from ..llm.server_manager import fetch_opencode_models
 
 log = logging.getLogger(__name__)
@@ -718,6 +719,8 @@ class SettingsDialog(QDialog):
                 self, "Test Connection Failed",
                 f"Error testing connection:\n\n{str(e)}"
             )
+        finally:  # the probe's derived config goes with it (the app leaves no traces)
+            remove_launch_files(get_opencode_launch_test_dir())
     
 
 

@@ -143,6 +143,7 @@ def test_no_board_is_optional_and_configured_archive_is_shared(panel, tmp_path, 
 def test_launch_transport_preserves_complete_admitted_board(tmp_path, monkeypatch, configured_limit):
     from procedo.studio.authoring.netlist_text import BOARD_CONTEXT_MAX_BYTES
     from procedo.studio.llm import launch_config as settings
+    from procedo.studio.llm import launch_files
 
     master = tmp_path / "master.json"
     master.write_text(json.dumps({
@@ -156,7 +157,8 @@ def test_launch_transport_preserves_complete_admitted_board(tmp_path, monkeypatc
     monkeypatch.setattr(settings, "_build_skill_tools_blocks", lambda root: {})
     original = master.read_bytes()
     launch = settings.build_launch_config(tmp_path, launch_dir=tmp_path / "launch")
-    config = json.loads((launch / "opencode.json").read_text(encoding="utf-8"))
+    config = json.loads(
+        launch_files.launch_file_path(launch, launch_files.CONFIG_FILE).read_text(encoding="utf-8"))
     assert config["tool_output"] == {
         "max_bytes": max(configured_limit, BOARD_CONTEXT_MAX_BYTES),
         "max_lines": max(configured_limit, BOARD_CONTEXT_MAX_BYTES),

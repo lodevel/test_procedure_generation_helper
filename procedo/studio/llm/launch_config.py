@@ -1,6 +1,6 @@
 """The OpenCode config tree Studio owns (the ``master.json`` blueprint, the ``launch/`` and
-``launch_test/`` dirs) and the per-launch ``opencode.json`` with its MCP blocks, built fresh
-at each launch."""
+``launch_test/`` dirs) and each Studio process's per-launch ``opencode-<pid>.json`` with its
+MCP blocks, built fresh at each launch."""
 
 import copy
 import json
@@ -11,6 +11,7 @@ from typing import Optional
 
 from ..core.fileio import atomic_write_text
 from ..core import studio_settings
+from .launch_files import CONFIG_FILE, PID_FILE, UNIVERSE_FILE, launch_file_path
 
 log = logging.getLogger(__name__)
 
@@ -18,8 +19,8 @@ log = logging.getLogger(__name__)
 def get_opencode_config_dir() -> Path:
     """The editor-OWNED OpenCode config directory (sibling of settings.json).
 
-    Holds the project-agnostic ``master.json`` blueprint and the per-launch
-    ``launch/opencode.json`` derived config. One config tree, tied to the editor,
+    Holds the project-agnostic ``master.json`` blueprint and each Studio process's
+    per-launch ``launch/opencode-<pid>.json`` derived config. One config tree, tied to the editor,
     not per project.
     """
     d = studio_settings.get_settings_path().parent / "opencode"
@@ -39,9 +40,9 @@ def get_opencode_master_path() -> Path:
 
 
 def get_opencode_launch_dir() -> Path:
-    """The stable directory the per-launch derived ``opencode.json`` is written
-    to (and that ``opencode serve`` is launched with / pointed at via
-    ``OPENCODE_CONFIG``)."""
+    """The stable directory each Studio process's per-launch derived config is
+    written to (``launch_file_path``; ``opencode serve`` is launched from it and
+    pointed at that config via ``OPENCODE_CONFIG``)."""
     d = get_opencode_config_dir() / "launch"
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -55,7 +56,7 @@ def get_opencode_launch_test_dir() -> Path:
     ``start()`` would overwrite this process's ``launch/`` pid file and its ``stop()`` would
     DELETE it, wiping the LIVE server's orphan-sweep record (the exact
     orphan-left bug class). Isolating the probe in ``launch_test/`` keeps its pid
-    file + derived ``opencode.json`` from ever colliding with the live ones."""
+    file + derived config from ever colliding with the live ones."""
     d = get_opencode_config_dir() / "launch_test"
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -183,7 +184,6 @@ def _build_run_skill_block(project_root, launch_dir, run_skill_secret):
     if not run_skill_secret:
         return None
     from ..llm.mcp_config import build_run_skill_mcp_block
-    from .server_manager import pid_file_path
     from ..authoring.locations import skill_roots
     from ..authoring.tool_folders import build_skill_tools_universe
     # Sort roots by SkillSource (ASCENDING) so the child resolves the same body
@@ -196,7 +196,7 @@ def _build_run_skill_block(project_root, launch_dir, run_skill_secret):
     try:
         _uni = build_skill_tools_universe(project_root)
         if _uni:
-            _uf = Path(launch_dir) / "run_skill_universe.json"
+            _uf = launch_file_path(launch_dir, UNIVERSE_FILE)
             _uf.write_text(json.dumps(_uni), encoding="utf-8")
             universe_file = str(_uf)
     except Exception:
@@ -204,7 +204,7 @@ def _build_run_skill_block(project_root, launch_dir, run_skill_secret):
     return build_run_skill_mcp_block(
         venv_python_win=_python_win(),
         mcp_script_win=_mcp_script_win("_run_skill_mcp.py"),
-        server_port_file_win=str(pid_file_path(launch_dir)),
+        server_port_file_win=str(launch_file_path(launch_dir, PID_FILE)),
         skill_roots_win=roots,
         secret=run_skill_secret,
         universe_file_win=universe_file,
@@ -216,8 +216,9 @@ def build_launch_config(
     launch_dir: Optional[Path] = None,
     run_skill_secret: Optional[str] = None,
 ) -> Path:
-    """Derive the per-launch ``opencode.json`` from the MASTER blueprint and the
-    CURRENT project, returning the LAUNCH DIR (what ``opencode serve`` is pointed
+    """Derive THIS Studio process's per-launch config (``opencode-<pid>.json``,
+    ``launch_file_path``) from the MASTER blueprint and the CURRENT project, returning
+    the LAUNCH DIR (what ``opencode serve`` is pointed
     at via ``OPENCODE_CONFIG`` / launched from).
 
     Reads ``master.json`` (providers + general, no model/mcp), deep-copies it, and
@@ -286,7 +287,7 @@ def build_launch_config(
         log.exception("Failed to build skill-tools MCP blocks")
     data["mcp"] = mcp
 
-    target = launch_dir / "opencode.json"
+    target = launch_file_path(launch_dir, CONFIG_FILE)
     payload = json.dumps(data, indent=2)
     atomic_write_text(target, payload)  # never a half-written config
     log.info("Built launch config (project=%s, mcp=%s)",

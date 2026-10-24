@@ -10,6 +10,7 @@ Cover the own-server-only behaviour added in the lifecycle refactor:
 All WSL/HTTP work is mocked — these are pure-logic tests.
 """
 import json
+import os
 import shlex
 import threading
 import time
@@ -35,8 +36,8 @@ def _proc_probe_stdout(*, alive=True, cmdline=None, environ=None):
 
 def _pid_file(launch_dir: Path) -> Path:
     """THIS process's pid file in *launch_dir* (one per Studio process)."""
-    from procedo.studio.llm import server_manager
-    return server_manager.pid_file_path(launch_dir)
+    from procedo.studio.llm import launch_files
+    return launch_files.launch_file_path(launch_dir, launch_files.PID_FILE)
 
 
 def _mgr(tmp_path: Path) -> OpenCodeServerManager:
@@ -54,7 +55,7 @@ def test_serve_command_includes_opencode_config(tmp_path):
     mgr = OpenCodeServerManager(cfg)
     cmd = mgr._build_serve_command(5123)
     assert "OPENCODE_CONFIG=" in cmd
-    assert "/mnt/c/Users/me/.workflow_editor/opencode/launch/opencode.json" in cmd
+    assert f"/mnt/c/Users/me/.workflow_editor/opencode/launch/opencode-{os.getpid()}.json" in cmd
     assert "OPENCODE_ENABLE_EXA=1" in cmd
     assert "opencode serve --port 5123" in cmd
 
@@ -69,7 +70,7 @@ def test_serve_command_omits_config_without_launch_dir():
 def test_serve_command_translates_posix_launch_dir():
     cfg = OpenCodeConfig(working_directory="/mnt/c/foo/launch")
     cmd = OpenCodeServerManager(cfg)._build_serve_command(7000)
-    assert "OPENCODE_CONFIG=/mnt/c/foo/launch/opencode.json" in cmd
+    assert f"OPENCODE_CONFIG=/mnt/c/foo/launch/opencode-{os.getpid()}.json" in cmd
 
 
 def test_serve_command_shell_quotes_spaced_launch_dir():
@@ -79,11 +80,11 @@ def test_serve_command_shell_quotes_spaced_launch_dir():
     cmd = OpenCodeServerManager(cfg)._build_serve_command(7100)
     # The config token is quoted as a single shell word; the raw space-bearing
     # path never appears unquoted.
-    assert "OPENCODE_CONFIG='/mnt/c/Users/John Doe/.workflow_editor/launch/opencode.json'" in cmd
+    cfg_wsl = f"/mnt/c/Users/John Doe/.workflow_editor/launch/opencode-{os.getpid()}.json"
+    assert f"OPENCODE_CONFIG='{cfg_wsl}'" in cmd
     # Round-trips through the shell lexer as ONE token (no split on the space).
     tokens = shlex.split(cmd)
-    assert "/mnt/c/Users/John Doe/.workflow_editor/launch/opencode.json" in \
-        [t.split("=", 1)[1] for t in tokens if t.startswith("OPENCODE_CONFIG=")]
+    assert cfg_wsl in [t.split("=", 1)[1] for t in tokens if t.startswith("OPENCODE_CONFIG=")]
 
 
 def test_serve_command_shell_quotes_metachar_hostname():
@@ -735,8 +736,8 @@ def test_stop_without_a_linux_pid_issues_no_name_kill(tmp_path, monkeypatch):
 
 def _another_studios_record(tmp_path, owner=777777, pid=5150, port=6060):
     """The pid file a SECOND Studio process (Windows pid *owner*) wrote in the shared dir."""
-    from procedo.studio.llm import server_manager
-    path = server_manager.pid_file_path(tmp_path, owner)
+    from procedo.studio.llm import launch_files
+    path = launch_files.launch_file_path(tmp_path, launch_files.PID_FILE, owner)
     path.write_text(json.dumps({"pid": pid, "port": port, "started_at": 0}), encoding="utf-8")
     return path
 
@@ -768,6 +769,117 @@ def test_sweep_kills_the_orphan_of_a_dead_studio(tmp_path):
         mgr._sweep_orphan()
     assert any("kill -TERM" in c and "t 5150" in c and "--port 6060 " in c for c in calls)
     assert not other.exists()
+
+
+def test_the_identity_check_matches_the_config_token_the_server_runs_with(tmp_path):
+    # The environ token a launched server carries is the serve command's OPENCODE_CONFIG
+    # after the shell unquotes it (a spaced path included): the sweep must call it OURS.
+    launch = tmp_path / "Studio data" / "launch"
+    mgr = _mgr(launch)
+    tokens = shlex.split(mgr._build_serve_command(5005))
+    environ = [t for t in tokens if t.startswith("OPENCODE_CONFIG=")]
+    assert environ == [f"OPENCODE_CONFIG={mgr._our_config_wsl_path()}"]
+    result = MagicMock()
+    result.stdout = _proc_probe_stdout(cmdline=["opencode", "serve", "--port", "5005"],
+                                       environ=environ)
+    with patch("procedo.studio.llm.server_manager.subprocess.run", return_value=result):
+        assert mgr._pid_is_our_opencode(4242) is PidIdentity.OURS
+        # Another Studio's server runs with ITS config: not ours unless we sweep its record.
+        assert mgr._pid_is_our_opencode(4242, 777777) is PidIdentity.NOT_OURS
+
+
+def test_the_sweep_identifies_a_dead_studio_s_server_by_that_studio_s_config(tmp_path):
+    from procedo.studio.llm import launch_files
+    mgr = _mgr(tmp_path)
+    other = _another_studios_record(tmp_path)
+    probe = MagicMock()
+    probe.stdout = _proc_probe_stdout(
+        cmdline=["opencode", "serve", "--port", "6060"],
+        environ=[f"OPENCODE_CONFIG={launch_files.config_wsl_path(tmp_path, 777777)}"])
+    gone = MagicMock()
+    gone.stdout = _proc_probe_stdout(alive=False)
+    calls = []
+
+    def fake_run(cmd, *a, **k):
+        calls.append(" ".join(cmd))
+        if "/proc/5150/environ" in cmd[-1]:
+            return probe if len([c for c in calls if "environ" in c]) == 1 else gone
+        return MagicMock()
+
+    with patch("procedo.studio.llm.server_manager.pid_alive", return_value=False), \
+         patch("procedo.studio.llm.server_manager.time.sleep"), \
+         patch("procedo.studio.llm.server_manager.subprocess.run", side_effect=fake_run):
+        mgr._sweep_orphan()
+    assert any("kill -TERM" in c and "t 5150" in c for c in calls)
+    assert not other.exists()
+
+
+def _launch_files(tmp_path, owner):
+    from procedo.studio.llm import launch_files
+    paths = [launch_files.launch_file_path(tmp_path, kind, owner) for kind in
+             (launch_files.PID_FILE, launch_files.CONFIG_FILE, launch_files.UNIVERSE_FILE)]
+    for path in paths:
+        path.write_text(json.dumps({"pid": 1}), encoding="utf-8")
+    return paths
+
+
+def test_the_sweep_removes_a_dead_studio_s_launch_files_and_the_legacy_shared_ones(tmp_path):
+    from procedo.studio.llm import launch_files
+    mgr = _mgr(tmp_path)
+    dead, live = 777777, 888888
+    dead_files = _launch_files(tmp_path, dead)
+    live_files = _launch_files(tmp_path, live)
+    own_config = launch_files.launch_file_path(tmp_path, launch_files.CONFIG_FILE)
+    own_config.write_text("{}", encoding="utf-8")
+    legacy = [tmp_path / name for name in ("opencode.pid", "opencode.json", "run_skill_universe.json")]
+    for path in legacy:
+        path.write_text("{}", encoding="utf-8")
+    with patch("procedo.studio.llm.server_manager.pid_alive", side_effect=lambda pid: pid == live), \
+         patch.object(mgr, "_pid_is_our_opencode", return_value=PidIdentity.NOT_OURS):
+        mgr._sweep_orphan()
+    assert [p.exists() for p in dead_files] == [False, False, False]
+    assert all(p.exists() for p in live_files)
+    assert own_config.exists()  # built for the server about to start
+    assert not any(p.exists() for p in legacy)
+
+
+def test_a_dead_studio_s_config_stays_while_its_server_record_does(tmp_path):
+    # An inconclusive identity keeps the record for the next sweep: its files stay with it.
+    mgr = _mgr(tmp_path)
+    files = _launch_files(tmp_path, 777777)
+    with patch("procedo.studio.llm.server_manager.pid_alive", return_value=False), \
+         patch.object(mgr, "_pid_is_our_opencode", return_value=PidIdentity.UNKNOWN):
+        mgr._sweep_orphan()
+    assert all(p.exists() for p in files)
+
+
+def test_removing_a_studio_s_launch_files_keeps_its_server_record_and_other_studios_files(tmp_path):
+    from procedo.studio.llm import launch_files
+    own = _launch_files(tmp_path, os.getpid())
+    other = _launch_files(tmp_path, 777777)
+    launch_files.remove_launch_files(tmp_path)
+    assert [p.exists() for p in own] == [True, False, False]
+    assert all(p.exists() for p in other)
+
+
+def test_the_studio_exit_stops_the_server_and_removes_its_launch_files(tmp_path):
+    from types import SimpleNamespace
+
+    from procedo.studio.controllers.llm_server_controller import LLMServerController
+    own = _launch_files(tmp_path, os.getpid())
+    sm = MagicMock()
+    sm.config = OpenCodeConfig(working_directory=str(tmp_path))
+    LLMServerController._stop_current_server(SimpleNamespace(server_manager=sm))
+    sm.stop.assert_called_once()
+    assert [p.exists() for p in own] == [True, False, False]
+
+
+def test_the_self_spawned_server_is_pointed_at_this_studio_s_config(tmp_path):
+    from procedo.studio.llm.lifecycle_adapters import make_wsl_lifecycle
+    cfg = OpenCodeConfig(working_directory=str(tmp_path / "launch test"))
+    command = make_wsl_lifecycle(cfg)._command()[-1]
+    assert f"OPENCODE_CONFIG={_mgr(tmp_path / 'launch test')._our_config_wsl_path()}" in \
+        shlex.split(command)
 
 
 def test_an_old_manager_s_stop_keeps_the_new_manager_s_record(tmp_path):

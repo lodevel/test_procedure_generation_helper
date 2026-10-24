@@ -22,6 +22,7 @@ from procedo.core.off_gui import answer_to
 from .. import shell
 from ..llm import OpenCodeConfig
 from ..llm.backend_factory import BACKEND_TYPE_OPENCODE, BackendConfig, BackendFactory
+from ..llm.launch_files import remove_launch_files
 from ..llm.server_manager import OpenCodeServerManager
 
 if TYPE_CHECKING:
@@ -175,7 +176,8 @@ class LLMServerController(QObject):
         _pw_threading.Thread(target=sm.start, daemon=True).start()
 
     def _stop_current_server(self):
-        """Stop whatever server manager is CURRENT (stable cleanup target).
+        """Stop whatever server manager is CURRENT (stable cleanup target) and
+        delete this process's launch files (the app leaves no traces).
 
         Bound once via atexit in prewarm; reads self.server_manager
         at call time so a manager swap (Settings Save) can't leave a stale
@@ -188,6 +190,8 @@ class LLMServerController(QObject):
             except Exception:
                 log.debug('current server manager stop() failed',
                           exc_info=True)
+            if sm.config.working_directory:
+                remove_launch_files(sm.config.working_directory)
 
     def restart_for_project(self):
         """On project change, retire the old server and stand up a FRESH one

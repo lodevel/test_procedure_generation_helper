@@ -23,7 +23,15 @@ import requests
 
 from procedo.core.evidence_tree import pid_alive
 
-from .mcp_config import win_to_wsl_path
+from .launch_files import (
+    PID_FILE,
+    config_wsl_path,
+    launch_file_owners,
+    launch_file_path,
+    remove_launch_files,
+    remove_legacy_launch_files,
+    unlink_quietly,
+)
 from .opencode_backend import OpenCodeConfig, safe_wsl_cwd
 from .server_health import (
     ServerError,
@@ -34,15 +42,6 @@ from .server_health import (
 )
 
 log = logging.getLogger(__name__)
-
-
-def pid_file_path(launch_dir, owner: Optional[int] = None) -> Path:
-    """The pid file of the Studio process *owner* (Windows pid; default THIS one) in
-    *launch_dir*: ``opencode-<owner>.pid``. One per Studio process, because every Studio
-    process of the user shares the launch dir (Bench starts one per "Open in Studio"): a
-    process writes only its own record, and its run_skill MCP server reads its server's
-    port from it."""
-    return Path(launch_dir) / f"opencode-{os.getpid() if owner is None else owner}.pid"
 
 
 class PidIdentity(Enum):
@@ -436,8 +435,8 @@ class OpenCodeServerManager:
           tool for non-OpenCode providers. The tool is only EXPOSED per-request
           via the message body's ``tools`` override, so this is availability,
           not usage.
-        - ``OPENCODE_CONFIG=<launch_dir_wsl>/opencode.json`` (C1) points OpenCode
-          at OUR derived launch config EXPLICITLY — we do NOT rely on cwd, which
+        - ``OPENCODE_CONFIG=<launch_dir_wsl>/opencode-<pid>.json`` (C1) points OpenCode
+          at THIS process's derived launch config EXPLICITLY — we do NOT rely on cwd, which
           was the likely cause of bare config-less servers. The launch dir comes
           from ``config.working_directory`` (a Windows path set by main_window to
           ``build_launch_config``'s return), translated to its ``/mnt/c`` WSL
@@ -449,9 +448,8 @@ class OpenCodeServerManager:
         # can neither break the command nor inject a second one. The env-var
         # names + `opencode serve` literal are fixed and need no quoting.
         env = "OPENCODE_ENABLE_EXA=1 "
-        launch_dir = self._config.working_directory
-        if launch_dir:
-            cfg_wsl = win_to_wsl_path(str(launch_dir)).rstrip("/") + "/opencode.json"
+        cfg_wsl = self._our_config_wsl_path()
+        if cfg_wsl:
             env += f"OPENCODE_CONFIG={shlex.quote(cfg_wsl)} "
         return (
             f"echo {self._PID_MARKER}$$ >&2; "
@@ -725,24 +723,24 @@ class OpenCodeServerManager:
     #
     # On a clean exit ``stop()`` tears the process down. But a crash / hard kill
     # of the editor can leave the Linux-side ``opencode serve`` alive. Each Studio
-    # process records ITS server's Linux pid+port in ``pid_file_path`` (one file
+    # process records ITS server's Linux pid+port in its pid file (``launch_file_path``, one
     # per Studio process) as soon as the spawn prints it, and at the START of the
     # next ``start()`` the records of DEAD Studio processes (and our own) are read
     # back and that process killed — NEVER a live Studio's server, and
     # ONLY after confirming the live pid is an ``opencode serve`` launched
-    # with OUR ``OPENCODE_CONFIG`` (the launch-dir opencode.json), checked
+    # with that process's ``OPENCODE_CONFIG`` (``config_wsl_path``), checked
     # against /proc cmdline+environ. We NEVER pkill-by-name blindly: the recorded
     # pid may have been recycled to an unrelated process, and the user may run
     # their own opencode pointed at a DIFFERENT config.
     # ------------------------------------------------------------------ #
 
     def _pid_file_path(self) -> Optional[Path]:
-        """Path to OUR pid file (``pid_file_path``) or ``None`` when no launch dir
+        """Path to OUR pid file (``launch_file_path``) or ``None`` when no launch dir
         is configured (the file lives beside the derived config)."""
         launch_dir = self._config.working_directory
         if not launch_dir:
             return None
-        return pid_file_path(launch_dir)
+        return launch_file_path(launch_dir, PID_FILE)
 
     def _write_pid_file(self, pid: int, port: int) -> None:
         """Record OUR spawned server as JSON ``{pid, port, started_at}`` so a
@@ -770,10 +768,7 @@ class OpenCodeServerManager:
         data = self._read_pid_file(path)
         if data is not None and data["pid"] != pid:
             return
-        try:
-            path.unlink(missing_ok=True)
-        except Exception as e:  # noqa: BLE001 — best-effort
-            log.debug(f"Could not remove pid file {path}: {e}")
+        unlink_quietly(path)
 
     def _read_pid_file(self, path: Optional[Path] = None) -> Optional[dict]:
         """Read a pid file (*path*, default OUR own), or ``None`` when it is absent /
@@ -789,15 +784,16 @@ class OpenCodeServerManager:
             return None
         return data
 
-    def _our_config_wsl_path(self) -> Optional[str]:
-        """The WSL ``OPENCODE_CONFIG`` path THIS manager launches with
-        (``<launch_dir_wsl>/opencode.json``), or ``None`` when no launch dir is
-        set. This is OUR launch identity: the orphan sweep requires the recorded
-        pid's cmdline/environ to carry exactly this path before it kills."""
+    def _our_config_wsl_path(self, owner: Optional[int] = None) -> Optional[str]:
+        """The WSL ``OPENCODE_CONFIG`` path the Studio process *owner* (default THIS
+        one) launches with in our launch dir (``config_wsl_path``), or ``None`` when
+        no launch dir is set. This is a server's launch identity: the orphan sweep
+        requires the recorded pid's cmdline/environ to carry exactly the path of the
+        record's owner before it kills."""
         launch_dir = self._config.working_directory
         if not launch_dir:
             return None
-        return win_to_wsl_path(str(launch_dir)).rstrip("/") + "/opencode.json"
+        return config_wsl_path(launch_dir, owner)
 
     # Sentinels the identity probe emits so we can tell a DEAD pid apart from a
     # WSL-level read failure: a clean run prints ALIVE/DEAD; if neither shows up
@@ -806,11 +802,11 @@ class OpenCodeServerManager:
     _ID_DEAD = "__OC_DEAD__"
     _ID_SEP = "__OC_ENV__"
 
-    def _pid_is_our_opencode(self, pid: int) -> "PidIdentity":
+    def _pid_is_our_opencode(self, pid: int, owner: Optional[int] = None) -> "PidIdentity":
         """Tri-state identity of the recorded ``pid`` (a Linux pid) in WSL.
 
         - ``OURS``: the LIVE process is an ``opencode serve`` AND was launched
-          with OUR ``OPENCODE_CONFIG`` (the launch-dir ``opencode.json``),
+          with the ``OPENCODE_CONFIG`` of the record's *owner* (default us),
           matched as an EXACT token (not a substring) against its cmdline and
           environ — so a sibling config like ``<our_cfg>.backup`` never matches
           and the USER's own opencode at a DIFFERENT config is spared.
@@ -823,7 +819,7 @@ class OpenCodeServerManager:
         When this manager has no launch dir (no config identity to assert), we
         fall back to a bare ``opencode serve`` token check — the strongest
         marker available, and the pid file is per-launch-dir anyway."""
-        our_cfg = self._our_config_wsl_path()
+        our_cfg = self._our_config_wsl_path(owner)
         # Probe pid liveness explicitly (ALIVE/DEAD marker) so a dead pid is a
         # DEFINITE verdict, and emit cmdline + environ NUL-delimited so we can
         # split into exact tokens. One wsl.exe round-trip.
@@ -903,27 +899,30 @@ class OpenCodeServerManager:
         return False
 
     def _sweep_orphan(self) -> None:
-        """Sweep the records of Studio processes that are gone (and our own).
+        """Sweep the records of Studio processes that are gone (and our own), then
+        the other launch files of a gone process whose record is gone, and the
+        files every Studio process shared before each got its own.
 
-        A record whose owner (the Windows pid in its name) is alive and not us
-        belongs to ANOTHER live Studio: its file and its server are left alone.
-        A reused owner pid reads as alive, so that record is skipped too (fail
-        safe: a missed orphan, never a killed live server)."""
+        Launch files whose owner (the Windows pid in their name) is alive and not
+        us belong to ANOTHER live Studio: they and its server are left alone. A
+        reused owner pid reads as alive, so those are skipped too (fail safe: a
+        missed orphan, never a killed live server)."""
         launch_dir = self._config.working_directory
         if not launch_dir:
             return
-        for path in sorted(Path(launch_dir).glob("opencode-*.pid")):
-            owner = path.stem.split("-", 1)[1]
-            if not owner.isdigit():
+        remove_legacy_launch_files(launch_dir)
+        for owner in launch_file_owners(launch_dir):
+            if owner != os.getpid() and pid_alive(owner):
+                log.debug(f"Studio process {owner} is alive; leaving its server alone")
                 continue
-            if int(owner) != os.getpid() and pid_alive(int(owner)):
-                log.debug(f"{path.name} belongs to a live Studio; leaving its server alone")
-                continue
+            path = launch_file_path(launch_dir, PID_FILE, owner)
             data = self._read_pid_file(path)
             if data is not None:
-                self._sweep_record(path, data)
+                self._sweep_record(path, data, owner)
+            if owner != os.getpid() and not path.exists():
+                remove_launch_files(launch_dir, owner)
 
-    def _sweep_record(self, path: Path, data: dict) -> None:
+    def _sweep_record(self, path: Path, data: dict, owner: int) -> None:
         """Kill the leftover ``opencode serve`` one swept record names.
 
         Tri-state gated (MAJOR-1): we only ever kill on a conclusive ``OURS``,
@@ -940,7 +939,7 @@ class OpenCodeServerManager:
         pid = data["pid"]
         port = data.get("port") if isinstance(data.get("port"), int) else 0
 
-        identity = self._pid_is_our_opencode(pid)
+        identity = self._pid_is_our_opencode(pid, owner)
         if identity is PidIdentity.UNKNOWN:
             # Inconclusive — could not read /proc (timeout / WSL hiccup). Keep
             # the pid file and retry on the next launch; never lose an orphan.
@@ -966,7 +965,7 @@ class OpenCodeServerManager:
         # gone or was recycled to a different process in the TERM→wait gap, this
         # is no longer OURS and we MUST NOT -9 (PID-reuse TOCTOU). Only escalate
         # on a fresh, conclusive OURS.
-        post = self._pid_is_our_opencode(pid)
+        post = self._pid_is_our_opencode(pid, owner)
         if post is PidIdentity.OURS:
             self._signal_linux_tree(pid, "KILL", port)
             # We forcibly -9'd OUR process — the pid file has served its purpose.

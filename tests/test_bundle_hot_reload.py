@@ -139,7 +139,8 @@ def test_reload_rebuilds_gating_from_changed_defaults(tmp_path, monkeypatch):
     mgr = TaskConfigManager(fallback_path=tmp_path / "none.json",
                             project_root=root)
 
-    assert set(mgr.get_task_ids_for_tab("text_json")) == {"task_a", "task_old"}
+    # The bundle's tasks, then the editor's own (listed, not runnable).
+    assert mgr.get_task_ids_for_tab("text_json")[:2] == ["task_a", "task_old"]
     assert mgr.get_task_config("text_json", "task_a").prompt_template == "PROMPT V1"
 
     fired = []
@@ -150,8 +151,8 @@ def test_reload_rebuilds_gating_from_changed_defaults(tmp_path, monkeypatch):
         root, [_task("task_a", "PROMPT V2"), _task("task_new", "NEW")])
     mgr.reload(root)
 
-    ids = set(mgr.get_task_ids_for_tab("text_json"))
-    assert ids == {"task_a", "task_new"}
+    ids = mgr.get_task_ids_for_tab("text_json")
+    assert ids[:2] == ["task_a", "task_new"]
     assert "task_old" not in ids
     assert mgr.get_task_config("text_json", "task_a").prompt_template == "PROMPT V2"
     assert mgr.get_task_config("text_json", "task_new").prompt_template == "NEW"

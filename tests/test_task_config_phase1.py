@@ -5,10 +5,10 @@ refactor (see PLAN_workflows_to_project_config.md):
 
 - Unknown ``workflows.<tab>`` keys (e.g. a future ``validators`` block)
   survive load+save verbatim (Codex Q3).
-- Project mode reads ``<project>/config/config.json:workflows`` and falls
-  back to the shared repo file, then to ``DEFAULT_TASK_CONFIGS``.
-- A per-task ``button_label`` override on top of the fallback chain shows
-  up for that task while the rest stay at the fallback's values.
+- Project mode lists ``<project>/config/config.json:workflows`` over the
+  editor defaults (the shared repo file is read only without a project);
+  a tab with no runnable task lists none.
+- A per-task ``button_label`` override shows up for that task.
 - ``reload(project_root)`` clears the cache before re-reading (no leak
   from the previous project's state).
 - The migration ``<project>/config/tab_contexts.json`` →
@@ -92,7 +92,7 @@ def test_unknown_workflows_keys_survive_round_trip(tmp_path):
                         "id": "derive_json_from_text",
                         "name": "Derive JSON from Text",
                         "button_label": "Override",
-                        "prompt_template": None,
+                        "prompt_template": "P",
                         "enabled": True,
                         "max_validator_attempts": None,
                     },
@@ -133,7 +133,9 @@ def test_unknown_workflows_keys_survive_round_trip(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_project_with_no_workflows_uses_fallback(tmp_path):
+def test_project_with_no_runnable_task_lists_none(tmp_path):
+    """No bundle, no workflows: the editor defaults have no prompt, so no tab
+    lists a task (the shared fallback file is not read in project mode)."""
     fallback = _shared_fallback(tmp_path)
     root = _project_root(tmp_path)
     (root / "config" / "config.json").write_text(
@@ -142,9 +144,8 @@ def test_project_with_no_workflows_uses_fallback(tmp_path):
     )
     mgr = TaskConfigManager(fallback, project_root=root)
 
-    tasks = mgr.get_all_tasks_for_tab("text_json")
-    labels = [t.button_label for t in tasks]
-    assert labels == ["Text → JSON", "Review JSON"], "fallback labels used"
+    for tab_id in DEFAULT_TASK_CONFIGS:
+        assert mgr.get_all_tasks_for_tab(tab_id) == [], tab_id
 
 
 def test_project_override_per_task_button_label(tmp_path):
@@ -158,7 +159,7 @@ def test_project_override_per_task_button_label(tmp_path):
                         "id": "derive_json_from_text",
                         "name": "Derive JSON from Text",
                         "button_label": "CUSTOM Text→JSON",
-                        "prompt_template": None,
+                        "prompt_template": "P",
                         "enabled": True,
                     },
                 ],
@@ -170,16 +171,17 @@ def test_project_override_per_task_button_label(tmp_path):
     task = mgr.get_task_config("text_json", "derive_json_from_text")
     assert task.button_label == "CUSTOM Text→JSON", "override wins"
 
-    # All other defaults still come through via _fill_missing_defaults.
+    # The editor's other text_json tasks are listed too; the other tabs have no
+    # runnable task, so they list none.
+    assert len(mgr.get_all_tasks_for_tab("text_json")) == len(DEFAULT_TASK_CONFIGS["text_json"])
     other_tabs = [tid for tid in DEFAULT_TASK_CONFIGS if tid != "text_json"]
     for tid in other_tabs:
-        assert mgr.get_all_tasks_for_tab(tid), f"tab {tid} populated from defaults"
+        assert mgr.get_all_tasks_for_tab(tid) == [], tid
 
 
 def test_no_files_anywhere_uses_baked_defaults(tmp_path):
     fallback = tmp_path / "does_not_exist.json"
-    root = _project_root(tmp_path)
-    mgr = TaskConfigManager(fallback, project_root=root)
+    mgr = TaskConfigManager(fallback)  # no project: the baked-in defaults
     for tab_id, defaults in DEFAULT_TASK_CONFIGS.items():
         tasks = mgr.get_all_tasks_for_tab(tab_id)
         assert len(tasks) == len(defaults)
@@ -203,6 +205,7 @@ def test_reload_clears_cache_and_switches_project(tmp_path):
                         "id": "derive_json_from_text",
                         "name": "Derive JSON from Text",
                         "button_label": "Label A",
+                        "prompt_template": "P",
                     },
                 ],
             },
@@ -219,6 +222,7 @@ def test_reload_clears_cache_and_switches_project(tmp_path):
                         "id": "derive_json_from_text",
                         "name": "Derive JSON from Text",
                         "button_label": "Label B",
+                        "prompt_template": "P",
                     },
                 ],
             },
@@ -232,12 +236,12 @@ def test_reload_clears_cache_and_switches_project(tmp_path):
     assert mgr.get_task_config("text_json", "derive_json_from_text").button_label == "Label B"
     assert mgr.project_root == proj_b
 
-    # Switching to a project with no workflows key falls back to the shared file.
+    # Switching to a project with no workflows key and no bundle lists no task.
     proj_c = tmp_path / "proj_c"
     (proj_c / "config").mkdir(parents=True)
     (proj_c / "config" / "config.json").write_text("{}", encoding="utf-8")
     mgr.reload(proj_c)
-    assert mgr.get_task_config("text_json", "derive_json_from_text").button_label == "Text → JSON"
+    assert mgr.get_all_tasks_for_tab("text_json") == []
 
 
 def test_reload_fires_callbacks(tmp_path):
@@ -271,6 +275,7 @@ def test_migrates_project_tab_contexts(tmp_path):
                     "id": "derive_json_from_text",
                     "name": "Derive JSON from Text",
                     "button_label": "Legacy Label",
+                    "prompt_template": "P",
                 },
             ],
             "future_block": {"keep": "me"},
@@ -337,7 +342,8 @@ def test_migration_idempotent_when_workflows_already_present(tmp_path):
     project_cfg.write_text(json.dumps({
         "workflows": {
             "text_json": {"tasks": [
-                {"id": "derive_json_from_text", "name": "n", "button_label": "Existing"},
+                {"id": "derive_json_from_text", "name": "n", "button_label": "Existing",
+                 "prompt_template": "P"},
             ]},
         },
     }), encoding="utf-8")
@@ -368,7 +374,8 @@ def test_selected_rules_lifted_onto_each_task(tmp_path):
             "text_json": {
                 "selected_rules": ["x.md", "y.md"],
                 "tasks": [
-                    {"id": "derive_json_from_text", "name": "n", "button_label": "L1"},
+                    {"id": "derive_json_from_text", "name": "n", "button_label": "L1",
+                     "prompt_template": "P"},
                     {"id": "review_json", "name": "n", "button_label": "L2",
                      "selected_rules": ["override.md"]},
                 ],
@@ -385,9 +392,12 @@ def test_selected_rules_lifted_onto_each_task(tmp_path):
 def test_set_selected_rules_for_tab_propagates(tmp_path):
     fallback = _shared_fallback(tmp_path)
     root = _project_root(tmp_path)
+    (root / "config" / "config.json").write_text(json.dumps({"workflows": {"text_json": {
+        "tasks": [{"id": "derive_json_from_text", "prompt_template": "P"}]}}}), encoding="utf-8")
     mgr = TaskConfigManager(fallback, project_root=root)
 
     mgr.set_selected_rules_for_tab("text_json", ["a.md", "b.md"])
+    assert mgr.get_all_tasks_for_tab("text_json")
     for task in mgr.get_all_tasks_for_tab("text_json"):
         assert task.selected_rules == ["a.md", "b.md"]
 

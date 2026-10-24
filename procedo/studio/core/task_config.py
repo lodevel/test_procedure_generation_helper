@@ -2,10 +2,11 @@
 Task Configuration Manager — per-project workflow config.
 
 Stores LLM task definitions and chat configurations under the project's
-``config/config.json:workflows`` key. Falls back to a shared repo file
-(``external/test_procedure_generation_helper/config/tab_contexts.json``)
-when a project has no ``workflows`` section, and finally to baked-in
-``DEFAULT_TASK_CONFIGS`` when neither file is available.
+``config/config.json:workflows`` key; a project's tasks are the host's
+``workflow_defaults.effective_workflows`` of its bundle and that key, the
+listing Project Configuration shows too. Without a project, a shared repo file
+(``external/test_procedure_generation_helper/config/tab_contexts.json``) is
+read, and the baked-in ``DEFAULT_TASK_CONFIGS`` when it is absent.
 
 Schema (project ``config.json``):
 
@@ -49,7 +50,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from procedo.core import config_manager
 from procedo.core.paths import exists_quiet
-from procedo.core.workflow_defaults import merge_workflows
+from procedo.core.workflow_defaults import effective_workflows
 
 from . import task_config_defaults, task_config_migrations
 from .fileio import atomic_write_text
@@ -75,10 +76,9 @@ class TaskConfigManager:
       writes the given path as a self-contained tab-contexts JSON. Used
       by unit tests and the repo's shared fallback.
     * **Project mode** — ``TaskConfigManager(fallback_path, project_root)``.
-      Reads ``<project>/config/config.json:workflows`` (falling back to
-      ``fallback_path`` and finally to ``DEFAULT_TASK_CONFIGS``). Writes
-      the ``workflows`` section back into the project's ``config.json``
-      using preserve-and-overlay.
+      Lists ``effective_workflows`` of the project's bundle and its
+      ``<project>/config/config.json:workflows``. Writes the ``workflows``
+      section back into the project's ``config.json`` using preserve-and-overlay.
 
     Call ``reload(project_root)`` to switch projects after construction.
     """
@@ -112,11 +112,10 @@ class TaskConfigManager:
         # leaking into project config (Codex H2). Empty in legacy mode.
         self._project_workflow_snapshot: Dict[str, Any] = {}
 
-        # Pack defaults indexed for snapshot-stamp filtering: stamping a
-        # task identical to its pack default is a no-op (no leak via
-        # bulk callers like SettingsDialog's set_all_tasks_for_tab,
-        # Codex Q1). Populated at load time from
-        # ``task_config_defaults.load_pack_workflow_defaults``.
+        # Inherited (editor + bundle) tasks indexed for snapshot-stamp
+        # filtering: stamping a task identical to its inherited default is a
+        # no-op (no leak via bulk callers like set_all_tasks_for_tab, Codex Q1).
+        # Populated at load time.
         self._pack_task_dicts_by_tab: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
         # Subscribers notified after ``reload()``. Lets the main window
@@ -151,12 +150,7 @@ class TaskConfigManager:
         """Label for the data source currently feeding the caches. Diagnostic."""
         if self._project_root is None:
             return f"file:{self._fallback_path}"
-        proj = self._project_config_path()
-        if proj and exists_quiet(proj):
-            data = config_manager.read_unified_config(proj.parent)
-            if isinstance(data, dict) and isinstance(data.get("workflows"), dict):
-                return f"project:{proj}"
-        return f"fallback:{self._fallback_path}"
+        return f"project:{self._project_config_path()}"
 
     @property
     def project_root(self) -> Optional[Path]:
@@ -174,29 +168,15 @@ class TaskConfigManager:
         takes it explicitly).
         """
         # Project mode: first migrate any legacy tab_contexts.json, then
-        # load pack defaults + project workflows and merge them.
+        # list the bundle + project workflows the way Project Configuration does.
         if self._project_root is not None:
             task_config_migrations.migrate_project_tab_contexts(self._project_root)
 
-            pack_defaults = task_config_defaults.load_pack_workflow_defaults(self._project_root)
-            # Pack defines the runtime task universe. Editor provides
-            # per-field fallback ONLY for tasks pack declares (so sparse
-            # {id, prompt_template} bundle entries inherit name/button_label
-            # from the editor's baked-in defaults). Editor-only tasks are
-            # NOT pulled into the runtime — pack omitting a task means it
-            # doesn't exist at runtime.
-            editor_plus_pack = task_config_defaults.apply_editor_field_fallback(pack_defaults)
+            bundle = task_config_defaults.load_pack_workflow_defaults(self._project_root)
             self._pack_task_dicts_by_tab = {}
-            for tab_id, tab_cfg in editor_plus_pack.items():
-                if not isinstance(tab_cfg, dict):
-                    continue
-                pack_tasks = tab_cfg.get("tasks", [])
-                if not isinstance(pack_tasks, list):
-                    continue
-                index: Dict[str, Dict[str, Any]] = {}
-                for t in pack_tasks:
-                    if isinstance(t, dict) and isinstance(t.get("id"), str):
-                        index[t["id"]] = deepcopy(t)
+            for tab_id, tab_cfg in effective_workflows(bundle, {}).items():
+                index = {t["id"]: t for t in tab_cfg.get("tasks") or []
+                         if isinstance(t, dict) and isinstance(t.get("id"), str)}
                 if index:
                     self._pack_task_dicts_by_tab[tab_id] = index
 
@@ -214,66 +194,39 @@ class TaskConfigManager:
             # never leak into project config.json (Codex H2).
             self._project_workflow_snapshot = deepcopy(project_workflows)
 
-            if pack_defaults or project_workflows:
-                # The host's merge (editor_baked_in < pack < project), on a base
-                # that holds the bundle-declared tasks only — unlike the host's
-                # ``merged_layered_view``, which keeps the editor-only tasks too.
-                # Reuses ``editor_plus_pack`` (built above for the stamp filter)
-                # so both paths see the same baseline.
-                merged = merge_workflows(editor_plus_pack, project_workflows)
-                # Run button-label migration on the merged dict so older
-                # per-project configs upgrade cleanly. Also migrate the
-                # snapshot so future saves persist the upgraded labels.
-                task_config_migrations.migrate_button_labels_in_place(merged)
-                task_config_migrations.migrate_button_labels_in_place(self._project_workflow_snapshot)
-                self._populate_caches(merged, drop_tab_selected_rules=True)
-                task_config_defaults.fill_missing_defaults(self._task_configs, self._chat_configs)
-                return
+            merged = effective_workflows(bundle, project_workflows)
+            # Run button-label migration on the merged dict so older
+            # per-project configs upgrade cleanly. Also migrate the
+            # snapshot so future saves persist the upgraded labels.
+            task_config_migrations.migrate_button_labels_in_place(merged)
+            task_config_migrations.migrate_button_labels_in_place(self._project_workflow_snapshot)
+            self._populate_caches(merged, drop_tab_selected_rules=True)
+            return
 
-        # Fall back to the repo-shared tab_contexts file.
+        # No project: the repo-shared tab_contexts file, which this mode owns.
         if self._fallback_path.exists():
             try:
                 with open(self._fallback_path, "r", encoding="utf-8") as f:
                     raw = json.load(f)
                 migrated = task_config_migrations.migrate_button_labels_in_place(raw)
-                # In legacy mode (no project_root) we own the fallback file,
-                # so we want round-trip fidelity for the tab-level
-                # ``selected_rules`` field. In project mode we lift+drop.
-                drop_tab_selected = self._project_root is not None
-                self._populate_caches(
-                    raw, drop_tab_selected_rules=drop_tab_selected
-                )
+                # Round-trip fidelity for the tab-level ``selected_rules`` field.
+                self._populate_caches(raw, drop_tab_selected_rules=False)
                 task_config_defaults.fill_missing_defaults(self._task_configs, self._chat_configs)
-                # Persist the in-place migration only when we own the file
-                # (legacy single-file mode). In project mode the shared
-                # fallback is read-only.
-                if migrated and self._project_root is None:
+                if migrated:
                     self._save_config_internal()
                 return
             except json.JSONDecodeError as e:
                 log.error("Corrupted config file %s: %s.", self._fallback_path, e)
-                if self._project_root is None:
-                    # Legacy mode: we own the file — back it up and rebuild.
-                    self._auto_recover_config()
-                else:
-                    # Project mode: shared fallback is read-only. Use
-                    # in-memory defaults; don't touch the repo file.
-                    log.warning("Shared fallback %s unreadable in project mode; "
-                                "using in-memory defaults.", self._fallback_path)
-                    self._initialize_defaults()
+                self._auto_recover_config()  # back it up and rebuild
                 return
             except Exception as e:
                 log.error("Error loading config from %s: %s.",
                           self._fallback_path, e, exc_info=True)
-                if self._project_root is None:
-                    self._auto_recover_config()
-                else:
-                    self._initialize_defaults()
+                self._auto_recover_config()
                 return
 
         # No file anywhere — initialize from baked-in defaults.
-        log.info("No config file present (project=%s, fallback=%s); using defaults.",
-                 self._project_root, self._fallback_path)
+        log.info("No config file present (fallback=%s); using defaults.", self._fallback_path)
         self._initialize_defaults()
 
     # ------------------------------------------------------------------

@@ -2,11 +2,12 @@
 
 Characterization of ``TaskConfigManager``'s three-layer load on a realistic
 fixture: the host's real ``default_workflows.json`` (editor layer), a bundle
-``defaults.json:workflows`` and a project ``config.json:workflows``. The merge
-itself is the host's ``workflow_defaults.merge_workflows``; Studio's own
-rules sit around it (bundle-declared tasks only, editor field fallback,
-``_fill_missing_defaults``). Any change to what a Studio tab lists, runs or
-shows makes this fail.
+``defaults.json:workflows`` and a project ``config.json:workflows``. The listing is the
+host's ``workflow_defaults.effective_workflows``, the one Project Configuration
+shows too: a bundle-declared tab lists the editor-only tasks as well, a tab
+with no runnable task lists none, and a bundle ``chat_config`` inherits no
+editor system prompt. Any change to what a Studio tab lists, runs or shows
+makes this fail.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ _BUNDLE_WORKFLOWS = {
         "tasks": [
             {"id": "generate_code_from_json", "prompt_template": "BUNDLE codegen"},
         ],
+        "chat_config": {"enabled": False},
     },
     "bundle_tab": {
         "tasks": [{"id": "t", "name": "T", "button_label": "T", "prompt_template": "P"}],
@@ -90,20 +92,19 @@ def test_studio_layered_load_is_pinned(tmp_path):
         ("derive_json_from_text", "Derive JSON from Text", "Text → JSON", "BUNDLE derive",
          True, None),
         ("bundle_only", "Bundle only", "B", "BUNDLE only", True, None),
+        # The editor-only tasks of a bundle-declared tab are listed (no prompt: not runnable).
+        ("render_text_from_json", "Render Text from JSON", "JSON → Text", None, True, None),
+        ("review_text_procedure", "Review Text Procedure", "Review Text", None, True, None),
+        ("review_text_vs_json", "Review Text vs JSON", "Check Text↔JSON", None, True, None),
     ]
-    assert _tasks(mgr, "json_code") == [
-        ("generate_code_from_json", "Generate Code from JSON", "JSON → Code", "BUNDLE codegen",
-         True, None),
-    ]
-    assert _tasks(mgr, "bundle_tab") == [("t", "T", "T", "P", True, None)]
-    # A tab the bundle declares no tasks for falls back to the editor defaults
-    # (no prompt: listed but not invocable).
-    assert [t[0] for t in _tasks(mgr, "text_only")] == ["review_text_procedure"]
-    assert not mgr.is_task_invocable("text_only", "review_text_procedure")
-    assert _tasks(mgr, "traceability") == []
-    # Editor-only tasks of a bundle-declared tab are NOT run by Studio.
-    assert mgr.get_task_config("text_json", "render_text_from_json").prompt_template is None
     assert not mgr.is_task_invocable("text_json", "render_text_from_json")
+    assert [t[0] for t in _tasks(mgr, "json_code")] == [
+        "generate_code_from_json", "derive_json_from_code", "review_json", "review_code",
+        "review_code_vs_json"]
+    assert _tasks(mgr, "bundle_tab") == [("t", "T", "T", "P", True, None)]
+    # A tab with no runnable task lists none.
+    assert _tasks(mgr, "text_only") == []
+    assert _tasks(mgr, "traceability") == []
 
     assert mgr.get_validator_specs_for_tab("text_json") == [
         {"id": "bundle.v2", "label": "V2", "enabled": False},
@@ -113,7 +114,8 @@ def test_studio_layered_load_is_pinned(tmp_path):
     assert mgr.get_validator_specs_for_tab("json_code") == []
 
     assert _chat(mgr, "text_json") == (False, "PROJECT chat")
-    assert _chat(mgr, "json_code") == (True, _EDITOR_CHAT)
+    # A partial bundle chat_config inherits no editor system prompt.
+    assert _chat(mgr, "json_code") == (False, "")
     assert _chat(mgr, "text_only") == (True, _EDITOR_CHAT)
     assert _chat(mgr, "traceability") == (True, "")
 

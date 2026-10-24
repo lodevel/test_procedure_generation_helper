@@ -2053,7 +2053,7 @@ class TimeoutRetargetTests(_BenchBase):
 # Hold resolution (owner ruling 2026-08-27): PSU1 for a given op is whatever
 # its CURRENT address resolves to — _ensure_held folds the op's OWN bench
 # dict to its canonical endpoint FIRST and binds the name to the instance
-# that endpoint resolves to (sibling _hold_resolution.py).
+# that endpoint resolves to (_resolve_hold in _safe_off.py).
 # ---------------------------------------------------------------------------
 
 

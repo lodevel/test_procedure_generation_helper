@@ -98,7 +98,7 @@ def _call(d: dict, req: dict) -> dict:
         return {"ok": False, "kind": "NoWorkDir", "error": f"no run folder to call in: {work_dir!r}"}
     try:
         with FunctionWorker(work_dir, once=True) as worker:
-            reading = make_call(document, d["_sib"]("_engine_ops").run_inputs(req), node_path, worker,
+            reading = make_call(document, d["_sib"]("_engine_ops_manual").run_inputs(req), node_path, worker,
                                 _check(d))
     except CallStopped as exc:
         return {"ok": False, "kind": "Stopped", "error": str(exc)}

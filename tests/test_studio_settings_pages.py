@@ -476,6 +476,7 @@ class _LifecycleBackend:
 
     def __init__(self, config, lifecycle, events):
         self._lifecycle, self.events = lifecycle, events
+        self.is_running = False  # as the real one: no session until started
 
     def start(self):
         from opencode_client.lifecycle import ServerUnavailable
@@ -483,6 +484,7 @@ class _LifecycleBackend:
             self.events.append(self._lifecycle.ensure_running())
         except ServerUnavailable:
             return False
+        self.is_running = True
         return True
 
     def send_request(self, request):
@@ -514,6 +516,34 @@ def test_the_chat_test_runs_on_the_manager_s_server_and_the_manager_stops_it_aft
 
     monkeypatch.setattr(package_lifecycle.subprocess, "Popen", popen)
     answer = probe.SettingsBackendProbe._run_test("opencode", None, "127.0.0.1", 5005, None)
+    assert spawned == []
     assert answer[0] == "information", answer
     assert events == ["start", "http://127.0.0.1:5005", "request", "stop"]
-    assert spawned == []
+
+
+def test_studio_exiting_while_a_test_connection_runs_stops_its_server(monkeypatch, tmp_path):
+    """The test runs on a daemon thread: the manager's stop is an exit hook while it runs,
+    and only then."""
+    from types import SimpleNamespace
+
+    from procedo.studio.dialogs import settings_backend_probe as probe
+    from procedo.studio.llm import opencode_backend, server_manager
+    hooks, seen = [], []
+    monkeypatch.setattr(probe, "atexit", SimpleNamespace(register=hooks.append, unregister=hooks.remove),
+                        raising=False)
+    monkeypatch.setattr(probe, "ensure_master_config", lambda seed_from=None: None)
+    monkeypatch.setattr(probe, "build_launch_config", lambda root, launch_dir=None: tmp_path)
+    monkeypatch.setattr(probe, "get_opencode_launch_test_dir", lambda: tmp_path)
+    monkeypatch.setattr(probe, "remove_launch_files", lambda d: None)
+
+    class _Booting(_RecordingManager):
+        def start(self):
+            seen.append(self.stop in hooks)  # Studio exits during the boot
+            return False
+
+    monkeypatch.setattr(server_manager, "OpenCodeServerManager", lambda config: _Booting(config, []))
+    monkeypatch.setattr(opencode_backend, "OpenCodeBackend", _LifecycleBackend)
+    answer = probe.SettingsBackendProbe._run_test("opencode", None, "127.0.0.1", 5005, None)
+    assert seen == [True]
+    assert hooks == []
+    assert answer[0] == "warning"

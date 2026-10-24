@@ -1,6 +1,8 @@
 """The Settings dialog's OpenCode server probes: Start server (relaunch it, poll until it
 answers) and Test connection (start a throwaway server, one real chat request)."""
 
+import atexit
+
 from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QMessageBox
 
@@ -284,15 +286,18 @@ class SettingsBackendProbe(QObject):
                 # The chat test then runs on that same server; try/finally so it
                 # is ALWAYS stopped by the manager that started it (it alone
                 # knows the server's Linux pid) and its launch_test pid file
-                # cleaned, even on an early-return warning path below.
-                if not mgr.start():
-                    st = mgr.last_status
-                    why = f"\n\n{st.message}" if st and not st.ok else ""
-                    return (
-                        "warning", "Test Connection",
-                        f"✗ Could not start OpenCode\n\nHost: {config.server_hostname}\nPort: {config.server_port}{why}"
-                    )
+                # cleaned, even on an early-return warning path below. This
+                # worker is a daemon thread: Studio exiting meanwhile stops it at
+                # exit (stop retires a boot still in flight).
+                atexit.register(mgr.stop)
                 try:
+                    if not mgr.start():
+                        st = mgr.last_status
+                        why = f"\n\n{st.message}" if st and not st.ok else ""
+                        return (
+                            "warning", "Test Connection",
+                            f"✗ Could not start OpenCode\n\nHost: {config.server_hostname}\nPort: {config.server_port}{why}"
+                        )
                     if not mgr.health_check():
                         return (
                             "warning", "Test Connection",
@@ -351,6 +356,7 @@ class SettingsBackendProbe(QObject):
                     )
                 finally:
                     mgr.stop()
+                    atexit.unregister(mgr.stop)
 
         except Exception as e:
             return ("critical", "Test Connection Failed", f"Error testing connection:\n\n{str(e)}")

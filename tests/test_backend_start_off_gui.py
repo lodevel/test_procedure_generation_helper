@@ -383,5 +383,5 @@ def test_an_opencode_factory_without_a_server_manager_spawns_no_server():
          patch("opencode_client.lifecycle.subprocess.Popen") as popen:
         backend = factory.create_backend(tab_id="text_json")
         backend.start()
-    assert isinstance(backend, NoneBackend)
     popen.assert_not_called()
+    assert isinstance(backend, NoneBackend)

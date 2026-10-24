@@ -170,7 +170,7 @@ class BackendFactory:
 
         Args:
             config: Backend configuration
-            server_manager: OpenCode server manager (required for OpenCode backend)
+            server_manager: The OpenCode server manager; None only for the "none" backend
         """
         self._config = config
         self._server_manager = server_manager

@@ -9,6 +9,7 @@ Cover the own-server-only behaviour added in the lifecycle refactor:
 
 All WSL/HTTP work is mocked — these are pure-logic tests.
 """
+import functools
 import json
 import os
 import shlex
@@ -897,10 +898,38 @@ def test_stop_keeps_the_record_when_wsl_exe_already_exited(tmp_path):
     mgr._server_process = _fake_spawn(["__OC_PID__31337\n"], alive=False)
     _write_record(mgr, 31337)  # what the launch's shell wrote
     mgr._start_stderr_drain(5005)
-    with patch("procedo.studio.llm.server_manager.subprocess.run") as run:
+    runs = []
+    with patch("procedo.studio.llm.server_manager.subprocess.run",
+               side_effect=lambda cmd, *a, **k: runs.append(list(cmd)) or _probe_result(
+                   cmdline=["opencode", "serve", "--port", "5005"],
+                   environ=[f"OPENCODE_CONFIG={mgr._orphans.our_config_wsl_path()}"])):
         mgr._stop_process()
-    run.assert_not_called()
+    assert _kill_runs(runs) == []
     assert mgr._orphans.read_pid_file()["pid"] == 31337
+
+
+def _probe_result(**probe):
+    result = MagicMock()
+    result.stdout = _proc_probe_stdout(**probe)
+    return result
+
+
+def test_a_stop_without_the_marker_drops_the_record_once_its_pid_is_gone(tmp_path, monkeypatch):
+    # Studio stops while its launch is still in .bashrc: no Linux pid to signal, so the record
+    # its launch wrote goes once that pid is gone, and stays while it is still our launch.
+    monkeypatch.setattr(OpenCodeServerManager, "_LINUX_PID_WAIT", 0.01)
+    mgr = _mgr(tmp_path)
+    for probe, kept in (({"alive": False}, False),
+                        ({"cmdline": ["bash", "-ic", mgr._build_serve_command(5005)]}, True)):
+        mgr._server_process = _fake_spawn([])
+        _write_record(mgr, 31337)  # what the launch's shell wrote
+        mgr._start_stderr_drain(5005)
+        runs = []
+        with patch("procedo.studio.llm.server_manager.subprocess.run",
+                   side_effect=lambda cmd, *a, **k: runs.append(list(cmd)) or _probe_result(**probe)):
+            mgr._stop_process()
+        assert _kill_runs(runs) == []
+        assert (mgr._orphans.read_pid_file() is not None) is kept
 
 
 def test_a_spawn_without_stderr_forgets_the_previous_spawn_s_pid(tmp_path):
@@ -923,6 +952,16 @@ def test_serve_command_prints_its_linux_pid_then_execs_opencode(tmp_path):
 # The launch writes its server's record before bash sources the .bashrc      #
 # --------------------------------------------------------------------------- #
 
+@functools.lru_cache(maxsize=None)
+def _wsl_shell_runs(wsl: str) -> bool:
+    """True when *wsl* runs a shell at all (a runner may have wsl.exe but no distro)."""
+    try:
+        return subprocess.run([wsl, "-e", "sh", "-c", "true"], capture_output=True,
+                              timeout=10).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def _real_shell(argv, home, bin_dir):
     """*argv* (a ``_serve_argv`` launch) for a real shell, HOME and PATH pointed at fakes:
     through wsl.exe on Windows (its ``-e`` kept), straight to a POSIX ``sh`` elsewhere."""
@@ -931,8 +970,8 @@ def _real_shell(argv, home, bin_dir):
            f"PATH={win_to_wsl_path(str(bin_dir))}:/usr/bin:/bin"]
     if os.name != "nt":
         return [*env, *argv[2:]]
-    if shutil.which(argv[0]) is None:
-        pytest.skip("needs wsl.exe")
+    if shutil.which(argv[0]) is None or not _wsl_shell_runs(argv[0]):
+        pytest.skip("needs WSL with a distro")
     return [argv[0], argv[1], *env, *argv[2:]]
 
 
@@ -947,6 +986,7 @@ def _fake_home_and_opencode(tmp_path):
         b'i=0; while [ ! -e "$HOME/go" ] && [ $i -lt 200 ]; do sleep 0.05; i=$((i+1)); done\n')
     (bin_dir / "opencode").write_bytes(
         b'#!/bin/sh\n{ echo "$$"; echo "$OPENCODE_CONFIG"; printf "%s\\n" "$@"; } > "$HOME/served"\n')
+    (bin_dir / "opencode").chmod(0o755)
     return home, bin_dir
 
 
@@ -1023,6 +1063,32 @@ def test_the_sweep_stops_a_server_whose_studio_died_before_reading_its_marker(tm
         mgr._orphans.sweep_orphan()
     assert any("kill -TERM" in c and f"t {pid}" in c and "--port 6060 " in c for c in calls)
     assert not dead.exists()
+
+
+def test_the_identity_probe_runs_bash_without_sourcing_the_bashrc(tmp_path):
+    # A .bashrc of seconds would eat the probe's 3 s timeout: every verdict UNKNOWN, no orphan
+    # ever stopped, and the timed-out bash left behind.
+    mgr = _mgr(tmp_path)
+    runs = []
+    with patch("procedo.studio.llm.server_manager.subprocess.run",
+               side_effect=lambda cmd, *a, **k: runs.append(list(cmd)) or _probe_result(alive=False)):
+        assert mgr._orphans.pid_is_our_opencode(4242) is PidIdentity.NOT_OURS
+    assert [cmd[:4] for cmd in runs] == [["wsl", "-e", "bash", "-c"]]
+
+
+def test_the_sweep_forgets_a_dead_studio_s_unfinished_record_and_kills_nothing(tmp_path):
+    # Its launch's shell was killed between the truncate and the printf: an empty record of a
+    # dead Studio names no server; it and that Studio's other launch files go.
+    from procedo.studio.llm import launch_files
+    mgr = _mgr(tmp_path)
+    record, config, universe = _launch_files(tmp_path, 777777)
+    record.write_text("", encoding="utf-8")
+    with patch("procedo.studio.llm.opencode_orphan_sweep.pid_alive", return_value=False), \
+         patch("procedo.studio.llm.server_manager.subprocess.run") as run:
+        mgr._orphans.sweep_orphan()
+    run.assert_not_called()
+    assert [p.exists() for p in (record, config, universe)] == [False, False, False]
+    assert launch_files.launch_file_owners(tmp_path) == []
 
 
 def test_the_sweep_keeps_the_record_of_a_launch_still_sourcing_the_bashrc(tmp_path):

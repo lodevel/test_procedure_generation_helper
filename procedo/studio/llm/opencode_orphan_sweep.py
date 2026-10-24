@@ -42,6 +42,10 @@ from .opencode_backend import OpenCodeConfig, safe_wsl_cwd
 
 log = logging.getLogger(__name__)
 
+# How the serve launch execs the server (``_build_serve_command``): a pid whose cmdline
+# carries it but is no ``opencode serve`` yet is our launch still before that exec.
+SERVE_EXEC = "exec opencode serve --port "
+
 # When this Studio process started (near enough): a record with our pid written before it
 # belongs to an earlier process that had the same pid.
 _PROCESS_STARTED = time.time()
@@ -51,14 +55,15 @@ class PidIdentity(Enum):
     """Tri-state verdict for a recorded pid's identity in the orphan sweep.
 
     The third state is the load-bearing one: a /proc read that times out or
-    hits a WSL hiccup is INCONCLUSIVE, not "not ours". Treating inconclusive as
+    hits a WSL hiccup, or our launch that has not exec'd opencode yet, is
+    INCONCLUSIVE, not "not ours". Treating inconclusive as
     "not ours" would delete the pid file and permanently lose a still-running
     orphan. On UNKNOWN the sweep keeps the pid file and retries next launch.
     """
 
     OURS = "ours"          # live, an opencode serve, carries OUR config → kill
     NOT_OURS = "not_ours"  # definitely dead/recycled/unrelated → safe to forget
-    UNKNOWN = "unknown"    # read error / timeout / WSL hiccup → keep, retry later
+    UNKNOWN = "unknown"    # read error / timeout / WSL hiccup / launch not exec'd yet → keep, retry later
 
 
 def signal_linux_tree(wsl_path: str, pid: int, sig: str, port: int) -> None:
@@ -136,6 +141,15 @@ class OrphanSweeper:
             return
         unlink_quietly(path)
 
+    def forget_if_gone(self) -> None:
+        """Remove OUR record once its pid is conclusively not a live server of
+        ours (dead or reused): for a stop that could signal no Linux pid. Kept on
+        OURS / UNKNOWN (a survivor, or our launch still in .bashrc): the next
+        start's sweep handles it."""
+        data = self.read_pid_file()
+        if data is not None and self.pid_is_our_opencode(data["pid"]) is PidIdentity.NOT_OURS:
+            self.remove_pid_file(data["pid"])
+
     def read_pid_file(self, path: Optional[Path] = None) -> Optional[dict]:
         """Read a pid file (*path*, default OUR own), or ``None`` when it is absent /
         unreadable / not a JSON object carrying an int ``pid``."""
@@ -178,7 +192,8 @@ class OrphanSweeper:
           and the USER's own opencode at a DIFFERENT config is spared.
         - ``NOT_OURS``: the pid is definitely gone/recycled, OR it is alive but
           not an opencode serve / not carrying our config — safe to forget.
-        - ``UNKNOWN``: the /proc read timed out or WSL hiccuped — INCONCLUSIVE.
+        - ``UNKNOWN``: the /proc read timed out or WSL hiccuped, or the pid is
+          our launch that has not exec'd opencode yet — INCONCLUSIVE.
           The caller must keep the pid file and retry; treating this as
           NOT_OURS would permanently lose a still-running orphan.
 
@@ -188,7 +203,8 @@ class OrphanSweeper:
         our_cfg = self.our_config_wsl_path(owner)
         # Probe pid liveness explicitly (ALIVE/DEAD marker) so a dead pid is a
         # DEFINITE verdict, and emit cmdline + environ NUL-delimited so we can
-        # split into exact tokens. One wsl.exe round-trip.
+        # split into exact tokens. One wsl.exe round-trip; ``-e`` runs bash
+        # directly, so no .bashrc (seconds on some machines) eats the timeout.
         script = (
             f"if [ -e /proc/{int(pid)} ]; then echo {self._ID_ALIVE}; "
             f"else echo {self._ID_DEAD}; fi; "
@@ -198,7 +214,7 @@ class OrphanSweeper:
         )
         try:
             result = subprocess.run(
-                [self._config.wsl_path, "bash", "-ic", script],
+                [self._config.wsl_path, "-e", "bash", "-c", script],
                 capture_output=True, text=True, timeout=3, cwd=safe_wsl_cwd(),
             )
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
@@ -229,7 +245,7 @@ class OrphanSweeper:
             # Still our launch's sh / bash before its `exec opencode serve` (bash
             # sourcing .bashrc takes seconds; the record is written before): not
             # the server yet, so keep the record for the next sweep.
-            if any("exec opencode serve --port " in t for t in cmd_tokens):
+            if any(SERVE_EXEC in t for t in cmd_tokens):
                 return PidIdentity.UNKNOWN
             return PidIdentity.NOT_OURS
         if our_cfg is None:
@@ -292,6 +308,10 @@ class OrphanSweeper:
                 continue
             if data is not None:
                 self._sweep_record(path, data, owner)
+            elif owner != os.getpid():
+                # A dead Studio's record its shell never finished (killed between
+                # the truncate and the printf) names no server: forget it, kill nothing.
+                unlink_quietly(path)
             if owner != os.getpid() and not path.exists():
                 remove_launch_files(launch_dir, owner)
 
@@ -314,11 +334,12 @@ class OrphanSweeper:
 
         identity = self.pid_is_our_opencode(pid, owner)
         if identity is PidIdentity.UNKNOWN:
-            # Inconclusive — could not read /proc (timeout / WSL hiccup). Keep
-            # the pid file and retry on the next launch; never lose an orphan.
+            # Inconclusive — could not read /proc (timeout / WSL hiccup), or our
+            # launch has not exec'd opencode yet. Keep the pid file and retry on
+            # the next launch; never lose an orphan.
             log.warning(
-                f"Orphan-sweep identity check for pid {pid} was inconclusive; "
-                f"keeping pid file and retrying next launch"
+                f"Orphan-sweep identity check for pid {pid} was inconclusive (or our "
+                f"launch has not exec'd opencode yet); keeping pid file and retrying next launch"
             )
             return
         if identity is PidIdentity.NOT_OURS:

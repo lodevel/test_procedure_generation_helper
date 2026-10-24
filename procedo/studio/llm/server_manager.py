@@ -19,7 +19,7 @@ import requests
 
 from .launch_files import config_env
 from .opencode_backend import OpenCodeConfig, safe_wsl_cwd
-from .opencode_orphan_sweep import OrphanSweeper, signal_linux_tree
+from .opencode_orphan_sweep import SERVE_EXEC, OrphanSweeper, signal_linux_tree
 from .server_health import (
     ServerError,
     ServerStatus,
@@ -438,7 +438,7 @@ class OpenCodeServerManager:
             for name, value in config_env(self._config.working_directory).items())
         return (
             f"echo {self._PID_MARKER}$$ >&2; "
-            f"{env}exec opencode serve --port {int(port)} "
+            f"{env}{SERVE_EXEC}{int(port)} "
             f"--hostname {shlex.quote(str(self._config.server_hostname))}"
         )
     
@@ -665,11 +665,14 @@ class OpenCodeServerManager:
         finally:
             self._server_process = None
 
-        # We signalled our Linux tree: drop OUR record. Otherwise keep it (wsl.exe
-        # had already exited, so its pid may be reused): the next start's
+        # We signalled our Linux tree: drop OUR record. Otherwise (no marker yet,
+        # or wsl.exe had already exited so its pid may be reused) drop it only
+        # once its pid is conclusively not our server: the next start's
         # identity-checked sweep can still find a server that survived.
         if signalled is not None:
             self._orphans.remove_pid_file(signalled)
+        else:
+            self._orphans.forget_if_gone()
 
     def _await_spawned(self) -> Optional[tuple[int, int]]:
         """The current spawn's (Linux pid, port), waiting up to ``_LINUX_PID_WAIT``

@@ -1,5 +1,5 @@
-"""A view's LLM task buttons: built from TaskConfigManager, labelled from it, relabelled and
-rebuilt when the settings change. Held by ``BaseTab`` as ``task_buttons``."""
+"""A view's LLM task buttons: built from TaskConfigManager, labelled from it, rebuilt when
+the settings change. Held by ``BaseTab`` as ``task_buttons``."""
 
 import logging
 from typing import TYPE_CHECKING, Callable, Optional
@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QToolButton
 from procedo.ui import ui_kit
 
 from ..llm.backend_base import LLMTask
-from ..widgets.action_bar import ActionBar, set_task_label, task_button
+from ..widgets.action_bar import ActionBar, task_button
 
 if TYPE_CHECKING:
     from ..core.task_config import TaskConfigManager
@@ -58,10 +58,8 @@ class TaskButtonRow:
         """
         Create an assistant button for an LLM task, labelled from TaskConfigManager.
 
-        The button stores its task metadata as properties so
-        ``refresh_labels`` can relabel it when settings change. With
-        *force_callback* it is a split button: its ▾ menu offers the task and
-        its force variant (validation bypassed).
+        With *force_callback* it is a split button: its ▾ menu offers the task
+        and its force variant (validation bypassed).
 
         Args:
             task: The LLMTask this button triggers
@@ -81,45 +79,8 @@ class TaskButtonRow:
         button = task_button(label, callback, force_callback=force_callback,
                              force_tooltip=force_tooltip)
         button.setEnabled(enabled)
-
-        # Store metadata as properties for refresh_labels()
-        button.setProperty("llm_task", task)
-        button.setProperty("tab_name", tab_name)
-        button.setProperty("task_id_override", task_id_override)
         button.setToolTip(tooltip or f"{label}\nTask: {task.value}")
         return button
-
-    def refresh_labels(self):
-        """
-        Refresh all LLM button labels after settings change.
-
-        This method finds all buttons with llm_task property and updates
-        their text to reflect current TaskConfigManager settings.
-        Should be called after:
-        - Settings dialog changes button labels
-        - Tab contexts are modified
-        - Switching themes/profiles that affect labels
-        """
-        # Find all buttons with llm_task property
-        buttons = self._action_bar.findChildren(QToolButton)
-        refreshed_count = 0
-
-        for button in buttons:
-            task = button.property("llm_task")
-            if task is not None:
-                # This is an LLM task button, refresh its label
-                tab_name = button.property("tab_name")
-                if tab_name is None:
-                    tab_name = self._tab_name
-                task_id_override = button.property("task_id_override")
-
-                # Get updated label from TaskConfigManager
-                new_label = self._label(task, tab_name, task_id_override=task_id_override)
-                set_task_label(button, new_label)
-                refreshed_count += 1
-
-        if refreshed_count > 0:
-            log.debug(f"Refreshed {refreshed_count} button label(s) in {self._owner_name}")
 
     def rebuild(self):
         """Build the assistant row's LLM task buttons from TaskConfigManager.

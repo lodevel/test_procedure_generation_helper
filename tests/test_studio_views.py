@@ -85,7 +85,8 @@ def test_the_force_variant_is_in_the_split_buttons_menu(opened):
     layout = tab.action_bar.assistant_layout
     buttons = [layout.itemAt(i).widget() for i in range(layout.count())]
     split = [b for b in buttons if isinstance(b, QToolButton) and b.menu() is not None]
-    assert [b.property("task_id_override") for b in split] == [LLMTask.DERIVE_JSON_FROM_TEXT.value]
+    derive = tab.task_config_manager.get_task_config("text_json", LLMTask.DERIVE_JSON_FROM_TEXT.value)
+    assert [b.text() for b in split] == [f"✦ {derive.button_label}"]
 
     strict, force = split[0].menu().actions()
     force.trigger()

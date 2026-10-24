@@ -3,7 +3,6 @@ Test BaseTab button label integration.
 
 Verifies that BaseTab's assistant buttons (its ``task_buttons`` row) work correctly:
 - create_button() (a split button when the task has a force variant)
-- refresh_labels()
 - the action bar's assistant row (_create_action_bar)
 """
 
@@ -35,10 +34,6 @@ class TestBaseTabButtonLabels:
         assert button.isEnabled()
         assert button.menu() is None  # no force variant: a plain button
         
-        # Check that metadata is stored
-        assert button.property("llm_task") == LLMTask.REVIEW_JSON
-        assert button.property("tab_name") == "base"
-        
         # Verify callback works
         button.click()
         assert callback_called == [True]
@@ -55,7 +50,6 @@ class TestBaseTabButtonLabels:
             force_tooltip="Force generate JSON",
         )
 
-        assert button.property("llm_task") == LLMTask.DERIVE_JSON_FROM_TEXT
         assert button.popupMode() == QToolButton.ToolButtonPopupMode.MenuButtonPopup
         strict, force = button.menu().actions()
         assert force.text().startswith(strict.text() + " — force")
@@ -88,14 +82,14 @@ class TestBaseTabButtonLabels:
         assert button.toolTip() == custom_tooltip
     
     def test_create_task_button_custom_tab_name(self, row):
-        """Test creating task button with custom tab name."""
+        """A custom tab name is the label lookup's: a tab without the task falls back."""
         button = row.create_button(
             task=LLMTask.AD_HOC_CHAT,
             callback=lambda: None,
             tab_name="custom_tab"
         )
         
-        assert button.property("tab_name") == "custom_tab"
+        assert button.text() == "✦ " + LLMTask.AD_HOC_CHAT.value.replace("_", " ").title()
     
     def test_create_task_button_uses_task_config_manager(self, row, mock_main_window):
         """Test that create_button uses TaskConfigManager for labels."""
@@ -125,85 +119,6 @@ class TestBaseTabButtonLabels:
         
         assert button.text() == "✦ Custom Review Label"
     
-    def test_refresh_button_labels_updates_existing_buttons(self, base_tab, row, mock_main_window):
-        """Test that refresh_labels updates all task buttons."""
-        # Add the tasks to base tab if not exists (since "base" is not in defaults)
-        from procedo.studio.core.task_config_model import TaskConfig
-        
-        if not mock_main_window.task_config_manager.get_task_config("base", LLMTask.REVIEW_JSON.value):
-            task1 = TaskConfig(
-                id=LLMTask.REVIEW_JSON.value,
-                name="Review JSON",
-                button_label="Review JSON",
-                prompt_template=None,
-                enabled=True
-            )
-            mock_main_window.task_config_manager.add_task("base", task1)
-        
-        if not mock_main_window.task_config_manager.get_task_config("base", LLMTask.REVIEW_CODE.value):
-            task2 = TaskConfig(
-                id=LLMTask.REVIEW_CODE.value,
-                name="Review Code",
-                button_label="Review Code",
-                prompt_template=None,
-                enabled=True
-            )
-            mock_main_window.task_config_manager.add_task("base", task2)
-        
-        # Create several task buttons and add them to the tab's layout
-        button1 = row.create_button(
-            task=LLMTask.REVIEW_JSON,
-            callback=lambda: None
-        )
-        button2 = row.create_button(
-            task=LLMTask.REVIEW_CODE,
-            callback=lambda: None
-        )
-        
-        # Put the buttons in the action bar's assistant row so findChildren works
-        base_tab.action_bar.set_assistant_buttons([button1, button2])
-        
-        # Record original labels
-        original_label1 = button1.text()
-        original_label2 = button2.text()
-        
-        # Change labels in manager
-        mock_main_window.task_config_manager.update_task_config(
-            tab_id="base",
-            task_id=LLMTask.REVIEW_JSON.value,
-            button_label="New JSON Label"
-        )
-        mock_main_window.task_config_manager.update_task_config(
-            tab_id="base",
-            task_id=LLMTask.REVIEW_CODE.value,
-            button_label="New Code Label"
-        )
-        
-        # Refresh
-        row.refresh_labels()
-        
-        # Verify buttons were updated
-        assert button1.text() == "✦ New JSON Label"
-        assert button2.text() == "✦ New Code Label"
-        assert button1.text() != original_label1
-        assert button2.text() != original_label2
-    
-    def test_refresh_button_labels_ignores_non_task_buttons(self, base_tab, row):
-        """Test that refresh_labels doesn't affect regular buttons."""
-        # Create regular button (not a task button)
-        regular_button = base_tab.create_button("Regular Button")
-        original_text = regular_button.text()
-        
-        # Refresh should not affect it
-        row.refresh_labels()
-        
-        assert regular_button.text() == original_text
-    
-    def test_refresh_button_labels_handles_empty_tab(self, row):
-        """Test that refresh_labels works on tab with no buttons."""
-        # Should not raise exception
-        row.refresh_labels()
-    
     def test_task_config_manager_property(self, base_tab, mock_main_window):
         """Test task_config_manager property accessor."""
         assert base_tab.task_config_manager is mock_main_window.task_config_manager
@@ -222,17 +137,24 @@ class TestLLMButtonCapabilityGating:
         would still show up as children)."""
         layout = tab.action_bar.assistant_layout
         widgets = (layout.itemAt(i).widget() for i in range(layout.count()))
-        return [w for w in widgets
-                if isinstance(w, QToolButton) and w.property("llm_task") is not None]
+        return [w for w in widgets if isinstance(w, QToolButton)]
+
+    @classmethod
+    def _by_id(cls, tab):
+        """The task buttons by task id: one per enabled task but the chat, in order."""
+        ids = [t.id for t in tab.task_config_manager.get_enabled_tasks_for_tab(tab.tab_id)
+               if t.id != LLMTask.AD_HOC_CHAT.value]
+        buttons = cls._collect_task_buttons(tab)
+        assert len(buttons) == len(ids)
+        return dict(zip(ids, buttons))
 
     def test_bare_editor_all_task_buttons_greyed(self, base_tab, mock_main_window):
         base_tab.tab_id = "text_json"
         base_tab._create_action_bar()
 
-        buttons = self._collect_task_buttons(base_tab)
-        assert len(buttons) > 0
-        for btn in buttons:
-            task_id = btn.property("task_id_override")
+        by_id = self._by_id(base_tab)
+        assert len(by_id) > 0
+        for task_id, btn in by_id.items():
             assert not btn.isEnabled(), f"{task_id} must be greyed without a bundle"
             assert btn.toolTip() == "Not provided by this bundle"
 
@@ -248,9 +170,8 @@ class TestLLMButtonCapabilityGating:
         )
         base_tab.task_buttons.rebuild()
 
-        buttons = self._collect_task_buttons(base_tab)
-        assert len(buttons) > 0
-        by_id = {btn.property("task_id_override"): btn for btn in buttons}
+        by_id = self._by_id(base_tab)
+        assert len(by_id) > 0
         assert by_id[declared_id].isEnabled()
         assert by_id[declared_id].toolTip() != "Not provided by this bundle"
         for task_id, btn in by_id.items():
@@ -264,16 +185,20 @@ class TestLLMButtonCapabilityGating:
         base_tab._get_force_callback_map = lambda: {derive: (lambda: None, "force it")}
         base_tab._create_action_bar()
 
-        by_id = {b.property("task_id_override"): b for b in self._collect_task_buttons(base_tab)}
+        by_id = self._by_id(base_tab)
         assert by_id[derive].menu() is not None
         assert all(b.menu() is None for task_id, b in by_id.items() if task_id != derive)
 
     def test_no_ad_hoc_chat_button(self, base_tab, mock_main_window):
-        base_tab.tab_id = "json_code"  # json_code declares an ad_hoc_chat task entry
+        from procedo.studio.core.task_config_model import TaskConfig
+
+        base_tab.tab_id = "json_code"
+        mock_main_window.task_config_manager.add_task("json_code", TaskConfig(
+            id=LLMTask.AD_HOC_CHAT.value, name="Chat", button_label="Chat", enabled=True))
         base_tab._create_action_bar()
-        buttons = self._collect_task_buttons(base_tab)
-        ids = {btn.property("task_id_override") for btn in buttons}
-        assert LLMTask.AD_HOC_CHAT.value not in ids
+        enabled = [t.id for t in base_tab.task_config_manager.get_enabled_tasks_for_tab("json_code")]
+        assert LLMTask.AD_HOC_CHAT.value in enabled
+        assert len(self._collect_task_buttons(base_tab)) == len(enabled) - 1
 
     def test_declared_custom_task_click_threads_custom_task_id(
         self, base_tab, mock_main_window
@@ -293,9 +218,7 @@ class TestLLMButtonCapabilityGating:
         base_tab._run_task_async = MagicMock()
         base_tab._create_action_bar()
 
-        buttons = self._collect_task_buttons(base_tab)
-        by_id = {btn.property("task_id_override"): btn for btn in buttons}
-        btn = by_id["verify_shunt"]
+        btn = self._by_id(base_tab)["verify_shunt"]
         assert btn.isEnabled()
         assert btn.toolTip() != "Not provided by this bundle"
 

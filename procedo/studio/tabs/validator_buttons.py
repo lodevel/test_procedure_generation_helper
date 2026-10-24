@@ -88,8 +88,6 @@ class ValidatorButtonRow:
         tab_id = self._tab_id
         if manager is None or tab_id is None:
             return 0
-        if not hasattr(manager, "get_validator_specs_for_tab"):
-            return 0  # older TaskConfigManager — Phase 1 install
 
         # Probe validator availability so unusable buttons don't render.
         # Two levels (Phase 4.6):

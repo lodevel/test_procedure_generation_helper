@@ -5,6 +5,8 @@ Provides a centralized logging setup with configurable levels
 and formatted console output for debugging.
 """
 
+import atexit
+import io
 import logging
 import logging.handlers
 import sys
@@ -24,22 +26,64 @@ LOG_BACKUPS = 2
 
 
 class _StderrToLog:
-    """Studio's ``sys.stderr``: each line written lands in the log, whatever started Studio."""
+    """Studio's ``sys.stderr``: each line written lands in the log, whatever started Studio.
+
+    A write made while a line is being logged (the log handler failing reports to stderr) goes
+    to the stderr the process started with, never back into the log: no recursion."""
+
+    encoding = "utf-8"
+    errors = "replace"
 
     def __init__(self, logger: logging.Logger) -> None:
         self._logger = logger
         self._pending = ""
+        self._lock = threading.Lock()
+        self._busy = threading.local()
 
     def write(self, text: str) -> int:
-        self._pending += text
-        *lines, self._pending = self._pending.split("\n")
-        for line in lines:
-            if line.strip():
-                self._logger.error("stderr: %s", line)
+        if getattr(self._busy, "on", False):
+            self._write_original(text)
+            return len(text)
+        with self._lock:
+            self._pending += text
+            *lines, self._pending = self._pending.split("\n")
+        self._log(lines)
         return len(text)
+
+    def _log(self, lines: list[str]) -> None:
+        self._busy.on = True
+        try:
+            for line in lines:
+                if line.strip():
+                    self._logger.error("stderr: %s", line)
+        finally:
+            self._busy.on = False
+
+    @staticmethod
+    def _write_original(text: str) -> None:
+        if sys.__stderr__ is not None:
+            try:
+                sys.__stderr__.write(text)
+            except (OSError, ValueError):
+                pass
+
+    def flush_pending(self) -> None:
+        """Log what was written without a final newline (at exit)."""
+        with self._lock:
+            rest, self._pending = self._pending, ""
+        self._log([rest])
 
     def flush(self) -> None:
         pass
+
+    def close(self) -> None:
+        pass
+
+    def isatty(self) -> bool:
+        return False
+
+    def fileno(self) -> int:
+        raise io.UnsupportedOperation("Studio's stderr is the log, not a file descriptor")
 
 
 def _log_uncaught(logger: logging.Logger) -> None:
@@ -103,6 +147,7 @@ def setup_logging(
     root_logger.debug(f"Logging to file: {log_file}")
 
     sys.stderr = _StderrToLog(root_logger)
+    atexit.register(sys.stderr.flush_pending)
     _log_uncaught(root_logger)
     
     root_logger.debug(f"Logging initialized at level {logging.getLevelName(level)}")

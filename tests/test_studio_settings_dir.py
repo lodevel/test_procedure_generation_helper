@@ -1,6 +1,5 @@
 """Procedo Studio's settings folder is named in ONE place (``studio_settings.get_settings_path``,
-through the host's ``app_identity``), and Studio migrates the old folder at start-up before
-anything reads a setting."""
+through the host's ``app_identity``)."""
 
 from __future__ import annotations
 
@@ -8,7 +7,7 @@ import argparse
 import re
 from pathlib import Path
 
-from procedo.core import app_identity, app_identity_migration, temp_root
+from procedo.core import app_identity, temp_root
 from procedo.ui import error_copy
 
 from procedo.studio import __main__ as studio_main
@@ -41,9 +40,6 @@ def test_the_tests_never_reach_the_real_folders_settings_or_environment(tmp_path
         app_identity.roaming_data_dir(),
         app_identity.local_data_dir(),
         app_identity.studio_settings_dir(),
-        app_identity.legacy_roaming_data_dir(),
-        app_identity.legacy_local_data_dir(),
-        app_identity.legacy_studio_settings_dir(),
         studio_settings.get_settings_path(),
         Path.home(),
         *(Path(os.environ[name]) for name in ("APPDATA", "LOCALAPPDATA", "USERPROFILE", "HOME")),
@@ -53,9 +49,6 @@ def test_the_tests_never_reach_the_real_folders_settings_or_environment(tmp_path
     store.setValue("probe", 1)
     store.sync()
     assert Path(store.fileName()).is_relative_to(tmp_path)
-    for old, new in app_identity.legacy_settings_pairs():
-        assert Path(old.fileName()).is_relative_to(tmp_path)
-        assert Path(new.fileName()).is_relative_to(tmp_path)
 
 
 def test_the_settings_live_in_studio_s_folder():
@@ -72,7 +65,7 @@ def _args() -> argparse.Namespace:
     )
 
 
-def test_studio_start_migrates_before_anything_reads_its_settings(monkeypatch):
+def test_studio_start_reads_its_settings_under_procedos_organization(monkeypatch):
     seen: list[str] = []
     organizations: list[str] = []
     read = studio_settings.get_settings_path
@@ -115,33 +108,15 @@ def test_studio_start_migrates_before_anything_reads_its_settings(monkeypatch):
     monkeypatch.setattr(studio_main, "MainWindow", _Window)
     monkeypatch.setattr(studio_main, "apply_app_theme", lambda name, app: name)
     monkeypatch.setattr(error_copy, "install_error_copy", lambda app: True)  # the fake app filters nothing
-    monkeypatch.setattr(app_identity_migration, "migrate", lambda: seen.append("migrate"))
     monkeypatch.setattr(
         studio_settings, "get_settings_path", lambda: (seen.append("settings"), read())[1]
     )
 
     assert studio_main.main() == 0
 
-    assert seen[0] == "migrate" and "settings" in seen
+    assert "settings" in seen
     # One identity: Studio's Qt organization is Procedo's.
     assert organizations == [app_identity.SETTINGS_ORGANIZATION]
-
-
-def test_studio_s_migration_copies_the_old_settings_folder():
-    """The same migrate() Bench runs: Studio's old folder lands in the new one (fake keys)."""
-    old = app_identity.legacy_studio_settings_dir()
-    (old / "opencode" / "launch").mkdir(parents=True)
-    (old / "settings.json").write_text('{"api_key": "sk-fake"}', encoding="utf-8")
-    (old / "opencode" / "master.json").write_text('{"provider": {}}', encoding="utf-8")
-    (old / "opencode" / "launch" / "opencode.pid").write_text("{}", encoding="utf-8")
-
-    app_identity_migration.migrate()
-
-    assert studio_settings.load_settings() == {"api_key": "sk-fake"}
-    assert launch_config.get_opencode_master_path().read_text(encoding="utf-8") == (
-        '{"provider": {}}'
-    )
-    assert not (app_identity.studio_settings_dir() / "opencode" / "launch").exists()
 
 
 def test_a_save_that_fails_midway_leaves_the_previous_settings_file(monkeypatch):

@@ -30,7 +30,9 @@ def load_board(project_root: Optional[Path]) -> dict:
     blanket 'no archive'. Never raises; synchronous — run it off the UI thread."""
     empty = {"components": [], "nets": [], "error": ""}
     if project_root is None:
-        return {**empty, "error": "No project is open in the editor."}
+        from ..pack_ops.pack_parsers import NO_PROJECT
+
+        return {**empty, "error": NO_PROJECT}
     tgz = odb_archive.find(project_root)
     if tgz is None:
         return {**empty, "error":

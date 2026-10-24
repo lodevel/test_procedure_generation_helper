@@ -36,7 +36,7 @@ from . import bundle_capabilities
 _TIMEOUT_IS_AVAILABLE = 5
 
 #: Why no op runs with no project open: the wheel runs only in a project's engine.
-NO_PROJECT = "no project is open: the deterministic parser runs in the project's engine"
+NO_PROJECT = "No project is open."
 
 
 # ---------------------------------------------------------------------------

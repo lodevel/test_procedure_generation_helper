@@ -141,3 +141,31 @@ def test_studio_s_migration_copies_the_old_settings_folder():
         '{"provider": {}}'
     )
     assert not (app_identity.studio_settings_dir() / "opencode" / "launch").exists()
+
+
+def test_a_save_that_fails_midway_leaves_the_previous_settings_file(monkeypatch):
+    """``save_settings`` replaces the file whole: a value that cannot be written, or a crash
+    before the replace, leaves the old file, never a truncated one."""
+    import json
+
+    import pytest
+
+    from procedo.studio.core import fileio
+
+    studio_settings.save_settings({"llm_backend": "opencode"})
+    path = studio_settings.get_settings_path()
+    before = path.read_bytes()
+    with pytest.raises(TypeError):
+        studio_settings.save_settings({"llm_backend": "none", "bad": object()})
+    assert path.read_bytes() == before
+
+    def crash(*_args):
+        raise OSError("power cut")
+
+    monkeypatch.setattr(fileio.os, "replace", crash)
+    with pytest.raises(OSError):
+        studio_settings.save_settings({"llm_backend": "none"})
+    monkeypatch.undo()
+    assert path.read_bytes() == before
+    assert json.loads(before) == {"llm_backend": "opencode"}
+    assert [p.name for p in path.parent.iterdir() if p.name.endswith(".tmp")] == []

@@ -116,6 +116,28 @@ def test_every_setting_round_trips_through_settings_json_skills_included(qapp, n
             opencode["fold_system_into_prompt"]) == (False, True, False, False)
 
 
+def test_save_keeps_every_key_the_dialog_does_not_own_as_stored_at_save_time(qapp, no_network):
+    """Save overwrites only its own fields: the wizard's keys (``set_wizard_setting``), keys of
+    a newer Studio and keys written while the dialog was open all survive."""
+    save_settings({
+        "llm_backend": "opencode", "custom_output_format": "fmt",
+        "opencode": {"port": 4100, "a_newer_key": 1},
+        "wizard": {"max_concurrent_sessions": 3, "last_skill": "dcdc"},
+    })
+    dlg = _open(qapp)
+    while_open = load_settings()  # the wizard writes a key while Settings is open
+    while_open["wizard"]["written_while_open"] = True
+    save_settings(while_open)
+    dlg.wizard_max_sessions.setValue(5)
+    dlg._on_save()
+    saved = load_settings()
+    assert saved["custom_output_format"] == "fmt"
+    assert saved["opencode"]["a_newer_key"] == 1 and saved["opencode"]["port"] == 4100
+    assert saved["wizard"] == {
+        "max_concurrent_sessions": 5, "last_skill": "dcdc", "written_while_open": True}
+    assert dlg.get_settings() == saved
+
+
 def test_the_validator_page_saves_to_the_project_config(qapp, no_network, project):
     dlg = _open(qapp, project)
     dlg.validator_enabled.setChecked(False)

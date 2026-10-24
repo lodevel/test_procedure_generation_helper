@@ -7,6 +7,8 @@ from pathlib import Path
 
 from procedo.core import app_identity
 
+from .fileio import atomic_write_text
+
 log = logging.getLogger(__name__)
 
 
@@ -33,7 +35,5 @@ def load_settings() -> dict:
 
 
 def save_settings(settings: dict):
-    """Save settings to file."""
-    path = get_settings_path()
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(settings, f, indent=2)
+    """Save settings to file, whole or not at all (a failed save leaves the old file)."""
+    atomic_write_text(get_settings_path(), json.dumps(settings, indent=2))

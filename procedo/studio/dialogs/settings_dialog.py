@@ -892,9 +892,10 @@ class SettingsDialog(QDialog):
         moved to ``_WorkflowsTab`` in the parent app's Project
         Configuration dialog (Phase 4).
         """
-        # Save LLM backend settings to settings.json
-        self._settings = {
-            "llm_backend": self.backend_combo.currentText(),
+        # Save LLM backend settings to settings.json: the file as stored NOW (keys another
+        # writer owns, e.g. the wizard's, or written while this dialog was open, survive)
+        # with only the dialog's own keys overwritten.
+        owned = {
             "common_llm": {
                 "context_window": self.context_window.value(),
                 "request_timeout": self.request_timeout.value(),
@@ -914,12 +915,16 @@ class SettingsDialog(QDialog):
                 "max_concurrent_sessions": self.wizard_max_sessions.value(),
             },
         }
-        
         try:
-            save_settings(self._settings)
+            settings = load_settings()
+            settings["llm_backend"] = self.backend_combo.currentText()
+            for section, values in owned.items():
+                settings[section] = {**settings.get(section, {}), **values}
+            save_settings(settings)
         except Exception as e:  # the dialog stays open, its values kept: the user can retry
             QMessageBox.critical(self, "Save Failed", str(e))
             return
+        self._settings = settings
         try:  # Validator tab — the project's validator_loop section, said apart when it fails
             self._save_validator_values()
         except Exception as e:  # a project config unreachable or damaged: never replaced

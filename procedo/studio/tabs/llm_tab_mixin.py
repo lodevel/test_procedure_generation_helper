@@ -3,6 +3,9 @@
 Provides _run_task_async, response handling, validation, and error recovery
 in a single mixin consumed by JsonCodeTab and TextJsonTab.
 
+The validator-in-the-loop (the check of each reply and the FSM step it drives) is a
+:class:`ValidatorLoop` the tab holds (``validator_loop``).
+
 Tabs that use this mixin must implement:
   - _apply_proposals(response, task)     — dispatch per-artifact proposals
                                            (task drives the per-task section override)
@@ -25,16 +28,11 @@ from ..llm.prompt_builder import PromptBuilder, TaskPromptNotDeclaredError
 from ..llm.output_contracts import get_contract_for_tab
 from ..llm.reconstruction import pipeline_ownership
 from ..llm.backend_base import ValidationIssue
-from ..llm.run_state import LLMRunState, RunStateKind
+from ..llm.run_state import LLMRunState
 from ..llm.tab_context import ChatMessage as _ChatMessage
-from ..core.validation_outcome import ValidationOutcome
-from ..llm.validator_dispatch import (
-    format_validator_feedback,
-    validate_response,
-)
 from ..llm.worker import LLMWorker
-from ..pack_ops import engine_async
 from ..llm.transcript_replay import serialize_transcript
+from .llm_validator_loop import ValidatorLoop
 
 log = logging.getLogger(__name__)
 
@@ -135,10 +133,7 @@ class LLMTabMixin:
         #   (b) Auto-retry — ``begin_retry`` put the FSM in LLM_REQUESTED;
         #       the run goes on, attempt counter and test included.
         run_state = self._ensure_run_state()
-        if getattr(self, "_validator_check", None) is not None:
-            # A check still running belongs to the run replaced now: its answer is dropped.
-            self._validator_check = None
-            self.main_window.dock.chat_panel.set_llm_active(False)
+        self.validator_loop.drop()
         if not retry:
             run_state.reset_to_idle()
             run_state.start_run(task, self._resolve_max_attempts(task),
@@ -321,11 +316,11 @@ class LLMTabMixin:
             )
 
         # 6. Drive the validator-in-the-loop FSM. The check runs on a worker (~6 engine round
-        #    trips); steps 6b-7 resume in :meth:`_on_validator_result` when it answers.
+        #    trips); steps 6b-7 resume in :meth:`_finish_response` when it answers.
         #   VALIDATING → AWAITING_REVIEW (passed / skipped) → proposal card → APPLIED / REJECTED
         #   VALIDATING → VALIDATOR_FAIL_RETRYING → re-spawn worker; re-enters on its response
         #   VALIDATING → FAILED_OUT_OF_RETRIES (toggle off / out of attempts) → card with warning
-        self._start_validator_check(response)
+        self.validator_loop.start(response)
 
     def _finish_response(self, response, fsm_decision: str) -> None:
         """6b + 7. A retry or an operator-only halt ends here (the retry's reply re-enters the
@@ -412,7 +407,7 @@ class LLMTabMixin:
         """Promote contract-validation strings to ``ValidationIssue``
         objects on the response, then push the merged list into the
         dock's findings panel. The validator-in-the-loop step adds its
-        own issues to the same panel via :meth:`_drive_validator_fsm`,
+        own issues to the same panel via :class:`ValidatorLoop`,
         so the operator sees one consolidated finding list per turn."""
         if validation_issues:
             response.issues.extend([
@@ -569,8 +564,19 @@ class LLMTabMixin:
         return issues
 
     # ------------------------------------------------------------------ #
-    # Validator-in-the-loop FSM driver                                    #
+    # Run state and the validator-in-the-loop                             #
     # ------------------------------------------------------------------ #
+
+    @functools.cached_property
+    def validator_loop(self) -> ValidatorLoop:
+        """The tab's validator-in-the-loop, made on first use (the tab's context is set after
+        ``BaseTab.__init__``)."""
+        return ValidatorLoop(
+            main_window=self.main_window, tab_context=self.tab_context,
+            run_state=self._ensure_run_state(), status=self.status_message.emit,
+            section_override=self._task_section_override, drop_late_reply=self._drop_late_reply,
+            is_active=self._is_active_tab, show_error=self.show_error,
+            finish=self._finish_response, run_task=self._run_task_async)
 
     def _ensure_run_state(self) -> LLMRunState:
         """Lazily attach the per-tab :class:`LLMRunState`. Lazy creation
@@ -624,262 +630,6 @@ class LLMTabMixin:
         # 2. Per-project setting from Validator-tab persistence, 3. the default.
         from ..llm.validator_loop_settings import max_attempts
         return max_attempts(getattr(self.tab_context.project_manager, "project_root", None))
-
-    def _is_auto_correct_enabled(self) -> bool:
-        """Operator's runtime toggle — read from the chat-panel checkbox.
-
-        Defaults to True if the chat panel is missing the getter (older
-        builds, custom main windows). The chat panel's checkbox is greyed
-        out when ``deterministic_path_available()`` returns False, so a
-        True return here doesn't necessarily mean the loop will fire —
-        :meth:`_drive_validator_fsm` short-circuits earlier on
-        ``outcome.skipped``.
-        """
-        getter = getattr(self.main_window.dock.chat_panel, "get_auto_correct_enabled", None)
-        if getter is None:
-            return True
-        try:
-            return bool(getter())
-        except Exception:
-            log.exception("get_auto_correct_enabled() raised; defaulting to ON")
-            return True
-
-    def _start_validator_check(self, response) -> None:
-        """Start the deterministic check of *response* on a worker; the chat stays locked (no
-        new message, nothing to cancel) until :meth:`_on_validator_result` resumes. Without a
-        run in LLM_REQUESTED (defensive: a request fired outside the normal flow) the FSM is
-        reset and the proposals are applied unchecked."""
-        run_state = self._ensure_run_state()
-        if run_state.state != RunStateKind.LLM_REQUESTED:
-            log.debug("FSM in %s when handling a response: reset, apply-only", run_state.state.name)
-            run_state.reset_to_idle()
-            self._finish_response(response, "continue")
-            return
-        run_state.begin_validating(response)
-        # The inputs are read here, on the GUI thread; the worker only reads its copies.
-        check = self._validator_check_call(response)
-        token = self._validator_check = object()
-        self.main_window.dock.chat_panel.set_llm_active(True, cancellable=False)
-        self.status_message.emit("Checking the proposal…")
-        engine_async.call(getattr(self.tab_context.project_manager, "project_root", None), check,
-                          lambda answer: self._on_validator_answer(token, answer),
-                          cue=self.main_window.loading, cue_label="Checking the proposal\u2026")
-
-    def _claim_validator_check(self, token) -> bool:
-        """True when *token*'s check is the one still awaited (it no longer is, the chat unlocks);
-        False for a late answer: a newer run, or a closed test, dropped the check."""
-        if token is not getattr(self, "_validator_check", None):
-            log.info("Dropped a late proposal-check result: its run was replaced")
-            return False
-        self._validator_check = None
-        self.main_window.dock.chat_panel.set_llm_active(False)
-        return True
-
-    def _on_validator_answer(self, token, answer) -> None:
-        """The check answered: continue the FSM with its outcome. A check that raised ends the
-        run, its error shown as an LLM error is."""
-        if not self._claim_validator_check(token) or self._drop_late_reply():
-            return
-        try:
-            outcome = answer()
-        except Exception as exc:  # noqa: BLE001 — told to the operator
-            log.error("The proposal check failed: %s", exc, exc_info=True)
-            self._ensure_run_state().reset_to_idle()
-            if self._is_active_tab():
-                self.show_error("Validator Error", str(exc))
-            return
-        response = self._ensure_run_state().last_response
-        self._finish_response(response, self._drive_validator_fsm(response, outcome))
-
-    def _drive_validator_fsm(self, response, outcome: ValidationOutcome) -> str:
-        """Advance the FSM (in VALIDATING) by one step with the check's *outcome* for *response*.
-
-        Returns one of:
-          - ``"continue"`` — caller should run ``_apply_proposals`` and
-            reset the FSM via the proposal handlers.
-          - ``"retry"`` — caller should NOT apply; the worker has been
-            re-spawned and ``_handle_llm_response`` will fire again.
-          - ``"halt_for_operator"`` — caller should NOT apply and NOT
-            retry; every error is in an operator-only field that the
-            LLM cannot fix by design. The operator must edit the source.
-
-        Always returns; never raises. The FSM-state side-effects encode
-        the outcome of this attempt and what happens next.
-        """
-        run_state = self._ensure_run_state()
-        run_state.last_outcome = outcome
-
-        if outcome.skipped:
-            self._maybe_warn_validator_unavailable(outcome.reason)
-            run_state.on_validator_pass(outcome)
-            return "continue"
-
-        if outcome.ok:
-            # Replace the panel with the validator's empty result.
-            # Otherwise the LLM's review-side `validation.issues[]` (which
-            # describe the PRE-proposal state) linger after the proposal
-            # is applied — the operator accepts a clean proposal and is
-            # left staring at "11 findings" that describe a state the
-            # accept just overwrote. The validator is the authority on
-            # the post-apply state; if it says ok, the panel is empty.
-            self.main_window.dock.show_validation_result_from_list([])
-            self.main_window.dock.chat_panel.add_message(
-                "system",
-                self._format_pass_message(run_state), tone="success",
-            )
-            run_state.on_validator_pass(outcome)
-            return "continue"
-
-        # Failure path: surface issues through the existing dock panel
-        # so the layout is identical to output-contract violations.
-        self.main_window.dock.show_validation_result_from_list(
-            [issue.to_dock_dict() for issue in outcome.issues]
-        )
-
-        # All-operator-only short-circuit: every error is in a field the
-        # LLM rewriter does not touch by design (test ID, description,
-        # pack versions). Retrying cannot fix any of them.
-        if outcome.all_operator_only:
-            run_state.give_up_now(outcome)
-            self.main_window.dock.chat_panel.add_message(
-                "system",
-                "Validator rejected the response, but every error is in an "
-                "operator-only field (test ID, description, or pack version) "
-                "that the LLM rewriter does not modify. Edit the original "
-                "procedure to fix the flagged lines, then retry.", tone="warning",
-            )
-            return "halt_for_operator"
-
-        # Operator-toggle: when auto-correct is off, treat any failure
-        # as an immediate give-up — fall through to operator review.
-        if not self._is_auto_correct_enabled():
-            run_state.give_up_now(outcome)
-            self.main_window.dock.chat_panel.add_message(
-                "system",
-                self._format_give_up_message(run_state, auto_correct_off=True), tone="warning",
-            )
-            return "continue"
-
-        decision = run_state.on_validator_fail(outcome)
-        if decision == "retry":
-            self.main_window.dock.chat_panel.add_message(
-                "system",
-                self._format_retry_message(run_state), tone="warning",
-            )
-            self._spawn_retry_worker(outcome)
-            return "retry"
-
-        # Out of retries — fall through to operator review with banner.
-        self.main_window.dock.chat_panel.add_message(
-            "system",
-            self._format_give_up_message(run_state, auto_correct_off=False), tone="warning",
-        )
-        return "continue"
-
-    def _validator_check_call(self, response):
-        """The no-argument call that builds the :class:`ValidationOutcome` for *response*, with
-        its inputs read now.
-
-        Single point of contact with the dispatcher — keeps the FSM driver
-        independent of the artifact-manager layout."""
-        project_root = getattr(self.tab_context.project_manager, "project_root", None)
-        artifacts = self.tab_context.artifact_manager
-        run_state = self._ensure_run_state()
-        current = {
-            "text": getattr(artifacts.procedure_text, "content", "") or "",
-            "json": getattr(artifacts.procedure_json, "content", "") or "",
-            "code": getattr(artifacts.test_code, "content", "") or "",
-        }
-        # Phase 3 (2026-04-27): dispatch is artifact-shape, not LLMTask.
-        # The validator follows whatever the LLM proposed; covers buttons,
-        # custom tasks, and ad-hoc chat uniformly. The per-task section
-        # override threads through so before-validate reconstruction uses the
-        # same LLM-owned set as the prompt emit-list and at-apply path.
-        override = self._task_section_override(run_state.task)
-        return functools.partial(
-            validate_response, response, current, project_root, task_override=override
-        )
-
-    def _spawn_retry_worker(self, outcome: ValidationOutcome) -> None:
-        """Spawn a new LLM worker carrying the validator feedback as the
-        retry's user-role message. The FSM is already in
-        ``VALIDATOR_FAIL_RETRYING``; we transition to ``LLM_REQUESTED``
-        via :meth:`LLMRunState.begin_retry` here."""
-        run_state = self._ensure_run_state()
-        feedback = format_validator_feedback(
-            outcome,
-            attempt=run_state.attempt,
-            max_attempts=run_state.max_attempts,
-        )
-        run_state.begin_retry()
-        # Re-enter the worker-spawn path as a retry: no start_run, so the
-        # attempt counter (and the run's test) are preserved.
-        self._run_task_async(run_state.task, retry=True, user_message=feedback)
-
-    # ------------------------------------------------------------------ #
-    # Per-attempt chat-panel messages (small helpers, easy to tune)       #
-    # ------------------------------------------------------------------ #
-
-    @staticmethod
-    def _format_pass_message(run_state: LLMRunState) -> str:
-        if run_state.attempt > 1:
-            return f"✓ Validator passed on attempt {run_state.attempt}/{run_state.max_attempts}."
-        return "✓ Deterministic validator passed."
-
-    @staticmethod
-    def _format_retry_message(run_state: LLMRunState) -> str:
-        n = len(run_state.last_outcome.issues) if run_state.last_outcome else 0
-        # ``run_state.attempt`` was already incremented to the upcoming
-        # attempt by ``on_validator_fail`` — show the just-failed one.
-        failed_attempt = run_state.attempt - 1
-        return (
-            f"⟳ Validator rejected attempt {failed_attempt}/{run_state.max_attempts} "
-            f"({n} issue{'s' if n != 1 else ''}). Re-prompting…"
-        )
-
-    @staticmethod
-    def _format_give_up_message(
-        run_state: LLMRunState, *, auto_correct_off: bool
-    ) -> str:
-        n = len(run_state.last_outcome.issues) if run_state.last_outcome else 0
-        if auto_correct_off:
-            return (
-                f"⚠ Validator rejected the response ({n} issue"
-                f"{'s' if n != 1 else ''}). Auto-correct is off; it is proposed "
-                f"with a warning — review and apply, fix manually, "
-                f"or reject."
-            )
-        return (
-            f"⚠ Auto-correct exhausted after {run_state.max_attempts} "
-            f"attempt{'s' if run_state.max_attempts != 1 else ''} "
-            f"({n} residual issue{'s' if n != 1 else ''}). "
-            f"The last response is proposed with a warning; "
-            f"review and apply, fix manually, or reject."
-        )
-
-    def _maybe_warn_validator_unavailable(self, reason: str) -> None:
-        """Emit a once-per-tab system message when the deterministic path
-        isn't available, then suppress further notifications until the
-        tab is recreated. Avoids spamming the chat with the same banner
-        on every LLM call.
-
-        Suppressed entirely when the operator explicitly opted out via
-        ``validator_loop.enabled=false`` — in that case there's nothing
-        to warn about, the user already knows (Phase 4.6).
-        """
-        if getattr(self.tab_context, "_validator_unavailable_warned", False):
-            return
-        if "disabled in project settings" in reason:
-            # User opt-out → don't nag.
-            self.tab_context._validator_unavailable_warned = True
-            return
-        self.tab_context._validator_unavailable_warned = True
-        self.main_window.dock.chat_panel.add_message(
-            "system",
-            f"ℹ Deterministic validator unavailable ({reason}). "
-            f"Falling back to operator review only — your Accept on its proposal remains "
-            f"the gate before any LLM-proposed change is applied.",
-        )
 
     # ------------------------------------------------------------------ #
     # Helpers                                                             #

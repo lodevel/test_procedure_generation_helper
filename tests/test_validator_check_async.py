@@ -11,6 +11,7 @@ import pytest
 from PySide6.QtCore import QCoreApplication
 
 import procedo.studio.tabs.llm_tab_mixin as llm_tab_mixin
+import procedo.studio.tabs.llm_validator_loop as llm_validator_loop
 from procedo.studio.llm import LLMTask
 from procedo.studio.core.validation_outcome import ValidationOutcome
 
@@ -71,7 +72,7 @@ def asked(opened, monkeypatch):  # noqa: F811
     monkeypatch.setattr(llm_tab_mixin, "LLMWorker", _Asked)
     view._run_task_async(LLMTask.REVIEW_TEXT_PROCEDURE)
     view.check = _Check()
-    monkeypatch.setattr(llm_tab_mixin, "validate_response", view.check)
+    monkeypatch.setattr(llm_validator_loop, "validate_response", view.check)
     view.applied = []
     monkeypatch.setattr(view, "_apply_proposals", lambda r, task=None: view.applied.append(r))
     view.reply = SimpleNamespace(total_tokens=1)
@@ -79,7 +80,7 @@ def asked(opened, monkeypatch):  # noqa: F811
 
 
 def _start(view):
-    view._start_validator_check(view.reply)
+    view.validator_loop.start(view.reply)
 
 
 def test_the_check_runs_off_the_gui_thread_and_locks_the_chat_meanwhile(asked):
@@ -138,3 +139,22 @@ def test_a_failed_check_ends_the_run_and_shows_the_error(asked, mbox):
     assert mbox.critical[0][0] == "Validator Error" and "engine gone" in mbox.critical[0][1]
     assert view.applied == [] and view._ensure_run_state().state.name == "IDLE"
     assert w.dock.chat_panel.send_btn.isEnabled()
+
+
+def test_the_validator_unavailable_message_shows_once_per_view_and_never_after_an_opt_out():
+    posted = []
+    chat = SimpleNamespace(add_message=lambda role, text, **kw: posted.append(text))
+
+    def loop():
+        return llm_validator_loop.ValidatorLoop(
+            main_window=SimpleNamespace(dock=SimpleNamespace(chat_panel=chat)), tab_context=None,
+            run_state=None, status=None, section_override=None, drop_late_reply=None,
+            is_active=None, show_error=None, finish=None, run_task=None)
+
+    shown = loop()
+    shown._maybe_warn_validator_unavailable("no engine")
+    shown._maybe_warn_validator_unavailable("no engine")
+    opted_out = loop()
+    opted_out._maybe_warn_validator_unavailable("validator loop disabled in project settings")
+    opted_out._maybe_warn_validator_unavailable("no engine")
+    assert len(posted) == 1 and "Deterministic validator unavailable (no engine)" in posted[0]

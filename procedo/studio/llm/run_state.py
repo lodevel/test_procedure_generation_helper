@@ -8,8 +8,8 @@ The FSM is intentionally narrow:
     button" → "result applied / rejected" run, including the auto-retry
     iterations in between;
   - it knows nothing about Qt, LLM backends, or the chat panel — those
-    live in :mod:`llm_tab_mixin` and consume the FSM via its public
-    transition methods.
+    live in :mod:`llm_tab_mixin` and its :mod:`llm_validator_loop`, which
+    consume the FSM via its public transition methods.
 
 Splitting it out means the auto-retry loop's transition logic is one
 small testable unit, not buried inside ``_handle_llm_response``.
@@ -83,7 +83,7 @@ class LLMRunState:
     to ``IDLE`` on any terminal transition.
 
     The dataclass holds no Qt references on purpose — it is purely the
-    truth-state. The orchestrator (mixin) reads these fields to decide
+    truth-state. The orchestrators (the mixin and its ValidatorLoop) read these fields to decide
     whether to spawn another worker, show a banner, etc.
     """
 

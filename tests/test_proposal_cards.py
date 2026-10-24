@@ -19,6 +19,7 @@ from procedo.studio.dialogs.diff_viewer import DiffViewer
 from procedo.studio.dock.chat_messages import CLOSED, ProposalCard, ProposalMessage
 from procedo.studio.llm import LLMTask
 import procedo.studio.tabs.llm_tab_mixin as llm_tab_mixin
+import procedo.studio.tabs.llm_validator_loop as llm_validator_loop
 import procedo.studio.tabs.text_actions as text_actions
 
 from .test_main_window_characterization import (
@@ -403,7 +404,7 @@ def test_a_late_reply_is_dropped_whole_before_anything_reads_it(opened, monkeypa
     t2 = w.root / "tests" / "t2"
     w.open_test(t2)
     touched = []
-    monkeypatch.setattr(llm_tab_mixin, "validate_response", lambda *a, **k: touched.append("v"))
+    monkeypatch.setattr(llm_validator_loop, "validate_response", lambda *a, **k: touched.append("v"))
     monkeypatch.setattr(view, "_parse_response_to_dict", lambda r: touched.append("parse"))
     monkeypatch.setattr(w.dock, "show_validation_result_from_list",
                         lambda issues: touched.append("findings"))

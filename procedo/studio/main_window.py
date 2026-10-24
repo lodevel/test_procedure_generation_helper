@@ -47,7 +47,7 @@ class StudioWorkspace(QWidget):
       the OpenCode pill and menu, Export, Skill chat, Save all
     - the four views (Text, Text-JSON, JSON-Code, Traceability) behind a
       segmented switch
-    - the Workspace (tests) and Assistant (Chat, Session, Findings, Raw)
+    - the Workspace (tests) and Assistant (Chat, Findings, Raw)
       columns
     - the status line: project, rules, bundle, validator
     - ``menu_bar``, for the window that hosts it to show

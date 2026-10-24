@@ -229,4 +229,4 @@ def test_the_composer_sits_under_every_tab(opened):
     assert [layout.itemAt(i).widget() for i in range(layout.count())][-1] is dock.chat_panel.composer
     assert dock.tab_widget.property("underline") is True
     assert [dock.tab_widget.tabText(i) for i in range(dock.tab_widget.count())] == [
-        "Chat", "Session", "Findings", "Raw"]
+        "Chat", "Findings", "Raw"]

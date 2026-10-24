@@ -162,7 +162,6 @@ class DocumentController:
         # Switch chat context to current tab's TabContext
         if hasattr(mw, 'dock') and hasattr(tab, 'tab_context'):
             mw.dock.chat_panel.switch_context(tab.tab_context)
-            mw.dock.session_viewer.switch_context(tab.tab_context)
             mw.dock.raw_viewer.switch_context(tab.tab_context)
             # Findings are per-test (session_state), no context switch needed
 
@@ -294,15 +293,9 @@ class DocumentController:
         mw.text_only_tab.refresh_parser_button()
         mw.json_code_tab.refresh_parser_button()
 
-        # Refresh dock panels with session data
-        mw.dock.refresh_session()
-
         # Update status indicators
         mw._update_status_indicators()
         mw._update_menu_state()
-
-        # Refresh session viewer
-        mw.dock.refresh_session()
 
         # Switch to appropriate tab only on first test load.
         # When switching between tests, preserve the user's current tab.

@@ -1,7 +1,7 @@
 """
 The Assistant column (the right column of Procedo Studio), as on the approved board S5: its
 header ("Assistant" and the rules picker "Rules · n of N ▾"), the underlined tabs Chat /
-Session / Findings N / Raw, and the chat's composer under every tab.
+Findings N / Raw, and the chat's composer under every tab.
 """
 
 from PySide6.QtWidgets import QMessageBox, QPushButton, QTabWidget, QVBoxLayout, QWidget
@@ -13,7 +13,6 @@ from ..widgets.rule_selector import RuleSelectorDialog, current_selection
 from .chat_panel import ChatPanel
 from .findings_panel import FindingsPanel
 from .raw_response_viewer import RawResponseViewer
-from .session_viewer import SessionViewer
 
 if TYPE_CHECKING:
     from ..main_window import StudioWorkspace
@@ -23,7 +22,7 @@ class DockWidget(QWidget):
     """
     The Assistant column: a fixed column of the workspace (no float, no close).
 
-    Tabs: Chat (the LLM conversation), Session (assumptions / decisions / questions),
+    Tabs: Chat (the LLM conversation),
     Findings (validation issues, their count in the tab), Raw (the last responses).
     """
 
@@ -42,7 +41,6 @@ class DockWidget(QWidget):
         head.layout().setContentsMargins(14, 10, 14, 8)
 
         self.chat_panel = ChatPanel(self.main_window, self)
-        self.session_viewer = SessionViewer(self.main_window, self)
         self.findings_panel = FindingsPanel(self.main_window, self)
         self.raw_viewer = RawResponseViewer(self.main_window, self)
         self.findings_panel.issues_changed.connect(self._show_findings_count)
@@ -51,7 +49,6 @@ class DockWidget(QWidget):
         self.tab_widget.setObjectName("assistantTabs")
         self.tab_widget.setProperty("underline", True)  # the app QSS's underlined tabs
         self.tab_widget.addTab(self.chat_panel, "Chat")
-        self.tab_widget.addTab(self.session_viewer, "Session")
         self.tab_widget.addTab(self.findings_panel, "Findings")
         self.tab_widget.addTab(self.raw_viewer, "Raw")
 
@@ -132,7 +129,3 @@ class DockWidget(QWidget):
         """The Findings tab carries the issue count ("Findings 3")."""
         index = self.tab_widget.indexOf(self.findings_panel)
         self.tab_widget.setTabText(index, f"Findings {count}" if count else "Findings")
-
-    def refresh_session(self):
-        """Refresh the session viewer."""
-        self.session_viewer.refresh()

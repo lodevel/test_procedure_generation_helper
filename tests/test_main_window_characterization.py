@@ -880,7 +880,6 @@ def test_tab_change_syncs_previous_tab_and_switches_context(make_window,
     w.json_code_tab.on_activated = lambda: calls.append("activate_new")
     switched = []
     w.dock.chat_panel.switch_context = switched.append
-    w.dock.session_viewer.switch_context = lambda ctx: None
     w.dock.raw_viewer.switch_context = lambda ctx: None
 
     w.view_stack.setCurrentWidget(w.json_code_tab)

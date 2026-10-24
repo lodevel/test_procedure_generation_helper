@@ -118,7 +118,7 @@ def build_frame(ws: StudioWorkspace) -> None:
         action.toggled.connect(column.setVisible)
     refresh_header(ws)
     refresh_footer(ws)
-    ws._llm_server.refresh_indicator()
+    ws.llm_server.refresh_indicator()
 
 
 def _card(content: QWidget, width: int) -> QFrame:

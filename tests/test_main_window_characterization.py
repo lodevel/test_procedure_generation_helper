@@ -214,8 +214,8 @@ def test_construction_smoke_disabled_backend(make_window):
     # order, and the views + Assistant start disabled until a test is loaded.
     w = make_window()
 
-    assert w._llm_server.server_manager is None
-    assert w._llm_server.backend_factory.backend_type == BACKEND_TYPE_NONE
+    assert w.llm_server.server_manager is None
+    assert w.llm_server.backend_factory.backend_type == BACKEND_TYPE_NONE
     assert [b.text() for b in w.view_buttons.buttons()] == [
         "Text", "Text–JSON", "JSON–Code", "Traceability"]
     assert w.view_stack.currentWidget() is w.text_only_tab
@@ -245,8 +245,8 @@ def test_construction_smoke_disabled_backend(make_window):
 def test_a_health_probes_verdict_lands_on_the_ui_thread(make_window):
     w = make_window()
     ran = []
-    w._llm_server._on_health_probe_result = lambda sm, alive: ran.append((sm, alive, threading.current_thread()))
-    worker = threading.Thread(target=lambda: w._llm_server._health_verdict(("sm", True)))
+    w.llm_server._on_health_probe_result = lambda sm, alive: ran.append((sm, alive, threading.current_thread()))
+    worker = threading.Thread(target=lambda: w.llm_server._health_verdict(("sm", True)))
     worker.start()
     worker.join(5)
     _settle(lambda: ran)
@@ -1061,8 +1061,8 @@ def test_settings_dialog_accept_and_cancel_wiring(make_window, monkeypatch,
 
     monkeypatch.setattr(mw_mod, "SettingsDialog", FakeSettingsDialog)
     events = []
-    orig_init = w._llm_server.init_backend
-    w._llm_server.init_backend = lambda: (events.append("init_backend"),
+    orig_init = w.llm_server.init_backend
+    w.llm_server.init_backend = lambda: (events.append("init_backend"),
                                           orig_init())[1]
     w.refresh_all_button_labels = lambda: events.append("labels")
     w.text_only_tab.reload_netlist = lambda: events.append("netlist")
@@ -1070,7 +1070,7 @@ def test_settings_dialog_accept_and_cancel_wiring(make_window, monkeypatch,
     w._on_settings()
 
     assert created[0].args == (w.task_config_manager, w, root,
-                               w._llm_server.server_manager)
+                               w.llm_server.server_manager)
     assert w._settings == {"llm_backend": "none", "marker": 42}
     assert events == ["init_backend", "netlist", "labels"]
 

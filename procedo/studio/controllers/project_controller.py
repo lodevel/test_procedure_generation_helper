@@ -86,7 +86,7 @@ class ProjectController(QObject):
 
         # Show the Workspace column if hidden
         mw.toggle_workspace_action.setChecked(True)
-        mw._llm_server.restart_for_project()
+        mw.llm_server.restart_for_project()
 
         # Show success message
         QMessageBox.information(
@@ -109,7 +109,7 @@ class ProjectController(QObject):
         mw.json_code_tab.refresh_parser_button()
         watch_project_config(mw)
         mw.toggle_workspace_action.setChecked(True)
-        mw._llm_server.restart_for_project()
+        mw.llm_server.restart_for_project()
 
     def rebuild_open_recent_menu(self):
         mw = self._mw
@@ -198,7 +198,7 @@ class ProjectController(QObject):
 
                 # Show the Workspace column
                 mw.toggle_workspace_action.setChecked(True)
-                mw._llm_server.restart_for_project()
+                mw.llm_server.restart_for_project()
             else:
                 QMessageBox.warning(
                     mw,

@@ -25,6 +25,14 @@ from .server_manager import OpenCodeServerManager
 log = logging.getLogger(__name__)
 
 
+# Backend type constants
+BACKEND_TYPE_OPENCODE = "opencode"
+BACKEND_TYPE_NONE = "none"
+
+# List of valid backend types
+VALID_BACKEND_TYPES = [BACKEND_TYPE_OPENCODE, BACKEND_TYPE_NONE]
+
+
 def start_backend(factory, tab_id: str) -> tuple[LLMBackend, bool]:
     """A new backend for *tab_id* from *factory*, started, and whether to keep it: what a
     Studio tab and a skill chat make on first use (off the GUI thread:
@@ -43,14 +51,6 @@ def start_backend(factory, tab_id: str) -> tuple[LLMBackend, bool]:
     if not keep:
         log.info(f"Fallback NoneBackend for '{tab_id}': the next use tries again")
     return backend, keep
-
-
-# Backend type constants
-BACKEND_TYPE_OPENCODE = "opencode"
-BACKEND_TYPE_NONE = "none"
-
-# List of valid backend types
-VALID_BACKEND_TYPES = [BACKEND_TYPE_OPENCODE, BACKEND_TYPE_NONE]
 
 
 @dataclass

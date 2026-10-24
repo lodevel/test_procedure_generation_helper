@@ -17,12 +17,9 @@ from procedo.ui.page_nav import PagedArea, field_row, heading, page_form
 
 from ..core.task_config import TaskConfigManager
 from ..core.studio_settings import load_settings, read_settings, save_settings
-from ..llm.launch_config import (
-    build_launch_config, ensure_master_config, get_opencode_launch_test_dir,
-    get_opencode_master_path,
-)
-from ..llm.launch_files import remove_launch_files
+from ..llm.launch_config import get_opencode_master_path
 from ..llm.server_manager import fetch_opencode_models
+from .settings_backend_probe import SettingsBackendProbe
 
 log = logging.getLogger(__name__)
 
@@ -52,11 +49,9 @@ class SettingsDialog(QDialog):
         server_manager=None,
     ):
         super().__init__(parent)
-        # Workers (the model-list fetch, the Start-server liveness probe) answer through
-        # these relays and never hold this dialog: it may be deleted while they run, and
-        # then their answers are dropped (procedo.core.off_gui).
+        # The model-list fetch worker answers through this relay and never holds this dialog:
+        # it may be deleted while it runs, and then its answer is dropped (procedo.core.off_gui).
         self._models_answer = answer_to(self._on_models_answer)
-        self._start_probe_answer = answer_to(self._on_start_probe_answer)
         self.setWindowTitle("Settings")
         self.setMinimumSize(700, 600)  # every page scrolls when shorter than its fields
         self.resize(780, 760)
@@ -79,17 +74,19 @@ class SettingsDialog(QDialog):
         # may post _apply_opencode_models() back AFTER the dialog is closed; the
         # posted callback returns early on this flag instead of touching deleted
         # C++ widgets (use-after-close). The Start-server poll has its own
-        # _start_poll_done latch; this guards the model-refresh path.
+        # poll latch (SettingsBackendProbe); this guards the model-refresh path.
         self._closed = False
-        # Generation token for the Start-server probe: bumped on each
-        # _on_start_server_clicked so a stale probe (from an earlier start
-        # attempt) is dropped instead of applying alive=True to a newer poll.
-        self._start_server_generation = 0
 
         # Note: task / chat editing moved to the parent app's
         # ProjectConfigDialog -> Workflows tab (Phase 4). This dialog
         # now owns only LLM backend + validator-loop settings.
         self._setup_ui()
+        self._probe = SettingsBackendProbe(
+            self, server_manager=server_manager, project_root=project_root,
+            backend=self.backend_combo.currentText, host=self.opencode_host,
+            port=self.opencode_port, model_value=self._opencode_model_value,
+            start_button=self.opencode_start_server, note=self.opencode_models_note,
+            populate_models=self._populate_opencode_models)
         self._load_values()
 
     def _setup_ui(self):
@@ -243,10 +240,10 @@ class SettingsDialog(QDialog):
         self.opencode_start_server.setToolTip(
             "The OpenCode server is not reachable. Click to (re)launch it, then "
             "the model list refreshes automatically.")
-        self.opencode_start_server.clicked.connect(self._on_start_server_clicked)
+        self.opencode_start_server.clicked.connect(lambda: self._probe.start_server())
         self.opencode_start_server.setVisible(False)
         self.test_connection_btn = QPushButton("Test connection")
-        self.test_connection_btn.clicked.connect(self._on_test_connection)
+        self.test_connection_btn.clicked.connect(lambda: self._probe.test_connection())
         self.opencode_server_pill = QLabel()
         self.opencode_server_pill.setVisible(False)
         row = field_row(self.opencode_start_server, self.test_connection_btn,
@@ -414,141 +411,6 @@ class SettingsDialog(QDialog):
                 "Server not reachable — type a model id or leave empty for "
                 "auto-pick.")
 
-    def _on_start_server_clicked(self):
-        """(Re)launch OUR OpenCode server from the picker, off the UI thread, and
-        re-query the model list once it answers.
-
-        Auto-recovery seam for a crashed mid-session server: ``ensure_running``
-        relaunches via the SAME ``start()`` path the app uses (orphan-sweep +
-        respawn), so the user never has to restart the whole app. We poll the
-        manager's liveness on a short QTimer (the daemon ``start()`` returns
-        asynchronously) and refresh the list when it comes up, all without
-        freezing the dialog.
-        """
-        import threading
-        from PySide6.QtCore import QTimer
-        sm = self._server_manager
-        if sm is None:
-            return
-        # A manual Start-server is a user intervention: clear any auto-recovery
-        # give-up state on the main window so the background poll resumes
-        # auto-recovering this server after this attempt (best-effort — the
-        # parent is the main window when launched from it).
-        parent = self.parent()
-        reset = getattr(getattr(parent, "_llm_server", None), "reset_recovery", None)
-        if callable(reset):
-            reset()
-        # Bump the generation token: each Start-server attempt owns a fresh
-        # token. A probe spawned by an EARLIER attempt carries the old token and
-        # its result is dropped (it must not stop a newer poll's timer, re-enable
-        # the button, or list models for the wrong state).
-        self._start_server_generation += 1
-        generation = self._start_server_generation
-        self.opencode_start_server.setEnabled(False)
-        self.opencode_models_note.setText("Starting OpenCode server…")
-        # Launch off the UI thread; ensure_running short-circuits if it is
-        # already alive and otherwise calls start().
-        try:
-            threading.Thread(target=sm.ensure_running, daemon=True).start()
-        except Exception:
-            # Spawn failed — re-enable the button and surface a note instead of
-            # wedging it disabled with the "Starting…" note forever. No poll
-            # timer is armed (nothing to poll), so just bail.
-            self.opencode_start_server.setEnabled(True)
-            self.opencode_models_note.setText(
-                "Could not start the server — check the OpenCode install / "
-                "logs, then try again.")
-            return
-
-        # Poll liveness for up to ~startup timeout; refresh + re-enable on the UI
-        # thread when it answers (or give up with a clear note). is_alive is a
-        # blocking 2s HTTP /health GET, so each tick runs it on a daemon thread
-        # and the verdict is answered to the UI thread (_start_probe_answer) —
-        # the probe never mutates dialog state cross-thread, and the modal dialog
-        # never freezes. _start_poll_done latches the terminal state so a late
-        # probe result can still flip us to success after a timeout note (no
-        # cross-thread flag the UI reads stale, no ignored late success).
-        self._start_poll_elapsed = 0.0
-        self._start_probe_in_flight = False
-        self._start_poll_done = False
-        timer = QTimer(self)
-        timer.setInterval(1000)
-        # Stash the timer so done() (dialog close) can stop it — a fired-after-
-        # close tick would otherwise run HTTP on the UI thread and touch deleted
-        # C++ widgets (use-after-close).
-        self._start_poll_timer = timer
-
-        def _tick():
-            if self._start_poll_done:
-                return
-            self._start_poll_elapsed += 1.0
-            if self._start_poll_elapsed >= 60.0:
-                # Timeout: stop ticking and show the give-up note. We do NOT set
-                # _start_poll_done here — an is_alive probe may still be in
-                # flight; if it comes back alive its UI-thread handler honours
-                # the LATE success (flips the note + lists models) instead of
-                # silently dropping it.
-                timer.stop()
-                self.opencode_start_server.setEnabled(True)
-                self.opencode_models_note.setText(
-                    "Server did not come up — check the OpenCode install / logs, "
-                    "then try again.")
-                return
-            # Kick off the next is_alive probe off the UI thread (one at a time).
-            if self._start_probe_in_flight:
-                return
-            self._start_probe_in_flight = True
-            answer = self._start_probe_answer
-
-            def _probe():
-                # Off the UI thread (blocking ~2s /health). The verdict is
-                # posted back to the UI thread; the daemon mutates
-                # NO dialog state directly (a lost QTimer.singleShot here would
-                # wedge _start_probe_in_flight=True forever).
-                try:
-                    alive = sm.is_alive
-                except Exception:
-                    alive = False
-                answer((alive, generation))
-
-            try:
-                threading.Thread(target=_probe, daemon=True).start()
-            except Exception:
-                # Spawn failed after the flag was set — clear it so the next
-                # tick can probe again (never wedge _start_probe_in_flight=True).
-                self._start_probe_in_flight = False
-
-        def _on_start_probe_result(alive, gen=generation):
-            # UI-thread continuation of one is_alive probe.
-            # Drop a stale probe from an EARLIER Start-server attempt: applying
-            # its verdict would stop a newer poll's timer / re-enable the button /
-            # list models for the wrong state.
-            if gen != self._start_server_generation:
-                return
-            self._start_probe_in_flight = False
-            if self._start_poll_done:
-                return  # already terminal (a prior probe won, or dialog logic done)
-            if not alive:
-                return  # keep polling (the tick re-arms / enforces timeout)
-            # Gate success on is_alive (process up AND /health answers): start()
-            # spawns the process EARLY then waits for /health, so is_running
-            # flips true before the server can serve /config. This is the SINGLE
-            # success seam — it also catches a late success after the timeout
-            # note (the timer may already be stopped).
-            self._start_poll_done = True
-            timer.stop()
-            self.opencode_start_server.setEnabled(True)
-            self._populate_opencode_models()  # toggles the button off + lists models
-
-        self._on_start_probe_result = _on_start_probe_result
-        timer.timeout.connect(_tick)
-        timer.start()
-
-    def _on_start_probe_answer(self, answer):
-        """One Start-server probe's ``(alive, generation)``: the newest click's handler
-        drops a stale generation."""
-        self._on_start_probe_result(*answer)
-
     def done(self, result):
         """Cancel the Start-server poll on ANY dialog close (OK or Cancel).
 
@@ -556,174 +418,13 @@ class SettingsDialog(QDialog):
         timer here guarantees no tick fires after the dialog (and its C++
         widgets) are gone — avoiding HTTP on the UI thread + use-after-close.
         """
-        timer = getattr(self, "_start_poll_timer", None)
-        if timer is not None:
-            timer.stop()
-        # Latch the poll terminal so a probe still in flight, whose result
-        # marshals back after this close, no-ops in its UI-thread handler
-        # instead of touching deleted C++ widgets (use-after-close).
-        self._start_poll_done = True
+        self._probe.shutdown()
         # Disposed flag for any OTHER posted callback (the model-refresh worker's
         # _apply_opencode_models) — it returns early on this instead of mutating
         # deleted C++ widgets after close.
         self._closed = True
         super().done(result)
 
-    def _on_test_connection(self):
-        """Test the LLM backend configuration."""
-        backend = self.backend_combo.currentText()
-        
-        if backend == "none":
-            QMessageBox.information(self, "Test Connection", "No backend selected.")
-            return
-        
-        try:
-            if backend == "opencode":
-                # Test OpenCode backend
-                from ..llm.opencode_backend import OpenCodeBackend, OpenCodeConfig
-                from ..llm.lifecycle_adapters import make_wsl_lifecycle
-                from ..llm.backend_base import LLMRequest, LLMTask
-                
-                # Build the per-launch derived config (MCP built fresh) from the
-                # MASTER blueprint, matching how real chat launches it. Ensure the
-                # master exists first (seeded once from the project relic).
-                #
-                # CRITICAL: build into a THROWAWAY launch_test/ dir, NOT the live
-                # launch/ dir. The test server's start() writes a pid file and its
-                # stop() DELETES it; sharing the live dir would clobber the LIVE
-                # server's orphan-sweep record (its pid file) — the exact
-                # orphan-left bug class. Isolating it means the probe's pid file +
-                # derived opencode.json never collide with the live ones.
-                ensure_master_config(
-                    seed_from=(self._project_root / "opencode.json")
-                    if self._project_root else None)
-                test_launch_dir = get_opencode_launch_test_dir()
-                launch_dir = str(build_launch_config(
-                    self._project_root, launch_dir=test_launch_dir))
-                config = OpenCodeConfig(
-                    server_port=self.opencode_port.value(),
-                    server_hostname=self.opencode_host.text() or "127.0.0.1",
-                    model=self._opencode_model_value() or None,
-                    working_directory=launch_dir,
-                )
-
-                # Classified availability check — a precise reason (e.g.
-                # "OpenCode was not found in the WSL PATH. Install it
-                # (npm i -g opencode-ai)...") instead of a vague "not available".
-                from ..llm.server_manager import OpenCodeServerManager
-                mgr = OpenCodeServerManager(config)
-                if not mgr.is_available():
-                    status = mgr.last_status
-                    reason = status.message if status else "OpenCode is not available."
-                    QMessageBox.warning(self, "Test Connection", f"✗ {reason}")
-                    return
-
-                # C6: install OK is not enough — actually START a server and
-                # confirm /health is reachable, surfacing bind failures (the
-                # manager classifies PORT_IN_USE/START_TIMEOUT/START_FAILED).
-                # Then STOP it so the chat-test backend (which spawns its own
-                # `opencode serve`) doesn't collide on the port. try/finally so
-                # the probe server is ALWAYS torn down (and its launch_test pid
-                # file cleaned), even on an early-return warning path below.
-                if not mgr.start():
-                    st = mgr.last_status
-                    why = f"\n\n{st.message}" if st and not st.ok else ""
-                    QMessageBox.warning(
-                        self, "Test Connection",
-                        f"✗ Could not start OpenCode\n\nHost: {config.server_hostname}\nPort: {config.server_port}{why}"
-                    )
-                    return
-                try:
-                    reachable = mgr.health_check()
-                finally:
-                    mgr.stop()
-                if not reachable:
-                    QMessageBox.warning(
-                        self, "Test Connection",
-                        f"✗ Server started but /health was not reachable\n\n"
-                        f"Host: {config.server_hostname}\nPort: {config.server_port}"
-                    )
-                    return
-
-                # Always run a real end-to-end chat test (Default = auto-pick
-                # included), so the button truly validates the model, not just
-                # that OpenCode is installed + reachable.
-                model_label = config.model or "auto-pick (Default)"
-                # The probe stopped the manager's server above so THIS backend
-                # spawns its own on that port — inject the WSL self-spawn
-                # lifecycle so start() actually launches (the package client
-                # otherwise only attaches to an already-running server).
-                backend_obj = OpenCodeBackend(
-                    config=config, lifecycle=make_wsl_lifecycle(config)
-                )
-                if not backend_obj.is_running:
-                    if not backend_obj.start():
-                        st = mgr.last_status
-                        why = f"\n\n{st.message}" if st and not st.ok else ""
-                        QMessageBox.warning(
-                            self, "Test Connection",
-                            f"✗ Could not start OpenCode\n\nHost: {config.server_hostname}\nPort: {config.server_port}{why}"
-                        )
-                        return
-                try:
-                    test_request = LLMRequest(
-                        task=LLMTask.AD_HOC_CHAT,
-                        strict_mode=False,
-                        user_message="Respond with just 'OK'",
-                    )
-                    import threading
-                    result = {"response": None, "error": None}
-
-                    def test_send():
-                        try:
-                            result["response"] = backend_obj.send_request(test_request)
-                        except Exception as e:
-                            result["error"] = str(e)
-
-                    thread = threading.Thread(target=test_send)
-                    thread.start()
-                    thread.join(timeout=30)
-                    if thread.is_alive():
-                        result["error"] = "Request timed out after 30 seconds"
-
-                    if backend_obj.is_running:
-                        backend_obj.stop()
-
-                    hint = ("\n\nIf you picked a specific model, your account "
-                            "may not support it — try leaving Model empty "
-                            "(auto-pick).")
-                    if result["error"]:
-                        QMessageBox.warning(
-                            self, "Test Connection",
-                            f"✗ Chat test failed\n\nModel: {model_label}\n\nError: {result['error']}{hint}"
-                        )
-                    elif result["response"] and result["response"].error_message:
-                        QMessageBox.warning(
-                            self, "Test Connection",
-                            f"✗ Chat test failed\n\nModel: {model_label}\n\nError: {result['response'].error_message}{hint}"
-                        )
-                    else:
-                        QMessageBox.information(
-                            self, "Test Connection",
-                            f"✓ OpenCode is working\n\nHost: {config.server_hostname}\nPort: {config.server_port}\nModel: {model_label}"
-                        )
-                except Exception:
-                    if backend_obj.is_running:
-                        backend_obj.stop()
-                    raise
-            
-        except Exception as e:
-            QMessageBox.critical(
-                self, "Test Connection Failed",
-                f"Error testing connection:\n\n{str(e)}"
-            )
-        finally:  # the probe's derived config goes with it (the app leaves no traces)
-            remove_launch_files(get_opencode_launch_test_dir())
-    
-
-
-
-    
     # ------------------------------------------------------------------ #
     # Validator page (per-project: validator_loop.* settings)             #
     # ------------------------------------------------------------------ #

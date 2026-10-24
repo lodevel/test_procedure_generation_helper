@@ -1179,11 +1179,24 @@ def _fake_dialog():
     self._settings = {}
     self._server_manager = None
     self._models_probe_in_flight = False
-    self._start_server_generation = 0
     self._closed = False
-    # The probes' answer channels: not reached on the spawn-failure paths under test.
+    # The probe's answer channel: not reached on the spawn-failure paths under test.
     self._models_answer = MagicMock()
+    return self
+
+
+def _fake_probe(server_manager):
+    """A SettingsBackendProbe driven UNBOUND on a namespace of MagicMock widgets."""
+    import types
+    self = types.SimpleNamespace()
+    self._start_button = MagicMock()
+    self._note = MagicMock()
+    self._server_manager = server_manager
+    self._populate_models = MagicMock()
+    self._start_server_generation = 0
     self._start_probe_answer = MagicMock()
+    self._owner = MagicMock()
+    self._owner.parent.return_value = None
     return self
 
 
@@ -1209,28 +1222,24 @@ def test_models_probe_spawn_failure_clears_inflight_flag():
 def test_start_probe_spawn_failure_re_enables_button():
     # Residual #4: ensure_running Thread.start() failure must re-enable the Start
     # button and replace the "Starting…" note — not wedge it disabled forever.
-    from procedo.studio.dialogs.settings_dialog import SettingsDialog
-    self = _fake_dialog()
-    self._server_manager = _FakeSM(alive=False)
-    self.parent = MagicMock(return_value=None)
+    from procedo.studio.dialogs.settings_backend_probe import SettingsBackendProbe
+    self = _fake_probe(_FakeSM(alive=False))
     # The spawn fails BEFORE the poll timer is armed, so QTimer is never reached;
     # patch it anyway for safety (a SimpleNamespace is not a valid QObject parent).
     with patch("threading.Thread", side_effect=_raising_thread), \
             patch("PySide6.QtCore.QTimer", MagicMock()):
-        SettingsDialog._on_start_server_clicked(self)
+        SettingsBackendProbe.start_server(self)
     # Button re-enabled (last setEnabled call is True) after the spawn failure.
-    assert self.opencode_start_server.setEnabled.call_args[0][0] is True
-    assert "Starting" not in self.opencode_models_note.setText.call_args[0][0]
+    assert self._start_button.setEnabled.call_args[0][0] is True
+    assert "Starting" not in self._note.setText.call_args[0][0]
 
 
 def test_stale_start_probe_result_is_dropped_by_generation():
     # Residual #2: a probe result from an EARLIER Start-server attempt (older
     # generation token) must be dropped — it must not stop a newer poll's timer,
     # re-enable the button, or list models for the wrong state.
-    from procedo.studio.dialogs.settings_dialog import SettingsDialog
-    self = _fake_dialog()
-    self._server_manager = _FakeSM(alive=False)
-    self.parent = MagicMock(return_value=None)
+    from procedo.studio.dialogs.settings_backend_probe import SettingsBackendProbe
+    self = _fake_probe(_FakeSM(alive=False))
     # First click installs _on_start_probe_result bound to generation 1.
     captured = {}
 
@@ -1241,24 +1250,23 @@ def test_stale_start_probe_result_is_dropped_by_generation():
 
     with patch("threading.Thread", side_effect=_capture_thread), \
             patch("PySide6.QtCore.QTimer", MagicMock()):
-        SettingsDialog._on_start_server_clicked(self)
+        SettingsBackendProbe.start_server(self)
     handler_gen1 = self._on_start_probe_result
     assert self._start_server_generation == 1
 
     # A SECOND click bumps the generation to 2 (a newer poll owns the state).
     with patch("threading.Thread", side_effect=_capture_thread), \
             patch("PySide6.QtCore.QTimer", MagicMock()):
-        SettingsDialog._on_start_server_clicked(self)
+        SettingsBackendProbe.start_server(self)
     assert self._start_server_generation == 2
 
     # Reset observable widgets, then deliver the STALE gen-1 result (alive=True).
-    self.opencode_start_server.reset_mock()
-    self._populate_opencode_models = MagicMock()
+    self._start_button.reset_mock()
     handler_gen1(True, 1)
 
     # Dropped: no button re-enable, no model re-query for the stale generation.
-    self.opencode_start_server.setEnabled.assert_not_called()
-    self._populate_opencode_models.assert_not_called()
+    self._start_button.setEnabled.assert_not_called()
+    self._populate_models.assert_not_called()
 
 
 def test_apply_models_no_ops_after_dialog_closed():

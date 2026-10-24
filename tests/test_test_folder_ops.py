@@ -126,9 +126,10 @@ def test_rename_moves_the_folder_ids_and_references(tmp_path):
     assert config == {"test_order": {"order": ["Other", "Bar"]}, "x": "µ"}
     assert json.loads((root / "scenarios" / "s1.json").read_text(encoding="utf-8"))["tests"] == ["Bar", "Other"]
     assert (root / "scenarios" / "s2.json").read_text(encoding="utf-8") == json.dumps({"tests": ["Other"]})
-    for written in (root / "config" / "config.json", root / "scenarios" / "s1.json"):  # today's layout
-        text = written.read_text(encoding="utf-8")
-        assert text == json.dumps(json.loads(text), indent=2, ensure_ascii=False) + "\n"
+    text = (root / "config" / "config.json").read_text(encoding="utf-8")  # today's layout
+    assert text == json.dumps(json.loads(text), indent=2, ensure_ascii=False) + "\n"
+    # a scenario is rewritten by the project's own Scenarios.rename_test_in: same bytes as the Bench writes
+    assert (root / "scenarios" / "s1.json").read_text(encoding="utf-8") == json.dumps({"tests": ["Bar", "Other"]}, indent=2)
 
 
 def test_rename_refuses_an_existing_name_and_touches_nothing(tmp_path):

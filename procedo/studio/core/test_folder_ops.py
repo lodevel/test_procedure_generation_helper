@@ -9,7 +9,9 @@ import os
 import re
 from pathlib import Path
 
+from procedo.core.file_cache import FileCache
 from procedo.core.paths import is_link, rmtree
+from procedo.core.scenarios import Scenarios
 
 from . import test_sync
 from .fileio import atomic_write_text, retry_while_busy
@@ -110,31 +112,23 @@ def _same_folder(a: Path, b: Path) -> bool:
 
 
 def _swap_references(project_root: Path, old: str, new: str) -> list[str]:
-    """Swap ``old`` for ``new`` in config.json ``test_order`` and every
-    ``scenarios/*.json`` ``tests`` list. Returns warnings."""
+    """Swap ``old`` for ``new`` in config.json ``test_order`` and every scenario
+    (the project's own rewrite, ``Scenarios.rename_test_in``). Returns warnings."""
     warnings: list[str] = []
-
-    def swapped(seq: list) -> list:
-        return [new if entry == old else entry for entry in seq]
-
-    def rewrite(path: Path, label: str, get, put) -> None:
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            seq = get(data)
-            if isinstance(seq, list) and old in seq:
-                put(data, swapped(seq))
-                atomic_write_text(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
-        except (OSError, ValueError, AttributeError, TypeError) as e:
-            warnings.append(f"{label}: {e}")
-
     config_file = project_root / "config" / "config.json"
     if config_file.exists():
-        rewrite(config_file, "config.json test_order",
-                lambda d: d.get("test_order", {}).get("order"),
-                lambda d, v: d["test_order"].__setitem__("order", v))
-    scenarios_dir = project_root / "scenarios"
-    if scenarios_dir.is_dir():
-        for sc_file in sorted(scenarios_dir.glob("*.json")):
-            rewrite(sc_file, f"scenarios/{sc_file.name}",
-                    lambda d: d.get("tests"), lambda d, v: d.__setitem__("tests", v))
+        try:
+            data = json.loads(config_file.read_text(encoding="utf-8"))
+            order = data.get("test_order", {}).get("order")
+            if isinstance(order, list) and old in order:
+                data["test_order"]["order"] = [new if entry == old else entry for entry in order]
+                atomic_write_text(config_file, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        except (OSError, ValueError, AttributeError, TypeError) as e:
+            warnings.append(f"config.json test_order: {e}")
+    scenarios = Scenarios(project_root / "scenarios", FileCache())
+    for sc_file, orig_bytes in scenarios.referencing(old):
+        try:
+            scenarios.rename_test_in(sc_file, orig_bytes, old, new)
+        except (OSError, ValueError) as e:
+            warnings.append(f"scenarios/{sc_file.name}: {e}")
     return warnings

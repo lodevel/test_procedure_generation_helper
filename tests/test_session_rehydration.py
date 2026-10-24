@@ -30,7 +30,7 @@ class TestSerializeTranscript:
         assert serialize_transcript([], 10_000) == ""
 
     def test_nonpositive_budget_returns_blank(self):
-        msgs = [ChatMessage(role="user", content="hello")]
+        msgs = [ChatMessage(role="user", content="hello", full_prompt="P")]
         assert serialize_transcript(msgs, 0) == ""
         assert serialize_transcript(msgs, -5) == ""
 
@@ -43,7 +43,7 @@ class TestSerializeTranscript:
 
     def test_role_labels(self):
         msgs = [
-            ChatMessage(role="user", content="u1"),
+            ChatMessage(role="user", content="u1", full_prompt="P"),
             ChatMessage(role="assistant", content="a1"),
             ChatMessage(role="system", content="s1"),
         ]
@@ -56,14 +56,14 @@ class TestSerializeTranscript:
         assert "User: x" in out2
 
     def test_header_present(self):
-        out = serialize_transcript([ChatMessage(role="user", content="hi")], 10_000)
+        out = serialize_transcript([ChatMessage(role="user", content="hi", full_prompt="P")], 10_000)
         assert out.startswith("Conversation so far")
         # model-facing instruction: must tell the model to re-call the tools
         assert "re-call" in out.lower()
 
     def test_newest_first_survival_under_truncation(self):
         # 10 numbered messages; a tiny budget that fits only the last couple.
-        msgs = [ChatMessage(role="user", content=f"message number {i:02d}") for i in range(10)]
+        msgs = [ChatMessage(role="user", content=f"message number {i:02d}", full_prompt="P") for i in range(10)]
         # budget room for header + ~2 short blocks
         budget = len(
             "Conversation so far, replayed after the previous server session was lost. "
@@ -270,3 +270,20 @@ class TestRehydrateRetry:
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+class TestUnsentLinesAreNotReplayed:
+    def test_a_never_sent_user_line_and_the_not_sent_notes_stay_out(self):
+        msgs = [
+            ChatMessage(role="user", content="sent question", full_prompt="P"),
+            ChatMessage(role="assistant", content="an answer"),
+            ChatMessage(role="user", content="replaced question"),
+            ChatMessage(role="system", content="Not sent: replaced by a new message.",
+                        tone="warning"),
+            ChatMessage(role="system", content="Server restarted", tone="neutral"),
+        ]
+        out = serialize_transcript(msgs, 10_000)
+        assert "sent question" in out and "an answer" in out
+        assert "Note: Server restarted" in out
+        assert "replaced question" not in out
+        assert "Not sent" not in out

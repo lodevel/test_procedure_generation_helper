@@ -54,7 +54,7 @@ class SettingsBackendProbe(QObject):
         import threading
         from PySide6.QtCore import QTimer
         sm = self._server_manager
-        if sm is None:
+        if sm is None or self._test_running:
             return
         # A manual Start-server is a user intervention: clear any auto-recovery
         # give-up state on the main window so the background poll resumes
@@ -196,10 +196,12 @@ class SettingsBackendProbe(QObject):
         if backend == "none":
             QMessageBox.information(self._owner, "Test Connection", "No backend selected.")
             return
-        if self._test_running:
+        if self._test_running or self._start_poll_active():
             return
         self._test_running = True
         self._test_button.setEnabled(False)
+        self._start_was_enabled = self._start_button.isEnabled()
+        self._start_button.setEnabled(False)  # both would use the same host:port
         self._test_cue.start("Testing connection…", at_once=True)
         port, host, model = self._port.value(), self._host.text() or "127.0.0.1", self._model_value() or None
         project_root = self._project_root
@@ -210,9 +212,15 @@ class SettingsBackendProbe(QObject):
             self._end_test()
             raise
 
+    def _start_poll_active(self):
+        """A Start-server attempt is waiting for its server to come up."""
+        timer = getattr(self, "_start_poll_timer", None)
+        return timer is not None and timer.isActive()
+
     def _end_test(self):
         self._test_running = False
         self._test_button.setEnabled(True)
+        self._start_button.setEnabled(self._start_was_enabled)
         self._test_cue.done()
 
     def _on_test_answer(self, answer):

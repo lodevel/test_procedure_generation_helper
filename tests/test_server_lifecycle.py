@@ -1195,6 +1195,7 @@ def _fake_probe(server_manager):
     self._server_manager = server_manager
     self._populate_models = MagicMock()
     self._start_server_generation = 0
+    self._test_running = False
     self._start_probe_answer = MagicMock()
     self._owner = MagicMock()
     self._owner.parent.return_value = None

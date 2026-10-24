@@ -398,3 +398,50 @@ def test_closing_the_dialog_mid_test_shows_nothing_and_still_stops_its_server(qa
     for _ in range(20):
         qapp.processEvents()
     assert shown == []
+
+
+def test_start_server_is_off_while_a_test_runs_and_comes_back_as_it_was(qapp, no_network, project,
+                                                                       monkeypatch, tmp_path):
+    from unittest.mock import MagicMock
+    shown, _ = _slow_test_connection(monkeypatch, tmp_path)
+    dlg = _open(qapp, project)
+    dlg.backend_combo.setCurrentText("opencode")
+    dlg._probe._server_manager = MagicMock()
+    for was in (True, False):
+        shown.clear()
+        dlg.opencode_start_server.setEnabled(was)
+        dlg.test_connection_btn.click()
+        assert not dlg.opencode_start_server.isEnabled()
+        dlg._probe.start_server()  # even called directly: nothing starts meanwhile
+        dlg._probe._server_manager.ensure_running.assert_not_called()
+        deadline = time.monotonic() + 15
+        while not shown and time.monotonic() < deadline:
+            qapp.processEvents()
+            time.sleep(0.005)
+        assert dlg.opencode_start_server.isEnabled() is was
+    dlg.reject()
+
+
+def test_test_connection_does_nothing_while_a_start_server_poll_runs(qapp, no_network, project,
+                                                                   monkeypatch, tmp_path):
+    from PySide6.QtCore import QTimer
+    shown, _ = _slow_test_connection(monkeypatch, tmp_path)
+    dlg = _open(qapp, project)
+    dlg.backend_combo.setCurrentText("opencode")
+    poll = QTimer(dlg)
+    poll.start(1000)
+    dlg._probe._start_poll_timer = poll
+    dlg.test_connection_btn.click()
+    assert dlg.test_connection_btn.isEnabled() and not dlg.test_connection_cue.active
+    time.sleep(0.2)
+    qapp.processEvents()
+    assert not _SlowManager.instances and shown == []
+    poll.stop()  # the poll ended: a test may run again
+    dlg.test_connection_btn.click()
+    assert not dlg.test_connection_btn.isEnabled()
+    deadline = time.monotonic() + 15
+    while not shown and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(0.005)
+    assert len(shown) == 1
+    dlg.reject()

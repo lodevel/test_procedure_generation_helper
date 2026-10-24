@@ -25,11 +25,11 @@ from procedo.core.evidence_tree import pid_alive
 
 from .launch_files import (
     PID_FILE,
+    config_env,
     config_wsl_path,
     launch_file_owners,
     launch_file_path,
     remove_launch_files,
-    remove_legacy_launch_files,
     unlink_quietly,
 )
 from .opencode_backend import OpenCodeConfig, safe_wsl_cwd
@@ -440,17 +440,16 @@ class OpenCodeServerManager:
           was the likely cause of bare config-less servers. The launch dir comes
           from ``config.working_directory`` (a Windows path set by main_window to
           ``build_launch_config``'s return), translated to its ``/mnt/c`` WSL
-          form. When no launch dir is set we omit OPENCODE_CONFIG and fall back
-          to OpenCode's own discovery.
+          form, with project-config discovery off (``config_env``). When no
+          launch dir is set we omit both and fall back to OpenCode's own discovery.
         """
         # Every value that lands in the bash -ic string is shell-quoted so a
         # space or metacharacter in the home/launch path (or a crafted hostname)
         # can neither break the command nor inject a second one. The env-var
         # names + `opencode serve` literal are fixed and need no quoting.
-        env = "OPENCODE_ENABLE_EXA=1 "
-        cfg_wsl = self._our_config_wsl_path()
-        if cfg_wsl:
-            env += f"OPENCODE_CONFIG={shlex.quote(cfg_wsl)} "
+        env = "OPENCODE_ENABLE_EXA=1 " + "".join(
+            f"{name}={shlex.quote(value)} "
+            for name, value in config_env(self._config.working_directory).items())
         return (
             f"echo {self._PID_MARKER}$$ >&2; "
             f"{env}exec opencode serve --port {int(port)} "
@@ -900,8 +899,7 @@ class OpenCodeServerManager:
 
     def _sweep_orphan(self) -> None:
         """Sweep the records of Studio processes that are gone (and our own), then
-        the other launch files of a gone process whose record is gone, and the
-        files every Studio process shared before each got its own.
+        the other launch files of a gone process whose record is gone.
 
         Launch files whose owner (the Windows pid in their name) is alive and not
         us belong to ANOTHER live Studio: they and its server are left alone. A
@@ -910,7 +908,6 @@ class OpenCodeServerManager:
         launch_dir = self._config.working_directory
         if not launch_dir:
             return
-        remove_legacy_launch_files(launch_dir)
         for owner in launch_file_owners(launch_dir):
             if owner != os.getpid() and pid_alive(owner):
                 log.debug(f"Studio process {owner} is alive; leaving its server alone")

@@ -34,7 +34,7 @@ from opencode_client.lifecycle import (
 )
 
 from .opencode_backend import OpenCodeConfig, safe_wsl_cwd
-from .launch_files import config_wsl_path
+from .launch_files import config_env
 
 
 def make_wsl_lifecycle(config: OpenCodeConfig) -> SubprocessServerLifecycle:
@@ -45,12 +45,11 @@ def make_wsl_lifecycle(config: OpenCodeConfig) -> SubprocessServerLifecycle:
     [OPENCODE_CONFIG=<this process's launch config>] opencode serve --port <port>
     --hostname <host>"]`` with ``cwd`` = the launch dir, polling ``/health`` for
     readiness — the endpoint the desktop has always used. The config is named
-    explicitly: each Studio process's has its own name (``config_wsl_path``), which
+    explicitly (``config_env``): each Studio process's has its own name, which
     OpenCode never discovers in the cwd.
     """
     env = {"OPENCODE_ENABLE_EXA": "1"}
-    if config.working_directory:
-        env["OPENCODE_CONFIG"] = shlex.quote(config_wsl_path(config.working_directory))
+    env.update((name, shlex.quote(value)) for name, value in config_env(config.working_directory).items())
     return SubprocessServerLifecycle(
         project_cwd=config.working_directory or safe_wsl_cwd(),
         host=config.server_hostname,

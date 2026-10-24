@@ -21,8 +21,6 @@ PID_FILE = "pid"  # its server's Linux pid + port (the orphan sweep's record)
 CONFIG_FILE = "json"  # its derived opencode.json, the server's OPENCODE_CONFIG
 UNIVERSE_FILE = "universe.json"  # its run_skill gate universe
 _PREFIX = "opencode-"
-# What every Studio process shared in the launch dir before each got its own files.
-_LEGACY_FILES = ("opencode.pid", "opencode.json", "run_skill_universe.json")
 
 
 def launch_file_path(launch_dir, kind: str, owner: Optional[int] = None) -> Path:
@@ -48,6 +46,17 @@ def config_wsl_path(launch_dir, owner: Optional[int] = None) -> str:
     return win_to_wsl_path(str(launch_dir)).rstrip("/") + "/" + name
 
 
+def config_env(launch_dir) -> dict[str, str]:
+    """The environment that points a server at THIS process's launch config in *launch_dir*
+    (none without a launch dir: OpenCode's own discovery then). Project-config discovery is
+    off: OpenCode would merge every ``opencode.json`` from its cwd (the launch dir) up to ``/``
+    on top of ``OPENCODE_CONFIG`` (e.g. the launch dir's old shared one, or the relic in its
+    parent folder), overriding this config's model and MCP blocks."""
+    if not launch_dir:
+        return {}
+    return {"OPENCODE_CONFIG": config_wsl_path(launch_dir), "OPENCODE_DISABLE_PROJECT_CONFIG": "1"}
+
+
 def remove_launch_files(launch_dir, owner: Optional[int] = None) -> None:
     """Delete *owner*'s (default THIS process's) launch files in *launch_dir* but its pid
     file: that record goes only once its server is gone (the server manager's stop / sweep)."""
@@ -55,13 +64,6 @@ def remove_launch_files(launch_dir, owner: Optional[int] = None) -> None:
     for path in Path(launch_dir).glob(launch_file_path(launch_dir, "*", owner).name):
         if path.name != keep:
             unlink_quietly(path)
-
-
-def remove_legacy_launch_files(launch_dir) -> None:
-    """Delete the files every Studio process shared in *launch_dir* before each got its own
-    (OpenCode would also read a stale ``opencode.json`` there as the cwd's project config)."""
-    for name in _LEGACY_FILES:
-        unlink_quietly(Path(launch_dir) / name)
 
 
 def unlink_quietly(path: Path) -> None:

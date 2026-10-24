@@ -64,7 +64,15 @@ def test_serve_command_omits_config_without_launch_dir():
     mgr = OpenCodeServerManager(OpenCodeConfig(working_directory=None))
     cmd = mgr._build_serve_command(6000)
     assert "OPENCODE_CONFIG=" not in cmd
+    assert "OPENCODE_DISABLE_PROJECT_CONFIG" not in cmd  # OpenCode's own discovery then
     assert "opencode serve --port 6000" in cmd
+
+
+def test_no_opencode_json_up_the_launch_dir_can_override_this_studio_s_config():
+    # OpenCode merges every opencode.json from its cwd (the launch dir) up to / AFTER
+    # OPENCODE_CONFIG — the old shared launch/opencode.json, its parent's relic: it must not look.
+    cmd = OpenCodeServerManager(OpenCodeConfig(working_directory="/mnt/c/foo/launch"))._build_serve_command(1)
+    assert "OPENCODE_DISABLE_PROJECT_CONFIG=1" in shlex.split(cmd)
 
 
 def test_serve_command_translates_posix_launch_dir():
@@ -823,7 +831,7 @@ def _launch_files(tmp_path, owner):
     return paths
 
 
-def test_the_sweep_removes_a_dead_studio_s_launch_files_and_the_legacy_shared_ones(tmp_path):
+def test_the_sweep_removes_a_dead_studio_s_launch_files_never_the_shared_legacy_ones(tmp_path):
     from procedo.studio.llm import launch_files
     mgr = _mgr(tmp_path)
     dead, live = 777777, 888888
@@ -840,7 +848,8 @@ def test_the_sweep_removes_a_dead_studio_s_launch_files_and_the_legacy_shared_on
     assert [p.exists() for p in dead_files] == [False, False, False]
     assert all(p.exists() for p in live_files)
     assert own_config.exists()  # built for the server about to start
-    assert not any(p.exists() for p in legacy)
+    # An old-format Studio still running reads them (its server record, its relaunch config).
+    assert all(p.exists() for p in legacy)
 
 
 def test_a_dead_studio_s_config_stays_while_its_server_record_does(tmp_path):
@@ -877,9 +886,9 @@ def test_the_studio_exit_stops_the_server_and_removes_its_launch_files(tmp_path)
 def test_the_self_spawned_server_is_pointed_at_this_studio_s_config(tmp_path):
     from procedo.studio.llm.lifecycle_adapters import make_wsl_lifecycle
     cfg = OpenCodeConfig(working_directory=str(tmp_path / "launch test"))
-    command = make_wsl_lifecycle(cfg)._command()[-1]
-    assert f"OPENCODE_CONFIG={_mgr(tmp_path / 'launch test')._our_config_wsl_path()}" in \
-        shlex.split(command)
+    command = shlex.split(make_wsl_lifecycle(cfg)._command()[-1])
+    assert f"OPENCODE_CONFIG={_mgr(tmp_path / 'launch test')._our_config_wsl_path()}" in command
+    assert "OPENCODE_DISABLE_PROJECT_CONFIG=1" in command
 
 
 def test_an_old_manager_s_stop_keeps_the_new_manager_s_record(tmp_path):

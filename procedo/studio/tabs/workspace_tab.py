@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from procedo.core import studio_launch_env
 from procedo.core.starter_test import sanitize_test_id
+from procedo.core.paths import exists_quiet, is_dir_quiet, unreachable
 from procedo.ui import ui_indicators, ui_kit
 from procedo.ui.badge_delegate import BADGES_ROLE, BadgeDelegate
 
@@ -305,6 +306,9 @@ class WorkspaceTab(BaseTab):
     def _delete_test(self, path: Path):
         """Delete a test folder after confirmation (core.test_folder_ops)."""
         # Count files for the confirmation message
+        if reason := unreachable(path):
+            QMessageBox.warning(self, "Delete Test", reason)
+            return
         files = list(path.iterdir()) if path.is_dir() else []
         file_count = len([f for f in files if f.is_file()])
 
@@ -326,7 +330,7 @@ class WorkspaceTab(BaseTab):
             test_folder_ops.delete_test(pm.get_tests_dir(), path)
         except test_folder_ops.TestFolderError as e:
             QMessageBox.critical(self, "Delete Failed", str(e))
-            if not path.exists():  # moved aside, partly deleted: it is gone as a test
+            if not exists_quiet(path) and unreachable(path) is None:  # moved aside, partly deleted: it is gone as a test
                 self.test_deleted.emit(path)
                 self.refresh()
             return
@@ -364,7 +368,7 @@ class WorkspaceTab(BaseTab):
         """Re-read the open test's row only: saving or acknowledging it changes no other test.
         The whole list when that row or its folder is not there."""
         path = self._current_opened_test
-        if path is not None and path.is_dir():
+        if path is not None and is_dir_quiet(path):
             for i in range(self.test_list.count()):
                 item = self.test_list.item(i)
                 if item.data(Qt.UserRole) == path:

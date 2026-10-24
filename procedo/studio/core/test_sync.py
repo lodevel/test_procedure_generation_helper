@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 import time
 from pathlib import Path
+from procedo.core.paths import unreachable
 
 from .artifact_manager import ArtifactManager, enforced_sync_hash
 from .session_state import read_sync_baseline, write_sync_baseline
@@ -35,6 +36,8 @@ def _stamp(path: Path, patterns: list[re.Pattern[str]]) -> tuple:
 def _disk_hash(test_dir: Path, name: str, patterns: list[re.Pattern[str]]) -> str | None:
     """The sync hash of one tracked file on disk; None when it is absent."""
     path = test_dir / name
+    if reason := unreachable(path):
+        raise OSError(reason)  # never read as absent: a baseline written from it would be thinner
     if not path.exists():
         return None
     stamp = _stamp(path, patterns)

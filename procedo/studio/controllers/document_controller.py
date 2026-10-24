@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QMessageBox
 
+from procedo.core.paths import unreachable
 from procedo.ui.ui_kit import set_pill
 
 from ..core import ArtifactManager, ArtifactType, SessionState
@@ -218,6 +219,12 @@ class DocumentController:
         mw = self._mw
         log.info(f"Opening test: {path}")
 
+        # A share that cannot be asked reads as "no files": opening would blank the editors
+        # and the next save would write the blanks over the real files.
+        if reason := unreachable(path):
+            QMessageBox.warning(mw, "Open Test", reason)
+            return
+
         # Check for unsaved changes before loading a new test
         if mw.artifact_manager and self.check_unsaved_changes():
             return  # User cancelled
@@ -231,6 +238,8 @@ class DocumentController:
         # Save current session state (includes validation_issues) before switching
         if hasattr(mw, 'session_state') and mw.session_state and mw.session_state._file_path:
             try:
+                if reason := unreachable(mw.session_state._file_path):
+                    raise OSError(reason)
                 mw.session_state.save()
             except Exception as e:
                 log.warning(f"Failed to save session state before switching tests: {e}")

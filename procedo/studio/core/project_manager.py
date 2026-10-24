@@ -17,6 +17,7 @@ from typing import NamedTuple, Optional
 from enum import Enum, auto
 
 from procedo.core import starter_test
+from procedo.core.paths import exists_quiet, is_dir_quiet, unreachable
 from procedo.core.config_manager import PROJECT_RULES, project_rule_doc_paths
 
 from .fileio import atomic_create
@@ -65,9 +66,12 @@ class RuleDocError(Exception):
 
 def _bundle_rule_files(folder: Optional[Path]) -> list[Path]:
     """The bundle rule documents in *folder*: its ``*.md`` files (any case), sorted."""
-    if folder is None or not folder.is_dir():
+    if folder is None or not is_dir_quiet(folder):
         return []
-    return sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".md")
+    try:
+        return sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".md")
+    except OSError:  # the share dropped after the folder answered
+        return []
 
 
 class RulesState(Enum):
@@ -102,9 +106,9 @@ class TestFolderInfo:
         return cls(
             path=folder,
             name=folder.name,
-            has_json=(folder / "procedure.json").exists(),
-            has_code=(folder / "test.py").exists(),
-            has_text=(folder / "procedure_text.md").exists(),
+            has_json=exists_quiet(folder / "procedure.json"),
+            has_code=exists_quiet(folder / "test.py"),
+            has_text=exists_quiet(folder / "procedure_text.md"),
         )
 
     @property
@@ -160,14 +164,14 @@ class ProjectManager:
     
     def is_valid_project_root(self, path: Path) -> bool:
         """Check if path is a valid project root."""
-        if not path.exists() or not path.is_dir():
+        if not is_dir_quiet(path):
             return False
         
         # Valid if contains tests/ or config/
         tests_dir = path / "tests"
         config_dir = path / "config"
         
-        return tests_dir.exists() or config_dir.exists()
+        return exists_quiet(tests_dir) or exists_quiet(config_dir)
     
     def detect_project_from_test_folder(self, test_folder: Path) -> Optional[Path]:
         """
@@ -176,8 +180,8 @@ class ProjectManager:
         If user selected a test folder directly, attempt to find project root.
         """
         # Check if this looks like a test folder
-        has_json = (test_folder / "procedure.json").exists()
-        has_code = (test_folder / "test.py").exists()
+        has_json = exists_quiet(test_folder / "procedure.json")
+        has_code = exists_quiet(test_folder / "test.py")
         
         if not (has_json or has_code):
             return None
@@ -196,14 +200,14 @@ class ProjectManager:
         if self.project_root is None:
             return None
         tests_dir = self.project_root / "tests"
-        return tests_dir if tests_dir.exists() else None
+        return tests_dir if exists_quiet(tests_dir) else None
     
     def get_config_dir(self) -> Optional[Path]:
         """Get the config directory."""
         if self.project_root is None:
             return None
         config_dir = self.project_root / "config"
-        return config_dir if config_dir.exists() else None
+        return config_dir if exists_quiet(config_dir) else None
 
     # Phase 5.1 (2026-05-11): the per-project parser/renderer loader
     # chain (get_text_parser, get_code_parser, get_text_renderer,
@@ -253,7 +257,7 @@ class ProjectManager:
         if config_dir is None:
             return compiled
         config_file = config_dir / "config.json"
-        if not config_file.exists():
+        if not exists_quiet(config_file):
             return compiled
         try:
             data = json.loads(config_file.read_text(encoding="utf-8"))
@@ -304,7 +308,10 @@ class ProjectManager:
         if tests_dir is None:
             return []
         
-        return [TestFolderInfo.of(item) for item in sorted(tests_dir.iterdir()) if item.is_dir()]
+        try:
+            return [TestFolderInfo.of(item) for item in sorted(tests_dir.iterdir()) if item.is_dir()]
+        except OSError:  # the share dropped after the folder answered
+            return []
     
     def detect_rules_root(self) -> bool:
         """Load the open project's rules: the folder the user picked for it, else its
@@ -405,8 +412,8 @@ class ProjectManager:
             return None
         
         new_folder = tests_dir / name
-        if new_folder.exists():
-            return None  # Already exists
+        if unreachable(new_folder) or new_folder.exists():
+            return None  # Already exists, or the share cannot be asked
         
         try:
             new_folder.mkdir(parents=True)

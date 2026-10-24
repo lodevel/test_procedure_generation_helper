@@ -9,6 +9,7 @@ This is tool-generated and can be cleaned.
 import json
 import logging
 from pathlib import Path
+from procedo.core.paths import unreachable
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import Optional, Any
@@ -92,7 +93,11 @@ class SessionState:
     
     def load(self) -> bool:
         """Load session state from disk. Returns True if loaded."""
-        if self._file_path is None or not self._file_path.exists():
+        if self._file_path is None:
+            return False
+        if reason := unreachable(self._file_path):
+            raise OSError(reason)  # a share that cannot be asked is not "no session yet"
+        if not self._file_path.exists():
             return False
         
         try:

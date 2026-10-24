@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 
 from procedo.core.file_cache import FileCache
-from procedo.core.paths import is_link, rmtree
+from procedo.core.paths import is_link, rmtree, unreachable
 from procedo.core.scenarios import Scenarios
 
 from . import test_sync
@@ -25,9 +25,16 @@ class TestFolderError(Exception):
     __test__ = False  # not a pytest test class
 
 
+def _require_reachable(path: Path) -> None:
+    """Stop a folder action on a share that cannot be asked: \"absent\" would be a guess."""
+    if reason := unreachable(path):
+        raise TestFolderError(reason)
+
+
 def _prove_child(tests_dir: Path, test_dir: Path) -> None:
     """``test_dir`` is a real folder directly inside the tests folder — not a
     link or junction (acting on one would reach its target), not elsewhere."""
+    _require_reachable(test_dir)
     if is_link(test_dir):
         raise TestFolderError(f"'{test_dir.name}' is a link, not a test folder.")
     if test_dir.resolve().parent != tests_dir.resolve():
@@ -40,6 +47,7 @@ def _aside_name(tests_dir: Path, name: str) -> Path:
     """A free hidden name for a folder being deleted (an earlier failed delete
     may have left ``.<name>.deleting`` behind)."""
     aside, n = tests_dir / f".{name}.deleting", 1
+    _require_reachable(tests_dir)
     while aside.exists():
         n += 1
         aside = tests_dir / f".{name}.deleting{n}"
@@ -73,6 +81,7 @@ def rename_test(project_root: Path, tests_dir: Path, test_dir: Path, new_name: s
     for what could not follow (the ids re-sync on the next save)."""
     _prove_child(tests_dir, test_dir)
     new_dir = tests_dir / new_name
+    _require_reachable(new_dir)
     # A case-only rename (Foo -> foo) on Windows names the same folder: allowed.
     if new_dir.exists() and not _same_folder(test_dir, new_dir):
         raise TestFolderError(f"A test named '{new_name}' already exists.")
@@ -89,7 +98,9 @@ def rename_test(project_root: Path, tests_dir: Path, test_dir: Path, new_name: s
     warnings: list[str] = []
     for fname, fixer in (("procedure_text.md", force_text_id_line), ("procedure.json", force_json_id)):
         fpath = new_dir / fname
-        if fpath.exists():
+        if reason := unreachable(fpath):
+            warnings.append(f"{fname}: {reason}")
+        elif fpath.exists():
             try:
                 atomic_write_text(fpath, fixer(fpath.read_text(encoding="utf-8"), new_name))
             except (OSError, ValueError) as e:
@@ -116,7 +127,9 @@ def _swap_references(project_root: Path, old: str, new: str) -> list[str]:
     (the project's own rewrite, ``Scenarios.rename_test_in``). Returns warnings."""
     warnings: list[str] = []
     config_file = project_root / "config" / "config.json"
-    if config_file.exists():
+    if reason := unreachable(config_file):
+        warnings.append(f"config.json test_order: {reason}")
+    elif config_file.exists():
         try:
             data = json.loads(config_file.read_text(encoding="utf-8"))
             order = data.get("test_order", {}).get("order")
@@ -125,10 +138,14 @@ def _swap_references(project_root: Path, old: str, new: str) -> list[str]:
                 atomic_write_text(config_file, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
         except (OSError, ValueError, AttributeError, TypeError) as e:
             warnings.append(f"config.json test_order: {e}")
-    scenarios = Scenarios(project_root / "scenarios", FileCache())
-    for sc_file, orig_bytes in scenarios.referencing(old):
-        try:
-            scenarios.rename_test_in(sc_file, orig_bytes, old, new)
-        except (OSError, ValueError) as e:
-            warnings.append(f"scenarios/{sc_file.name}: {e}")
+    scenarios_dir = project_root / "scenarios"
+    if reason := unreachable(scenarios_dir):
+        warnings.append(f"scenarios: {reason}")
+    else:
+        scenarios = Scenarios(scenarios_dir, FileCache())
+        for sc_file, orig_bytes in scenarios.referencing(old):
+            try:
+                scenarios.rename_test_in(sc_file, orig_bytes, old, new)
+            except (OSError, ValueError) as e:
+                warnings.append(f"scenarios/{sc_file.name}: {e}")
     return warnings

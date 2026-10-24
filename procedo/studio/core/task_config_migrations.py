@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from procedo.core import config_manager
+from procedo.core.paths import unreachable
 
 from ..llm.backend_base import LLMTask
 from .fileio import atomic_write_text
@@ -28,6 +29,9 @@ def migrate_project_tab_contexts(project_root: Path) -> None:
     orphan so a failed write doesn't leave both files stale.
     """
     legacy = project_root / "config" / "tab_contexts.json"
+    if reason := unreachable(legacy):
+        log.warning("Could not migrate %s: %s", legacy, reason)  # never write beside a config that cannot be read
+        return
     if not legacy.exists():
         return
     project_cfg_path = project_root / "config" / "config.json"

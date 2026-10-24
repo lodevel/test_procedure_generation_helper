@@ -6,6 +6,7 @@ These run locally without LLM, providing quick syntax checks.
 
 import py_compile
 from pathlib import Path
+from procedo.core.paths import exists_quiet
 from dataclasses import dataclass, field
 from typing import Optional
 from enum import Enum
@@ -106,7 +107,7 @@ class CodeValidator:
         """Validate Python code from a file."""
         result = ValidationResult(is_valid=True)
         
-        if not file_path.exists():
+        if not exists_quiet(file_path):
             result.add_error(f"File not found: {file_path}")
             return result
         

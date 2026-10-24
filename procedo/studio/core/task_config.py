@@ -48,6 +48,7 @@ from threading import RLock
 from typing import Any, Callable, Dict, List, Optional
 
 from procedo.core import config_manager
+from procedo.core.paths import exists_quiet
 from procedo.core.workflow_defaults import merge_workflows
 
 from . import task_config_defaults, task_config_migrations
@@ -151,7 +152,7 @@ class TaskConfigManager:
         if self._project_root is None:
             return f"file:{self._fallback_path}"
         proj = self._project_config_path()
-        if proj and proj.exists():
+        if proj and exists_quiet(proj):
             data = config_manager.read_unified_config(proj.parent)
             if isinstance(data, dict) and isinstance(data.get("workflows"), dict):
                 return f"project:{proj}"
@@ -632,7 +633,7 @@ class TaskConfigManager:
             )
             # Backup the live file (legacy mode) before clobbering caches.
             source = self._project_config_path() if self._project_root else self._fallback_path
-            if differs and source and source.exists():
+            if differs and source and exists_quiet(source):
                 try:
                     shutil.copy2(source, source.with_suffix(".json.old"))
                 except OSError as e:

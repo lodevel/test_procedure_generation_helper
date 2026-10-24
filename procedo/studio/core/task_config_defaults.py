@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from procedo.core import bundle_registry, studio_launch_env
+from procedo.core.paths import is_file_quiet
 from procedo.core.workflow_defaults import read_editor_defaults
 
 from .task_config_model import ChatConfig, SelectedRules, TaskConfig, clone_selected_rules
@@ -93,7 +94,7 @@ def load_pack_workflow_defaults(project_root: Optional[Path]) -> Dict[str, Any]:
     defaults_path: Optional[Path] = None
     if project_root is not None:
         candidate = project_root / "bundle" / "defaults.json"
-        if candidate.is_file():
+        if is_file_quiet(candidate):
             defaults_path = candidate
     if defaults_path is None:
         path_str = os.environ.get(studio_launch_env.BUNDLE_DEFAULTS_PATH)

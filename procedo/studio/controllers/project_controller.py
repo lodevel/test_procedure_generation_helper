@@ -28,6 +28,7 @@ from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 from procedo.core import app_settings, display_snapshot
 from procedo.core.new_project_dialog import NewProjectDialog
 from procedo.core.off_gui import run_off_gui
+from procedo.core.paths import exists_quiet
 from procedo.engine_client import engine
 
 from .. import _project_local_state
@@ -235,12 +236,12 @@ def watch_project_config(mw) -> None:
         mw._config_watcher.removePath(str(mw._watched_config_dir))
         mw._watched_config_dir = None
 
-    if new_path and new_path.exists():
+    if new_path and exists_quiet(new_path):
         mw._config_watcher.addPath(str(new_path))
         mw._watched_config_path = new_path
     # Watch the parent dir regardless of file presence — survives
     # the brief delete-recreate window of ProjectConfigDialog commits.
-    if config_dir is not None and config_dir.exists():
+    if config_dir is not None and exists_quiet(config_dir):
         mw._config_watcher.addPath(str(config_dir))
         mw._watched_config_dir = config_dir
 
@@ -271,11 +272,11 @@ def watch_project_bundle(mw) -> None:
     if root is None:
         return
     root = Path(root)
-    if root.exists():
+    if exists_quiet(root):
         mw._config_watcher.addPath(str(root))
         mw._watched_project_root = root
     bundle_dir = root / "bundle"
-    if bundle_dir.exists():
+    if exists_quiet(bundle_dir):
         mw._config_watcher.addPath(str(bundle_dir))
         mw._watched_bundle_dir = bundle_dir
 
@@ -347,7 +348,7 @@ def on_config_file_changed(mw, path: str) -> None:
     """
     handle_config_change(mw)
     p = Path(path)
-    if p.exists() and str(p) not in mw._config_watcher.files():
+    if exists_quiet(p) and str(p) not in mw._config_watcher.files():
         mw._config_watcher.addPath(str(p))
 
 
@@ -377,7 +378,7 @@ def on_config_dir_changed(mw, path: str) -> None:
     # If the file watch dropped during a rmtree window, re-add it
     # now that the directory event tells us the file is back.
     file_str = str(mw._watched_config_path)
-    if (mw._watched_config_path.exists()
+    if (exists_quiet(mw._watched_config_path)
             and file_str not in mw._config_watcher.files()):
         mw._config_watcher.addPath(file_str)
         handle_config_change(mw)

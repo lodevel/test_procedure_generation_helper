@@ -20,7 +20,7 @@ ensure_workflow_editor_importable()
 
 from procedo.core import bundle_registry  # noqa: E402
 from procedo.studio.pack_ops import bundle_capabilities  # noqa: E402
-from procedo.studio.launch_env import BUNDLE_DEFAULTS_PATH  # noqa: E402
+from procedo.core.studio_launch_env import BUNDLE_DEFAULTS_PATH  # noqa: E402
 
 
 class TestBenchFieldsAccessor(unittest.TestCase):

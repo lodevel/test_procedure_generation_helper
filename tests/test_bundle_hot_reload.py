@@ -29,7 +29,7 @@ from PySide6.QtCore import QFileSystemWatcher, QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from procedo.studio.core.task_config import TaskConfigManager  # noqa: E402
-from procedo.studio.launch_env import BUNDLE_DEFAULTS_PATH  # noqa: E402
+from procedo.core.studio_launch_env import BUNDLE_DEFAULTS_PATH  # noqa: E402
 from procedo.studio.pack_ops import bundle_capabilities  # noqa: E402
 from procedo.studio.controllers import project_controller  # noqa: E402
 

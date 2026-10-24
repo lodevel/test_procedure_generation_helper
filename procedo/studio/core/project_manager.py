@@ -220,7 +220,7 @@ class ProjectManager:
         the procedure.json/test.py out-of-sync check.
 
         SINGLE SOURCE = the pack-declared ``bench_fields`` (read from the bundle
-        via ``bundle_capabilities.bench_fields``): one pattern per declared field name,
+        via ``bundle_registry.bench_fields``): one pattern per declared field name,
         so a new pack/field is covered with zero project config. The project
         ``config/config.json`` ``patterns`` / ``profiles.controllers[].override_suffix``
         are still honoured as an optional per-project OVERRIDE (back-compat for
@@ -231,8 +231,9 @@ class ProjectManager:
         # 1. Pack-declared bench fields (single source) → one constant-matching
         #    pattern per declared field name (VISA, BAUD, MANUAL_OVERRIDE, ...).
         try:
-            from procedo.studio.pack_ops.bundle_capabilities import bench_fields as _bench_fields
-            declared = _bench_fields(self.project_root)
+            from procedo.core import bundle_registry
+            from procedo.studio.pack_ops.bundle_capabilities import defaults_path
+            declared = bundle_registry.bench_fields(defaults_path(self.project_root))
         except Exception:
             declared = {}
         field_names = sorted({

@@ -19,10 +19,10 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QPushButton, QTabWidget, QVBoxLayout, QWidget
 
+from procedo.core import os_open
 from procedo.ui import ui_kit
 
 from ..authoring import ContextSource, assemble
@@ -186,8 +186,7 @@ class SkillContextPicker(ui_kit.Card):
 
     def _open_documents_dir(self) -> None:
         if self._documents_dir is not None:
-            QDesktopServices.openUrl(
-                QUrl.fromLocalFile(str(self._documents_dir)))
+            os_open.open_or_log(self._documents_dir)
 
     def _refresh_tab(self, tab: _SourceTab) -> None:
         tab.refresh()

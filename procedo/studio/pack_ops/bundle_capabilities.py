@@ -1,15 +1,15 @@
 """What the active bundle declares, read from its ``defaults.json`` without
-importing any pack: equipment profiles, per-type capabilities and bench fields,
-and the gating of an action on the equipment a procedure uses."""
+importing any pack: equipment profiles and per-type capabilities, and the
+gating of an action on the equipment a procedure uses. (Bench fields are
+read by the host's ``procedo.core.bundle_registry``.)"""
 from __future__ import annotations
 
-import json
 import os
 import re
 from pathlib import Path
 from typing import Optional
 
-from procedo.core import section_ownership
+from procedo.core import bundle_registry, section_ownership
 from procedo.engine_client.engine_session import ParserUnavailable
 
 from .. import launch_env
@@ -20,7 +20,7 @@ def _load_bundle_equipment_profiles(
 ) -> list[dict]:
     """Read ``equipment_profiles`` from the bundle's defaults.json.
 
-    Task #39: resolved project-root-first via ``_bundle_defaults_path``
+    Task #39: resolved project-root-first via :func:`defaults_path`
     (``<project_root>/bundle/defaults.json`` when a project is open, so
     a bundle imported mid-session is seen immediately), falling back to
     ``PROCEDO_BUNDLE_DEFAULTS_PATH`` — the same convention as
@@ -30,15 +30,8 @@ def _load_bundle_equipment_profiles(
     WITHOUT the ``equipment_profiles`` key is a pre-bundle/2 artifact —
     that is a hard error (D4), never a silent ``[]``.
     """
-    import json
-    p = _bundle_defaults_path(project_root)
-    if p is None:
-        return []
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    if not isinstance(data, dict):
+    data = bundle_registry.read_defaults(defaults_path(project_root))
+    if data is None:
         return []
     profiles = data.get("equipment_profiles")
     if not isinstance(profiles, list):
@@ -61,12 +54,11 @@ _EQUIP_LINE_RE = None    # lazily compiled
 _HEADING_LINE_RE = None  # lazily compiled
 
 
-def _bundle_defaults_path(project_root: Optional[Path]) -> Optional[Path]:
+def defaults_path(project_root: Optional[Path]) -> Optional[Path]:
     """Resolve the bundle defaults.json: a project's ``<root>/bundle/defaults.json``
     when a project is open, else ``PROCEDO_BUNDLE_DEFAULTS_PATH`` (editor mode)."""
     if project_root is not None:
-        p = Path(project_root) / "bundle" / "defaults.json"
-        return p if p.exists() else None
+        return bundle_registry.defaults_path(Path(project_root))
     env = os.environ.get(launch_env.BUNDLE_DEFAULTS_PATH)
     return Path(env) if env else None
 
@@ -76,45 +68,11 @@ def pack_capabilities(project_root: Optional[Path] = None) -> dict[str, dict]:
     ``{etype: {parse, schema, emit, codegen, pack}}``. Empty dict when no bundle
     / no capabilities block (pre-capability bundle) — callers treat 'absent' as
     'unknown', see :func:`can`."""
-    path = _bundle_defaults_path(project_root)
-    if path is None:
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    data = bundle_registry.read_defaults(defaults_path(project_root))
+    if data is None:
         return {}
     caps = (data.get("pack_dispatch") or {}).get("capabilities")
     return caps if isinstance(caps, dict) else {}
-
-
-def bench_fields(project_root: Optional[Path] = None) -> dict[str, list]:
-    """Return the bundle's per-equipment-type config-field descriptor
-    ``{etype: [{name, type, label, default, required?, choices?}]}`` — the single
-    source the equipment-config editor renders from (packs declare it in
-    rules_index.json; codegen derives its ``{field: default}`` from the same
-    data). Empty dict when no bundle / pre-bench_fields bundle (caller falls back
-    to the project-config regex)."""
-    path = _bundle_defaults_path(project_root)
-    if path is None:
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    bf = (data.get("pack_dispatch") or {}).get("bench_fields")
-    return bf if isinstance(bf, dict) else {}
-
-
-def bench_constant_names(etype: str, eid: str, project_root: Optional[Path] = None) -> list[str]:
-    """Generated-code constant names for one equipment instance, e.g.
-    ``["PSU1_VISA", "PSU1_REMOTE", ...]`` — derived from the declared bench_fields
-    as ``<sanitized-upper eid>_<FIELD.upper()>``. Lets the GUI identify
-    operator-editable bench constants from pack declarations instead of regex.
-    Empty when the etype has no declared fields."""
-    prefix = re.sub(r"\W", "_", str(eid)).upper()
-    return [f"{prefix}_{f['name'].upper()}" for f in bench_fields(project_root).get(etype, [])
-            if isinstance(f, dict) and isinstance(f.get("name"), str)]
-
 
 
 def _heading_name(line: str, known_sections: frozenset[str]) -> Optional[str]:

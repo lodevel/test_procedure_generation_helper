@@ -18,8 +18,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, Optional
 
+from procedo.engine_client import engine_session
+
 from . import section_ownership
-from ..pack_ops import engine_session, pack_parsers
+from ..pack_ops import pack_parsers
 
 
 def pipeline_ownership(

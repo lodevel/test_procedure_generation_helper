@@ -28,7 +28,8 @@ import pytest
 from procedo.core import project_local_state, temp_root, venv_pool
 from procedo.studio import _project_local_state
 from procedo.studio.core import odb_inspect
-from procedo.studio.pack_ops import engine, engine_session, pack_parsers
+from procedo.engine_client import engine, engine_session
+from procedo.studio.pack_ops import pack_parsers
 
 _PROJECT_ID = "aaaaaaaa-1111-2222-3333-444444444444"
 
@@ -131,7 +132,7 @@ def test_every_op_frame_carries_the_projects_bundle_dir(
 ):
     """An op goes to the project's TOOLS engine: the machine-local interpreter runs
     the daemon by path with ``--role tools``, and the frame names the bundle."""
-    from procedo.studio.pack_ops import engine
+    from procedo.engine_client import engine
 
     project = _project(tmp_path)
     python = _install_interpreter(project)

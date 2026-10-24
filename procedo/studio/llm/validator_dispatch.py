@@ -344,7 +344,9 @@ def _fill_parser_owned_meta(
     """
     if not isinstance(json_obj, dict):
         return
-    from ..pack_ops import engine_replies, engine_session, pack_parsers
+    from procedo.engine_client import engine_replies, engine_session
+
+    from ..pack_ops import pack_parsers
 
     try:
         derived = pack_parsers.sync_meta_json(json_obj, project_root=project_root)

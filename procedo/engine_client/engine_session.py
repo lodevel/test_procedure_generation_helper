@@ -2,7 +2,7 @@
 NDJSON channel to ``engine_client/_execute_op_subprocess.py`` in the project venv (start,
 one stdin writer, per-frame read timeout, stderr tail, venv claim, terminate and
 reap). :mod:`.engine` owns the instances, one per project and role;
-:mod:`.bench_client` adds the RUN frames; :mod:`.pack_parsers` sends ops through it.
+:mod:`.bench_client` adds the RUN frames; Studio's ``pack_parsers`` sends ops through it.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from procedo.core import temp_root
-from .. import _project_local_state
+from . import project_venv
 
 # Default timeouts (seconds).
 _TIMEOUT_DEFAULT = 30
@@ -39,11 +39,11 @@ def _timeout() -> int:
         return _TIMEOUT_DEFAULT
 
 
-def _resolve_project_python(project_root: Path) -> _project_local_state.ProjectVenv:
+def _resolve_project_python(project_root: Path) -> project_venv.ProjectVenv:
     """The project's interpreter AND bundle dir; ParserUnavailable when there is none."""
-    resolved = _project_local_state.venv(project_root)
+    resolved = project_venv.venv(project_root)
     if resolved is None:
-        raise ParserUnavailable(_project_local_state.why_no_venv(project_root))
+        raise ParserUnavailable(project_venv.why_no_venv(project_root))
     return resolved
 
 
@@ -89,7 +89,7 @@ class RemoteSession:
     def _start(self) -> None:
         venv = _resolve_project_python(self._project_root)  # may raise ParserUnavailable
         self._bundle_dir = str(venv.bundle_dir)
-        runner = Path(__file__).resolve().parents[2] / "engine_client" / "_execute_op_subprocess.py"
+        runner = Path(__file__).resolve().parent / "_execute_op_subprocess.py"
         # The child's temp files go with this app's, and so does a relative write of a
         # frame without a working folder (an exec_ops frame names the run's own).
         temp = str(temp_root.root())
@@ -101,8 +101,8 @@ class RemoteSession:
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         self._release_claim()
-        self._claim = (_project_local_state.claim_engine(self._project_root, self._proc.pid,
-                                                         self._role), self._proc.pid)
+        self._claim = (project_venv.claim_engine(self._project_root, self._proc.pid,
+                                                 self._role), self._proc.pid)
         self._dead = False
         self._stderr_tail.clear()
         threading.Thread(target=self._drain_stderr, args=(self._proc,),
@@ -331,7 +331,7 @@ class RemoteSession:
 
     def _release_claim(self) -> None:
         if self._claim is not None:
-            _project_local_state.release_engine(*self._claim, self._role)
+            project_venv.release_engine(*self._claim, self._role)
             self._claim = None
 
     @property

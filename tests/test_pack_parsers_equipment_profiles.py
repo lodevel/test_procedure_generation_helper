@@ -21,7 +21,7 @@ from tests._qt_stub import ensure_workflow_editor_importable
 ensure_workflow_editor_importable()
 
 from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
-from procedo.studio.pack_ops import engine_session  # noqa: E402
+from procedo.engine_client import engine_session  # noqa: E402
 from procedo.studio.pack_ops import bundle_capabilities  # noqa: E402
 from procedo.studio.launch_env import BUNDLE_DEFAULTS_PATH  # noqa: E402
 

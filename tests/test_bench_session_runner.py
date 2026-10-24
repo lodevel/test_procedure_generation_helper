@@ -2209,7 +2209,7 @@ class BenchClientLiveTests(unittest.TestCase):
     def _client(self):
         from tests._qt_stub import ensure_workflow_editor_importable
         ensure_workflow_editor_importable()
-        from procedo.studio.pack_ops import bench_client as bc
+        from procedo.engine_client import bench_client as bc
         c = bc.BenchSessionClient(Path("/nonexistent"))
 
         def _start():            # THIS interpreter (no project venv in tests)
@@ -2231,7 +2231,7 @@ class BenchClientLiveTests(unittest.TestCase):
 
         from tests._qt_stub import ensure_workflow_editor_importable
         ensure_workflow_editor_importable()
-        from procedo.studio.pack_ops import bench_client as bc
+        from procedo.engine_client import bench_client as bc
         c = bc.BenchSessionClient(Path("/nonexistent"))
         c._proc, c._bundle_dir = SimpleNamespace(stdin=io.StringIO()), "B"
         held, done, answer = threading.Event(), threading.Event(), {}
@@ -2255,8 +2255,8 @@ class BenchClientLiveTests(unittest.TestCase):
     def test_end_session_is_shutdown(self):
         from tests._qt_stub import ensure_workflow_editor_importable
         ensure_workflow_editor_importable()
-        from procedo.studio.pack_ops import bench_client as bc
-        from procedo.studio.pack_ops.engine_session import RemoteSession
+        from procedo.engine_client import bench_client as bc
+        from procedo.engine_client.engine_session import RemoteSession
         self.assertIs(bc.BenchSessionClient.end_session, RemoteSession.shutdown)
 
     def test_run_test_frame_carries_the_options_only_when_non_default(self):

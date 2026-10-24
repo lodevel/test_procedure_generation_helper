@@ -28,9 +28,9 @@ from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 from procedo.core import app_settings, display_snapshot
 from procedo.core.new_project_dialog import NewProjectDialog
 from procedo.core.off_gui import run_off_gui
+from procedo.engine_client import engine
 
 from .. import _project_local_state
-from ..pack_ops import engine
 
 if TYPE_CHECKING:
     from ..main_window import StudioWorkspace

@@ -423,7 +423,7 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
     def _engine_session(self):
         from tests._qt_stub import ensure_workflow_editor_importable
         ensure_workflow_editor_importable()
-        from procedo.studio.pack_ops import engine_session
+        from procedo.engine_client import engine_session
         return engine_session
 
     def _session(self, batch_result):
@@ -528,7 +528,7 @@ class RemoteSessionLiveTransportTests(unittest.TestCase):
     def _live_session(self):
         from tests._qt_stub import ensure_workflow_editor_importable
         ensure_workflow_editor_importable()
-        from procedo.studio.pack_ops import engine_session
+        from procedo.engine_client import engine_session
         s = engine_session.RemoteSession(Path("/nonexistent"))
         runner = _RUNNER   # the engine_client/ daemon script (module-level, verified on import)
 

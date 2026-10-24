@@ -20,7 +20,7 @@ from tests._qt_stub import ensure_workflow_editor_importable
 ensure_workflow_editor_importable()
 
 from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
-from procedo.studio.pack_ops import engine_session  # noqa: E402
+from procedo.engine_client import engine_session  # noqa: E402
 from procedo.studio.pack_ops import bundle_capabilities  # noqa: E402
 
 EQUIP_LINES = """PSU1 : psu channels=[{1, max_voltage=24.0 V, max_current=2.0 A}]

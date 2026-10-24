@@ -5,7 +5,7 @@ import json
 import time
 from types import SimpleNamespace
 
-from procedo.studio.pack_ops import engine_session
+from procedo.engine_client import engine_session
 
 OPS = [
     {"node_path": "1", "op": {"device": "psu1", "op": "psu.output", "channel": 1, "on": True}},

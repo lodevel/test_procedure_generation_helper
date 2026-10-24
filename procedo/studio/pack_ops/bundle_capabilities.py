@@ -9,9 +9,10 @@ import re
 from pathlib import Path
 from typing import Optional
 
+from procedo.engine_client.engine_session import ParserUnavailable
+
 from .. import launch_env
 from ..llm import section_ownership
-from .engine_session import ParserUnavailable
 
 
 def _load_bundle_equipment_profiles(

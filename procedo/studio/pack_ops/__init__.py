@@ -3,7 +3,7 @@ bundle's ``rules_packager_base`` wheel (parse/render/validate/codegen via
 :mod:`pack_parsers`).
 
 Wheel code runs in the *project's* venv, in its persistent engine process
-(:mod:`.engine`), so the bundle that ships with the project — not the GUI's
+(:mod:`procedo.engine_client.engine`), so the bundle that ships with the project — not the GUI's
 environment — defines procedure.json. No LLM involvement; the LLM backend
 lives in ``procedo.studio.llm``.
 

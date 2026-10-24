@@ -332,7 +332,7 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
             button=self.quick_code_btn, cue=self.code_card.loading, cue_label="Generating code\u2026")
 
     def _quick_code_done(self, sent: str, procedure: dict, answer) -> None:
-        from ..pack_ops import engine_session
+        from procedo.engine_client import engine_session
         try:
             code_str, warnings = answer()
         except engine_session.ParserUnavailable as e:

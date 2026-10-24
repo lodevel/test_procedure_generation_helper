@@ -32,11 +32,11 @@ import its LLM backends.
   side-by-side diff (`dialogs/diff_viewer.py`) and applied only on explicit accept.
 - **Pack-driven parsing/validation.** Parsing, codegen, and validation are dispatched
   to the *project's* venv via `procedo/studio/pack_ops/pack_parsers.py` (each op a
-  frame to the project's persistent engine process, `pack_ops/engine.py`, which
-  runs `llm/_execute_op_subprocess.py --role tools` against the
+  frame to the project's persistent engine process, `procedo/engine_client/engine.py`, which
+  runs `engine_client/_execute_op_subprocess.py --role tools` against the
   `rules_packager_base` wheel), so the rules/wheel used are the ones bundled with
   the active project — not the editor's own interpreter.
-- **Per-op execution daemon.** `procedo/studio/llm/_execute_op_subprocess.py` is a
+- **Per-op execution daemon.** `procedo/engine_client/_execute_op_subprocess.py` is a
   persistent runner that executes individual procedure ops against live equipment
   (used by Procedo Bench's interactive/manual runner).
 
@@ -51,6 +51,13 @@ test_procedure_generation_helper/
 ├── config/
 │   └── tab_contexts.json          # Fallback per-task rules/prompts
 ├── tests/                         # pytest suite
+├── procedo/engine_client/         # The engine-process stack, shared with Procedo Bench (no LLM, no Qt)
+│   ├── engine.py                  # One engine process per project and role
+│   ├── engine_session.py          # RemoteSession: the channel to one engine process
+│   ├── bench_client.py            # The RUN frames (bench session)
+│   ├── engine_replies.py          # Engine replies as app-facing objects
+│   ├── project_venv.py            # Where the project's venv is (asks the host)
+│   └── _execute_op_subprocess.py  # Per-op execution daemon (imports drivers) + its _-prefixed siblings
 └── procedo/studio/
     ├── __init__.py                # Package init, __version__ = "0.1.0"
     ├── __main__.py                # CLI entry point (python -m procedo.studio)
@@ -70,16 +77,13 @@ test_procedure_generation_helper/
     │   ├── backend_base.py        # Abstract LLMBackend + NoneBackend
     │   ├── backend_factory.py     # Per-tab backend instances (BackendConfig)
     │   ├── opencode_backend.py    # OpenCode backend (re-exports the opencode_client client)
-    │   ├── _execute_op_subprocess.py     # Per-op execution daemon (imports drivers)
     │   ├── prompt_builder.py / reconstruction.py / response_parser.py
     │   ├── section_ownership.py / output_contracts.py / validator_dispatch.py
     │   ├── server_manager.py      # OpenCode server lifecycle
     │   └── worker.py              # Async LLM worker thread
     ├── pack_ops/                  # The bridge into the project venv
     │   ├── pack_parsers.py        # Façade: parse/codegen/validate in project venv
-    │   ├── engine.py              # One engine process per project and role
-    │   ├── engine_session.py      # RemoteSession: the channel to one engine process
-    │   ├── engine_replies.py      # Engine replies as editor-facing objects
+    │   ├── engine_async.py        # Engine calls off the GUI thread
     │   └── bundle_capabilities.py # Bundle defaults readers + capability gating
     ├── tabs/                      # Tab widgets
     │   ├── text_only_tab.py       # "Text" tab
@@ -214,14 +218,14 @@ LLM-driven tabs return a disabled-backend error.
 
 ## Per-op execution daemon
 
-`procedo/studio/llm/_execute_op_subprocess.py` is a persistent NDJSON-framed daemon
+`procedo/engine_client/_execute_op_subprocess.py` is a persistent NDJSON-framed daemon
 (one JSON object per line, both directions) that executes individual procedure ops
 against live instruments. It is the only runner that imports the hardware drivers,
 and it is driven by Procedo Bench's interactive/manual runner
 (`guided_manual_execution_dialog.py`). Key properties:
 
-- **Invoked by file path** in the *project* venv (not `python -m`), so it skips the
-  PySide6 package init that the project venv lacks.
+- **Invoked by file path** in the *project* venv (not `python -m`): the project venv
+  has no `procedo` package.
 - **No-reset guarantee:** it only `connect()`/`open()` + `initialize()`, never
   `reset()`, so it never disturbs the bench state an operator set up.
 - **Per-device session policy** (`per_step` vs `per_session`): per-session devices are
@@ -240,9 +244,10 @@ and it is driven by Procedo Bench's interactive/manual runner
 ## How it ties into Procedo Bench
 
 - Procedo Bench imports this package from its venv's editable install.
+- Bench and its shared core reach the engine processes through `procedo.engine_client`
+  (`engine`, `bench_client`, `engine_replies` — `ManualRunResult` of `build_manual_run`).
 - Several main-GUI modules import from `procedo.studio` directly —
-  `pack_ops.bundle_capabilities` (`bench_fields`, `bench_constant_names`),
-  `pack_ops.engine_replies` (`ManualRunResult` of `build_manual_run`), `llm.section_ownership`, and
+  `pack_ops.bundle_capabilities` (`bench_fields`, `bench_constant_names`), `llm.section_ownership`, and
   `core.task_config`.
 - The interactive/manual runner (`guided_manual_execution_dialog.py`) uses
   `pack_parsers` and the per-op execution daemon to run ops against live equipment;

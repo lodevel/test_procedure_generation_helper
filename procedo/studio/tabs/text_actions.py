@@ -162,7 +162,7 @@ class TextActionsMixin:
             button=self.sync_equipment_btn, cue=self.text_card.loading, cue_label="Syncing equipment\u2026")
 
     def _sync_equipment_done(self, original: str, answer) -> None:
-        from ..pack_ops import engine_session
+        from procedo.engine_client import engine_session
         try:
             new_text, warnings = answer()
         except engine_session.ParserUnavailable as exc:
@@ -221,7 +221,7 @@ class TextActionsMixin:
             cue=self.text_card.loading, cue_label="Syncing meta\u2026")
 
     def _sync_meta_done(self, original: str, answer) -> None:
-        from ..pack_ops import engine_session
+        from procedo.engine_client import engine_session
         try:
             new_text, warnings = answer()
         except engine_session.ParserUnavailable as exc:
@@ -266,7 +266,7 @@ class TextActionsMixin:
             cue=self.text_card.loading, cue_label="Renumbering steps\u2026")
 
     def _renumber_done(self, original: str, answer) -> None:
-        from ..pack_ops import engine_session
+        from procedo.engine_client import engine_session
         try:
             renumbered = answer()
         except engine_session.ParserUnavailable as exc:
@@ -321,7 +321,9 @@ class TextActionsMixin:
 
     def _parse_and_generate_parsed(self, sent: str, answer) -> None:
         """Text → JSON (strict) answered: on to JSON → code."""
-        from ..pack_ops import engine_session, pack_parsers
+        from procedo.engine_client import engine_session
+
+        from ..pack_ops import pack_parsers
         try:
             procedure, parse_warnings = answer()
         except engine_session.ParserUnavailable as e:
@@ -356,7 +358,7 @@ class TextActionsMixin:
     def _parse_and_generate_generated(self, sent: str, procedure: dict, answer) -> None:
         """JSON → code (strict) answered: offer both files as one card."""
         from ..core import ArtifactType
-        from ..pack_ops import engine_session
+        from procedo.engine_client import engine_session
 
         # ensure_ascii=False matches the LLM JSON-proposal write path so the
         # diff base (artifact_manager content) doesn't show spurious \uXXXX vs

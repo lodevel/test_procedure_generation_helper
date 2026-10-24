@@ -9,7 +9,7 @@ import pytest
 
 from procedo.core import temp_root
 from procedo.studio.core.validators import CodeValidator
-from procedo.studio.pack_ops import engine, engine_session
+from procedo.engine_client import engine, engine_session
 
 
 @pytest.fixture

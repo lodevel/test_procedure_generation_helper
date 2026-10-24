@@ -24,7 +24,7 @@ ensure_workflow_editor_importable()
 
 from procedo.engine_client import _engine_ops as engine_ops  # noqa: E402
 from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
-from procedo.studio.pack_ops import engine_session  # noqa: E402
+from procedo.engine_client import engine_session  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
     not _env.rules_packager_available(), reason=_env.WHEEL_SKIP_REASON

@@ -10,9 +10,9 @@ editor stays usable with no project open.
 
 Mechanism
 ---------
-An op is a frame to the project's TOOLS engine (:mod:`.engine`): one persistent
+An op is a frame to the project's TOOLS engine (:mod:`procedo.engine_client.engine`): one persistent
 ``engine_client/_execute_op_subprocess.py --role tools`` per project, run by FILE PATH in
-the machine-local venv (``_project_local_state``), serving the op table
+the machine-local venv (``project_venv``), serving the op table
 ``engine_client/_engine_ops.py``. By path, not ``-m``: the project venv does not
 have the ``procedo`` package.
 """
@@ -23,17 +23,18 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
-from .. import launch_env
-from ..llm import section_ownership
-from . import bundle_capabilities
-from .engine_replies import (
+from procedo.engine_client.engine_replies import (
     _make_parse_failure,
     _ReconstructReport,
     _reconstruct_issues_from_dicts,
     _reconstruct_parse_failure,
     _ValidateReport,
 )
-from .engine_session import ParserUnavailable, _timeout
+from procedo.engine_client.engine_session import ParserUnavailable, _timeout
+
+from .. import launch_env
+from ..llm import section_ownership
+from . import bundle_capabilities
 
 # Wheel version we expect (used in error messages only).
 _REQUIRED_WHEEL = "rules_packager_base.rules.v2_0_2.parser"
@@ -51,7 +52,7 @@ def _engine_call(project_root: Path, spec: dict[str, Any],
                  timeout: Optional[float] = None) -> dict[str, Any]:
     """``spec`` answered by the project's TOOLS engine: the op's result dict, or
     ``{"ok": False, "kind", "error"}``. Raises ParserUnavailable without a venv."""
-    from . import engine  # the project's engine processes
+    from procedo.engine_client import engine  # the project's engine processes
     return engine.tools_op(project_root, spec, timeout or _timeout())
 
 

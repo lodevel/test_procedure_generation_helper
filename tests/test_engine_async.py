@@ -18,7 +18,7 @@ import procedo.studio.tabs.text_actions as text_actions
 from procedo.studio.authoring.wizard_api import StudioAuthoringApi
 from procedo.studio.core import ArtifactType
 from procedo.studio.llm import reconstruction
-from procedo.studio.pack_ops import engine
+from procedo.engine_client import engine
 
 from .test_proposal_cards import _cards, _llm, opened as opened  # noqa: F401
 from .test_main_window_characterization import (  # noqa: F401
@@ -183,7 +183,7 @@ def test_the_wizards_parse_and_meta_sync_run_off_the_gui_thread(qapp, tmp_path, 
 
 
 def test_the_wizards_api_raises_the_engines_error(qapp, tmp_path, monkeypatch):
-    from procedo.studio.pack_ops import engine_session
+    from procedo.engine_client import engine_session
     pm = SimpleNamespace(project_root=tmp_path)
     api = StudioAuthoringApi(SimpleNamespace(project_manager=pm, backend_factory=None))
     monkeypatch.setattr(engine, "tools_op", _Tools(

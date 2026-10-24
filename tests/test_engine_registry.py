@@ -27,9 +27,10 @@ from tests._qt_stub import ensure_workflow_editor_importable
 ensure_workflow_editor_importable()
 
 from procedo.core import temp_root  # noqa: E402
-from procedo.studio import _project_local_state  # noqa: E402
+from procedo.engine_client import project_venv  # noqa: E402
 from procedo.engine_client import _engine_ops as engine_ops  # noqa: E402
-from procedo.studio.pack_ops import engine, engine_session, pack_parsers  # noqa: E402
+from procedo.engine_client import engine, engine_session  # noqa: E402
+from procedo.studio.pack_ops import pack_parsers  # noqa: E402
 
 _DAEMON = Path(__file__).resolve().parent.parent / "procedo" / "engine_client" / "_execute_op_subprocess.py"
 _REAL_POPEN = subprocess.Popen
@@ -41,7 +42,7 @@ def project(tmp_path, monkeypatch):
     root = tmp_path / "proj"
     (root / "bundle").mkdir(parents=True)
     (root / "bundle" / "bundle.json").write_text("{}", encoding="utf-8")
-    venv = _project_local_state.ProjectVenv(Path(sys.executable), root / "bundle")
+    venv = project_venv.ProjectVenv(Path(sys.executable), root / "bundle")
     monkeypatch.setattr(engine_session, "_resolve_project_python", lambda _root: venv)
     monkeypatch.setattr(engine, "_slots", {})
     monkeypatch.setattr(engine, "_closed", False)   # an earlier test's exit hook closed it
@@ -180,9 +181,9 @@ def test_a_dead_instance_is_not_restarted_to_be_replaced(project, spawns):
 
 def test_a_tools_instance_claims_its_venv_for_its_pid_until_it_ends(project, spawns, monkeypatch):
     seen: list = []
-    monkeypatch.setattr(_project_local_state, "claim_engine",
+    monkeypatch.setattr(project_venv, "claim_engine",
                         lambda root, pid, role: seen.append(("claim", pid, role)) or project / "venv")
-    monkeypatch.setattr(_project_local_state, "release_engine",
+    monkeypatch.setattr(project_venv, "release_engine",
                         lambda folder, pid, role: seen.append(("release", pid, role)))
     assert _available(project)["ok"] and _available(project)["ok"]
     pid = _session(project)._proc.pid
@@ -194,9 +195,9 @@ def test_a_tools_instance_claims_its_venv_for_its_pid_until_it_ends(project, spa
 @pytest.fixture
 def claims(monkeypatch, project):
     seen: list = []
-    monkeypatch.setattr(_project_local_state, "claim_engine",
+    monkeypatch.setattr(project_venv, "claim_engine",
                         lambda root, pid, role: seen.append(("claim", pid)) or project / "venv")
-    monkeypatch.setattr(_project_local_state, "release_engine",
+    monkeypatch.setattr(project_venv, "release_engine",
                         lambda folder, pid, role: seen.append(("release", pid)))
     return seen
 
@@ -637,8 +638,8 @@ def test_run_claims_its_venv_as_a_bench_holder_tools_as_this_app_s_engine(monkey
 
     seen = []
     monkeypatch.setattr(venv_pool, "claim_child", lambda root, pid, token: seen.append(token))
-    _project_local_state.claim_engine(Path("p"), 1, "run")
-    _project_local_state.claim_engine(Path("p"), 1, "tools")
+    project_venv.claim_engine(Path("p"), 1, "run")
+    project_venv.claim_engine(Path("p"), 1, "tools")
     assert seen == [venv_pool.BENCH, venv_pool.engine_token()]
 
 

@@ -149,7 +149,7 @@ class ProjectManager:
             if self.project_root != path:
                 self._picked_rules_root = None  # a picked rules folder is that project's
             if self.project_root is not None and self.project_root != path:
-                from procedo.studio.pack_ops import engine
+                from procedo.engine_client import engine
 
                 engine.stop(project_root=self.project_root)  # the project switched away
             self.project_root = path

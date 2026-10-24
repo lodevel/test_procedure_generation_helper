@@ -164,7 +164,7 @@ class TextJsonTab(TextActionsMixin, LLMTabMixin, BaseTab):
             cue=self.json_card.loading, cue_label="Parsing\u2026")
 
     def _quick_parse_done(self, sent: str, answer) -> None:
-        from ..pack_ops import engine_session
+        from procedo.engine_client import engine_session
         # pack_parsers.parse_text raises ParseFailure on grammar errors
         # (with .code, .fix_hint, .findings — same shape the legacy
         # ParseError carried) or ParserUnavailable if the wheel isn't
@@ -234,7 +234,7 @@ class TextJsonTab(TextActionsMixin, LLMTabMixin, BaseTab):
             cue=self.text_card.loading, cue_label="Rendering\u2026")
 
     def _quick_render_done(self, sent: str, answer) -> None:
-        from ..pack_ops import engine_session
+        from procedo.engine_client import engine_session
         try:
             result_text = answer()
         except engine_session.ParserUnavailable as e:

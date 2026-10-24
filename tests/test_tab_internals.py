@@ -1,13 +1,17 @@
 """What Studio's three LLM views share, pinned once for all of them: how an assistant reply maps
 onto the output contract's fields; what each deterministic text transform (Renumber steps, Sync
-Equipment, Sync Meta) does with its answer and says; how the ⚡ pack buttons are gated."""
+Equipment, Sync Meta) does with its answer and says; how the ⚡ pack buttons are gated; how a
+regenerated test.py keeps the operator's pinned bench constants (Quick Code, the assistant's test.py
+proposal, Parse + Generate)."""
 
+import json
 from types import SimpleNamespace
 
 import pytest
 
 import procedo.studio.tabs.text_actions as text_actions
 from procedo.engine_client import engine
+from procedo.studio.core import ArtifactType
 from procedo.studio.pack_ops import bundle_capabilities, pack_parsers
 
 from .test_engine_async import _Tools, _pump
@@ -223,3 +227,86 @@ def test_hidden_buttons_are_not_gated_on_an_edit(opened, monkeypatch):
     w.json_code_tab.json_editor.setPlainText(_JSON)
     assert asked == []
     assert w.json_code_tab.quick_code_btn.isHidden() and w.text_only_tab.sync_meta_btn.isHidden()
+
+
+# --- a regenerated test.py keeps the operator's pinned bench constants ------------------------------
+
+_PINNED = 'PSU1_VISA = "ASRL3::INSTR"\n\n\ndef main():\n    return 0\n'
+_GENERATED = 'PSU1_VISA = "ASRL1::INSTR"\n\n\ndef main():\n    return 1\n'
+_PROCEDURE = {"id": "t1", "equipment": [{"id": "PSU1", "type": "psu"}], "steps": []}
+
+
+def _codegen(procedure=_PROCEDURE):
+    def reply(spec):
+        if spec["op"] == "parse_text":
+            return {"ok": True, "json": procedure, "warnings": []}
+        return {"ok": True, "code": _GENERATED, "warnings": []}
+    return _Tools(reply=reply)
+
+
+def _proposed(w, monkeypatch, start):
+    """The test.py each way proposes: Quick Code / the assistant's proposal (the code card's
+    proposal), Parse + Generate (its card's test.py)."""
+    got = []
+    monkeypatch.setattr(w.json_code_tab, "propose_edit", lambda card, text, **kw: got.append(text))
+    monkeypatch.setattr(w.dock.chat_panel, "offer_proposal", lambda ctx, proposal: got.extend(
+        change.proposed for change in proposal.changes if change.file_name == "test.py"))
+    start()
+    _pump(lambda: got)
+    return got
+
+
+def _quick_code(w, procedure=_PROCEDURE):
+    jc = w.json_code_tab
+    w.view_stack.setCurrentWidget(jc)
+    jc.json_editor.setPlainText(json.dumps(procedure))
+    return jc._on_quick_code
+
+
+def _assistant(w, procedure=_PROCEDURE):
+    jc = w.json_code_tab
+    w.view_stack.setCurrentWidget(jc)
+    w.artifact_manager.set_content(ArtifactType.PROCEDURE_JSON, json.dumps(procedure))
+    return lambda: jc._handle_code_proposal(SimpleNamespace(mode="replace", content=_GENERATED))
+
+
+def _parse_generate(w, procedure=None):
+    to = w.text_only_tab
+    w.view_stack.setCurrentWidget(to)
+    return to._on_parse_and_generate
+
+
+@pytest.mark.parametrize("way", [_quick_code, _assistant, _parse_generate])
+def test_a_regenerated_test_py_keeps_the_pinned_bench_constants(opened, monkeypatch, way):
+    w = opened
+    monkeypatch.setattr(engine, "tools_op", _codegen())
+    start = way(w)
+    w.json_code_tab.code_editor.setPlainText(_PINNED)
+    w.artifact_manager.set_content(ArtifactType.TEST_CODE, _PINNED)
+
+    (proposed,) = _proposed(w, monkeypatch, start)
+
+    assert "ASRL3::INSTR" in proposed and "ASRL1" not in proposed and "return 1" in proposed
+
+
+@pytest.mark.parametrize("equipment", [[{"type": "psu"}], [{"id": 5, "type": "psu"}]])
+@pytest.mark.parametrize("way", [_quick_code, _assistant])
+def test_without_equipment_ids_the_generated_test_py_is_proposed_as_is(
+        opened, monkeypatch, way, equipment):
+    w = opened
+    monkeypatch.setattr(engine, "tools_op", _codegen())
+    start = way(w, {"id": "t1", "equipment": equipment, "steps": []})
+    w.json_code_tab.code_editor.setPlainText(_PINNED)
+
+    assert _proposed(w, monkeypatch, start) == [_GENERATED]
+
+
+def test_the_assistants_test_py_is_proposed_as_is_when_the_json_does_not_parse(opened, monkeypatch):
+    w = opened
+    jc = w.json_code_tab
+    w.view_stack.setCurrentWidget(jc)
+    w.artifact_manager.set_content(ArtifactType.PROCEDURE_JSON, "{not json")
+    jc.code_editor.setPlainText(_PINNED)
+
+    assert _proposed(w, monkeypatch, lambda: jc._handle_code_proposal(
+        SimpleNamespace(mode="replace", content=_GENERATED))) == [_GENERATED]

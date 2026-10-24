@@ -20,6 +20,7 @@ from ..llm import LLMTask
 from ..llm.reconstruction import reconstructed_or_error
 from ..pack_ops import engine_async
 from .pack_gating import PackGatingMixin
+from .pinned_constants import keep_pinned_constants
 
 log = logging.getLogger(__name__)
 
@@ -304,24 +305,9 @@ class TextActionsMixin(PackGatingMixin):
         if not engine_async.unchanged(self.text_card.editor, sent, self.status_message.emit):
             return
 
-        current_code = (self.artifact_manager.get_content(ArtifactType.TEST_CODE) or "").strip()
-        # Preserve operator-pinned bench-identification constants (VISA/COM,
-        # baud, timeout, remote, channel) from the existing test.py. Codegen
-        # emits inventory defaults (ASRL1::INSTR, COM1) that would otherwise
-        # clobber the operator's real bench addresses on every regen. Same
-        # merge json_code_tab's Quick Code applies.
-        if current_code:
-            from ..llm.code_constants_merge import preserve_bench_constants
-            equipment_ids = [
-                eq.get("id") for eq in (procedure.get("equipment") or [])
-                if isinstance(eq, dict) and eq.get("id")
-            ]
-            code, replaced = preserve_bench_constants(code, current_code, equipment_ids)
-            if replaced:
-                log.info(
-                    "Parse + Generate: preserved %d operator-pinned constant(s): %s",
-                    len(replaced), ", ".join(replaced),
-                )
+        code = keep_pinned_constants(
+            code, (self.artifact_manager.get_content(ArtifactType.TEST_CODE) or "").strip(),
+            procedure, "Parse + Generate")
 
         def current(kind):
             return lambda: self.artifact_manager.get_content(kind) or ""

@@ -21,6 +21,7 @@ from .llm_tab_mixin import LLMTabMixin
 from .json_tab import JsonSyntaxHighlighter
 from .code_tab import PythonSyntaxHighlighter
 from .pack_gating import PackGatingMixin
+from .pinned_constants import keep_pinned_constants
 from ..core import ArtifactType, StepMarkerParser
 from ..core.procedure_steps import numbered_steps
 from ..llm import TabContext, LLMTask
@@ -227,34 +228,12 @@ class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
             else:
                 content_str = str(proposal.content)
 
-            current_content = self.code_editor.toPlainText()
-
-            # Preserve operator-pinned bench-identification constants
-            # in the proposed code. The LLM doesn't know the bench's
-            # real VISA/COM addresses; if it produces defaults, we
-            # substitute the operator's existing values before proposing
-            # it so the operator only sees real-content changes.
-            if current_content.strip():
-                try:
-                    json_str = self.artifact_manager.procedure_json.content or ""
-                    procedure = json.loads(json_str) if json_str.strip() else {}
-                    equipment_ids = [
-                        eq.get("id") for eq in (procedure.get("equipment") or [])
-                        if isinstance(eq, dict) and eq.get("id")
-                    ]
-                except (json.JSONDecodeError, AttributeError):
-                    equipment_ids = []
-                if equipment_ids:
-                    from ..llm.code_constants_merge import preserve_bench_constants
-                    content_str, replaced = preserve_bench_constants(
-                        content_str, current_content, equipment_ids,
-                    )
-                    if replaced:
-                        log.info(
-                            "test.py proposal: preserved %d operator-pinned "
-                            "constant(s): %s",
-                            len(replaced), ", ".join(replaced),
-                        )
+            try:
+                procedure = json.loads(self.artifact_manager.procedure_json.content or "{}")
+            except json.JSONDecodeError:
+                procedure = None
+            content_str = keep_pinned_constants(
+                content_str, self.code_editor.toPlainText(), procedure, "test.py proposal")
             self.propose_edit(self.code_card, content_str,
                               test=self._ensure_run_state().test)
 
@@ -301,28 +280,8 @@ class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
         if not engine_async.unchanged(self.json_editor, sent, self.status_message.emit):
             return
 
-        current_code = self.code_editor.toPlainText().strip()
-
-        # Preserve operator-pinned bench-identification module constants
-        # from the existing test.py. Per the v2.0.x design (2026-04-28
-        # operator directive), bench fields (visa/port/baud/timeout/etc.)
-        # live ONLY in test.py — and codegen's defaults (`ASRL1::INSTR`,
-        # `COM1`) would otherwise clobber the operator's real bench
-        # values on every regen.
-        if current_code:
-            from ..llm.code_constants_merge import preserve_bench_constants
-            equipment_ids = [
-                eq.get("id") for eq in (procedure.get("equipment") or [])
-                if isinstance(eq, dict) and eq.get("id")
-            ]
-            code_str, replaced = preserve_bench_constants(
-                code_str, current_code, equipment_ids,
-            )
-            if replaced:
-                log.info(
-                    "Quick Code: preserved %d operator-pinned constant(s): %s",
-                    len(replaced), ", ".join(replaced),
-                )
+        code_str = keep_pinned_constants(
+            code_str, self.code_editor.toPlainText().strip(), procedure, "Quick Code")
 
         def done() -> None:
             if warnings:

@@ -4,6 +4,7 @@ import os
 
 import pytest
 
+from procedo.core import atomic_write
 from procedo.studio.core import fileio
 from procedo.studio.core.fileio import atomic_write_text
 
@@ -15,7 +16,7 @@ def test_replaces_an_existing_file_through_os_replace(tmp_path, monkeypatch):
     target.write_text("old", encoding="utf-8")
     calls = []
     real = os.replace
-    monkeypatch.setattr(fileio.os, "replace", lambda a, b: calls.append(b) or real(a, b))
+    monkeypatch.setattr(atomic_write.os, "replace", lambda a, b: calls.append(b) or real(a, b))
     atomic_write_text(target, "new µ±Ω")
     assert target.read_text(encoding="utf-8") == "new µ±Ω"
     assert calls == [target] and os.listdir(tmp_path) == ["procedure.json"]
@@ -33,7 +34,7 @@ def test_a_failed_write_keeps_the_old_file_and_leaves_no_temp(tmp_path, monkeypa
     def boom(*_):
         raise OSError("disk full")
 
-    monkeypatch.setattr(fileio.os, "replace", boom)
+    monkeypatch.setattr(atomic_write.os, "replace", boom)
     with pytest.raises(OSError, match="disk full"):
         atomic_write_text(target, "new")
     assert target.read_text(encoding="utf-8") == "old"
@@ -54,8 +55,8 @@ def test_a_target_briefly_held_open_is_retried(tmp_path, monkeypatch):
             raise err
         real(a, b)
 
-    monkeypatch.setattr(fileio.os, "replace", busy_then_free)
-    monkeypatch.setattr(fileio, "_BUSY_PAUSE_S", 0)
+    monkeypatch.setattr(atomic_write.os, "replace", busy_then_free)
+    monkeypatch.setattr(atomic_write, "_REPLACE_BACKOFF_S", 0)
     atomic_write_text(target, "new")
     assert target.read_text(encoding="utf-8") == "new" and os.listdir(tmp_path) == ["procedure.json"]
 
@@ -67,11 +68,35 @@ def test_a_target_held_open_for_good_fails_and_keeps_the_old_file(tmp_path, monk
     def always_busy(*_):
         raise PermissionError(5, "Access is denied")
 
-    monkeypatch.setattr(fileio.os, "replace", always_busy)
-    monkeypatch.setattr(fileio, "_BUSY_PAUSE_S", 0)
+    monkeypatch.setattr(atomic_write.os, "replace", always_busy)
+    monkeypatch.setattr(atomic_write, "_REPLACE_BACKOFF_S", 0)
     with pytest.raises(PermissionError):
         atomic_write_text(target, "new")
     assert target.read_text(encoding="utf-8") == "old" and os.listdir(tmp_path) == ["test.py"]
+
+
+def test_a_save_that_cannot_clean_up_leaves_only_a_pid_named_temp(tmp_path, monkeypatch):
+    """A kill (or a failed unlink) leaves a temp the start-up sweep can take: its name
+    carries the writer's pid, never a bare random mkstemp name."""
+    target = tmp_path / "settings.json"
+
+    def boom(*_):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(atomic_write.os, "replace", boom)
+    monkeypatch.setattr(atomic_write.os, "unlink", boom)
+    with pytest.raises(OSError):
+        atomic_write_text(target, "new")
+    monkeypatch.undo()
+    (leftover,) = os.listdir(tmp_path)
+    assert atomic_write._temp_owner(leftover) == os.getpid()
+
+
+def test_atomic_create_writes_the_bytes_verbatim(tmp_path):
+    """CRLF, LF and lone CR reach the file exactly as given (never text-translated)."""
+    data = b"a\r\nb\nc\rd"
+    fileio.atomic_create(tmp_path / "sub" / "x.md", data)
+    assert (tmp_path / "sub" / "x.md").read_bytes() == data
 
 
 @pytest.mark.skipif(os.linesep != "\r\n", reason="Windows line endings")

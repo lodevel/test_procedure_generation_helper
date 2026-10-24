@@ -17,6 +17,7 @@ from procedo.core import library_dialog
 from procedo.core.config_manager_dialog import ProjectConfigDialog, TemplateManagerDialog
 from procedo.core.install_helper_dialog import InstallPackageDialog
 from procedo.core import project_seeding
+from procedo.core.paths import exists_quiet
 from procedo.core.scenario_dialog import ScenarioManagerDialog
 
 from .core import ArtifactManager, SessionState, ProjectManager
@@ -230,7 +231,7 @@ class StudioWorkspace(QWidget):
                 log.info(f"Opening test from --test-name: {test_dir_to_open}")
             
             # Step 3: Open the test if determined
-            if test_dir_to_open and test_dir_to_open.exists():
+            if test_dir_to_open and exists_quiet(test_dir_to_open):
                 # Ensure project is set if not already
                 if not self.project_manager.project_root and self._cli_project_root:
                     self.project_manager.set_project_root(self._cli_project_root)

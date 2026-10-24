@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from procedo.core.starter_test import sanitize_test_id
+from procedo.core.paths import exists_quiet, is_dir_quiet, unreachable
 
 from .fileio import atomic_write_text
 from .session_state import read_sync_baseline
@@ -53,7 +54,7 @@ class Artifact:
     @property
     def exists_on_disk(self) -> bool:
         """Check if artifact file exists."""
-        return self.file_path is not None and self.file_path.exists()
+        return self.file_path is not None and exists_quiet(self.file_path)
     
     def mark_clean(self) -> None:
         """Mark artifact as saved (not dirty)."""
@@ -124,7 +125,9 @@ class ArtifactManager:
         if artifact.file_path is None:
             return
         
-        # Check if file was deleted
+        # Check if file was deleted (a share that cannot be asked keeps what is loaded)
+        if unreachable(artifact.file_path):
+            return
         if not artifact.file_path.exists():
             if artifact.content:  # Had content before, now deleted
                 artifact.content = ""
@@ -198,7 +201,7 @@ class ArtifactManager:
 
         from ..pack_ops import engine_async, pack_parsers
         root = self.test_dir.parent.parent if self.test_dir is not None else None
-        if root is None or not (root / "tests").is_dir():
+        if root is None or not is_dir_quiet(root / "tests"):
             root = None                      # no project layout: no engine, the refresh refuses
 
         def done(answer) -> None:
@@ -305,13 +308,16 @@ class ArtifactManager:
         
         for name in tool_files:
             path = self.test_dir / name
-            if path.exists():
+            if exists_quiet(path):
                 cleanable.append(path)
         
         # Also check for other patterns
         patterns = ["*.mapping.md", "*.draft.*", ".llm_cache"]
         for pattern in patterns:
-            cleanable.extend(self.test_dir.glob(pattern))
+            try:
+                cleanable.extend(self.test_dir.glob(pattern))
+            except OSError:  # the share dropped: nothing to clean
+                break
         
         return cleanable
     
@@ -323,9 +329,12 @@ class ArtifactManager:
         canonical = {self.PROCEDURE_JSON_NAME, self.TEST_CODE_NAME}
         non_canonical = []
         
-        for item in self.test_dir.iterdir():
-            if item.name not in canonical:
-                non_canonical.append(item)
+        try:
+            for item in self.test_dir.iterdir():
+                if item.name not in canonical:
+                    non_canonical.append(item)
+        except OSError:  # the share dropped: nothing to clean
+            return []
         
         return non_canonical
 

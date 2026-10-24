@@ -9,7 +9,7 @@ import os
 import re
 from pathlib import Path
 
-from procedo.core.paths import is_link, rmtree
+from procedo.core.paths import exists_quiet, is_dir_quiet, is_link, rmtree, unreachable
 
 from . import test_sync
 from .fileio import atomic_write_text, retry_while_busy
@@ -23,9 +23,16 @@ class TestFolderError(Exception):
     __test__ = False  # not a pytest test class
 
 
+def _require_reachable(path: Path) -> None:
+    """Stop a folder action on a share that cannot be asked: \"absent\" would be a guess."""
+    if reason := unreachable(path):
+        raise TestFolderError(reason)
+
+
 def _prove_child(tests_dir: Path, test_dir: Path) -> None:
     """``test_dir`` is a real folder directly inside the tests folder — not a
     link or junction (acting on one would reach its target), not elsewhere."""
+    _require_reachable(test_dir)
     if is_link(test_dir):
         raise TestFolderError(f"'{test_dir.name}' is a link, not a test folder.")
     if test_dir.resolve().parent != tests_dir.resolve():
@@ -38,6 +45,7 @@ def _aside_name(tests_dir: Path, name: str) -> Path:
     """A free hidden name for a folder being deleted (an earlier failed delete
     may have left ``.<name>.deleting`` behind)."""
     aside, n = tests_dir / f".{name}.deleting", 1
+    _require_reachable(tests_dir)
     while aside.exists():
         n += 1
         aside = tests_dir / f".{name}.deleting{n}"
@@ -71,6 +79,7 @@ def rename_test(project_root: Path, tests_dir: Path, test_dir: Path, new_name: s
     for what could not follow (the ids re-sync on the next save)."""
     _prove_child(tests_dir, test_dir)
     new_dir = tests_dir / new_name
+    _require_reachable(new_dir)
     # A case-only rename (Foo -> foo) on Windows names the same folder: allowed.
     if new_dir.exists() and not _same_folder(test_dir, new_dir):
         raise TestFolderError(f"A test named '{new_name}' already exists.")
@@ -87,7 +96,7 @@ def rename_test(project_root: Path, tests_dir: Path, test_dir: Path, new_name: s
     warnings: list[str] = []
     for fname, fixer in (("procedure_text.md", force_text_id_line), ("procedure.json", force_json_id)):
         fpath = new_dir / fname
-        if fpath.exists():
+        if exists_quiet(fpath):
             try:
                 atomic_write_text(fpath, fixer(fpath.read_text(encoding="utf-8"), new_name))
             except (OSError, ValueError) as e:
@@ -128,12 +137,12 @@ def _swap_references(project_root: Path, old: str, new: str) -> list[str]:
             warnings.append(f"{label}: {e}")
 
     config_file = project_root / "config" / "config.json"
-    if config_file.exists():
+    if exists_quiet(config_file):
         rewrite(config_file, "config.json test_order",
                 lambda d: d.get("test_order", {}).get("order"),
                 lambda d, v: d["test_order"].__setitem__("order", v))
     scenarios_dir = project_root / "scenarios"
-    if scenarios_dir.is_dir():
+    if is_dir_quiet(scenarios_dir):
         for sc_file in sorted(scenarios_dir.glob("*.json")):
             rewrite(sc_file, f"scenarios/{sc_file.name}",
                     lambda d: d.get("tests"), lambda d, v: d.__setitem__("tests", v))

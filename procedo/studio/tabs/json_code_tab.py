@@ -12,6 +12,7 @@ import logging
 import json
 from pathlib import Path
 from typing import Any
+from procedo.core.paths import is_dir_quiet
 from PySide6.QtWidgets import QVBoxLayout, QSplitter
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QTextCursor
@@ -398,7 +399,7 @@ class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
         from ..pack_ops import call_hints
         root = getattr(self.project_manager, "project_root", None)
         asked = self._hints_asked = (self._hints_asked[0] + 1, root)
-        if root is None or not (Path(root) / "functions").is_dir():
+        if root is None or not is_dir_quiet(Path(root) / "functions"):
             self._call_hints = {}
             return
         engine_async.call(root, lambda: call_hints.function_signatures(Path(root)),

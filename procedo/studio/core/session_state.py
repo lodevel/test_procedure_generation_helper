@@ -9,6 +9,7 @@ This is tool-generated and can be cleaned.
 import json
 import logging
 from pathlib import Path
+from procedo.core.paths import exists_quiet
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import Optional, Any
@@ -92,7 +93,7 @@ class SessionState:
     
     def load(self) -> bool:
         """Load session state from disk. Returns True if loaded."""
-        if self._file_path is None or not self._file_path.exists():
+        if self._file_path is None or not exists_quiet(self._file_path):
             return False
         
         try:

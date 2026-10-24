@@ -144,64 +144,23 @@ def _raw_send(dev, text: str) -> str:
 
 
 def _capture_remote_lines(procedure_json: dict, target_op: dict):
-    """Drive the owning pack's ``emit_python`` through a capture-context.
+    """The owning pack's driver call(s) for ``target_op`` (the engine's
+    ``codegen.remote_lines``).
 
     Returns ``(var_name, lines, meta)`` where ``lines`` is the remote branch's
     driver call(s) and ``meta`` carries ``ref``/``unit``/``has_result`` for a
     measuring op.  No test.py scaffolding (if/else, prompts) is emitted — only
     the remote driver call(s).
     """
-    from rules_packager_base.rules.v2_0_2.parser.codegen import _Generator
-    from rules_packager_base.rules.v2_0_2.parser.codegen_context import CodegenContext
-    from rules_packager_base.rules.v2_0_2.parser._default_registry import (
-        get_default_pack_parsers,
-    )
+    from rules_packager_base.rules.v2_0_2.parser.codegen import remote_lines
 
-    state = _Generator(procedure_json, None).state
-    ctx = CodegenContext(state)
-    lines: list = []
-    meta = {"ref": None, "unit": "", "has_result": False}
-
-    # Mirror CodegenState.emit's indentation: a pack that emits a BLOCK via
-    # ctx.emit_block("try:")/end_block bumps state.indent, and the body lines must
-    # be indented or the captured snippet won't compile (bodyless 'try:').
-    state.emit = lambda line="": lines.append(("    " * state.indent + line) if line else "")
-
-    def _cap_action(eid, remote_line, manual_msg):
-        lines.append(remote_line)
-
-    def _cap_measure(eid, ref_key, remote_expr, manual_msg, default_unit="V", label=""):
-        meta.update(ref=ref_key, unit=default_unit, has_result=True)
-        lines.append(f"__RESULT__ = ({remote_expr})")
-
-    def _cap_query(eid, ref_key, remote_expr, manual_msg):
-        meta.update(ref=ref_key, unit="", has_result=True)
-        lines.append(f"__RESULT__ = ({remote_expr})")
-
-    def _cap_block(eid, manual_msg, remote_emitter):
-        remote_emitter()
-
-    def _cap_block_measure(eid, ref_key, manual_msg, unit, label, remote_emitter):
-        meta.update(ref=ref_key, unit=unit, has_result=True)
-        remote_emitter()  # emits via state.emit, incl. record_measurement(...)
-
-    ctx.remote_or_manual_action = _cap_action
-    ctx.remote_or_manual_measure = _cap_measure
-    ctx.remote_or_manual_query = _cap_query
-    ctx.remote_or_manual_block = _cap_block
-    ctx.remote_or_manual_block_measure = _cap_block_measure
-
-    op_const = target_op.get("op") or ""
-    etype = op_const.split(".", 1)[0]
-    pack = get_default_pack_parsers().get(etype)
-    emit_python = getattr(pack, "emit_python", None) if pack else None
-    if emit_python is None or not emit_python(target_op, ctx):
+    captured = remote_lines(procedure_json, target_op)
+    if captured is None:
+        op_const = target_op.get("op") or ""
         raise _NoCodegen(
-            f"pack for {etype!r} did not emit a driver call for op {op_const!r}."
+            f"pack for {op_const.split('.', 1)[0]!r} did not emit a driver call for op {op_const!r}."
         )
-
-    var_name = state.device_vars.get(target_op.get("device"), target_op.get("device"))
-    return var_name, lines, meta
+    return captured
 
 
 def _ns_base(res) -> dict:

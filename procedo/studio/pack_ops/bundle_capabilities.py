@@ -146,7 +146,7 @@ def _section_scan_names(
     heading scan in :func:`equipment_types_in`; both lowercased.
 
     The section universe is bundle-driven — the ownership-map keys from
-    :func:`get_section_ownership` when loadable — falling back to the
+    :func:`pack_parsers.get_section_ownership` when loadable — falling back to the
     canonical v2.0.x names. The equipment section is the universe entry named
     ``equipment`` when declared, else the same literal: the ONE place to
     change if a bundle ever renames the section."""

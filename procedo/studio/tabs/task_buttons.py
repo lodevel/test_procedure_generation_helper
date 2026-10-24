@@ -241,12 +241,6 @@ class TaskButtonsMixin:
                     return task_config.button_label
                 else:
                     log.warning(f"Task config not found for {tab_name}.{lookup_id}, using fallback label")
-            # Handle old ButtonLabelManager for backward compatibility
-            elif hasattr(manager, 'get_label'):
-                label = manager.get_label(task, tab_name)
-                # Ensure we return a string
-                if isinstance(label, str):
-                    return label
         
         # Fallback: generate label from task name
         fallback_label = task.value.replace('_', ' ').title()

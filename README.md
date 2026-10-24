@@ -239,9 +239,7 @@ and it is driven by Procedo Bench's interactive/manual runner
 
 ## How it ties into Procedo Bench
 
-- Procedo Bench imports this package from its venv's editable install; the old
-  `app.py::_bootstrap_editor_on_path` sys.path hack survives only as a logged
-  deprecation shim.
+- Procedo Bench imports this package from its venv's editable install.
 - Several main-GUI modules import from `procedo.studio` directly —
   `pack_ops.bundle_capabilities` (`bench_fields`, `bench_constant_names`),
   `pack_ops.engine_replies` (`ManualRunResult` of `build_manual_run`), `llm.section_ownership`, and

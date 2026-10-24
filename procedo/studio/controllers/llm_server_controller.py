@@ -333,9 +333,6 @@ class LLMServerController(QObject):
 
     def _update_all_tab_contexts(self):
         """Update all tab contexts with the current backend factory."""
-        if not hasattr(self, '_backend_factory'):
-            return
-        
         for tab in self._mw._get_llm_tabs():
             if hasattr(tab, 'tab_context'):
                 tab.tab_context.update_backend_factory(self._backend_factory)

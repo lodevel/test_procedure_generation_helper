@@ -4,7 +4,7 @@
 correct physical device, independently of the name.  Every ``_ensure_held``
 resolution therefore folds the op's CURRENT bench dict to its canonical
 endpoint FIRST (the same wheel fold ``BenchState.enter`` / ``acquire_run``
-use, with the same old-wheel/no-address fallbacks) and binds the name to the
+use, with the same no-address fallback) and binds the name to the
 instance that endpoint resolves to:
 
 * endpoint held (active run-view claim, or the fold lands on a held
@@ -21,8 +21,8 @@ instance that endpoint resolves to:
   instance has no other owner: run views hold canonical endpoints (never
   names), the alias map holds routing data (not instances), and the single
   namespace slot is rebound by the fresh open;
-* staleness unprovable (old wheel without ``bench_endpoints``, address-less
-  bench dict, no record) -> today's name-keyed reuse — but the namespace
+* staleness unprovable (address-less bench dict, no record) -> today's
+  name-keyed reuse — but the namespace
   slot is STILL rebound to the held instance, so the instance returned is
   always the instance executed (pre-fix, a name previously routed onto a
   held endpoint kept executing on that endpoint's instance while the hold
@@ -42,14 +42,11 @@ from __future__ import annotations
 
 def fold_endpoint(session, bench, etype):
     """Canonical endpoint of a bench dict — the SAME fold (and fallbacks) as
-    ``BenchState.enter`` / ``acquire_run``: ``None`` for a missing dict, an
-    old wheel without ``bench_endpoints``, or an address-less dict."""
+    ``BenchState.enter`` / ``acquire_run``: ``None`` for a missing dict or an
+    address-less dict."""
     if not bench:
         return None
-    try:
-        from rules_packager_base import bench_endpoints as be
-    except ImportError:                     # old wheel: name-keyed, as today
-        return None
+    from rules_packager_base import bench_endpoints as be
     try:
         return be.canonical_endpoint(bench, (session.lifecycle or {}).get(etype))
     except ValueError:                      # no address: name-keyed, as today

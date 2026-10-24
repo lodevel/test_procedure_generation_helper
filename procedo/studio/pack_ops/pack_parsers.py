@@ -18,7 +18,6 @@ imports PySide6, which the project venv does not have.
 """
 from __future__ import annotations
 
-import logging
 import os
 import re
 from pathlib import Path
@@ -35,8 +34,6 @@ from .engine_replies import (
     _ValidateReport,
 )
 from .engine_session import ParserUnavailable, _timeout
-
-log = logging.getLogger(__name__)
 
 # Wheel version we expect (used in error messages only).
 _REQUIRED_WHEEL = "rules_packager_base.rules.v2_0_2.parser"

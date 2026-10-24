@@ -34,8 +34,7 @@ Bench-session frames (requests ride the daemon's NDJSON protocol)
                  "manual": [labels], "per_step": [endpoints]},
         "identities": {endpoint: str},          # from held drivers' .identity/.idn
         "reconnected"?: [endpoints]}   # held endpoints found dead and rebuilt
-    -> {"ok": false, "kind": "unsupported_bundle"} on an old wheel (no
-       bench_endpoints in the project venv); "RunActive"; "EndpointConflict".
+    -> {"ok": false, "kind": "RunActive"}; "EndpointConflict".
     Boundary health check (F-H6, ``check_held``): every ALREADY-HELD
     per_session endpoint the incoming run claims is probed (a live *IDN?
     through the raw seam — the same read that stocks the ``.identity``
@@ -249,18 +248,13 @@ class BenchState:
         addressing a held endpoint must land on the held instance: a second
         same-process connection would contend the instrument's remote lock
         (the EA supply drops its output over exactly that).  Only a genuinely
-        un-held endpoint keeps today's name-keyed guided-manual semantics;
-        so does an old wheel without ``bench_endpoints`` (the same
-        unsupported-bundle conditional pattern as ``acquire_run``)."""
+        un-held endpoint keeps today's name-keyed guided-manual semantics."""
         run = self.runs.get(self.active) if self.active else None
         key = run.view.get(device) if run is not None else None
         if key is not None and key in session.held:
             return key
         if bench:
-            try:
-                from rules_packager_base import bench_endpoints as be
-            except ImportError:      # old wheel: name-keyed, as today
-                return device
+            from rules_packager_base import bench_endpoints as be
             try:
                 key = be.canonical_endpoint(
                     bench, (session.lifecycle or {}).get(etype))
@@ -649,31 +643,13 @@ def _claim_channels(bench) -> set:
     """Channel numbers a claim's INVENTORY-style bench dict declares — the
     wheel's ONE normalizer (``channels_of``: ``channels`` list ∪ singular
     ``channel``, ``[1]`` fallback), so this daemon, host recovery and
-    generated cleanup can never read the contract apart.  The naive branch
-    mirrors it for an old wheel without ``channels_of``."""
-    try:
-        from rules_packager_base.bench_endpoints import channels_of
-    except ImportError:
-        out: set = set()
-        for c in (bench.get("channels") or []):
-            if isinstance(c, dict):
-                c = c.get("id", c.get("channel", c.get("n")))
-            if isinstance(c, int) and not isinstance(c, bool):
-                out.add(c)
-        single = bench.get("channel")
-        if isinstance(single, int) and not isinstance(single, bool):
-            out.add(single)
-        return out or {1}
+    generated cleanup can never read the contract apart."""
+    from rules_packager_base.bench_endpoints import channels_of
     return set(channels_of(bench))
 
 
 def _cmd_acquire_run(d: dict, session, req: dict) -> dict:
-    try:
-        from rules_packager_base import bench_endpoints as be
-    except ImportError:
-        return {"ok": False, "kind": "unsupported_bundle",
-                "error": "installed wheel lacks bench_endpoints; regenerate "
-                         "the bundle with rules_packager >= 2.0.5"}
+    from rules_packager_base import bench_endpoints as be
     st = _state(session)
     dry = bool(req.get("dry_run"))
     if not dry and st.active is not None:

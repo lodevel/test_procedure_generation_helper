@@ -382,7 +382,7 @@ def install_find_shortcuts(
     both registered caused Qt's "ambiguous shortcut overload"
     behaviour — neither binding fired. The menu action's window-level
     context fires from anywhere (including inside a tab editor) and
-    delegates to the active tab via ``MainWindow._show_find_bar``.
+    delegates to the active tab via ``StudioWorkspace._show_find_bar``.
 
     The function's name is kept for back-compat with existing call
     sites in each tab's ``_setup_ui``.

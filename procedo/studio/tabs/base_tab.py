@@ -3,7 +3,6 @@ Base Tab Widget - Common functionality for all editor tabs.
 """
 
 import json
-import logging
 from collections.abc import Iterable
 from PySide6.QtWidgets import QWidget, QPushButton, QMessageBox
 from PySide6.QtCore import Signal
@@ -18,8 +17,6 @@ from .validator_buttons import ValidatorButtonsMixin
 
 if TYPE_CHECKING:
     from ..main_window import MainWindow
-
-log = logging.getLogger(__name__)
 
 
 class BaseTab(ValidatorButtonsMixin, TaskButtonsMixin, QWidget):
@@ -72,14 +69,7 @@ class BaseTab(ValidatorButtonsMixin, TaskButtonsMixin, QWidget):
         """Get the task configuration manager."""
         from ..core.task_config import TaskConfigManager
         manager = getattr(self.main_window, 'task_config_manager', None)
-        # Only use task_config_manager if it's actually a TaskConfigManager instance
-        if manager is not None and isinstance(manager, TaskConfigManager):
-            return manager
-        # Fallback to button_label_manager for backward compatibility
-        manager = getattr(self.main_window, 'button_label_manager', None)
-        if manager is None:
-            log.warning("Neither task_config_manager nor button_label_manager found")
-        return manager
+        return manager if isinstance(manager, TaskConfigManager) else None
     
     def create_button(
         self, 

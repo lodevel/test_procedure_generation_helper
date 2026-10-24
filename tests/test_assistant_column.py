@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 
 import procedo.studio.dock.dock_widget as dock_mod
 from procedo.studio.dock.chat_messages import MessageWidget
@@ -121,6 +122,22 @@ def test_details_opens_the_message_details(panel, monkeypatch):
     details = next(b for b in bubble.findChildren(type(panel.send_btn)) if b.text() == "Details…")
     details.click()
     assert shown == [("P", "R")]
+
+
+@pytest.mark.parametrize("keypad", [False, True], ids=["enter", "keypad-enter"])
+def test_enter_sends_and_shift_enter_starts_a_line_with_either_enter_key(panel, keypad):
+    """The keypad's Enter is the main Enter key (it inserted a newline here, and sent in the
+    skill chat)."""
+    key, mods = ((Qt.Key.Key_Enter, Qt.KeyboardModifier.KeypadModifier) if keypad
+                 else (Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier))
+    seen = []
+    panel.message_sent.connect(seen.append)
+    QTest.keyClicks(panel.input_field, "hello")
+    QTest.keyClick(panel.input_field, key, mods | Qt.KeyboardModifier.ShiftModifier)
+    QTest.keyClicks(panel.input_field, "there")
+    assert seen == [] and panel.input_field.toPlainText() == "hello\nthere"
+    QTest.keyClick(panel.input_field, key, mods)
+    assert seen == ["hello\nthere"] and panel.input_field.toPlainText() == ""
 
 
 def test_the_composers_buttons_are_wired(panel):

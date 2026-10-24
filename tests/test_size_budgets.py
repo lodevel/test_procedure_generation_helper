@@ -45,7 +45,7 @@ FILE_BUDGET: dict[str, int] = {
 }
 
 CLASS_METHOD_BUDGET: dict[tuple[str, str], int] = {
-    ("studio/dock/skill_chat_widget.py", "SkillChatWidget"): 42,
+    ("studio/dock/skill_chat_widget.py", "SkillChatWidget"): 41,
 }
 
 FUNC_LEN_BUDGET: dict[tuple[str, str], int] = {

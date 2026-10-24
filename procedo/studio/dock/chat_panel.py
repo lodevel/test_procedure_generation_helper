@@ -9,7 +9,7 @@ compact, the context meter and the validator dot.
 
 import logging
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame, QPlainTextEdit,
+    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame,
     QPushButton, QCheckBox, QProgressBar,
 )
 from PySide6.QtCore import Qt, Signal, QEvent
@@ -23,6 +23,7 @@ from .chat_messages import (
 from ..core.proposal import current_test
 from ..llm.context_usage import format_context_usage, latest_message_total
 from .board_data_checkbox import BoardDataCheckBox
+from ..widgets.composer_input import ComposerInput
 from ..llm.tab_context import ChatMessage
 
 
@@ -240,11 +241,8 @@ class ChatPanel(QWidget):
         options.itemAt(0).layout().setSpacing(14)
 
         # Input area - multi-line (Enter to send, Shift+Enter for newline)
-        self.input_field = QPlainTextEdit()
-        self.input_field.setObjectName("composerInput")
-        self.input_field.setPlaceholderText("Ask a question or give instructions…")
-        self.input_field.setFixedHeight(58)
-        self.input_field.installEventFilter(self)
+        self.input_field = ComposerInput("Ask a question or give instructions…", 58)
+        self.input_field.submitted.connect(self._on_send)
 
         self.send_btn = QPushButton("Send")
         ui_kit.set_primary(self.send_btn)
@@ -292,13 +290,9 @@ class ChatPanel(QWidget):
         return composer
 
     def eventFilter(self, obj, event):
-        """Enter in the input sends (Shift+Enter inserts a newline); the chat's width bounds
-        the messages. Told apart by object name: no state read before it is needed."""
-        if event.type() == QEvent.Type.KeyPress and obj.objectName() == "composerInput":
-            if event.key() == Qt.Key.Key_Return and not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
-                self._on_send()
-                return True
-        elif event.type() == QEvent.Type.Resize and obj.objectName() == "chatViewport":
+        """The chat's width bounds the messages. Told apart by object name: no state read
+        before it is needed."""
+        if event.type() == QEvent.Type.Resize and obj.objectName() == "chatViewport":
             for message in self._messages():
                 self._fit(message)
         return super().eventFilter(obj, event)

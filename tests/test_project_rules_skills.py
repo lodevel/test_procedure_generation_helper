@@ -65,12 +65,12 @@ def test_the_rules_list_holds_the_bundle_rules_then_the_project_documents_labell
 
 
 def test_the_project_documents_come_after_the_bundle_rules_under_the_project_wins_line(tmp_path):
-    src = RulesSource(lambda: _docs(tmp_path), transform=str.upper)
+    src = RulesSource(lambda: _docs(tmp_path))
     out = src.materialize(["project/c.txt", "project/a.md", "a.md"])  # any key order
     assert out.index("## a.md") < out.index(PROJECT_RULES_WIN) < out.index("## project/a.md")
     assert out.index("## project/a.md") < out.index("## project/c.txt")
-    assert "BUNDLE A" in out and "PROJECT A" in out
-    assert "PROJECT C" in out and "﻿" not in out  # a BOM is not text
+    assert "bundle a" in out and "project a" in out
+    assert "project c" in out and "﻿" not in out  # a BOM is not text
     assert "d.pdf" not in out
 
 

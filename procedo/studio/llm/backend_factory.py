@@ -23,6 +23,25 @@ from .server_manager import OpenCodeServerManager
 log = logging.getLogger(__name__)
 
 
+def start_backend(factory, tab_id: str) -> tuple[LLMBackend, bool]:
+    """A new backend for *tab_id* from *factory*, started, and whether to keep it: the lazy
+    create a Studio tab (``TabContext.backend``) and a skill chat make on first use.
+
+    A ``NoneBackend`` the factory answers as a *fallback* (the OpenCode server would not start)
+    is not kept, so the next use tries the factory, and the server, again; one is kept when
+    the configured backend type is ``"none"``, and without a factory."""
+    if factory is None:
+        log.warning(f"No backend factory for '{tab_id}'")
+        return NoneBackend(), True
+    backend = factory.create_backend(tab_id=tab_id)
+    if hasattr(backend, "start"):
+        backend.start()
+    keep = not isinstance(backend, NoneBackend) or factory.backend_type == BACKEND_TYPE_NONE
+    if not keep:
+        log.info(f"Fallback NoneBackend for '{tab_id}': the next use tries again")
+    return backend, keep
+
+
 # Backend type constants
 BACKEND_TYPE_OPENCODE = "opencode"
 BACKEND_TYPE_NONE = "none"

@@ -127,6 +127,25 @@ def test_a_send_that_starts_the_conversation_is_checked_too_and_keeps_the_typed_
     assert len(sent) == 1 and widget._input.toPlainText() == ""
 
 
+@pytest.mark.parametrize("keypad", [False, True], ids=["enter", "keypad-enter"])
+def test_enter_sends_and_shift_enter_starts_a_line_with_either_enter_key(chat, keypad):
+    """The same composer input as the dock chat (``ComposerInput``)."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    key, mods = ((Qt.Key.Key_Enter, Qt.KeyboardModifier.KeypadModifier) if keypad
+                 else (Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier))
+    make, sent = chat
+    widget = make(_skill())
+    QTest.keyClicks(widget._input, "classify")
+    QTest.keyClick(widget._input, key, mods | Qt.KeyboardModifier.ShiftModifier)
+    QTest.keyClicks(widget._input, "the ICs")
+    assert sent == [] and widget._input.toPlainText() == "classify\nthe ICs"
+    QTest.keyClick(widget._input, key, mods)
+    assert len(sent) == 1 and "classify\nthe ICs" in sent[0]
+    assert widget._input.toPlainText() == ""
+
+
 @pytest.mark.parametrize("value", [5, True, "component_ids"])
 def test_a_needs_context_that_is_not_a_list_never_crashes(chat, value):
     make, sent = chat

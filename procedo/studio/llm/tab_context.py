@@ -18,9 +18,11 @@ from pathlib import Path
 
 from . import reconstruction
 from .backend_base import LLMBackend, LLMRequest, LLMTask
+from .backend_factory import start_backend
 from .output_contracts import get_contract_for_tab, get_allowed_artifacts
 from ..core.fileio import content_digest
-from ..core.project_manager import ATTACHED_NOTE, PROJECT_RULES_WIN, RuleDoc, attached_as_file
+from ..core.project_manager import RuleDoc
+from ..core.rule_context import attached_files, chosen_rule_docs, rules_prompt_text
 from ..core.session_state import SessionState
 
 if TYPE_CHECKING:
@@ -29,58 +31,6 @@ if TYPE_CHECKING:
     from .backend_factory import BackendFactory
 
 log = logging.getLogger(__name__)
-
-
-# YAML frontmatter fields stripped from rule docs before they ship to the LLM.
-# These exist for the build pipeline (rules_index.json, audience routing) and add
-# no semantic value the LLM uses to perform its tasks. Strip them on read so the
-# markdown source on disk stays canonical while the LLM payload is leaner.
-_LLM_USELESS_FRONTMATTER_FIELDS = frozenset({"related", "audience"})
-
-
-def _project_rules_preamble(attached: bool) -> str:
-    """Heads the project's own rule documents, sent after the bundle rules: they win (owner
-    decision 2026-10-19); *attached*: some come as files attached to the message."""
-    return (f"\n{'='*60}\n# Project rules\n{'='*60}\n"
-            + PROJECT_RULES_WIN + "\n"
-            + ("Some of them are attached to this message as files.\n" if attached else ""))
-
-
-def _strip_llm_useless_frontmatter(content: str) -> str:
-    """
-    Remove allowlisted top-level frontmatter fields from a markdown doc.
-
-    Recognizes the standard `---\\n<yaml>\\n---\\n` frontmatter block at the
-    start of the file. Only top-level fields whose name is in
-    `_LLM_USELESS_FRONTMATTER_FIELDS` are stripped, including any continuation
-    lines indented under them (so multi-line list values like
-    `related:\\n  - a\\n  - b` are dropped as a unit). Other frontmatter is
-    preserved as-is. Files without frontmatter are returned unchanged.
-    """
-    if not content.startswith("---\n"):
-        return content
-    end_marker_idx = content.find("\n---\n", 4)
-    if end_marker_idx == -1:
-        return content
-    fm_body = content[4:end_marker_idx]
-    rest = content[end_marker_idx + len("\n---\n"):]
-
-    kept_lines: list[str] = []
-    skipping = False
-    for line in fm_body.split("\n"):
-        # A top-level field starts at column 0 with `<name>:` (no leading space).
-        if line and not line[0].isspace() and ":" in line:
-            field_name = line.split(":", 1)[0].strip()
-            skipping = field_name in _LLM_USELESS_FRONTMATTER_FIELDS
-            if skipping:
-                continue
-        elif skipping:
-            # Continuation line (indented, blank, or comment under a stripped field).
-            continue
-        kept_lines.append(line)
-
-    new_fm = "\n".join(kept_lines)
-    return f"---\n{new_fm}\n---\n{rest}"
 
 
 # Task-to-Artifact Requirements Mapping
@@ -144,7 +94,6 @@ class TabContext:
         project_manager: "ProjectManager",
         artifact_manager: "ArtifactManager",
         task_config_manager: "TaskConfigManager",
-        session_state: "SessionState" = None,  # Ignored - kept for backward compatibility
     ):
         """
         Initialize tab context.
@@ -156,7 +105,6 @@ class TabContext:
             artifact_manager: Artifact manager for current content
             task_config_manager: TaskConfigManager — owns per-task
                 ``selected_rules`` resolution after Phase 1.
-            session_state: DEPRECATED - ignored. Each tab creates its own SessionState.
         """
         self.tab_id = tab_id
         self.board_data_enabled = False
@@ -199,55 +147,15 @@ class TabContext:
     
     @property
     def backend(self) -> LLMBackend:
-        """
-        Get backend instance, creating lazily on first access.
-
-        If the factory returns a :class:`NoneBackend` as a *fallback*
-        (e.g. because the OpenCode server was not running), the result is
-        **not** cached so that the next access retries the factory and can
-        pick up a newly available server.  A ``NoneBackend`` is only
-        cached when the configured backend type is explicitly ``"none"``.
-
-        Returns:
-            LLMBackend instance for this tab
-        """
-        if self._backend is not None:
-            return self._backend
-
-        from .backend_base import NoneBackend
-
-        if self._backend_factory is None:
-            log.warning(f"TabContext {self.tab_id}: No backend factory available")
-            self._backend = NoneBackend()
-            return self._backend
-
-        log.info(f"TabContext {self.tab_id}: Creating backend lazily via factory")
-        backend = self._backend_factory.create_backend(self.tab_id)
-
-        # Start the backend if needed
-        if hasattr(backend, 'start'):
-            log.debug(f"TabContext {self.tab_id}: Starting backend")
-            backend.start()
-
-        # Only cache the backend if it is a real backend or the user
-        # explicitly configured "none".  A NoneBackend returned as a
-        # fallback (server unavailable) must NOT be cached so that the
-        # next property access retries.
-        if not isinstance(backend, NoneBackend) or self._backend_factory.backend_type == "none":
-            self._backend = backend
-        else:
-            log.info(
-                f"TabContext {self.tab_id}: Factory returned fallback NoneBackend — "
-                "will retry on next access"
-            )
-
+        """The tab's backend, created on first access; what is kept: ``start_backend``."""
+        backend = self._backend
+        if backend is None:
+            backend, keep = start_backend(self._backend_factory, self.tab_id)
+            if keep:
+                self._backend = backend
         return backend
     
-    def update_managers(
-        self,
-        artifact_manager: "ArtifactManager",
-        session_state: "SessionState" = None  # Ignored - kept for backward compatibility
-    ):
+    def update_managers(self, artifact_manager: "ArtifactManager"):
         """Update manager references after test is opened.
         
         This fixes the issue where TabContext is created with None managers
@@ -259,10 +167,8 @@ class TabContext:
         
         Args:
             artifact_manager: Updated artifact manager instance
-            session_state: DEPRECATED - ignored. Each tab has its own SessionState.
         """
         self.artifact_manager = artifact_manager
-        # Note: session_state parameter is ignored - each tab has its own per-tab SessionState
 
         # Workflow config reloads are driven externally by MainWindow calling
         # ``task_config_manager.reload(project_root)`` when a project opens.
@@ -419,40 +325,16 @@ class TabContext:
     
     def _selected_rule_docs(self) -> list[RuleDoc]:
         """The selected rule documents on disk, bundle rules first (missing ones logged)."""
-        selected = set(self.get_selected_rules())
-        docs = [doc for doc in self.project_manager.get_rule_docs() if doc.key in selected]
-        for key in sorted(selected - {doc.key for doc in docs}):
-            log.warning(f"TabContext {self.tab_id}: selected rule document not found: {key}")
-        return docs
+        return chosen_rule_docs(self.project_manager.get_rule_docs(), self.get_selected_rules())
 
     def get_selected_rules_files(self) -> list[Path]:
         """The selected documents sent as they are, attached as files (PDFs)."""
-        return [doc.path for doc in self._selected_rule_docs() if attached_as_file(doc.path)]
+        return attached_files(self._selected_rule_docs())
 
     def get_selected_rules_content(self) -> Optional[str]:
-        """The selected rule documents, concatenated for the LLM (None: none): the bundle
-        rules first, then the project's own documents under a header saying they win
-        where the two conflict; a PDF is only named here, it is attached as a file."""
-        parts: dict[str, list[str]] = {"bundle": [], "project": []}
-        attached = False
-        for doc in self._selected_rule_docs():
-            if attached_as_file(doc.path):
-                attached = True
-                content = ATTACHED_NOTE + "\n"
-            else:
-                try:
-                    content = _strip_llm_useless_frontmatter(
-                        doc.path.read_text(encoding="utf-8-sig"))
-                except (OSError, UnicodeDecodeError) as exc:
-                    log.warning(f"TabContext {self.tab_id}: cannot read {doc.path}: {exc}")
-                    continue
-            title = "Project rules" if doc.origin == "project" else "Rules"
-            parts[doc.origin].append(
-                f"\n{'='*60}\n# {title} from: {doc.path.name}\n{'='*60}\n{content}")
-        if parts["project"]:
-            parts["project"].insert(0, _project_rules_preamble(attached))
-        contents = parts["bundle"] + parts["project"]
-        return "\n".join(contents) if contents else None
+        """The selected rule documents' text for the LLM (None: none), see
+        ``rule_context.rules_prompt_text``."""
+        return rules_prompt_text(self._selected_rule_docs())
 
     def _build_request(
         self,

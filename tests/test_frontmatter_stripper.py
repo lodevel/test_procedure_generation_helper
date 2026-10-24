@@ -1,6 +1,6 @@
-"""Unit tests for the LLM-useless frontmatter stripper in tab_context."""
+"""Unit tests for the LLM-useless frontmatter stripper in core.rule_context."""
 
-from procedo.studio.llm.tab_context import _strip_llm_useless_frontmatter
+from procedo.studio.core.rule_context import _strip_llm_useless_frontmatter
 
 
 def test_no_frontmatter_returns_unchanged():

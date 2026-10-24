@@ -160,6 +160,23 @@ def test_save_refuses_when_the_stored_settings_cannot_be_read_and_writes_nothing
     dlg.reject()
 
 
+def test_a_wizard_setting_is_never_written_over_settings_it_cannot_read():
+    """``set_wizard_setting`` keeps every other key, and fails on a damaged file instead of
+    writing only its own key (the wizard's caller treats the save as best-effort)."""
+    from procedo.studio.authoring.wizard_api import StudioAuthoringApi
+    from procedo.studio.core.studio_settings import get_settings_path
+
+    save_settings({"llm_backend": "none", "wizard": {"other": 1}})
+    StudioAuthoringApi.set_wizard_setting(None, "max_concurrent_sessions", 4)
+    assert load_settings() == {"llm_backend": "none",
+                               "wizard": {"other": 1, "max_concurrent_sessions": 4}}
+    damaged = '{"llm_backend": "none", "wizard": '
+    get_settings_path().write_text(damaged, encoding="utf-8")
+    with pytest.raises(ValueError, match="settings.json"):
+        StudioAuthoringApi.set_wizard_setting(None, "max_concurrent_sessions", 5)
+    assert get_settings_path().read_text(encoding="utf-8") == damaged
+
+
 def test_the_validator_page_saves_to_the_project_config(qapp, no_network, project):
     dlg = _open(qapp, project)
     dlg.validator_enabled.setChecked(False)

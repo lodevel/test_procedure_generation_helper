@@ -220,14 +220,23 @@ def _launch_wizard_flow(main_window, flow) -> None:
         return
     # On Finish (Accept), refresh the main window so new tests appear without a reload.
     dlg.finished.connect(lambda result: _refresh_main_after_wizard(main_window, result))
-    refs = getattr(main_window, "_wizard_dialogs", None)
-    if refs is None:
-        refs = []
-        main_window._wizard_dialogs = refs
-    refs.append(dlg)
+    _hold_modeless(main_window, "_wizard_dialogs", dlg)
     dlg.show()
     dlg.raise_()
     dlg.activateWindow()
+
+
+def _hold_modeless(main_window, attr: str, dialog) -> None:
+    """Keep a modeless dialog alive on ``main_window.<attr>`` (the GC would collect it);
+    closing it deletes it and drops the entry."""
+    from PySide6.QtCore import Qt
+    refs = getattr(main_window, attr, None)
+    if refs is None:
+        refs = []
+        setattr(main_window, attr, refs)
+    refs.append(dialog)
+    dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+    dialog.destroyed.connect(lambda *_: refs.remove(dialog) if dialog in refs else None)
 
 
 def _refresh_main_after_wizard(main_window, result) -> None:
@@ -302,9 +311,5 @@ def launch_skill_chat(main_window) -> None:
         insert_callback=_make_insert_callback(main_window),
         parent=main_window,
     )
-    # Hold a reference so the modeless dialog isn't garbage-collected.
-    refs = getattr(main_window, "_skill_chat_dialogs", None)
-    if refs is None:
-        refs = main_window._skill_chat_dialogs = []
-    refs.append(dialog)
+    _hold_modeless(main_window, "_skill_chat_dialogs", dialog)
     dialog.show()

@@ -86,6 +86,7 @@ class SettingsDialog(QDialog):
             backend=self.backend_combo.currentText, host=self.opencode_host,
             port=self.opencode_port, model_value=self._opencode_model_value,
             start_button=self.opencode_start_server, note=self.opencode_models_note,
+            test_button=self.test_connection_btn, test_cue=self.test_connection_cue,
             populate_models=self._populate_opencode_models)
         self._load_values()
 
@@ -244,10 +245,11 @@ class SettingsDialog(QDialog):
         self.opencode_start_server.setVisible(False)
         self.test_connection_btn = QPushButton("Test connection")
         self.test_connection_btn.clicked.connect(lambda: self._probe.test_connection())
+        self.test_connection_cue = ui_kit.LoadingCue()
         self.opencode_server_pill = QLabel()
         self.opencode_server_pill.setVisible(False)
         row = field_row(self.opencode_start_server, self.test_connection_btn,
-                        self.opencode_server_pill, None)
+                        self.test_connection_cue, self.opencode_server_pill, None)
         row.setAlignment(self.opencode_server_pill, Qt.AlignmentFlag.AlignVCenter)  # a pill, not a bar
         return row
 

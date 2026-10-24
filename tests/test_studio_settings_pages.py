@@ -286,3 +286,162 @@ def test_a_dialog_deleted_while_its_model_probe_runs_is_never_touched(qapp, monk
         qapp.processEvents()
         time.sleep(0.005)
     assert errors == []
+
+
+class _SlowManager:
+    """A server manager whose start / health check each take ~1 s (never a real server)."""
+    instances: list = []
+
+    def __init__(self, config):
+        self.last_status = None
+        self.stopped = 0
+        _SlowManager.instances.append(self)
+
+    def is_available(self):
+        return True
+
+    def start(self):
+        time.sleep(1.0)
+        return True
+
+    def health_check(self):
+        time.sleep(1.0)
+        return True
+
+    def stop(self):
+        self.stopped += 1
+
+
+class _SlowBackend:
+    is_running = False
+
+    def __init__(self, config, lifecycle=None):
+        pass
+
+    def start(self):
+        return True
+
+    def stop(self):
+        pass
+
+    def send_request(self, request):
+        time.sleep(1.0)
+        return type("R", (), {"error_message": ""})()
+
+
+def _slow_test_connection(monkeypatch, tmp_path):
+    from procedo.studio.dialogs import settings_backend_probe as probe
+    from procedo.studio.llm import lifecycle_adapters, opencode_backend, server_manager
+    shown, cleaned = [], []
+    monkeypatch.setattr(probe, "ensure_master_config", lambda seed_from=None: None)
+    monkeypatch.setattr(probe, "build_launch_config", lambda root, launch_dir=None: tmp_path)
+    monkeypatch.setattr(probe, "get_opencode_launch_test_dir", lambda: tmp_path)
+    monkeypatch.setattr(probe, "remove_launch_files", lambda d: cleaned.append(d))
+    monkeypatch.setattr(server_manager, "OpenCodeServerManager", _SlowManager)
+    monkeypatch.setattr(opencode_backend, "OpenCodeBackend", _SlowBackend)
+    monkeypatch.setattr(lifecycle_adapters, "make_wsl_lifecycle", lambda config: None)
+    for kind in ("information", "warning", "critical"):
+        monkeypatch.setattr(probe.QMessageBox, kind,
+                            staticmethod(lambda parent, title, text, kind=kind: shown.append((kind, title, text))))
+    _SlowManager.instances.clear()
+    return shown, cleaned
+
+
+def test_test_connection_runs_off_the_gui_thread_and_shows_the_same_result(qapp, no_network, project,
+                                                                          monkeypatch, tmp_path):
+    from PySide6.QtCore import QTimer
+    shown, cleaned = _slow_test_connection(monkeypatch, tmp_path)
+    dlg = _open(qapp, project)
+    dlg.backend_combo.setCurrentText("opencode")
+    last, gaps = [time.monotonic()], []
+
+    def tick():
+        now = time.monotonic()
+        gaps.append(now - last[0])
+        last[0] = now
+
+    timer = QTimer()
+    timer.timeout.connect(tick)
+    timer.start(10)
+    dlg.test_connection_btn.click()
+    assert not dlg.test_connection_btn.isEnabled()
+    assert dlg.test_connection_cue.active
+    dlg.test_connection_btn.click()  # a second click while it runs does nothing
+    deadline = time.monotonic() + 15
+    while not shown and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(0.005)
+    timer.stop()
+    assert max(gaps) < 0.5
+    assert len(shown) == 1 and len(_SlowManager.instances) == 1
+    kind, title, text = shown[0]
+    assert (kind, title) == ("information", "Test Connection")
+    assert text.startswith("✓ OpenCode is working\n\nHost: 127.0.0.1\nPort: ")
+    assert dlg.test_connection_btn.isEnabled() and not dlg.test_connection_cue.active
+    assert _SlowManager.instances[0].stopped == 1 and cleaned
+    dlg.reject()
+
+
+def test_closing_the_dialog_mid_test_shows_nothing_and_still_stops_its_server(qapp, no_network, project,
+                                                                             monkeypatch, tmp_path):
+    shown, cleaned = _slow_test_connection(monkeypatch, tmp_path)
+    dlg = _open(qapp, project)
+    dlg.backend_combo.setCurrentText("opencode")
+    dlg.test_connection_btn.click()
+    dlg.reject()
+    dlg.deleteLater()
+    deadline = time.monotonic() + 15
+    while not cleaned and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
+    assert cleaned and _SlowManager.instances[0].stopped == 1
+    for _ in range(20):
+        qapp.processEvents()
+    assert shown == []
+
+
+def test_start_server_is_off_while_a_test_runs_and_comes_back_as_it_was(qapp, no_network, project,
+                                                                       monkeypatch, tmp_path):
+    from unittest.mock import MagicMock
+    shown, _ = _slow_test_connection(monkeypatch, tmp_path)
+    dlg = _open(qapp, project)
+    dlg.backend_combo.setCurrentText("opencode")
+    dlg._probe._server_manager = MagicMock()
+    for was in (True, False):
+        shown.clear()
+        dlg.opencode_start_server.setEnabled(was)
+        dlg.test_connection_btn.click()
+        assert not dlg.opencode_start_server.isEnabled()
+        dlg._probe.start_server()  # even called directly: nothing starts meanwhile
+        dlg._probe._server_manager.ensure_running.assert_not_called()
+        deadline = time.monotonic() + 15
+        while not shown and time.monotonic() < deadline:
+            qapp.processEvents()
+            time.sleep(0.005)
+        assert dlg.opencode_start_server.isEnabled() is was
+    dlg.reject()
+
+
+def test_test_connection_does_nothing_while_a_start_server_poll_runs(qapp, no_network, project,
+                                                                   monkeypatch, tmp_path):
+    from PySide6.QtCore import QTimer
+    shown, _ = _slow_test_connection(monkeypatch, tmp_path)
+    dlg = _open(qapp, project)
+    dlg.backend_combo.setCurrentText("opencode")
+    poll = QTimer(dlg)
+    poll.start(1000)
+    dlg._probe._start_poll_timer = poll
+    dlg.test_connection_btn.click()
+    assert dlg.test_connection_btn.isEnabled() and not dlg.test_connection_cue.active
+    time.sleep(0.2)
+    qapp.processEvents()
+    assert not _SlowManager.instances and shown == []
+    poll.stop()  # the poll ended: a test may run again
+    dlg.test_connection_btn.click()
+    assert not dlg.test_connection_btn.isEnabled()
+    deadline = time.monotonic() + 15
+    while not shown and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(0.005)
+    assert len(shown) == 1
+    dlg.reject()

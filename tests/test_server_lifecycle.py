@@ -1195,6 +1195,7 @@ def _fake_probe(server_manager):
     self._server_manager = server_manager
     self._populate_models = MagicMock()
     self._start_server_generation = 0
+    self._test_running = False
     self._start_probe_answer = MagicMock()
     self._owner = MagicMock()
     self._owner.parent.return_value = None
@@ -1333,3 +1334,51 @@ def test_skill_chat_restart_relaunches_instead_of_stop_start():
     while not calls and time.monotonic() < deadline:
         time.sleep(0.01)
     assert calls == ["relaunch"]
+
+
+def test_the_launch_test_sweep_kills_a_dead_studio_s_test_server_and_spares_a_live_one(tmp_path):
+    # Studio exited mid-Test-connection: its throwaway server and files wait in launch_test/.
+    from procedo.studio.llm import opencode_orphan_sweep as sweep
+    dead, live = 777777, 888888
+    dead_files, live_files = _launch_files(tmp_path, dead), _launch_files(tmp_path, live)
+    _another_studios_record(tmp_path, owner=dead, pid=5150, port=6060)
+    calls = []
+    with patch.object(sweep, "get_opencode_launch_test_dir", return_value=tmp_path), \
+         patch.object(sweep, "pid_alive", side_effect=lambda pid: pid == live), \
+         patch.object(sweep.OrphanSweeper, "pid_is_our_opencode",
+                      side_effect=[PidIdentity.OURS, PidIdentity.NOT_OURS]) as ident, \
+         patch("procedo.studio.llm.server_manager.time.sleep"), \
+         patch("procedo.studio.llm.server_manager.subprocess.run",
+               side_effect=lambda cmd, *a, **k: calls.append(" ".join(cmd)) or MagicMock()):
+        sweep.sweep_launch_test_dir(OpenCodeConfig(working_directory=r"C:\live\launch"))
+    assert any("kill -TERM" in c and "t 5150" in c for c in calls)
+    assert [c for c in ident.call_args_list if c.args[0] != 5150] == []
+    assert not any(p.exists() for p in dead_files)
+    assert all(p.exists() for p in live_files)
+
+
+def test_prewarm_sweeps_the_launch_test_dir_once_before_the_server_starts(monkeypatch):
+    import types
+    from procedo.studio.controllers import llm_server_controller as ctl
+    order = []
+    sm = MagicMock()
+    sm.config.run_skill_secret = "s"
+    sm.start.side_effect = lambda: order.append("start")
+    monkeypatch.setattr(ctl, "sweep_launch_test_dir", lambda config: order.append("sweep"))
+
+    class _Sync:
+        def __init__(self, target=None, daemon=False):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    monkeypatch.setattr(ctl.threading, "Thread", _Sync)
+    self = types.SimpleNamespace(server_manager=sm, _server_cleanup_registered=True,
+                                 _mw=types.SimpleNamespace(project_manager=types.SimpleNamespace(project_root=None)))
+    with patch("procedo.studio.llm.launch_config.build_launch_config", return_value="x"), \
+         patch("procedo.studio.llm.launch_config.ensure_master_config"), \
+         patch("procedo.studio.authoring.tool_folders.build_skill_tools_universe", return_value={}):
+        ctl.LLMServerController.prewarm(self)
+        ctl.LLMServerController.prewarm(self)
+    assert order == ["sweep", "start", "start"]

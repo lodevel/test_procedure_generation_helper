@@ -11,10 +11,9 @@ holds even when the dialog is cancelled.
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QUrl
-from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox, QPushButton
 
+from procedo.core import os_open
 from procedo.ui import ui_kit
 
 from ..core.project_manager import RuleDocError, kilobytes, rule_doc_detail, warn_above
@@ -174,7 +173,7 @@ class RuleSelectorDialog(QDialog):
         except OSError as exc:
             QMessageBox.warning(self, "Open folder", f"Cannot create {folder}: {exc}")
             return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+        os_open.open_or_log(folder)
 
     def get_selected_rules(self) -> list[str]:
         """The ticked rule document keys (e.g. ['rule1.md', 'project/board.md'])."""

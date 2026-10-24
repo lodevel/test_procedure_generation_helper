@@ -13,9 +13,10 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QUrl
-from PySide6.QtGui import QAction, QDesktopServices
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QInputDialog, QMessageBox
+
+from procedo.core import os_open
 
 from . import load_skills, load_wizards, locations, wizard_api, wizard_flows
 from .context_sources import (
@@ -97,13 +98,13 @@ def _open_authoring_guide(main_window) -> None:
             main_window, "Skills", f"Authoring guide not found at:\n{doc}"
         )
         return
-    QDesktopServices.openUrl(QUrl.fromLocalFile(str(doc)))
+    os_open.open_or_log(doc)
 
 
 def _open_skills_folder(main_window) -> None:
     folder = locations.local_skills_dir()
     folder.mkdir(parents=True, exist_ok=True)
-    QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+    os_open.open_or_log(folder)
 
 
 # --------------------------------------------------------------------------- #

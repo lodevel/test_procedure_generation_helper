@@ -310,11 +310,9 @@ class SettingsDialog(QDialog):
     def _on_open_opencode_config(self):
         """Open the editor's master.json blueprint (or its folder if it hasn't
         been generated yet) in the OS default application."""
-        from PySide6.QtGui import QDesktopServices
-        from PySide6.QtCore import QUrl
+        from procedo.core import os_open
         master = get_opencode_master_path()
-        target = master if master.exists() else master.parent
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
+        os_open.open_or_log(master if master.exists() else master.parent)
 
     def _opencode_model_value(self) -> str:
         """The model id the user typed/selected, or '' for Default (no override

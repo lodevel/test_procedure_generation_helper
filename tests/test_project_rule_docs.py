@@ -440,10 +440,10 @@ def test_a_document_vanishing_while_the_picker_fills_is_skipped(qapp, tmp_path, 
 
 
 def test_open_folder_opens_the_project_rules_folder(qapp, tmp_path, monkeypatch):
-    from PySide6.QtGui import QDesktopServices
+    from procedo.core import os_open
     root = _project(tmp_path)
     opened = []
-    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(url.toLocalFile()))
+    monkeypatch.setattr(os_open, "open_path", opened.append)
     dlg = _dialog(root, _pm(root), _tcm(root))
 
     dlg._on_open_folder()

@@ -1349,6 +1349,22 @@ def test_the_launch_test_sweep_kills_a_dead_studio_s_test_server_and_spares_a_li
     assert all(p.exists() for p in live_files)
 
 
+def test_the_launch_test_sweep_leaves_this_studio_s_own_test_server_alone(tmp_path):
+    # A Test click in Studio's first seconds: the startup sweep still running must not kill its server.
+    from procedo.studio.llm import opencode_orphan_sweep as sweep
+    own = _launch_files(tmp_path, os.getpid())
+    _another_studios_record(tmp_path, owner=os.getpid(), pid=5150, port=6060)
+    calls = []
+    with patch.object(sweep, "get_opencode_launch_test_dir", return_value=tmp_path), \
+         patch.object(sweep.OrphanSweeper, "pid_is_our_opencode", return_value=PidIdentity.OURS), \
+         patch("procedo.studio.llm.server_manager.time.sleep"), \
+         patch("procedo.studio.llm.server_manager.subprocess.run",
+               side_effect=lambda cmd, *a, **k: calls.append(" ".join(cmd)) or MagicMock()):
+        sweep.sweep_launch_test_dir(OpenCodeConfig(working_directory=r"C:\live\launch"))
+    assert calls == []
+    assert all(p.exists() for p in own)
+
+
 def test_prewarm_sweeps_the_launch_test_dir_once_before_the_server_starts(monkeypatch):
     import types
     from procedo.studio.controllers import llm_server_controller as ctl

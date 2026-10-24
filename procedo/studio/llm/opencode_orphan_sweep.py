@@ -78,9 +78,11 @@ def signal_linux_tree(wsl_path: str, pid: int, sig: str, port: int) -> None:
 
 def sweep_launch_test_dir(config: OpenCodeConfig) -> None:
     """Sweep the Test-connection probe's launch dir (``launch_test/``) with the live dir's
-    rules: a Studio that exited mid-test leaves its throwaway server and files there."""
+    rules: a Studio that exited mid-test leaves its throwaway server and files there. This
+    Studio's own record is left alone: it is a Test connection started meanwhile (which
+    sweeps a leftover of its own before it spawns)."""
     OrphanSweeper(dataclasses.replace(
-        config, working_directory=str(get_opencode_launch_test_dir()))).sweep_orphan()
+        config, working_directory=str(get_opencode_launch_test_dir()))).sweep_orphan(own=False)
 
 
 class OrphanSweeper:
@@ -256,9 +258,10 @@ class OrphanSweeper:
                 return True
         return False
 
-    def sweep_orphan(self) -> None:
-        """Sweep the records of Studio processes that are gone (and our own), then
-        the other launch files of a gone process whose record is gone.
+    def sweep_orphan(self, own: bool = True) -> None:
+        """Sweep the records of Studio processes that are gone (and our own unless
+        *own* is False), then the other launch files of a gone process whose record
+        is gone.
 
         Launch files whose owner (the Windows pid in their name) is alive and not
         us belong to ANOTHER live Studio: they and its server are left alone. A
@@ -268,6 +271,8 @@ class OrphanSweeper:
         if not launch_dir:
             return
         for owner in launch_file_owners(launch_dir):
+            if owner == os.getpid() and not own:
+                continue
             if owner != os.getpid() and pid_alive(owner):
                 log.debug(f"Studio process {owner} is alive; leaving its server alone")
                 continue

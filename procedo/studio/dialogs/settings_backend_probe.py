@@ -31,6 +31,7 @@ class SettingsBackendProbe(QObject):
         self._test_button = test_button
         self._test_cue = test_cue            # the shared loading cue shown while a test runs
         self._test_running = False
+        self._start_was_enabled = True       # Start's state when the running test began
         self._closed = False
         self._populate_models = populate_models  # re-query the model list
         # The Start-server liveness probe answers through this relay and never holds this object.

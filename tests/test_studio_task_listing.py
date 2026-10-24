@@ -54,3 +54,41 @@ def test_a_tab_with_no_runnable_task_lists_none(studio_tab):
 def test_a_partial_bundle_chat_config_has_no_system_prompt(studio_tab):
     chat = studio_tab.task_config_manager.get_chat_config("text_json")
     assert (chat.enabled, chat.system_prompt) == (False, None)
+
+
+def _manager(tmp_path, project_workflows):
+    project = tmp_path / "rules_proj"
+    (project / "config").mkdir(parents=True)
+    (project / "bundle").mkdir()
+    (project / "bundle" / "defaults.json").write_text(json.dumps({"workflows": {"text_json": {
+        "tasks": [{"id": "derive_json_from_text", "prompt_template": "BUNDLE derive"}]}}}),
+        encoding="utf-8")
+    (project / "config" / "config.json").write_text(
+        json.dumps({"workflows": project_workflows}), encoding="utf-8")
+    return project, TaskConfigManager(tmp_path / "none.json", project_root=project)
+
+
+def _saved(project):
+    return json.loads((project / "config" / "config.json").read_text(encoding="utf-8"))["workflows"]
+
+
+def test_a_rule_tick_saves_only_the_bundle_and_project_tasks(tmp_path):
+    project, mgr = _manager(tmp_path, {"text_json": {"tasks": [
+        {"id": "review_json", "button_label": "Mine"}]}})
+    mgr.set_selected_rules_for_tab("text_json", ["a.md"])
+    mgr.add_rule_to_selections("project/b.md")
+    assert mgr.save_config()
+
+    saved = {t["id"]: t["selected_rules"] for t in _saved(project)["text_json"]["tasks"]}
+    assert saved == {"review_json": ["a.md", "project/b.md"],
+                     "derive_json_from_text": ["a.md", "project/b.md"]}
+
+
+def test_a_project_task_in_a_hidden_tab_survives_a_save(tmp_path):
+    hidden = {"tasks": [{"id": "mine", "name": "Mine", "button_label": "M"}]}
+    project, mgr = _manager(tmp_path, {"text_only": hidden})
+    assert mgr.get_all_tasks_for_tab("text_only") == []
+    mgr.set_selected_rules_for_tab("text_json", ["a.md"])
+    assert mgr.save_config()
+
+    assert _saved(project)["text_only"] == hidden

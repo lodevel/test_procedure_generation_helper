@@ -50,7 +50,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from procedo.core import config_manager
 from procedo.core.paths import exists_quiet
-from procedo.core.workflow_defaults import effective_workflows
+from procedo.core.workflow_defaults import effective_workflows, is_runnable
 
 from . import task_config_defaults, task_config_migrations
 from .fileio import atomic_write_text
@@ -115,8 +115,10 @@ class TaskConfigManager:
         # Inherited (editor + bundle) tasks indexed for snapshot-stamp
         # filtering: stamping a task identical to its inherited default is a
         # no-op (no leak via bulk callers like set_all_tasks_for_tab, Codex Q1).
-        # Populated at load time.
+        # Populated at load time, with the bundle's own workflows block (which
+        # tasks a bulk rule edit may claim, ``_stamp_owned_task``).
         self._pack_task_dicts_by_tab: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        self._bundle_workflows: Dict[str, Any] = {}
 
         # Subscribers notified after ``reload()``. Lets the main window
         # refresh button labels without TaskConfigManager importing Qt.
@@ -173,6 +175,7 @@ class TaskConfigManager:
             task_config_migrations.migrate_project_tab_contexts(self._project_root)
 
             bundle = task_config_defaults.load_pack_workflow_defaults(self._project_root)
+            self._bundle_workflows = bundle
             self._pack_task_dicts_by_tab = {}
             for tab_id, tab_cfg in effective_workflows(bundle, {}).items():
                 index = {t["id"]: t for t in tab_cfg.get("tasks") or []
@@ -291,17 +294,8 @@ class TaskConfigManager:
             return
         new_entry = task.to_dict()
 
-        tab_snap_existing = self._project_workflow_snapshot.get(tab_id, {})
-        snapshot_tasks = (
-            tab_snap_existing.get("tasks", [])
-            if isinstance(tab_snap_existing, dict) else []
-        )
-        already_in_snapshot = any(
-            isinstance(t, dict) and t.get("id") == task_id
-            for t in snapshot_tasks if isinstance(snapshot_tasks, list)
-        )
         pack_task = self._pack_task_dicts_by_tab.get(tab_id, {}).get(task_id)
-        if pack_task is not None and not already_in_snapshot:
+        if pack_task is not None and not self._in_snapshot(tab_id, task_id):
             if _task_dicts_equal(new_entry, pack_task):
                 return  # Pack-identical and never owned by project — no leak.
 
@@ -312,6 +306,16 @@ class TaskConfigManager:
                 tasks_list[i] = new_entry
                 return
         tasks_list.append(new_entry)
+
+    def _in_snapshot(self, tab_id: str, task_id: str) -> bool:
+        """The project's own workflows declare *task_id* in *tab_id*."""
+        return _declares(self._project_workflow_snapshot, tab_id, task_id)
+
+    def _stamp_owned_task(self, tab_id: str, task_id: str) -> None:
+        """Stamp a bulk rule edit of a task the bundle or the project declares; an
+        editor-only task stays inherited (its frozen editor fields never reach config.json)."""
+        if _declares(self._bundle_workflows, tab_id, task_id) or self._in_snapshot(tab_id, task_id):
+            self._stamp_task_in_snapshot(tab_id, task_id)
 
     def _remove_task_from_snapshot(self, tab_id: str, task_id: str) -> None:
         """Drop *task_id* from the snapshot's tasks list if present."""
@@ -430,6 +434,7 @@ class TaskConfigManager:
             self._raw_extras.clear()
             self._project_workflow_snapshot = {}
             self._pack_task_dicts_by_tab = {}
+            self._bundle_workflows = {}
             self._project_root = new_root
             self._load_config()
 
@@ -495,7 +500,7 @@ class TaskConfigManager:
         if task_id == "ad_hoc_chat":
             return True
         task = self.get_task_config(tab_id, task_id)
-        return task is not None and bool((task.prompt_template or "").strip())
+        return task is not None and is_runnable(task.prompt_template)
 
     def get_chat_config(self, tab_id: str) -> ChatConfig:
         with self._lock:
@@ -683,11 +688,9 @@ class TaskConfigManager:
                 return
             for task in tasks:
                 task.selected_rules = clone_selected_rules(selected)
-                # Persist intent: a rule-set edit applies to every task
-                # in this tab, so every task gets stamped (including
-                # previously-pack-only tasks the user is implicitly
-                # claiming ownership of by editing rules).
-                self._stamp_task_in_snapshot(tab_id, task.id)
+                # Persist intent: a rule-set edit claims every bundle or
+                # project task of this tab (bundle-only ones included).
+                self._stamp_owned_task(tab_id, task.id)
 
     def add_rule_to_selections(self, key: str) -> None:
         """Tick rule document *key* (one just added to the project) in every task's non-empty
@@ -698,12 +701,20 @@ class TaskConfigManager:
                     if task.selected_rules and isinstance(task.selected_rules, list) \
                             and key not in task.selected_rules:
                         task.selected_rules.append(key)
-                        self._stamp_task_in_snapshot(tab_id, task.id)
+                        self._stamp_owned_task(tab_id, task.id)
 
 
 # ---------------------------------------------------------------------------
 # Module-private helpers.
 # ---------------------------------------------------------------------------
+
+
+def _declares(workflows: Dict[str, Any], tab_id: str, task_id: str) -> bool:
+    """*workflows* (a workflows block) lists *task_id* under tab *tab_id*."""
+    tab = workflows.get(tab_id, {})
+    tasks = tab.get("tasks", []) if isinstance(tab, dict) else []
+    return isinstance(tasks, list) and any(
+        isinstance(t, dict) and t.get("id") == task_id for t in tasks)
 
 
 def _task_dicts_equal(a: Dict[str, Any], b: Dict[str, Any]) -> bool:

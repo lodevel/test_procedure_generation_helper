@@ -401,8 +401,10 @@ def test_set_selected_rules_for_tab_propagates(tmp_path):
     for task in mgr.get_all_tasks_for_tab("text_json"):
         assert task.selected_rules == ["a.md", "b.md"]
 
-    # Persisting and re-loading produces the same per-task values.
+    # Persisting and re-loading keeps the project's task's values; the
+    # editor-only tasks stay inherited (never saved by a rule edit).
     mgr.save_config()
     mgr2 = TaskConfigManager(fallback, project_root=root)
-    for task in mgr2.get_all_tasks_for_tab("text_json"):
-        assert task.selected_rules == ["a.md", "b.md"]
+    assert {t.id: t.selected_rules for t in mgr2.get_all_tasks_for_tab("text_json")} == {
+        t.id: ["a.md", "b.md"] if t.id == "derive_json_from_text" else None
+        for t in mgr2.get_all_tasks_for_tab("text_json")}

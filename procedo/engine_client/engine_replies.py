@@ -38,7 +38,7 @@ def _reconstruct_issues_from_dicts(findings: list[dict]) -> list["_IssueFromDict
 
 class _IssueFromDict:
     """Editor-facing finding reconstructed from the engine's finding dict
-    (``_engine_ops._finding_to_dict``); ``validation_outcome._issue_from_validator``
+    (``_engine_ops._finding_to_dict``); ``validation_outcome.issue_from_validator``
     consumes it."""
 
     def __init__(self, d: dict) -> None:

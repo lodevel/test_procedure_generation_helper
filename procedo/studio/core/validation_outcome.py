@@ -116,7 +116,7 @@ def _format_location(loc: Any) -> str:
     return str(loc)
 
 
-def _issue_from_validator(issue: Any) -> ValidationIssueView:
+def issue_from_validator(issue: Any) -> ValidationIssueView:
     """Convert a finding emitted by the project's text_renderer (or a
     ``ParseError`` mapped through :func:`_parse_error_to_issue`) into the
     editor-facing view. Defensive against missing attributes — duck-typed
@@ -135,9 +135,9 @@ def _issue_from_validator(issue: Any) -> ValidationIssueView:
     )
 
 
-def _outcome_from_report(report: Any) -> ValidationOutcome:
+def outcome_from_report(report: Any) -> ValidationOutcome:
     """Convert a ``ValidationReport`` to a :class:`ValidationOutcome`."""
-    issues = [_issue_from_validator(i) for i in getattr(report, "errors", [])]
+    issues = [issue_from_validator(i) for i in getattr(report, "errors", [])]
     return ValidationOutcome(
         ok=bool(getattr(report, "ok", True)),
         skipped=False,
@@ -145,7 +145,7 @@ def _outcome_from_report(report: Any) -> ValidationOutcome:
     )
 
 
-def _outcome_from_parse_error(exc: Any) -> ValidationOutcome:
+def outcome_from_parse_error(exc: Any) -> ValidationOutcome:
     """Convert a ParseError-shaped exception into a
     :class:`ValidationOutcome`.
 
@@ -163,7 +163,7 @@ def _outcome_from_parse_error(exc: Any) -> ValidationOutcome:
     """
     findings = getattr(exc, "findings", None) or []
     if findings:
-        issues = [_issue_from_validator(f) for f in findings]
+        issues = [issue_from_validator(f) for f in findings]
         return ValidationOutcome(ok=False, skipped=False, issues=issues)
     issue = ValidationIssueView(
         code=getattr(exc, "code", "PARSE_ERROR") or "PARSE_ERROR",
@@ -178,11 +178,11 @@ def _outcome_from_parse_error(exc: Any) -> ValidationOutcome:
     return ValidationOutcome(ok=False, skipped=False, issues=[issue])
 
 
-def _skipped(reason: str) -> ValidationOutcome:
+def skipped_outcome(reason: str) -> ValidationOutcome:
     return ValidationOutcome(ok=True, skipped=True, reason=reason)
 
 
-def _merge_outcomes(outcomes: list[ValidationOutcome]) -> ValidationOutcome:
+def merge_outcomes(outcomes: list[ValidationOutcome]) -> ValidationOutcome:
     """Combine per-artifact outcomes into a single result.
 
     Semantics (least surprising for the FSM and chat banners):
@@ -195,7 +195,7 @@ def _merge_outcomes(outcomes: list[ValidationOutcome]) -> ValidationOutcome:
     error when the text + json validators both passed.
     """
     if not outcomes:
-        return _skipped("LLM did not propose any artifact")
+        return skipped_outcome("LLM did not propose any artifact")
     if all(o.skipped for o in outcomes):
         return outcomes[0]
     issues: list[ValidationIssueView] = []
@@ -222,7 +222,7 @@ def outcome_from_exception(exc: BaseException) -> ValidationOutcome:
     ``ValueError`` / ``KeyError`` from codegen, etc.).
     """
     if hasattr(exc, "code") and hasattr(exc, "fix_hint"):
-        return _outcome_from_parse_error(exc)
+        return outcome_from_parse_error(exc)
     issue = ValidationIssueView(
         code=type(exc).__name__,
         message=str(exc) if str(exc) else repr(exc),
@@ -237,10 +237,10 @@ def outcome_from_exception(exc: BaseException) -> ValidationOutcome:
 # --------------------------------------------------------------------------- #
 
 
-class _FauxParseError:
+class FauxParseError:
     """Minimal duck-type used when the LLM returned proposed JSON as a
     string that doesn't itself decode. Lets us reuse
-    :func:`_outcome_from_parse_error` without importing rules_packager_base
+    :func:`outcome_from_parse_error` without importing rules_packager_base
     types in this module."""
 
     def __init__(self, code: str, message: str) -> None:

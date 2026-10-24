@@ -32,7 +32,7 @@ from ..core.validators_registry import (
     ValidatorContext,
     register,
 )
-from ..core.validation_outcome import ValidationIssueView, ValidationOutcome
+from ..core.validation_outcome import ValidationIssueView, ValidationOutcome, skipped_outcome
 from .validator_dispatch import validate_current_state
 
 log = logging.getLogger(__name__)
@@ -67,10 +67,6 @@ def _severity_str(severity: ValidationSeverity) -> str:
     return severity.value if isinstance(severity, ValidationSeverity) else str(severity)
 
 
-def _skipped(reason: str) -> ValidationOutcome:
-    return ValidationOutcome(ok=True, skipped=True, reason=reason, issues=[])
-
-
 # ---------------------------------------------------------------------------
 # Validator wrappers
 # ---------------------------------------------------------------------------
@@ -91,7 +87,7 @@ def _validate_procedure(ctx: ValidatorContext) -> ValidationOutcome:
 def _check_python_syntax(ctx: ValidatorContext) -> ValidationOutcome:
     """``py_compile`` syntax check on the current code artifact."""
     if not ctx.artifact_code or not ctx.artifact_code.strip():
-        return _skipped("No test.py content to check.")
+        return skipped_outcome("No test.py content to check.")
     return _to_outcome(CodeValidator().validate(ctx.artifact_code))
 
 

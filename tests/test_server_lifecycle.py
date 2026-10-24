@@ -11,6 +11,7 @@ All WSL/HTTP work is mocked — these are pure-logic tests.
 """
 import functools
 import json
+import locale
 import os
 import shlex
 import shutil
@@ -1089,6 +1090,36 @@ def test_the_sweep_forgets_a_dead_studio_s_unfinished_record_and_kills_nothing(t
     run.assert_not_called()
     assert [p.exists() for p in (record, config, universe)] == [False, False, False]
     assert launch_files.launch_file_owners(tmp_path) == []
+
+
+def test_the_sweep_keeps_a_dead_studio_s_record_it_cannot_read_now(tmp_path):
+    # A valid record that cannot be read at this moment may still name a live server.
+    mgr = _mgr(tmp_path)
+    files = _launch_files(tmp_path, 777777)
+    with patch("procedo.studio.llm.opencode_orphan_sweep.pid_alive", return_value=False), \
+         patch("pathlib.Path.read_text", side_effect=PermissionError("locked")), \
+         patch("procedo.studio.llm.server_manager.subprocess.run") as run:
+        mgr._orphans.sweep_orphan()
+    run.assert_not_called()
+    assert all(p.exists() for p in files)
+
+
+def test_the_identity_probe_reads_a_non_ascii_environment(tmp_path):
+    # The server's environ is UTF-8 (a PATH entry with an accent): decoding it with the
+    # Windows code page raised, so the verdict was never reached.
+    mgr = _mgr(tmp_path)
+    raw = _proc_probe_stdout(
+        cmdline=["opencode", "serve", "--port", "5005"],
+        environ=["PATH=/mnt/c/Users/Ána/bin",
+                 f"OPENCODE_CONFIG={mgr._orphans.our_config_wsl_path()}"]).encode("utf-8")
+
+    def fake_run(cmd, *a, encoding=None, errors=None, **k):
+        result = MagicMock()
+        result.stdout = raw.decode(encoding or locale.getpreferredencoding(False), errors or "strict")
+        return result
+
+    with patch("procedo.studio.llm.server_manager.subprocess.run", side_effect=fake_run):
+        assert mgr._orphans.pid_is_our_opencode(4242) is PidIdentity.OURS
 
 
 def test_the_sweep_keeps_the_record_of_a_launch_still_sourcing_the_bashrc(tmp_path):

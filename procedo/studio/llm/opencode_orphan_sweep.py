@@ -51,6 +51,23 @@ SERVE_EXEC = "exec opencode serve --port "
 _PROCESS_STARTED = time.time()
 
 
+def _record_text(path: Path) -> Optional[str]:
+    """*path*'s text, or ``None`` when it is absent or cannot be read now."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def _parse_record(text: Optional[str]) -> Optional[dict]:
+    """The record in *text* (a JSON object carrying an int ``pid``), else ``None``."""
+    try:
+        data = json.loads(text) if text is not None else None
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) and isinstance(data.get("pid"), int) else None
+
+
 class PidIdentity(Enum):
     """Tri-state verdict for a recorded pid's identity in the orphan sweep.
 
@@ -154,15 +171,7 @@ class OrphanSweeper:
         """Read a pid file (*path*, default OUR own), or ``None`` when it is absent /
         unreadable / not a JSON object carrying an int ``pid``."""
         path = path or self.pid_file_path()
-        if path is None or not path.exists():
-            return None
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None
-        if not isinstance(data, dict) or not isinstance(data.get("pid"), int):
-            return None
-        return data
+        return None if path is None else _parse_record(_record_text(path))
 
     def our_config_wsl_path(self, owner: Optional[int] = None) -> Optional[str]:
         """The WSL ``OPENCODE_CONFIG`` path the Studio process *owner* (default THIS
@@ -215,7 +224,8 @@ class OrphanSweeper:
         try:
             result = subprocess.run(
                 [self._config.wsl_path, "-e", "bash", "-c", script],
-                capture_output=True, text=True, timeout=3, cwd=safe_wsl_cwd(),
+                capture_output=True, encoding="utf-8", errors="replace",
+                timeout=3, cwd=safe_wsl_cwd(),
             )
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
             return PidIdentity.UNKNOWN
@@ -302,15 +312,17 @@ class OrphanSweeper:
                 log.debug(f"Studio process {owner} is alive; leaving its server alone")
                 continue
             path = launch_file_path(launch_dir, PID_FILE, owner)
-            data = self.read_pid_file(path)
+            text = _record_text(path)
+            data = _parse_record(text)
             if (data is not None and owner == os.getpid() and not include_own
                     and data.get("started_at", 0) >= _PROCESS_STARTED):
                 continue
             if data is not None:
                 self._sweep_record(path, data, owner)
-            elif owner != os.getpid():
-                # A dead Studio's record its shell never finished (killed between
-                # the truncate and the printf) names no server: forget it, kill nothing.
+            elif text is not None and owner != os.getpid():
+                # A dead Studio's record read but empty / unparseable (its shell killed
+                # between the truncate and the printf) names no server: forget it, kill
+                # nothing. One that cannot be read now is kept for the next sweep.
                 unlink_quietly(path)
             if owner != os.getpid() and not path.exists():
                 remove_launch_files(launch_dir, owner)

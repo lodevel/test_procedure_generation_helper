@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QInputDialog, QMessageBox
 
 from procedo.core import os_open
 
-from . import load_skills, load_wizards, locations, wizard_api, wizard_flows
+from . import load_skills, locations, wizard_api, wizard_flows
 from .context_sources import (
     ArtifactProvider,
     ArtifactsSource,

@@ -33,6 +33,12 @@ def _proc_probe_stdout(*, alive=True, cmdline=None, environ=None):
     return f"{marker}\n{cmd_blob}\n{sep}\n{env_blob}"
 
 
+def _pid_file(launch_dir: Path) -> Path:
+    """THIS process's pid file in *launch_dir* (one per Studio process)."""
+    from procedo.studio.llm import server_manager
+    return server_manager.pid_file_path(launch_dir)
+
+
 def _mgr(tmp_path: Path) -> OpenCodeServerManager:
     cfg = OpenCodeConfig(working_directory=str(tmp_path))
     return OpenCodeServerManager(cfg)
@@ -112,7 +118,7 @@ def test_find_free_port_zero_never_returns_zero():
 def test_write_then_read_pid_file_roundtrip(tmp_path):
     mgr = _mgr(tmp_path)
     mgr._write_pid_file(4242, 5005)
-    pid_file = tmp_path / "opencode.pid"
+    pid_file = _pid_file(tmp_path)
     assert pid_file.exists()
     data = json.loads(pid_file.read_text())
     assert data["pid"] == 4242 and data["port"] == 5005
@@ -121,8 +127,8 @@ def test_write_then_read_pid_file_roundtrip(tmp_path):
 
 def test_remove_pid_file_is_safe_when_absent(tmp_path):
     mgr = _mgr(tmp_path)
-    mgr._remove_pid_file()  # no file yet → must not raise
-    assert not (tmp_path / "opencode.pid").exists()
+    mgr._remove_pid_file(4242)  # no file yet → must not raise
+    assert not (_pid_file(tmp_path)).exists()
 
 
 def test_pid_file_path_none_without_launch_dir():
@@ -153,7 +159,7 @@ def test_sweep_orphan_kills_our_opencode_pid(tmp_path):
     assert any("kill -TERM" in f and "t 9999" in f for f in flat)
     assert any("kill -KILL" in f and "t 9999" in f for f in flat)
     # The stale file is gone after a conclusive sweep.
-    assert not (tmp_path / "opencode.pid").exists()
+    assert not (_pid_file(tmp_path)).exists()
 
 
 def test_sweep_orphan_spares_non_opencode_pid(tmp_path):
@@ -166,7 +172,7 @@ def test_sweep_orphan_spares_non_opencode_pid(tmp_path):
          patch("procedo.studio.llm.server_manager.subprocess.run") as run:
         mgr._sweep_orphan()
         run.assert_not_called()
-    assert not (tmp_path / "opencode.pid").exists()
+    assert not (_pid_file(tmp_path)).exists()
 
 
 def test_sweep_orphan_noop_without_pid_file(tmp_path):
@@ -307,7 +313,7 @@ def test_sweep_orphan_keeps_pid_file_on_unknown(tmp_path):
         mgr._sweep_orphan()
         run.assert_not_called()
     # Pid file SURVIVES the inconclusive sweep.
-    assert (tmp_path / "opencode.pid").exists()
+    assert (_pid_file(tmp_path)).exists()
 
 
 def test_sweep_orphan_skips_kill9_when_recheck_not_ours(tmp_path):
@@ -334,7 +340,7 @@ def test_sweep_orphan_skips_kill9_when_recheck_not_ours(tmp_path):
     assert any("kill -TERM" in c and "t 7777" in c for c in calls)
     assert not any("kill -KILL" in c for c in calls)
     # A conclusive OURS-then-gone sweep clears the (now stale) pid file.
-    assert not (tmp_path / "opencode.pid").exists()
+    assert not (_pid_file(tmp_path)).exists()
 
 
 def test_sweep_orphan_keeps_pid_file_when_recheck_unknown(tmp_path):
@@ -362,7 +368,7 @@ def test_sweep_orphan_keeps_pid_file_when_recheck_unknown(tmp_path):
     assert any("kill -TERM" in c and "t 8888" in c for c in calls)
     assert not any("kill -KILL" in c for c in calls)
     # Pid file SURVIVES — a possibly-running orphan is never lost.
-    assert (tmp_path / "opencode.pid").exists()
+    assert (_pid_file(tmp_path)).exists()
 
 
 # --------------------------------------------------------------------------- #
@@ -689,6 +695,9 @@ def test_stop_kills_the_linux_pid_it_started_never_by_name(tmp_path):
     kills = _kill_runs(runs)
     assert len(kills) == 1 and "kill -TERM" in kills[0]
     assert "31337" in kills[0] and "4242" not in kills[0]
+    # The bare pid is checked first: still an `opencode serve` on OUR port, else no kill.
+    assert "/proc/31337/cmdline" in kills[0]
+    assert "'opencode serve --port 5005 ' || exit 0" in kills[0]
     proc.terminate.assert_called_once()  # wsl.exe itself: through OUR handle
     assert mgr._read_pid_file() is None
     # The marker never reaches the failure-reason tail.
@@ -722,6 +731,78 @@ def test_stop_without_a_linux_pid_issues_no_name_kill(tmp_path, monkeypatch):
         mgr._stop_process()
     assert _kill_runs(runs) == []
     proc.terminate.assert_called_once()
+
+
+def _another_studios_record(tmp_path, owner=777777, pid=5150, port=6060):
+    """The pid file a SECOND Studio process (Windows pid *owner*) wrote in the shared dir."""
+    from procedo.studio.llm import server_manager
+    path = server_manager.pid_file_path(tmp_path, owner)
+    path.write_text(json.dumps({"pid": pid, "port": port, "started_at": 0}), encoding="utf-8")
+    return path
+
+
+def test_sweep_never_touches_a_live_studio_s_server(tmp_path):
+    # Bench opens a second Studio: its start() must leave the first one's LIVE
+    # server and record alone, even though the record names OUR config.
+    mgr = _mgr(tmp_path)
+    other = _another_studios_record(tmp_path)
+    with patch("procedo.studio.llm.server_manager.pid_alive", return_value=True), \
+         patch.object(mgr, "_pid_is_our_opencode", return_value=PidIdentity.OURS) as ident, \
+         patch("procedo.studio.llm.server_manager.subprocess.run") as run:
+        mgr._sweep_orphan()
+    run.assert_not_called()
+    ident.assert_not_called()
+    assert other.exists()
+
+
+def test_sweep_kills_the_orphan_of_a_dead_studio(tmp_path):
+    mgr = _mgr(tmp_path)
+    other = _another_studios_record(tmp_path)
+    calls = []
+    with patch("procedo.studio.llm.server_manager.pid_alive", return_value=False), \
+         patch.object(mgr, "_pid_is_our_opencode",
+                      side_effect=[PidIdentity.OURS, PidIdentity.NOT_OURS]), \
+         patch("procedo.studio.llm.server_manager.time.sleep"), \
+         patch("procedo.studio.llm.server_manager.subprocess.run",
+               side_effect=lambda cmd, *a, **k: calls.append(" ".join(cmd)) or MagicMock()):
+        mgr._sweep_orphan()
+    assert any("kill -TERM" in c and "t 5150" in c and "--port 6060 " in c for c in calls)
+    assert not other.exists()
+
+
+def test_an_old_manager_s_stop_keeps_the_new_manager_s_record(tmp_path):
+    # A manager swap in one Studio: the retired manager's (async) stop must not
+    # delete the record its successor already wrote in the same file.
+    old, new = _mgr(tmp_path), _mgr(tmp_path)
+    old._write_pid_file(111, 5005)
+    new._write_pid_file(222, 5006)
+    old._remove_pid_file(111)
+    assert new._read_pid_file()["pid"] == 222
+
+
+def test_stop_keeps_the_record_when_wsl_exe_already_exited(tmp_path):
+    # No Linux kill was possible (the pid may be reused): keep the record so the
+    # next start's identity-checked sweep can still find a surviving server.
+    mgr = _mgr(tmp_path)
+    mgr._server_process = _fake_spawn(["__OC_PID__31337\n"], alive=False)
+    mgr._start_stderr_drain(5005)
+    deadline = time.monotonic() + 5
+    while mgr._read_pid_file() is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+    with patch("procedo.studio.llm.server_manager.subprocess.run") as run:
+        mgr._stop_process()
+    run.assert_not_called()
+    assert mgr._read_pid_file()["pid"] == 31337
+
+
+def test_a_spawn_without_stderr_forgets_the_previous_spawn_s_pid(tmp_path):
+    mgr = _mgr(tmp_path)
+    mgr._server_process = _fake_spawn(["__OC_PID__31337\n"])
+    mgr._start_stderr_drain(5005)
+    mgr._server_process = _live_proc()
+    mgr._server_process.stderr = None
+    mgr._start_stderr_drain(5006)
+    assert mgr._spawned is None
 
 
 def test_serve_command_prints_its_linux_pid_then_execs_opencode(tmp_path):

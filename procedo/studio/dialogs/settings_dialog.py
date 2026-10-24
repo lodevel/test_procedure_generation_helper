@@ -592,7 +592,7 @@ class SettingsDialog(QDialog):
                 # CRITICAL: build into a THROWAWAY launch_test/ dir, NOT the live
                 # launch/ dir. The test server's start() writes a pid file and its
                 # stop() DELETES it; sharing the live dir would clobber the LIVE
-                # server's orphan-sweep record (opencode.pid) — the exact
+                # server's orphan-sweep record (its pid file) — the exact
                 # orphan-left bug class. Isolating it means the probe's pid file +
                 # derived opencode.json never collide with the live ones.
                 ensure_master_config(

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..core.fileio import atomic_write_text
-from ..core.studio_settings import get_settings_path
+from ..core import studio_settings
 
 log = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ def get_opencode_config_dir() -> Path:
     ``launch/opencode.json`` derived config. One config tree, tied to the editor,
     not per project.
     """
-    d = get_settings_path().parent / "opencode"
+    d = studio_settings.get_settings_path().parent / "opencode"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -52,7 +52,7 @@ def get_opencode_launch_test_dir() -> Path:
 
     Test Connection spins up its own ``opencode serve`` to validate the config.
     That probe must NOT share the live ``launch/`` dir: a test manager's
-    ``start()`` would overwrite ``launch/opencode.pid`` and its ``stop()`` would
+    ``start()`` would overwrite this process's ``launch/`` pid file and its ``stop()`` would
     DELETE it, wiping the LIVE server's orphan-sweep record (the exact
     orphan-left bug class). Isolating the probe in ``launch_test/`` keeps its pid
     file + derived ``opencode.json`` from ever colliding with the live ones."""
@@ -183,6 +183,7 @@ def _build_run_skill_block(project_root, launch_dir, run_skill_secret):
     if not run_skill_secret:
         return None
     from ..llm.mcp_config import build_run_skill_mcp_block
+    from .server_manager import pid_file_path
     from ..authoring.locations import skill_roots
     from ..authoring.tool_folders import build_skill_tools_universe
     # Sort roots by SkillSource (ASCENDING) so the child resolves the same body
@@ -203,7 +204,7 @@ def _build_run_skill_block(project_root, launch_dir, run_skill_secret):
     return build_run_skill_mcp_block(
         venv_python_win=_python_win(),
         mcp_script_win=_mcp_script_win("_run_skill_mcp.py"),
-        server_port_file_win=str(Path(launch_dir) / "opencode.pid"),
+        server_port_file_win=str(pid_file_path(launch_dir)),
         skill_roots_win=roots,
         secret=run_skill_secret,
         universe_file_win=universe_file,

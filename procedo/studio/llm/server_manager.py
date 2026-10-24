@@ -21,6 +21,8 @@ from typing import Optional
 
 import requests
 
+from procedo.core.evidence_tree import pid_alive
+
 from .mcp_config import win_to_wsl_path
 from .opencode_backend import OpenCodeConfig, safe_wsl_cwd
 from .server_health import (
@@ -32,6 +34,15 @@ from .server_health import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def pid_file_path(launch_dir, owner: Optional[int] = None) -> Path:
+    """The pid file of the Studio process *owner* (Windows pid; default THIS one) in
+    *launch_dir*: ``opencode-<owner>.pid``. One per Studio process, because every Studio
+    process of the user shares the launch dir (Bench starts one per "Open in Studio"): a
+    process writes only its own record, and its run_skill MCP server reads its server's
+    port from it."""
+    return Path(launch_dir) / f"opencode-{os.getpid() if owner is None else owner}.pid"
 
 
 class PidIdentity(Enum):
@@ -130,9 +141,9 @@ class OpenCodeServerManager:
         # prevents the pipe-buffer deadlock a chatty server would otherwise hit.
         self._stderr_tail: "deque[str]" = deque(maxlen=50)
         self._stderr_thread: Optional[threading.Thread] = None
-        # The Linux pid of the current spawn, parsed from its stderr marker by
-        # the drain thread (see _PID_MARKER). None until the first spawn.
-        self._linux_pid: "Optional[Future[int]]" = None
+        # The current spawn's (Linux pid, port), the pid parsed from its stderr
+        # marker by the drain thread (see _PID_MARKER). None until a spawn.
+        self._spawned: "Optional[Future[tuple[int, int]]]" = None
     
     @property
     def config(self) -> OpenCodeConfig:
@@ -554,7 +565,8 @@ class OpenCodeServerManager:
         keeps the pipe from filling (which would deadlock the server) and keeps
         the last lines available as a failure reason. The ``_PID_MARKER`` line
         is taken out of the stream: its Linux pid goes to the pid file and to
-        ``self._linux_pid`` (what ``_stop_process`` kills)."""
+        ``self._spawned`` (what ``_stop_process`` kills)."""
+        self._spawned = None  # never a previous spawn's pid
         proc = self._server_process
         if proc is None or proc.stderr is None:
             return
@@ -562,18 +574,18 @@ class OpenCodeServerManager:
         # spawn can't write into this spawn's reason blob or pid.
         tail: "deque[str]" = deque(maxlen=50)
         self._stderr_tail = tail
-        linux_pid: "Future[int]" = Future()
-        self._linux_pid = linux_pid
+        spawned: "Future[tuple[int, int]]" = Future()
+        self._spawned = spawned
 
         def _drain() -> None:
             try:
                 for line in proc.stderr:
                     text = line.strip()
                     pid = text[len(self._PID_MARKER):]
-                    if (not linux_pid.done() and text.startswith(self._PID_MARKER)
+                    if (not spawned.done() and text.startswith(self._PID_MARKER)
                             and pid.isdigit()):
                         self._write_pid_file(int(pid), port)
-                        linux_pid.set_result(int(pid))
+                        spawned.set_result((int(pid), port))
                         continue
                     tail.append(line)
             except Exception:  # noqa: BLE001 — best-effort drain
@@ -646,12 +658,15 @@ class OpenCodeServerManager:
         if self._server_process is None:
             return
 
+        signalled: Optional[int] = None
         if self._server_process.poll() is None:
-            linux_pid = self._await_linux_pid()
-            if linux_pid is None:
+            spawned = self._await_spawned()
+            if spawned is None:
                 log.warning("Server's Linux pid unknown; stopping wsl.exe only")
-            else:
-                self._signal_linux_tree(linux_pid, "TERM")
+            elif self._server_process.poll() is None:  # still ours after the wait
+                pid, port = spawned
+                self._signal_linux_tree(pid, "TERM", port)
+                signalled = pid
 
         log.debug(f"Stopping server process PID {self._server_process.pid}...")
         try:
@@ -668,26 +683,32 @@ class OpenCodeServerManager:
         finally:
             self._server_process = None
 
-        # Our process is gone — drop the PID file so the next session's
-        # orphan-sweep has nothing stale to chase.
-        self._remove_pid_file()
+        # We signalled our Linux tree: drop OUR record. Otherwise keep it (wsl.exe
+        # had already exited, so its pid may be reused): the next start's
+        # identity-checked sweep can still find a server that survived.
+        if signalled is not None:
+            self._remove_pid_file(signalled)
 
-    def _await_linux_pid(self) -> Optional[int]:
-        """The current spawn's Linux pid, waiting up to ``_LINUX_PID_WAIT`` for
-        its marker when a stop lands mid-boot; ``None`` if it never came."""
-        if self._linux_pid is None:
+    def _await_spawned(self) -> Optional[tuple[int, int]]:
+        """The current spawn's (Linux pid, port), waiting up to ``_LINUX_PID_WAIT``
+        for its marker when a stop lands mid-boot; ``None`` if it never came."""
+        if self._spawned is None:
             return None
         try:
-            return self._linux_pid.result(timeout=self._LINUX_PID_WAIT)
+            return self._spawned.result(timeout=self._LINUX_PID_WAIT)
         except FutureTimeout:
             return None
 
-    def _signal_linux_tree(self, pid: int, sig: str) -> None:
+    def _signal_linux_tree(self, pid: int, sig: str, port: int) -> None:
         """Send ``sig`` to the Linux process ``pid`` and all its descendants —
-        selected by pid/parent pid only, never by name. The whole tree is listed
-        before any signal is sent. ``wsl -e`` runs bash directly, so no login
-        shell re-expands the ``$`` in the script. Best-effort."""
+        selected by pid/parent pid only, never by name — but only while ``pid`` is
+        still an ``opencode serve`` on OUR ``port`` (else nothing: the pid was
+        reused). The whole tree is listed before any signal is sent. ``wsl -e``
+        runs bash directly, so no login shell re-expands the ``$`` in the script.
+        Best-effort."""
         script = (
+            f"tr '\\0' ' ' < /proc/{int(pid)}/cmdline 2>/dev/null "
+            f"| grep -qF -- 'opencode serve --port {int(port)} ' || exit 0; "
             't() { for c in $(pgrep -P "$1"); do t "$c"; done; echo "$1"; }; '
             f"kill -{sig} $(t {int(pid)}) 2>/dev/null"
         )
@@ -703,10 +724,12 @@ class OpenCodeServerManager:
     # Orphan-sweep via a PID file (C3)
     #
     # On a clean exit ``stop()`` tears the process down. But a crash / hard kill
-    # of the editor can leave the Linux-side ``opencode serve`` alive. We record
-    # OUR pid+port in ``<launch_dir>/opencode.pid`` after a successful spawn, and
-    # at the START of the next ``start()`` read it back and kill that process —
-    # but ONLY after confirming the live pid is an ``opencode serve`` launched
+    # of the editor can leave the Linux-side ``opencode serve`` alive. Each Studio
+    # process records ITS server's Linux pid+port in ``pid_file_path`` (one file
+    # per Studio process) as soon as the spawn prints it, and at the START of the
+    # next ``start()`` the records of DEAD Studio processes (and our own) are read
+    # back and that process killed — NEVER a live Studio's server, and
+    # ONLY after confirming the live pid is an ``opencode serve`` launched
     # with OUR ``OPENCODE_CONFIG`` (the launch-dir opencode.json), checked
     # against /proc cmdline+environ. We NEVER pkill-by-name blindly: the recorded
     # pid may have been recycled to an unrelated process, and the user may run
@@ -714,13 +737,12 @@ class OpenCodeServerManager:
     # ------------------------------------------------------------------ #
 
     def _pid_file_path(self) -> Optional[Path]:
-        """Path to OUR pid file (``<launch_dir>/opencode.pid``) or ``None`` when
-        no launch dir is configured (the file lives beside the derived config so
-        each editor install tracks only its own server)."""
+        """Path to OUR pid file (``pid_file_path``) or ``None`` when no launch dir
+        is configured (the file lives beside the derived config)."""
         launch_dir = self._config.working_directory
         if not launch_dir:
             return None
-        return Path(launch_dir) / "opencode.pid"
+        return pid_file_path(launch_dir)
 
     def _write_pid_file(self, pid: int, port: int) -> None:
         """Record OUR spawned server as JSON ``{pid, port, started_at}`` so a
@@ -738,20 +760,25 @@ class OpenCodeServerManager:
         except Exception as e:  # noqa: BLE001 — best-effort bookkeeping
             log.debug(f"Could not write pid file {path}: {e}")
 
-    def _remove_pid_file(self) -> None:
-        """Delete OUR pid file on a clean stop (best-effort)."""
-        path = self._pid_file_path()
+    def _remove_pid_file(self, pid: int, path: Optional[Path] = None) -> None:
+        """Delete the pid file (*path*, default OUR own) unless it now records a
+        pid other than *pid*: a manager swap's retired manager must not delete
+        the record its successor already wrote (best-effort)."""
+        path = path or self._pid_file_path()
         if path is None:
+            return
+        data = self._read_pid_file(path)
+        if data is not None and data["pid"] != pid:
             return
         try:
             path.unlink(missing_ok=True)
         except Exception as e:  # noqa: BLE001 — best-effort
             log.debug(f"Could not remove pid file {path}: {e}")
 
-    def _read_pid_file(self) -> Optional[dict]:
-        """Read OUR pid file, or ``None`` when it is absent / unreadable / not a
-        JSON object carrying an int ``pid``."""
-        path = self._pid_file_path()
+    def _read_pid_file(self, path: Optional[Path] = None) -> Optional[dict]:
+        """Read a pid file (*path*, default OUR own), or ``None`` when it is absent /
+        unreadable / not a JSON object carrying an int ``pid``."""
+        path = path or self._pid_file_path()
         if path is None or not path.exists():
             return None
         try:
@@ -876,7 +903,28 @@ class OpenCodeServerManager:
         return False
 
     def _sweep_orphan(self) -> None:
-        """Kill OUR leftover ``opencode serve`` from a crashed prior session.
+        """Sweep the records of Studio processes that are gone (and our own).
+
+        A record whose owner (the Windows pid in its name) is alive and not us
+        belongs to ANOTHER live Studio: its file and its server are left alone.
+        A reused owner pid reads as alive, so that record is skipped too (fail
+        safe: a missed orphan, never a killed live server)."""
+        launch_dir = self._config.working_directory
+        if not launch_dir:
+            return
+        for path in sorted(Path(launch_dir).glob("opencode-*.pid")):
+            owner = path.stem.split("-", 1)[1]
+            if not owner.isdigit():
+                continue
+            if int(owner) != os.getpid() and pid_alive(int(owner)):
+                log.debug(f"{path.name} belongs to a live Studio; leaving its server alone")
+                continue
+            data = self._read_pid_file(path)
+            if data is not None:
+                self._sweep_record(path, data)
+
+    def _sweep_record(self, path: Path, data: dict) -> None:
+        """Kill the leftover ``opencode serve`` one swept record names.
 
         Tri-state gated (MAJOR-1): we only ever kill on a conclusive ``OURS``,
         and we only delete the pid file on a conclusive verdict (OURS after the
@@ -889,10 +937,8 @@ class OpenCodeServerManager:
         If the pid went away or was recycled in the gap the re-check is no
         longer OURS and we do NOT -9, closing the PID-reuse TOCTOU. NEVER a
         blind pkill-by-name."""
-        data = self._read_pid_file()
-        if data is None:
-            return
         pid = data["pid"]
+        port = data.get("port") if isinstance(data.get("port"), int) else 0
 
         identity = self._pid_is_our_opencode(pid)
         if identity is PidIdentity.UNKNOWN:
@@ -906,12 +952,12 @@ class OpenCodeServerManager:
         if identity is PidIdentity.NOT_OURS:
             # Definitely gone / recycled / unrelated — forget the stale file.
             log.debug(f"PID-file pid {pid} is not OUR live opencode serve; not killing")
-            self._remove_pid_file()
+            self._remove_pid_file(pid, path)
             return
 
         # identity is OURS — graceful TERM first.
         log.info(f"Sweeping orphan opencode serve (pid {pid}) from a prior session")
-        self._signal_linux_tree(pid, "TERM")
+        self._signal_linux_tree(pid, "TERM", port)
 
         # Brief grace for the process to exit on its own.
         time.sleep(1.0)
@@ -922,14 +968,14 @@ class OpenCodeServerManager:
         # on a fresh, conclusive OURS.
         post = self._pid_is_our_opencode(pid)
         if post is PidIdentity.OURS:
-            self._signal_linux_tree(pid, "KILL")
+            self._signal_linux_tree(pid, "KILL", port)
             # We forcibly -9'd OUR process — the pid file has served its purpose.
-            self._remove_pid_file()
+            self._remove_pid_file(pid, path)
         elif post is PidIdentity.NOT_OURS:
             # Gone or recycled to a non-ours process in the TERM→wait gap: no -9
             # (closes the PID-reuse TOCTOU), and the stale file can go.
             log.debug(f"pid {pid} no longer OURS after TERM; skipping KILL -9")
-            self._remove_pid_file()
+            self._remove_pid_file(pid, path)
         else:  # UNKNOWN
             # Could NOT confirm the TERM took effect (a /proc read timeout / WSL
             # hiccup) — the orphan may still be alive. KEEP the pid file so the

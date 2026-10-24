@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from procedo.core import bundle_registry, section_ownership, studio_launch_env
+from procedo.core import bundle_registry, project_bundle, section_ownership, studio_launch_env
 from procedo.engine_client.engine_session import ParserUnavailable
 
 
@@ -57,7 +57,7 @@ def defaults_path(project_root: Optional[Path]) -> Optional[Path]:
     """Resolve the bundle defaults.json: a project's ``<root>/bundle/defaults.json``
     when a project is open, else ``PROCEDO_BUNDLE_DEFAULTS_PATH`` (editor mode)."""
     if project_root is not None:
-        return bundle_registry.defaults_path(Path(project_root))
+        return project_bundle.defaults_path(Path(project_root))
     env = os.environ.get(studio_launch_env.BUNDLE_DEFAULTS_PATH)
     return Path(env) if env else None
 

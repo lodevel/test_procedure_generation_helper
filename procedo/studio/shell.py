@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from procedo.core import bundle_registry
+from procedo.core import project_bundle
 from procedo.ui import ui_kit
 from procedo.ui.segmented import segment, segmented
 
@@ -264,7 +264,7 @@ def refresh_footer(ws: StudioWorkspace) -> None:
 
 def bundle_name(project_root) -> str:
     """The project's active bundle as Studio names it (``baseline 2.8.1``), "" when none."""
-    bundle = bundle_registry.read_active_bundle(Path(project_root)) if project_root else None
+    bundle = project_bundle.read_active_bundle(Path(project_root)) if project_root else None
     return f"{bundle.id} {bundle.version}" if bundle else ""
 
 

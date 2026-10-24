@@ -277,7 +277,7 @@ def test_the_pdf_tools_block_without_a_project_has_no_project_rules_folder(tmp_p
 
 
 def test_a_project_without_a_loadable_bundle_lists_no_bundle_rules(tmp_path):
-    """The bundle rules folder is the one Studio resolves (bundle_registry.active_rules_dir):
+    """The bundle rules folder is the one Studio resolves (project_bundle.active_rules_dir):
     no loadable bundle, no bundle rules for the tools either."""
     from procedo.studio.llm.launch_config import _build_pdf_tools_block
 

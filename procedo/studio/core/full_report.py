@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from procedo.core import bundle_registry, pack_extractors, report_export
+from procedo.core import pack_extractors, project_bundle, report_export
 
 from . import odb_inspect
 
@@ -30,7 +30,7 @@ def has_active_bundle(project_root) -> bool:
     """True when the project has an active bundle. Without one the pack extractors
     return empty, so the Word report would contain metadata only (no steps/expected)
     — the caller should warn before exporting."""
-    return bundle_registry.read_active_bundle(Path(project_root)) is not None
+    return project_bundle.read_active_bundle(Path(project_root)) is not None
 
 
 def export_full_report(

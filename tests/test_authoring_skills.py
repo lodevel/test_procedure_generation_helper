@@ -12,7 +12,7 @@ from procedo.studio.authoring import (
     load_skill,
     split_frontmatter,
 )
-from procedo.studio.authoring.skill_loader import find_skill_file
+from procedo.core.bundle_generator import skill_file
 
 # --------------------------------------------------------------------------- #
 # helpers                                                                      #
@@ -75,20 +75,20 @@ def test_split_frontmatter_non_mapping_raises():
 
 
 # --------------------------------------------------------------------------- #
-# find_skill_file / load_skill                                                 #
+# skill_file / load_skill                                                      #
 # --------------------------------------------------------------------------- #
 
-def test_find_skill_file_accepts_both_casings(tmp_path):
+def test_skill_file_accepts_both_casings(tmp_path):
     # Both casings must resolve to a real file. The returned name's casing is
     # filesystem-dependent (case-insensitive on Windows), so assert the file is
     # found and lower-cases to "skill.md" rather than an exact casing.
     upper = _make_skill(tmp_path / "a", filename="SKILL.md")
     lower = _make_skill(tmp_path / "b", filename="skill.md")
     for folder in (upper, lower):
-        found = find_skill_file(folder)
+        found = skill_file(folder)
         assert found is not None and found.is_file()
         assert found.name.lower() == "skill.md"
-    assert find_skill_file(tmp_path / "missing") is None
+    assert skill_file(tmp_path / "missing") is None
 
 
 def test_load_skill_populates_fields(tmp_path):

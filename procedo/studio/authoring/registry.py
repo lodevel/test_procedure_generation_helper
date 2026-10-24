@@ -10,9 +10,11 @@ import logging
 from pathlib import Path
 from typing import Iterator, Optional, Sequence, Tuple
 
+from procedo.core.bundle_generator import skill_file
+
 from . import locations
 from .skill import Skill, SkillSource
-from .skill_loader import SkillLoadError, find_skill_file, load_skill
+from .skill_loader import SkillLoadError, load_skill
 
 log = logging.getLogger(__name__)
 
@@ -20,7 +22,7 @@ log = logging.getLogger(__name__)
 def _iter_skill_folders(root: Path) -> Iterator[Path]:
     """Yield immediate subfolders of ``root`` that contain a SKILL.md."""
     for child in sorted(root.iterdir()):
-        if child.is_dir() and find_skill_file(child) is not None:
+        if child.is_dir() and skill_file(child) is not None:
             yield child
 
 

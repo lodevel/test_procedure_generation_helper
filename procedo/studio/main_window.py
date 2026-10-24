@@ -77,7 +77,7 @@ class StudioWorkspace(QWidget):
         # connect straight to them.
         self._project_controller = ProjectController(self)
         self._document_controller = DocumentController(self)
-        self._llm_server = LLMServerController(self)
+        self.llm_server = LLMServerController(self)
         self._assistant_controller = AssistantController(self)
         self._export_controller = ExportController(self)
 
@@ -130,7 +130,7 @@ class StudioWorkspace(QWidget):
         # Initialize LLM
         self._settings = load_settings()
         log.debug(f"Settings loaded: {list(self._settings.keys())}")
-        self._llm_server.init_backend()
+        self.llm_server.init_backend()
         
         # Prompt builder and response parser
         # Setup UI
@@ -179,19 +179,19 @@ class StudioWorkspace(QWidget):
         # The editor OWNS its OpenCode config (the project's opencode.json
         # is a relic): launch OpenCode from an editor-controlled dir, seeded
         # ONCE from the current project's opencode.json.
-        if self._llm_server.server_manager is not None:
+        if self.llm_server.server_manager is not None:
             # Pre-warm the server in the BACKGROUND so the first chat
             # doesn't lag (cold WSL boot + opencode serve). prewarm
             # rebuilds the derived launch config for the current project,
             # sets working_directory BEFORE start() (C3 race), registers the
             # live-targeting cleanup hook (C2), and starts on a daemon thread.
-            self._llm_server.prewarm()
+            self.llm_server.prewarm()
 
         # Begin polling server liveness so a crash mid-session is detected,
         # auto-recovered, and reflected in the status indicator (not just the
         # model picker). Started once the UI is up so the timer has an event
         # loop to run on.
-        self._llm_server.start_health_poll()
+        self.llm_server.start_health_poll()
     
     def _process_cli_arguments(self):
         """Process command-line arguments to load project and/or test."""
@@ -251,7 +251,7 @@ class StudioWorkspace(QWidget):
         Returns:
             BackendFactory instance
         """
-        return self._llm_server.backend_factory
+        return self.llm_server.backend_factory
     
     def _get_llm_tabs(self) -> list:
         """Get list of tabs that have TabContext.
@@ -432,7 +432,7 @@ class StudioWorkspace(QWidget):
             self.task_config_manager,
             self,
             project_root=self.project_manager.project_root,
-            server_manager=self._llm_server.server_manager,
+            server_manager=self.llm_server.server_manager,
         )
         if dialog.exec():
             _old_settings = self._settings
@@ -445,10 +445,10 @@ class StudioWorkspace(QWidget):
             # baked into the server launch, so switching it must NOT restart —
             # this matches the web plugin, and is the only valid behaviour when
             # opencode is shared/remote and cannot be restarted.
-            if self._llm_server.settings_require_restart(_old_settings, self._settings):
-                self._llm_server.init_backend()
+            if self.llm_server.settings_require_restart(_old_settings, self._settings):
+                self.llm_server.init_backend()
             else:
-                self._llm_server.apply_settings_live()
+                self.llm_server.apply_settings_live()
             self._apply_settings()
             try:
                 self.text_only_tab.reload_netlist()

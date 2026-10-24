@@ -64,7 +64,7 @@ class SettingsBackendProbe(QObject):
         # auto-recovering this server after this attempt (best-effort — the
         # parent is the main window when launched from it).
         parent = self._owner.parent()
-        reset = getattr(getattr(parent, "_llm_server", None), "reset_recovery", None)
+        reset = getattr(getattr(parent, "llm_server", None), "reset_recovery", None)
         if callable(reset):
             reset()
         # Bump the generation token: each Start-server attempt owns a fresh

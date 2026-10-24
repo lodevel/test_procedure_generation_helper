@@ -95,14 +95,14 @@ def test_the_opencode_pill_menu_restarts_the_server_and_opens_llm_settings(make_
 
 def test_the_server_pill_shows_the_model_or_the_trouble(make_window):
     w = make_window()
-    w._llm_server.server_manager = type("SM", (), {"config": type("C", (), {"model": "openai/gpt-5.4"})(),
+    w.llm_server.server_manager = type("SM", (), {"config": type("C", (), {"model": "openai/gpt-5.4"})(),
                                         "last_status": None, "stop": lambda self: None})()
-    w._llm_server.refresh_indicator(True)
+    w.llm_server.refresh_indicator(True)
     assert _pill(w.server_pill) == ("● OpenCode · openai/gpt-5.4 ▾", "success")
-    w._llm_server.refresh_indicator(False)
+    w.llm_server.refresh_indicator(False)
     assert _pill(w.server_pill) == ("● OpenCode · down ▾", "danger")
-    w._llm_server._server_recovering = True
-    w._llm_server.refresh_indicator(False)
+    w.llm_server._server_recovering = True
+    w.llm_server.refresh_indicator(False)
     assert _pill(w.server_pill) == ("● OpenCode · recovering… ▾", "warning")
 
 

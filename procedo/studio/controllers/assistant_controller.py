@@ -91,7 +91,7 @@ class AssistantController(QObject):
                 "🔄 Session reset - starting fresh. Rules will be sent on next interaction."
             )
         
-        self._mw._llm_server.refresh_indicator()
+        self._mw.llm_server.refresh_indicator()
 
     def on_cancel_llm(self):
         """Handle LLM cancellation request."""
@@ -113,7 +113,7 @@ class AssistantController(QObject):
         backend without relaunching the editor. Cancels any in-flight request,
         then retires the old manager and stands up a FRESH one (the retired
         manager is single-use); the next send re-uses the restarted server."""
-        sm = self._mw._llm_server.server_manager
+        sm = self._mw.llm_server.server_manager
         if sm is None:
             self._mw.dock.chat_panel.add_system_message(
                 "No restartable backend server is configured.", tone="warning")
@@ -131,7 +131,7 @@ class AssistantController(QObject):
         # FRESH manager instead: restart_for_project retires the old
         # one off the UI thread (no freeze, no orphan) and pre-warms the new
         # one on a daemon thread, so this returns immediately.
-        self._mw._llm_server.restart_for_project()
+        self._mw.llm_server.restart_for_project()
 
     def on_compact_session(self):
         """Manually compact the active tab's LLM session so a long

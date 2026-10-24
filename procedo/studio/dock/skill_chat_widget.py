@@ -43,14 +43,15 @@ import logging
 import threading
 from typing import Optional
 
-from PySide6.QtCore import Qt, QEvent, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QPlainTextEdit, QTextEdit, QPushButton, QCheckBox, QComboBox,
+    QWidget, QVBoxLayout, QTextEdit, QPushButton, QCheckBox, QComboBox,
 )
 
 from procedo.ui import fluent_qss, theme, ui_kit
 
 from ..authoring import ContextBundle, SkillChatSession, assemble
+from ..widgets.composer_input import ComposerInput
 from ..widgets.skill_context_picker import SkillContextPicker
 from ..llm.backend_base import LLMRequest, LLMTask
 from ..llm.context_usage import format_context_usage, used_tokens
@@ -291,14 +292,11 @@ class SkillChatWidget(QWidget):
                               self._save_docs_checkbox, None)
         toggles.setSpacing(16)
 
-        # Input box (Enter sends, Shift+Enter newline — mirrors ChatPanel).
-        self._input = QPlainTextEdit()
-        self._input.setObjectName("composerInput")  # the Assistant column's input look
-        self._input.setPlaceholderText(
+        # Input box (Enter sends, Shift+Enter newline — the Assistant column's input).
+        self._input = ComposerInput(
             "Optional: prime the skill before Run (e.g. 'build the test for U86'), "
-            "then refine over the next turns…")
-        self._input.setFixedHeight(_INPUT_HEIGHT)
-        self._input.installEventFilter(self)
+            "then refine over the next turns…", _INPUT_HEIGHT)
+        self._input.submitted.connect(self._on_send)
 
         # Action row: Run skill / Send, the readouts, then the icon buttons.
         buttons = ui_kit.hbox()
@@ -356,16 +354,6 @@ class SkillChatWidget(QWidget):
         composer.body.addWidget(self._input)
         composer.body.addLayout(buttons)
         layout.addWidget(composer)
-
-    def eventFilter(self, obj, event):  # noqa: N802 — Qt override
-        """Enter in the input field sends; Shift+Enter inserts a newline."""
-        if obj is self._input and event.type() == QEvent.Type.KeyPress:
-            is_return = event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
-            shift = event.modifiers() & Qt.KeyboardModifier.ShiftModifier
-            if is_return and not shift:
-                self._on_send()
-                return True
-        return super().eventFilter(obj, event)
 
     # -- public API -----------------------------------------------------------
 

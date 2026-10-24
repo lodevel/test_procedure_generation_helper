@@ -26,7 +26,7 @@ from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
 from procedo.core import app_settings, display_snapshot
-from procedo.core.new_project_dialog import NewProjectDialog
+from procedo.ui.new_project_dialog import NewProjectDialog
 from procedo.core.off_gui import run_off_gui
 from procedo.core.paths import exists_quiet
 from procedo.engine_client import engine

@@ -34,7 +34,7 @@ def test_cli_startup_discards_late_no_project_result(make_window, qapp, tmp_path
         if project is None:
             empty_started.set()
             assert release_empty.wait(10)
-            return {"components": [], "nets": [], "error": "No project is open in the editor."}
+            return {"components": [], "nets": [], "error": "No project is open."}
         assert project == root
         return _board("U_CURRENT")
 

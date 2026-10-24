@@ -34,7 +34,7 @@ from tests import _env
 _skip_no_wheel = pytest.mark.skipif(
     not _env.rules_packager_available(), reason=_env.WHEEL_SKIP_REASON
 )
-from procedo.studio.llm.section_ownership import (  # noqa: E402
+from procedo.core.section_ownership import (  # noqa: E402
     CANONICAL_SECTIONS,
     DEFAULT_OWNERSHIP,
     SectionOwnership,

@@ -18,9 +18,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, Optional
 
+from procedo.core import section_ownership
 from procedo.engine_client import engine_session
 
-from . import section_ownership
 from ..pack_ops import pack_parsers
 
 

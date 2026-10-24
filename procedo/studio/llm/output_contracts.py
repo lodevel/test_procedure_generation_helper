@@ -12,9 +12,11 @@ the task is DERIVE_JSON_FROM_TEXT).
 """
 
 from typing import Optional
-from . import section_ownership
+
+from procedo.core import section_ownership
+from procedo.core.section_ownership import SectionOwnership
+
 from .backend_base import LLMTask
-from .section_ownership import SectionOwnership
 
 # Text-only Tab Contract
 # Allows: procedure_text proposals only (smaller rule context, no JSON/code)

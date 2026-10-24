@@ -23,6 +23,7 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
+from procedo.core import section_ownership
 from procedo.engine_client.engine_replies import (
     _make_parse_failure,
     _ReconstructReport,
@@ -33,7 +34,6 @@ from procedo.engine_client.engine_replies import (
 from procedo.engine_client.engine_session import ParserUnavailable, _timeout
 
 from .. import launch_env
-from ..llm import section_ownership
 from . import bundle_capabilities
 
 # Wheel version we expect (used in error messages only).

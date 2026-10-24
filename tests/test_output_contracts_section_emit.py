@@ -21,7 +21,7 @@ from procedo.studio.llm.output_contracts import (  # noqa: E402
     get_contract_for_tab,
     render_section_emit_list,
 )
-from procedo.studio.llm.section_ownership import (  # noqa: E402
+from procedo.core.section_ownership import (  # noqa: E402
     CANONICAL_SECTIONS,
     CANONICAL_SECTION_ORDER,
     DEFAULT_OWNERSHIP,
@@ -167,7 +167,7 @@ class RenderSectionEmitListEmptyOrderFallbackTests(unittest.TestCase):
 
     def setUp(self) -> None:
         # Default frozenset construction with no section_order: equipment owned.
-        from procedo.studio.llm.section_ownership import SectionOwnership
+        from procedo.core.section_ownership import SectionOwnership
         self.rendered = render_section_emit_list(
             SectionOwnership(
                 llm_sections=frozenset({"equipment", "steps", "expected"}),

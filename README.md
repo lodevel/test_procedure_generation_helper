@@ -247,7 +247,7 @@ and it is driven by Procedo Bench's interactive/manual runner
 - Bench and its shared core reach the engine processes through `procedo.engine_client`
   (`engine`, `bench_client`, `engine_replies` — `ManualRunResult` of `build_manual_run`).
 - Several main-GUI modules import from `procedo.studio` directly —
-  `pack_ops.bundle_capabilities` (`bench_fields`, `bench_constant_names`), `llm.section_ownership`, and
+  `pack_ops.bundle_capabilities` (`bench_fields`, `bench_constant_names`) and
   `core.task_config`.
 - The interactive/manual runner (`guided_manual_execution_dialog.py`) uses
   `pack_parsers` and the per-op execution daemon to run ops against live equipment;

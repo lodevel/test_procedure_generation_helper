@@ -4,7 +4,7 @@ answers) and Test connection (start a throwaway server, one real chat request)."
 from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QMessageBox
 
-from procedo.core.off_gui import answer_to
+from procedo.core.off_gui import answer_to, run_off_gui
 
 from ..llm.launch_config import (
     build_launch_config, ensure_master_config, get_opencode_launch_test_dir,
@@ -17,7 +17,7 @@ class SettingsBackendProbe(QObject):
     answers are dropped once the dialog is deleted (procedo.core.off_gui)."""
 
     def __init__(self, owner, *, server_manager, project_root, backend, host, port,
-                 model_value, start_button, note, populate_models):
+                 model_value, start_button, note, test_button, test_cue, populate_models):
         super().__init__(owner)
         self._owner = owner
         self._server_manager = server_manager
@@ -28,6 +28,10 @@ class SettingsBackendProbe(QObject):
         self._model_value = model_value      # () -> the model id typed/selected, '' = Default
         self._start_button = start_button
         self._note = note
+        self._test_button = test_button
+        self._test_cue = test_cue            # the shared loading cue shown while a test runs
+        self._test_running = False
+        self._closed = False
         self._populate_models = populate_models  # re-query the model list
         # The Start-server liveness probe answers through this relay and never holds this object.
         self._start_probe_answer = answer_to(self._on_start_probe_answer)
@@ -183,15 +187,50 @@ class SettingsBackendProbe(QObject):
         if timer is not None:
             timer.stop()
         self._start_poll_done = True
+        self._closed = True  # a Test connection still running shows nothing (its worker cleans up itself)
 
     def test_connection(self):
-        """Test the LLM backend configuration."""
+        """Test the LLM backend configuration, off the UI thread; the result dialog follows."""
         backend = self._backend()
 
         if backend == "none":
             QMessageBox.information(self._owner, "Test Connection", "No backend selected.")
             return
+        if self._test_running:
+            return
+        self._test_running = True
+        self._test_button.setEnabled(False)
+        self._test_cue.start("Testing connection…", at_once=True)
+        port, host, model = self._port.value(), self._host.text() or "127.0.0.1", self._model_value() or None
+        project_root = self._project_root
+        try:
+            run_off_gui(lambda: self._run_test(backend, project_root, host, port, model),
+                        self._on_test_answer, name="settings-test-connection")
+        except Exception:
+            self._end_test()
+            raise
 
+    def _end_test(self):
+        self._test_running = False
+        self._test_button.setEnabled(True)
+        self._test_cue.done()
+
+    def _on_test_answer(self, answer):
+        """UI thread: the finished test's ``(QMessageBox method, title, text)``, or None."""
+        if self._closed:  # the dialog was closed meanwhile: its widgets and the user are gone
+            return
+        self._end_test()
+        if isinstance(answer, dict):  # the worker itself died
+            answer = ("critical", "Test Connection Failed",
+                      f"Error testing connection:\n\n{answer.get('error')}")
+        if answer is None:  # a backend with nothing to test
+            return
+        method, title, text = answer
+        getattr(QMessageBox, method)(self._owner, title, text)
+
+    @staticmethod
+    def _run_test(backend, project_root, host, port, model):
+        """Worker thread: the whole test, to the dialog to show: ``(method, title, text)``, or None for none."""
         try:
             if backend == "opencode":
                 # Test OpenCode backend
@@ -210,15 +249,13 @@ class SettingsBackendProbe(QObject):
                 # orphan-left bug class. Isolating it means the probe's pid file +
                 # derived opencode.json never collide with the live ones.
                 ensure_master_config(
-                    seed_from=(self._project_root / "opencode.json")
-                    if self._project_root else None)
+                    seed_from=(project_root / "opencode.json") if project_root else None)
                 test_launch_dir = get_opencode_launch_test_dir()
-                launch_dir = str(build_launch_config(
-                    self._project_root, launch_dir=test_launch_dir))
+                launch_dir = str(build_launch_config(project_root, launch_dir=test_launch_dir))
                 config = OpenCodeConfig(
-                    server_port=self._port.value(),
-                    server_hostname=self._host.text() or "127.0.0.1",
-                    model=self._model_value() or None,
+                    server_port=port,
+                    server_hostname=host,
+                    model=model,
                     working_directory=launch_dir,
                 )
 
@@ -230,8 +267,7 @@ class SettingsBackendProbe(QObject):
                 if not mgr.is_available():
                     status = mgr.last_status
                     reason = status.message if status else "OpenCode is not available."
-                    QMessageBox.warning(self._owner, "Test Connection", f"✗ {reason}")
-                    return
+                    return ("warning", "Test Connection", f"✗ {reason}")
 
                 # C6: install OK is not enough — actually START a server and
                 # confirm /health is reachable, surfacing bind failures (the
@@ -243,22 +279,20 @@ class SettingsBackendProbe(QObject):
                 if not mgr.start():
                     st = mgr.last_status
                     why = f"\n\n{st.message}" if st and not st.ok else ""
-                    QMessageBox.warning(
-                        self._owner, "Test Connection",
+                    return (
+                        "warning", "Test Connection",
                         f"✗ Could not start OpenCode\n\nHost: {config.server_hostname}\nPort: {config.server_port}{why}"
                     )
-                    return
                 try:
                     reachable = mgr.health_check()
                 finally:
                     mgr.stop()
                 if not reachable:
-                    QMessageBox.warning(
-                        self._owner, "Test Connection",
+                    return (
+                        "warning", "Test Connection",
                         f"✗ Server started but /health was not reachable\n\n"
                         f"Host: {config.server_hostname}\nPort: {config.server_port}"
                     )
-                    return
 
                 # Always run a real end-to-end chat test (Default = auto-pick
                 # included), so the button truly validates the model, not just
@@ -275,11 +309,10 @@ class SettingsBackendProbe(QObject):
                     if not backend_obj.start():
                         st = mgr.last_status
                         why = f"\n\n{st.message}" if st and not st.ok else ""
-                        QMessageBox.warning(
-                            self._owner, "Test Connection",
+                        return (
+                            "warning", "Test Connection",
                             f"✗ Could not start OpenCode\n\nHost: {config.server_hostname}\nPort: {config.server_port}{why}"
                         )
-                        return
                 try:
                     test_request = LLMRequest(
                         task=LLMTask.AD_HOC_CHAT,
@@ -308,29 +341,25 @@ class SettingsBackendProbe(QObject):
                             "may not support it — try leaving Model empty "
                             "(auto-pick).")
                     if result["error"]:
-                        QMessageBox.warning(
-                            self._owner, "Test Connection",
+                        return (
+                            "warning", "Test Connection",
                             f"✗ Chat test failed\n\nModel: {model_label}\n\nError: {result['error']}{hint}"
                         )
-                    elif result["response"] and result["response"].error_message:
-                        QMessageBox.warning(
-                            self._owner, "Test Connection",
+                    if result["response"] and result["response"].error_message:
+                        return (
+                            "warning", "Test Connection",
                             f"✗ Chat test failed\n\nModel: {model_label}\n\nError: {result['response'].error_message}{hint}"
                         )
-                    else:
-                        QMessageBox.information(
-                            self._owner, "Test Connection",
-                            f"✓ OpenCode is working\n\nHost: {config.server_hostname}\nPort: {config.server_port}\nModel: {model_label}"
-                        )
+                    return (
+                        "information", "Test Connection",
+                        f"✓ OpenCode is working\n\nHost: {config.server_hostname}\nPort: {config.server_port}\nModel: {model_label}"
+                    )
                 except Exception:
                     if backend_obj.is_running:
                         backend_obj.stop()
                     raise
 
         except Exception as e:
-            QMessageBox.critical(
-                self._owner, "Test Connection Failed",
-                f"Error testing connection:\n\n{str(e)}"
-            )
+            return ("critical", "Test Connection Failed", f"Error testing connection:\n\n{str(e)}")
         finally:  # the probe's derived config goes with it (the app leaves no traces)
             remove_launch_files(get_opencode_launch_test_dir())

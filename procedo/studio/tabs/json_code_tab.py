@@ -20,6 +20,8 @@ from .base_tab import BaseTab
 from .llm_tab_mixin import LLMTabMixin
 from .json_tab import JsonSyntaxHighlighter
 from .code_tab import PythonSyntaxHighlighter
+from .pack_gating import PackGatingMixin
+from .pinned_constants import keep_pinned_constants
 from ..core import ArtifactType, StepMarkerParser
 from ..core.procedure_steps import numbered_steps
 from ..llm import TabContext, LLMTask
@@ -33,7 +35,7 @@ log = logging.getLogger(__name__)
 #: The steps card's width on board S3.
 _STEPS_WIDTH = 210
 
-class JsonCodeTab(LLMTabMixin, BaseTab):
+class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
     """
     JSON-Code tab showing both artifacts side-by-side.
     
@@ -49,6 +51,8 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
     
     # Tab identifier for button label management
     tab_id = "json_code"
+    _no_pack_tip = "No code generator for {names}. Use the LLM workflow."
+    _proposal_fields = (("procedure_json", "procedure_json"), ("test_code", "test_code"))
     
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
@@ -114,14 +118,12 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         self.format_json_btn = self.create_button("Format JSON", self._on_format_json,
             tooltip="Auto-format JSON with proper indentation")
         # Quick Code — hidden until the project provides a code generator
-        self.quick_code_btn = self.create_button(
+        self.quick_code_btn = self._pack_button(
             "⚡ Quick Code", self._on_quick_code,
-            tooltip="Generate test code from JSON without LLM (rule-based, instant)"
-        )
-        self.quick_code_btn.setVisible(False)
+            "Generate test code from JSON without LLM (rule-based, instant)")
         layout.addWidget(self._create_action_bar(
             [self.save_both_btn, self.format_json_btn], [self.quick_code_btn]))
-        self.json_card.changed.connect(self._on_json_edited)  # gates Quick Code above
+        self.json_card.changed.connect(self._regate_pack_buttons)  # gates Quick Code above
 
     # Task callback maps for dynamic LLM button building (see TaskButtonsMixin._build_llm_buttons)
     
@@ -142,12 +144,13 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
             LLMTask.DERIVE_JSON_FROM_CODE.value: (self._on_force_derive_json, "Force derive JSON (bypass validation checks)"),
         }
     
-    def _on_json_edited(self):
-        """Re-gate Quick Code: the equipment set (hence codegen capability
-        needed) can change as the operator edits the JSON."""
-        if not self.quick_code_btn.isHidden():
-            project_root = getattr(self.project_manager, "project_root", None)
-            self._apply_codegen_gating(project_root)
+    def _pack_gates(self):
+        return [(self.quick_code_btn, "Deterministic JSON → Code", ("codegen",))]
+
+    def _gated_equipment_types(self, project_root) -> list[str]:
+        doc = json.loads(self.json_editor.toPlainText() or "{}")
+        return [e.get("type") for e in (doc.get("equipment") or [])
+                if isinstance(e, dict) and e.get("type")]
 
     def _on_generate_code(self):
         """JSON → Code transformation (strict mode)."""
@@ -213,25 +216,6 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         if response.test_code and response.test_code.mode:
             self._handle_code_proposal(response.test_code)
 
-    def _get_expected_artifact_fields(self) -> list[str]:
-        """Get expected artifact fields for this tab."""
-        return ["procedure_json", "test_code"]
-
-    def _parse_response_to_dict(self, response) -> dict:
-        """Parse LLMResponse into the dict format expected by _validate_output_contract."""
-        parsed = {
-            "assistant_message": response.assistant_message,
-            "open_questions": response.session_delta.get("open_questions", []),
-        }
-        parsed["propose_update"] = False
-        if response.procedure_json and response.procedure_json.mode:
-            parsed["propose_update"] = True
-            parsed["procedure_json"] = response.procedure_json.content
-        if response.test_code and response.test_code.mode:
-            parsed["propose_update"] = True
-            parsed["test_code"] = response.test_code.content
-        return parsed
-
     def _handle_code_proposal(self, proposal):
         """Offer a test_code proposal (``self.code_card``) as a proposal card."""
         # Accept "create" alongside "replace" — see text_json_tab for
@@ -243,72 +227,14 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
             else:
                 content_str = str(proposal.content)
 
-            current_content = self.code_editor.toPlainText()
-
-            # Preserve operator-pinned bench-identification constants
-            # in the proposed code. The LLM doesn't know the bench's
-            # real VISA/COM addresses; if it produces defaults, we
-            # substitute the operator's existing values before proposing
-            # it so the operator only sees real-content changes.
-            if current_content.strip():
-                try:
-                    json_str = self.artifact_manager.procedure_json.content or ""
-                    procedure = json.loads(json_str) if json_str.strip() else {}
-                    equipment_ids = [
-                        eq.get("id") for eq in (procedure.get("equipment") or [])
-                        if isinstance(eq, dict) and eq.get("id")
-                    ]
-                except (json.JSONDecodeError, AttributeError):
-                    equipment_ids = []
-                if equipment_ids:
-                    from ..llm.code_constants_merge import preserve_bench_constants
-                    content_str, replaced = preserve_bench_constants(
-                        content_str, current_content, equipment_ids,
-                    )
-                    if replaced:
-                        log.info(
-                            "test.py proposal: preserved %d operator-pinned "
-                            "constant(s): %s",
-                            len(replaced), ", ".join(replaced),
-                        )
+            try:
+                procedure = json.loads(self.artifact_manager.procedure_json.content or "{}")
+            except json.JSONDecodeError:
+                procedure = None
+            content_str = keep_pinned_constants(
+                content_str, self.code_editor.toPlainText(), procedure, "test.py proposal")
             self.propose_edit(self.code_card, content_str,
                               test=self._ensure_run_state().test)
-
-    def refresh_code_parser_button(self):
-        """Gate the Quick Code button in two tiers: visible iff the wheel
-        imports (else LLM-only), and enabled iff every equipment type in the
-        current JSON has a pack providing the ``codegen`` capability — else
-        disabled with a tooltip naming the missing pack."""
-        from ..pack_ops import pack_parsers
-        project_root = getattr(self.project_manager, "project_root", None)
-        available, _ = pack_parsers.is_available(project_root)
-        self.quick_code_btn.setVisible(available)
-        if available:
-            self._apply_codegen_gating(project_root)
-
-    def _apply_codegen_gating(self, project_root):
-        """Enable Quick Code only if every equipment type in the JSON has a
-        codegen-capable pack. Best-effort: any failure leaves it enabled. A running Quick Code
-        keeps it disabled until it answers."""
-        from ..pack_ops import bundle_capabilities
-        if engine_async.busy(self.quick_code_btn):
-            return
-        try:
-            doc = json.loads(self.json_editor.toPlainText() or "{}")
-            etypes = [e.get("type") for e in (doc.get("equipment") or [])
-                      if isinstance(e, dict) and e.get("type")]
-            ok, missing = bundle_capabilities.can_for_types("codegen", etypes, project_root)
-            if ok:
-                self.quick_code_btn.setEnabled(True)
-                self.quick_code_btn.setToolTip("Deterministic JSON → Code")
-            else:
-                names = ", ".join(f"{e} ({p})" for e, p in dict(missing).items())
-                self.quick_code_btn.setEnabled(False)
-                self.quick_code_btn.setToolTip(
-                    f"No code generator for {names}. Use the LLM workflow."
-                )
-        except Exception:
-            self.quick_code_btn.setEnabled(True)  # never break the editor over gating
 
     def _on_quick_code(self):
         """Deterministic JSON → Code without LLM (rule-based, instant)."""
@@ -353,28 +279,8 @@ class JsonCodeTab(LLMTabMixin, BaseTab):
         if not engine_async.unchanged(self.json_editor, sent, self.status_message.emit):
             return
 
-        current_code = self.code_editor.toPlainText().strip()
-
-        # Preserve operator-pinned bench-identification module constants
-        # from the existing test.py. Per the v2.0.x design (2026-04-28
-        # operator directive), bench fields (visa/port/baud/timeout/etc.)
-        # live ONLY in test.py — and codegen's defaults (`ASRL1::INSTR`,
-        # `COM1`) would otherwise clobber the operator's real bench
-        # values on every regen.
-        if current_code:
-            from ..llm.code_constants_merge import preserve_bench_constants
-            equipment_ids = [
-                eq.get("id") for eq in (procedure.get("equipment") or [])
-                if isinstance(eq, dict) and eq.get("id")
-            ]
-            code_str, replaced = preserve_bench_constants(
-                code_str, current_code, equipment_ids,
-            )
-            if replaced:
-                log.info(
-                    "Quick Code: preserved %d operator-pinned constant(s): %s",
-                    len(replaced), ", ".join(replaced),
-                )
+        code_str = keep_pinned_constants(
+            code_str, self.code_editor.toPlainText().strip(), procedure, "Quick Code")
 
         def done() -> None:
             if warnings:

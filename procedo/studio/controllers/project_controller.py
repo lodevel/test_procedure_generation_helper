@@ -81,7 +81,7 @@ class ProjectController(QObject):
         mw._update_project_rules_indicators()
         mw.text_json_tab.refresh_parser_button()
         mw.text_only_tab.refresh_parser_button()
-        mw.json_code_tab.refresh_code_parser_button()
+        mw.json_code_tab.refresh_parser_button()
         watch_project_config(mw)
 
         # Show the Workspace column if hidden
@@ -106,7 +106,7 @@ class ProjectController(QObject):
         mw._update_project_rules_indicators()
         mw.text_json_tab.refresh_parser_button()
         mw.text_only_tab.refresh_parser_button()
-        mw.json_code_tab.refresh_code_parser_button()
+        mw.json_code_tab.refresh_parser_button()
         watch_project_config(mw)
         mw.toggle_workspace_action.setChecked(True)
         mw._llm_server.restart_for_project()
@@ -193,7 +193,7 @@ class ProjectController(QObject):
                 mw._update_project_rules_indicators()
                 mw.text_json_tab.refresh_parser_button()
                 mw.text_only_tab.refresh_parser_button()
-                mw.json_code_tab.refresh_code_parser_button()
+                mw.json_code_tab.refresh_parser_button()
                 watch_project_config(mw)
 
                 # Show the Workspace column
@@ -395,7 +395,7 @@ def handle_config_change(mw) -> None:
     place."""
     mw.text_json_tab.refresh_parser_button()
     mw.text_only_tab.refresh_parser_button()
-    mw.json_code_tab.refresh_code_parser_button()
+    mw.json_code_tab.refresh_parser_button()
     try:
         project_root = mw.project_manager.project_root
         if project_root is not None:

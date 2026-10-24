@@ -102,18 +102,17 @@ def test_pack_buttons_stay_hidden_until_the_wheel_provides_them(opened, monkeypa
     monkeypatch.setattr(pack_parsers, "is_available", lambda root=None: (False, "no wheel"))
     for tab in (tj, to):
         tab.refresh_parser_button()
-    jc.refresh_code_parser_button()
+    jc.refresh_parser_button()
     assert all(b.isHidden() for b in packs)
     assert tj.sync_meta_btn.isHidden() and to.sync_meta_btn.isHidden()
     assert not _divider_visible(tj)
 
     monkeypatch.setattr(pack_parsers, "is_available", lambda root=None: (True, ""))
-    monkeypatch.setattr(bundle_capabilities, "can", lambda cap, text, root=None: (
+    monkeypatch.setattr(bundle_capabilities, "can_for_types", lambda cap, types, root=None: (
         (False, [("PSU1", "labscpi")]) if cap == "emit" else (True, [])))
-    monkeypatch.setattr(bundle_capabilities, "can_for_types", lambda cap, types, root=None: (True, []))
     for tab in (tj, to):
         tab.refresh_parser_button()
-    jc.refresh_code_parser_button()
+    jc.refresh_parser_button()
     assert not any(b.isHidden() for b in packs)
     assert not tj.sync_meta_btn.isHidden() and not to.sync_meta_btn.isHidden()
     assert not tj.quick_render_btn.isEnabled()  # needs "emit": no pack provides it

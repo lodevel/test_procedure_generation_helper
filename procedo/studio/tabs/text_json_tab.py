@@ -43,6 +43,7 @@ class TextJsonTab(TextActionsMixin, LLMTabMixin, BaseTab):
 
     # Tab identifier for button label management
     tab_id = "text_json"
+    _proposal_fields = (("procedure_text", "text_procedure"), ("procedure_json", "procedure_json"))
 
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
@@ -121,7 +122,7 @@ class TextJsonTab(TextActionsMixin, LLMTabMixin, BaseTab):
         layout.addWidget(self._create_action_bar(
             [self.save_both_btn, *self._text_file_buttons(), self.format_json_btn],
             [self.quick_parse_btn, self.quick_render_btn, self.parse_and_generate_btn]))
-        self.text_card.changed.connect(self._on_text_edited)  # gates the ⚡ buttons above
+        self.text_card.changed.connect(self._regate_pack_buttons)  # gates the ⚡ buttons above
 
     # Task callback maps for dynamic LLM button building (see TaskButtonsMixin._build_llm_buttons)
 
@@ -313,25 +314,6 @@ class TextJsonTab(TextActionsMixin, LLMTabMixin, BaseTab):
             self._handle_text_proposal(response.procedure_text, task)
         if response.procedure_json and response.procedure_json.mode:
             self._handle_json_proposal(response.procedure_json)
-
-    def _get_expected_artifact_fields(self) -> list[str]:
-        """Get expected artifact fields for this tab."""
-        return ["text_procedure", "procedure_json"]
-
-    def _parse_response_to_dict(self, response) -> dict:
-        """Parse LLMResponse into the dict format expected by _validate_output_contract."""
-        parsed = {
-            "assistant_message": response.assistant_message,
-            "open_questions": response.session_delta.get("open_questions", []),
-        }
-        parsed["propose_update"] = False
-        if response.procedure_text and response.procedure_text.mode:
-            parsed["propose_update"] = True
-            parsed["text_procedure"] = response.procedure_text.content
-        if response.procedure_json and response.procedure_json.mode:
-            parsed["propose_update"] = True
-            parsed["procedure_json"] = response.procedure_json.content
-        return parsed
 
     def on_activated(self):
         """Called when tab becomes active."""

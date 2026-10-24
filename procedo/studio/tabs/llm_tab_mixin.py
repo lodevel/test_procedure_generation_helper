@@ -6,8 +6,8 @@ in a single mixin consumed by JsonCodeTab and TextJsonTab.
 Tabs that use this mixin must implement:
   - _apply_proposals(response, task)     — dispatch per-artifact proposals
                                            (task drives the per-task section override)
-  - _get_expected_artifact_fields()      — list of artifact field names for contract check
-  - _parse_response_to_dict(response)    — map LLMResponse → validated dict
+and declare ``_proposal_fields``: the (LLMResponse attribute, contract field) of each artifact the
+tab may propose, in order.
 
 Instance attributes expected on ``self`` (provided by BaseTab / __init__):
   tab_id, tab_context, task_config_manager, main_window, status_message
@@ -40,6 +40,9 @@ log = logging.getLogger(__name__)
 
 class LLMTabMixin:
     """Mixin providing the shared LLM async pipeline for editor tabs."""
+
+    #: The (LLMResponse attribute, contract field) of each artifact this tab may propose.
+    _proposal_fields: tuple[tuple[str, str], ...] = ()
 
     # ------------------------------------------------------------------ #
     # Task dispatch                                                        #
@@ -432,6 +435,25 @@ class LLMTabMixin:
     # ------------------------------------------------------------------ #
     # Contract validation                                                 #
     # ------------------------------------------------------------------ #
+
+    def _get_expected_artifact_fields(self) -> list[str]:
+        """The contract fields of the artifacts this tab may propose."""
+        return [field for _attr, field in self._proposal_fields]
+
+    def _parse_response_to_dict(self, response) -> dict:
+        """Parse LLMResponse into the dict format expected by _validate_output_contract: each
+        artifact of ``_proposal_fields`` the reply proposes (a mode set) under its field."""
+        parsed = {
+            "assistant_message": response.assistant_message,
+            "open_questions": response.session_delta.get("open_questions", []),
+            "propose_update": False,
+        }
+        for attr, field in self._proposal_fields:
+            artifact = getattr(response, attr)
+            if artifact and artifact.mode:
+                parsed["propose_update"] = True
+                parsed[field] = artifact.content
+        return parsed
 
     def _validate_output_contract(self, parsed: dict) -> list[str]:
         """Validate parsed response against expected output contract.

@@ -232,9 +232,9 @@ def test_studio_closed_during_a_start_leaves_no_server_and_no_pid_file(qapp, tmp
                side_effect=requests.exceptions.ConnectionError()):
         request_backend(factory, "text_json", answers.take)
         deadline = time.monotonic() + 10
-        while mgr._read_pid_file() is None and time.monotonic() < deadline:
+        while mgr._orphans.read_pid_file() is None and time.monotonic() < deadline:
             time.sleep(0.01)
-        assert mgr._read_pid_file()["pid"] == 31337  # spawned, still starting
+        assert mgr._orphans.read_pid_file()["pid"] == 31337  # spawned, still starting
 
         LLMServerController._stop_current_server(SimpleNamespace(server_manager=mgr))
         _spin(lambda: answers.got)
@@ -243,7 +243,7 @@ def test_studio_closed_during_a_start_leaves_no_server_and_no_pid_file(qapp, tmp
     assert isinstance(backend, NoneBackend) and not keep
     proc.terminate.assert_called()
     assert mgr._server_process is None and not mgr.is_running
-    assert mgr._read_pid_file() is None and not _pid_file(tmp_path).exists()
+    assert mgr._orphans.read_pid_file() is None and not _pid_file(tmp_path).exists()
 
 
 # --- what the user sent always stays in the chat -------------------------------------------

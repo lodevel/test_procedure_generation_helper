@@ -116,11 +116,7 @@ def main() -> int:
     log.info("Procedo Studio starting")
     log.debug(f"CLI args: {args}")
 
-    # One-shot, before anything reads a setting: the old names' data to Procedo. Bench runs
-    # the same at its start; whichever starts first migrates, the markers make the other a no-op.
-    from procedo.core import app_identity, app_identity_migration, temp_root
-
-    app_identity_migration.migrate()
+    from procedo.core import app_identity, temp_root
     
     # Validate arguments
     if args.test_dir and args.test_name:

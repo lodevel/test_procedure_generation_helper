@@ -309,7 +309,7 @@ def test_stop_while_the_server_starts_drops_the_turn_and_unlocks_the_chat(
 
     chat._stop_btn.click()
 
-    reason = "Not sent: stopped while the AI server was starting."
+    reason = "Not sent: cancelled."
     assert failed == [reason] and _system_lines(chat)[-1] == reason
     assert ("You", "hello") in chat._blocks  # what was typed stays
     assert chat._send_btn.isEnabled() and not chat._loading.active
@@ -437,6 +437,42 @@ def test_cancel_while_the_server_starts_drops_the_send_and_the_next_waits_for_th
 
     assert server.starts == 1 and len(_Backend.made) == 1 and len(_Worker.made) == 1
     assert _lines(view)[-3:] == ["check U5", "Not sent: cancelled.", "check U6"]
+
+
+def test_cancel_on_another_view_drops_the_send_waiting_there(opened, monkeypatch):
+    """The chat locks on every view: Cancel on JSON+Code drops the send Text is waiting with."""
+    w = opened
+    view = w.text_only_tab
+    w.view_stack.setCurrentWidget(view)
+    view.tab_context.update_backend_factory(_factory(monkeypatch, _SlowServer()))
+    chat = w.dock.chat_panel
+    view._run_task_async(LLMTask.AD_HOC_CHAT, user_message="check U5")
+    w.view_stack.setCurrentWidget(w.json_code_tab)
+
+    chat.cancel_btn.click()
+
+    assert _lines(view)[-2:] == ["check U5", "Not sent: cancelled."]
+    assert view._queued_send is None and chat.send_btn.isEnabled() and not chat.loading.active
+
+
+def test_restart_backend_says_the_waiting_send_is_not_sent_because_of_the_restart(
+        opened, monkeypatch):
+    w = opened
+    view = w.text_only_tab
+    w.view_stack.setCurrentWidget(view)
+    server = _SlowServer()
+    view.tab_context.update_backend_factory(_factory(monkeypatch, server))
+    w.llm_server.server_manager = server  # the server Restart restarts
+    w._cli_args_processed = True
+    view._run_task_async(LLMTask.AD_HOC_CHAT, user_message="check U5")
+
+    w._assistant_controller.on_restart_backend()
+
+    assert "Not sent: cancelled." not in _lines(view)
+    assert "Not sent: the AI server is restarting." in _lines(view)[-3:]
+    assert view._queued_send is None and not w.dock.chat_panel.loading.active
+    _spin(lambda: not view._backend_requested)  # the old start answers: nobody's
+    assert _Worker.made == []
 
 
 def test_a_skill_chat_turn_waiting_for_the_server_is_never_replaced(skill_chat, monkeypatch):

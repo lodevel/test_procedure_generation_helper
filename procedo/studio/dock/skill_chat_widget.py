@@ -724,7 +724,7 @@ class SkillChatWidget(QWidget):
             self._worker.cancel()
             self._status.set_full_text("Stopping…")
         elif self._llm.drop_queued():
-            self._on_error("Not sent: stopped while the AI server was starting.")
+            self._on_error("Not sent: cancelled.")
 
     def _on_skill_changed(self, index: int) -> None:
         """Combo path: switch the active skill. (The combo is disabled while a

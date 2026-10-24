@@ -70,8 +70,8 @@ class LLMTabMixin:
         """Queue the send until the tab's backend has started off the GUI thread (the AI
         server's start can take a minute); its line shows in the chat at once, and the chat is
         locked and shows the loading cue meanwhile; Cancel drops it (:meth:`drop_queued_send`).
-        A second send meanwhile replaces the queued one (the chat says so) and waits for the
-        same start."""
+        A second send meanwhile (programmatic only: the chat is locked) replaces the queued one
+        (the chat says so) and waits for the same start."""
         chat = self.main_window.dock.chat_panel
         line = self._user_line(task, kwargs)
         replaced = self._queued_send is not None

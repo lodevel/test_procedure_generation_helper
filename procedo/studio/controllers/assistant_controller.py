@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QMessageBox
 from procedo.core.off_gui import answer_to
 
 from ..llm import LLMTask
+from .llm_server_controller import RESTARTING
 
 if TYPE_CHECKING:
     from ..main_window import StudioWorkspace
@@ -94,12 +95,11 @@ class AssistantController(QObject):
         self._mw.llm_server.refresh_indicator()
 
     def on_cancel_llm(self):
-        """Cancel the current tab's request: the one running, or the send waiting for the AI
-        server's start (not sent)."""
+        """Cancel the current tab's running request, else the send waiting for the AI server's
+        start, whichever tab holds it (the chat locks for it on every view): not sent."""
         # Check current tab for a running per-tab worker
         current_tab = self._mw.view_stack.currentWidget()
         worker = getattr(current_tab, '_worker', None)
-        drop_queued = getattr(current_tab, 'drop_queued_send', None)
         if worker and worker.isRunning():
             log.info("User requested LLM cancellation (per-tab worker)")
             worker.cancel()
@@ -109,8 +109,8 @@ class AssistantController(QObject):
             self._mw.dock.chat_panel.remove_thinking_message()
             self._mw.dock.chat_panel.add_system_message("Request cancelled by user")
             self._mw.footer.show_message("LLM request cancelled", 3000)
-        elif drop_queued is not None:
-            drop_queued("cancelled.", "neutral")
+        else:
+            self._mw.llm_server.drop_waiting_sends("cancelled.", "neutral")
 
     def on_restart_backend(self):
         """Restart the shared OpenCode server to recover a hung / unresponsive
@@ -122,7 +122,9 @@ class AssistantController(QObject):
             self._mw.dock.chat_panel.add_system_message(
                 "No restartable backend server is configured.", tone="warning")
             return
-        # Cancel any in-flight (possibly hung) request first (best-effort).
+        # A send waiting for the old server's start is not sent; then cancel any in-flight
+        # (possibly hung) request (best-effort).
+        self._mw.llm_server.drop_waiting_sends(RESTARTING)
         try:
             self.on_cancel_llm()
         except Exception:

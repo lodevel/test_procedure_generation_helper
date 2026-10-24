@@ -31,6 +31,9 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+#: Why a send waiting for the old server's start is not sent when the server restarts.
+RESTARTING = "the AI server is restarting."
+
 
 class LLMServerController(QObject):
     """The workspace's OpenCode server: manager, factory, health poll and recovery (a
@@ -221,12 +224,16 @@ class LLMServerController(QObject):
         if sm is None or not getattr(self._mw, '_cli_args_processed', False):
             return
         # A send waiting for the old server's start never goes to the new one: not sent, now.
-        for tab in self._mw._get_llm_tabs():
-            tab.drop_queued_send("the AI server is restarting.")
+        self.drop_waiting_sends(RESTARTING)
         # A manual restart (Restart backend / project switch) clears any
         # auto-recovery give-up state so the fresh manager is auto-recoverable.
         self.reset_recovery()
         self.init_backend()
+
+    def drop_waiting_sends(self, reason: str, tone: str = "warning") -> None:
+        """Drop the send of every tab waiting for the AI server's start: ``Not sent: <reason>``."""
+        for tab in self._mw._get_llm_tabs():
+            tab.drop_queued_send(reason, tone)
 
     def settings_require_restart(self, old: dict, new: dict) -> bool:
         """True when a Settings change needs the OpenCode server rebuilt.

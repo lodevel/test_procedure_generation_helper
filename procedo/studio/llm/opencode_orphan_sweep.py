@@ -14,6 +14,7 @@ may have been recycled to an unrelated process, and the user may run their own
 opencode pointed at a DIFFERENT config.
 """
 
+import dataclasses
 import json
 import logging
 import os
@@ -33,6 +34,7 @@ from .launch_files import (
     remove_launch_files,
     unlink_quietly,
 )
+from .launch_config import get_opencode_launch_test_dir
 from .opencode_backend import OpenCodeConfig, safe_wsl_cwd
 
 log = logging.getLogger(__name__)
@@ -72,6 +74,13 @@ def signal_linux_tree(wsl_path: str, pid: int, sig: str, port: int) -> None:
         )
     except Exception as e:  # noqa: BLE001 — best-effort cleanup
         log.debug(f"Linux-side kill -{sig} of pid {pid} failed (best-effort): {e}")
+
+
+def sweep_launch_test_dir(config: OpenCodeConfig) -> None:
+    """Sweep the Test-connection probe's launch dir (``launch_test/``) with the live dir's
+    rules: a Studio that exited mid-test leaves its throwaway server and files there."""
+    OrphanSweeper(dataclasses.replace(
+        config, working_directory=str(get_opencode_launch_test_dir()))).sweep_orphan()
 
 
 class OrphanSweeper:

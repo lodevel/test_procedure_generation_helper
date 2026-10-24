@@ -23,6 +23,7 @@ from .. import shell
 from ..llm import OpenCodeConfig
 from ..llm.backend_factory import BACKEND_TYPE_OPENCODE, BackendConfig, BackendFactory
 from ..llm.launch_files import remove_launch_files
+from ..llm.opencode_orphan_sweep import sweep_launch_test_dir
 from ..llm.server_manager import OpenCodeServerManager
 
 if TYPE_CHECKING:
@@ -172,8 +173,18 @@ class LLMServerController(QObject):
             import atexit
             atexit.register(self._stop_current_server)
             self._server_cleanup_registered = True
-        import threading as _pw_threading
-        _pw_threading.Thread(target=sm.start, daemon=True).start()
+        sweep_tests = not getattr(self, '_launch_test_swept', False)
+        self._launch_test_swept = True  # once per process: a later prewarm must not kill a running test's server
+
+        def _start():
+            if sweep_tests:
+                try:
+                    sweep_launch_test_dir(sm.config)
+                except Exception:
+                    log.warning('sweep of the Test-connection launch dir failed', exc_info=True)
+            sm.start()
+
+        threading.Thread(target=_start, daemon=True).start()
 
     def _stop_current_server(self):
         """Stop whatever server manager is CURRENT (stable cleanup target) and

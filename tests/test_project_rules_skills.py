@@ -160,8 +160,8 @@ def test_the_skill_chat_request_carries_the_selected_pdf(tmp_path, qapp, monkeyp
 
     monkeypatch.setattr(scw, "LLMWorker", _Worker)
     widget = scw.SkillChatWidget([_skill()], SimpleNamespace(), sources=[RulesSource(lambda: docs)])
-    widget._backend = object()  # started
-    monkeypatch.setattr(widget, "_ensure_session", lambda: None)
+    widget._llm.backend = object()  # started
+    monkeypatch.setattr(widget._llm, "ensure_session", lambda: None)
     widget._picker.set_checked("rules", ["a.md", "project/d.pdf"])
     widget.run_kickoff()
     assert sent[-1].attachments == [docs[3].path]

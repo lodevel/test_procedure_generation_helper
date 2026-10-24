@@ -161,7 +161,7 @@ def test_two_sends_wait_for_one_server_start_without_holding_the_gui(
     assert not cue.active  # the chat's cue went with the start
     assert chat._loading.label.text() == "Working…"  # the turn runs now
     sent = {id(worker.backend) for worker in _Worker.made}
-    assert sent == {id(view.tab_context.backend), id(chat._backend)}
+    assert sent == {id(view.tab_context.backend), id(chat._llm.backend)}
     assert all(isinstance(worker.backend, _Backend) and worker.backend.started
                for worker in _Worker.made)
 
@@ -202,7 +202,7 @@ def test_a_skill_chat_s_failed_start_is_its_reply(skill_chat, monkeypatch):
     _spin(lambda: failed)
 
     assert failed == [DOWN] and server.starts == 1
-    assert chat._backend is None and not chat._loading.active
+    assert chat._llm.backend is None and not chat._loading.active
 
 
 def test_studio_closed_during_a_start_leaves_no_server_and_no_pid_file(tmp_path):

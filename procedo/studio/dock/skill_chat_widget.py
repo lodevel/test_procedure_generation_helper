@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import html
 import logging
-import threading
 from typing import Optional
 
 from PySide6.QtCore import Signal
@@ -54,6 +53,7 @@ from procedo.ui import fluent_qss, theme, ui_kit
 from ..authoring import ContextBundle, SkillChatSession, assemble
 from ..widgets.composer_input import ComposerInput
 from ..widgets.skill_context_picker import SkillContextPicker
+from .skill_chat_backend import SkillChatBackend
 from ..llm.backend_base import LLMRequest, LLMTask
 from ..llm.backend_factory import SERVER_STARTING_TEXT, request_backend
 from ..llm.context_usage import format_context_usage, used_tokens
@@ -153,15 +153,13 @@ class SkillChatWidget(QWidget):
         super().__init__(parent)
         self._skills: list = list(skills)
         self._skill = self._skills[0] if self._skills else None
-        self._backend_factory = backend_factory
-        self._backend_tab_id = backend_tab_id
         self._show_skill_selector = show_skill_selector
         self._show_run_button = show_run_button
         self._dispatch_gate = dispatch_gate
         self._session = SkillChatSession(self._skill)
 
-        # Lazily-created dedicated backend + the in-flight worker.
-        self._backend = None
+        # The dedicated backend (started on first send) + the in-flight worker.
+        self._llm = SkillChatBackend(backend_factory, backend_tab_id)
         self._worker: Optional[LLMWorker] = None
         # The (prompt, files) of the turn waiting for the backend to start (request_backend).
         self._queued: Optional[tuple[str, list]] = None
@@ -463,7 +461,7 @@ class SkillChatWidget(QWidget):
             self._teardown_worker()
         self._queued = None  # a turn waiting for the backend's start is dropped too
         self._session = SkillChatSession(self._skill)
-        self._new_backend_session()  # discard OpenCode's history too
+        self._llm.new_session()  # discard OpenCode's history too
         self._latest_draft = ""
         self._stream_buffer = ""
         self._blocks = []
@@ -483,12 +481,7 @@ class SkillChatWidget(QWidget):
             self._worker.cancel()
             self._worker.wait(2000)
             self._teardown_worker()
-        if self._backend is not None and hasattr(self._backend, "stop"):
-            try:
-                self._backend.stop()
-            except Exception:
-                log.exception("skill-chat backend stop failed")
-            self._backend = None
+        self._llm.shutdown()
 
     def stop(self) -> None:
         """Public Stop: cancel the in-flight turn (host-facing). The wizard's
@@ -545,39 +538,10 @@ class SkillChatWidget(QWidget):
         backend, keep = started
         self._loading.done()
         self._loading.set_label(_WORKING)
-        if keep and self._backend is None:
-            self._backend = backend
+        self._llm.adopt(backend, keep)
         queued, self._queued = self._queued, None
         if queued is not None:
             self._really_dispatch(*queued, backend)
-
-    def _ensure_session(self) -> None:
-        """Make sure the cached backend has a LIVE session, creating one only if it
-        has none — the persistent-session counterpart of ``new_session``. The
-        session is REUSED across sends so OpenCode keeps the whole conversation
-        (incl. MCP tool results) instead of throwing it away each turn; after a
-        server restart the same id reattaches (OpenCode persists sessions on disk)."""
-        backend = self._backend
-        ensure = getattr(backend, "ensure_session", None) if backend else None
-        if callable(ensure):
-            try:
-                ensure()
-            except Exception:
-                log.exception("skill-chat ensure_session failed; sending anyway")
-
-    def _new_backend_session(self) -> None:
-        """Start a FRESH server session to TRUE-reset the conversation (trash /
-        skill-switch), discarding OpenCode's history. Prefers the cheap
-        ``new_session`` (re-POSTs /session); never ``reset_session`` (which stops +
-        restarts the whole server). No-op when no backend exists yet — the next send
-        mints a fresh one."""
-        backend = self._backend
-        new_session = getattr(backend, "new_session", None) if backend else None
-        if callable(new_session):
-            try:
-                new_session()
-            except Exception:
-                log.exception("skill-chat new_session failed; continuing")
 
     # -- send path ------------------------------------------------------------
 
@@ -627,14 +591,14 @@ class SkillChatWidget(QWidget):
         """Build the worker and start streaming — the actual fire, run immediately or released
         later by the gate (the UI already locked busy): on *backend*, else the dedicated one,
         once it has started off the GUI thread (the Conversation card's cue says so meanwhile)."""
-        backend = self._backend if backend is None else backend
+        backend = self._llm.backend if backend is None else backend
         if backend is None:
             self._queued = (prompt, files)
             self._loading.start(SERVER_STARTING_TEXT)
-            request_backend(self._backend_factory, self._backend_tab_id,
+            request_backend(self._llm.factory, self._llm.tab_id,
                             answer_to(self._on_backend_started))
             return
-        self._ensure_session()
+        self._llm.ensure_session()
 
         _declared = list(
             (getattr(self._skill, "metadata", None) or {}).get("mcp_tools") or [])
@@ -752,7 +716,7 @@ class SkillChatWidget(QWidget):
         # OpenCode server) over the static common_llm.context_window setting,
         # which is wrong for modern models (e.g. gpt-5.x: 272k+). The server is
         # up by the time a response lands, so resolve it lazily here and cache.
-        backend = self._backend
+        backend = self._llm.backend
         if backend is not None:
             try:
                 window = backend.get_context_window()
@@ -799,7 +763,7 @@ class SkillChatWidget(QWidget):
         self._session = SkillChatSession(self._skill)
         if self._picker is not None:
             self._picker.tick(_needed(skill))
-        self._new_backend_session()  # new skill → fresh OpenCode conversation
+        self._llm.new_session()  # new skill → fresh OpenCode conversation
         self._latest_draft = ""
         self._stream_buffer = ""
         self._blocks = []
@@ -818,27 +782,16 @@ class SkillChatWidget(QWidget):
         few seconds); the next send re-creates the backend with a fresh session
         against the new server. ``relaunch`` keeps the manager usable — a
         ``stop()`` would retire it and leave every tab without a server."""
-        sm = getattr(self._backend_factory, "server_manager", None)
-        if sm is None:
+        if not self._llm.relaunch_server():
             self._status.set_full_text("This backend has no restartable server.")
             return
-        # Cancel any in-flight (possibly hung) request and drop the cached
-        # backend so the next send reconnects to the fresh server.
+        # Cancel any in-flight (possibly hung) request: the next send reconnects to the
+        # fresh server.
         if self._worker is not None:
             self._worker.cancel()
         self._teardown_worker()
         self._set_busy(False)
         self._work_timer.stop()
-        self._backend = None
-        self._status.set_full_text("Restarting backend…")
-
-        def _restart() -> None:
-            try:
-                sm.relaunch()
-            except Exception:
-                log.exception("backend restart failed")
-
-        threading.Thread(target=_restart, daemon=True).start()
         self._status.set_full_text("Backend restarting — send again in a moment.")
 
     # -- rich-text transcript rendering --------------------------------------

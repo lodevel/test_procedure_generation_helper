@@ -5,11 +5,11 @@ sent to the LLM."""
 from __future__ import annotations
 
 import hashlib
-import os
-import tempfile
 import time
 from pathlib import Path
 from typing import Callable, Sequence, TypeVar
+
+from procedo.core import atomic_write
 
 T = TypeVar("T")
 
@@ -48,43 +48,17 @@ def retry_while_busy(action: Callable[[], T]) -> T:
 
 def atomic_write_text(path: Path, text: str) -> None:
     """Write ``text`` (UTF-8) to ``path`` so a crash leaves either the old file
-    or the new one, never a truncated mix: a temp file in the same folder, then
-    ``os.replace`` over the target (atomic on Windows too, unlike ``shutil.move``,
-    which copies then deletes when the target exists). A target briefly held
-    open by another process is retried. Creates the folder."""
-    _write_through_temp(
-        Path(path), text, lambda tmp, target: retry_while_busy(lambda: os.replace(tmp, target)))
+    or the new one, never a truncated mix: the host's ``atomic_write`` (a pid-named
+    temp in the same folder, then ``os.replace``, retried while another process
+    holds the target). Creates the folder."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write.write_text(path, text)
 
 
 def atomic_create(path: Path, data: bytes) -> None:
     """Write ``data`` to the NEW file ``path``, all or nothing, never replacing a
-    file already there: FileExistsError when it exists. A temp file in the same
-    folder, then ``os.rename``, which refuses an existing target on Windows (so a
-    file appearing meanwhile is not overwritten either). Creates the folder."""
+    file already there: FileExistsError when it exists. Creates the folder."""
     path = Path(path)
-    if path.exists():
-        raise FileExistsError(f"{path} already exists")
-    _write_through_temp(path, data, os.rename)
-
-
-def _write_through_temp(
-    path: Path, payload: str | bytes, publish: Callable[[str, Path], object]
-) -> None:
-    """*payload* (text as UTF-8) into a temp file beside *path*, then ``publish(tmp, path)``;
-    the temp file is removed when anything fails."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    try:
-        if isinstance(payload, bytes):
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(payload)
-        else:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(payload)
-        publish(tmp, path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass  # the original error is the one that matters
-        raise
+    atomic_write.create_bytes(path, data)

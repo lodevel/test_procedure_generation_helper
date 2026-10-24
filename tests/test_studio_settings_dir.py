@@ -151,7 +151,7 @@ def test_a_save_that_fails_midway_leaves_the_previous_settings_file(monkeypatch)
 
     import pytest
 
-    from procedo.studio.core import fileio
+    from procedo.core import atomic_write
 
     studio_settings.save_settings({"llm_backend": "opencode"})
     path = studio_settings.get_settings_path()
@@ -163,7 +163,7 @@ def test_a_save_that_fails_midway_leaves_the_previous_settings_file(monkeypatch)
     def crash(*_args):
         raise OSError("power cut")
 
-    monkeypatch.setattr(fileio.os, "replace", crash)
+    monkeypatch.setattr(atomic_write.os, "replace", crash)
     with pytest.raises(OSError):
         studio_settings.save_settings({"llm_backend": "none"})
     monkeypatch.undo()

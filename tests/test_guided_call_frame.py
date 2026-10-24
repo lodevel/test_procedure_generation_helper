@@ -132,6 +132,9 @@ def test_a_posted_cancel_ends_a_long_call_within_a_second_and_the_engine_answers
 def test_progress_frames_keep_a_long_call_inside_the_frame_deadline(session, run_dir):
     doc = _document("1. Call analysis.wait(2) as {1}.\n", "{1} = 2\n")
     node_path = _plan(doc, {})["steps"][0]["node_path"]
+    # The daemon is up first, as a run's session is before its first Call: the 1 s per-frame
+    # deadline bounds the call's silences, not the daemon's start (up to ~1.1 s under load).
+    assert session.ping()["pong"]
     answer = session.call_function(node_path, {"measurements": {}}, doc, work_dir=run_dir, timeout=1,
                                    stop=threading.Event())
     assert answer["ok"] and answer["reading"]["outcome"]["value"] == 2, answer

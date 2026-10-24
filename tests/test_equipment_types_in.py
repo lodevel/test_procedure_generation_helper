@@ -1,4 +1,4 @@
-"""Unit tests for ``procedo.studio.pack_ops.bundle_capabilities.equipment_types_in``.
+"""Unit tests for ``procedo.studio.pack_ops.equipment_scan.equipment_types_in``.
 
 Heading recognition must mirror the wheel's lenient form semantics:
 ``##`` + OPTIONAL space + name (``## Equipment`` == ``##Equipment``),
@@ -21,7 +21,7 @@ ensure_workflow_editor_importable()
 
 from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
 from procedo.engine_client import engine_session  # noqa: E402
-from procedo.studio.pack_ops import bundle_capabilities  # noqa: E402
+from procedo.studio.pack_ops import equipment_scan  # noqa: E402
 
 EQUIP_LINES = """PSU1 : psu channels=[{1, max_voltage=24.0 V, max_current=2.0 A}]
 ELOAD1 : eload channels=[{1, max_current=5.0 A}]
@@ -36,33 +36,33 @@ class EquipmentTypesInHeadingForms(unittest.TestCase):
     """Lenient heading matching (defect a: no-space form was missed)."""
 
     def test_spaced_heading_matches(self):
-        self.assertEqual(bundle_capabilities.equipment_types_in(_text("## Equipment")),
+        self.assertEqual(equipment_scan.equipment_types_in(_text("## Equipment")),
                          ["psu", "eload"])
 
     def test_no_space_heading_matches(self):
-        self.assertEqual(bundle_capabilities.equipment_types_in(_text("##Equipment")),
+        self.assertEqual(equipment_scan.equipment_types_in(_text("##Equipment")),
                          ["psu", "eload"])
 
     def test_h3_heading_is_content_not_matched(self):
-        self.assertEqual(bundle_capabilities.equipment_types_in(_text("###Equipment")), [])
-        self.assertEqual(bundle_capabilities.equipment_types_in(_text("### Equipment")), [])
+        self.assertEqual(equipment_scan.equipment_types_in(_text("###Equipment")), [])
+        self.assertEqual(equipment_scan.equipment_types_in(_text("### Equipment")), [])
 
     def test_mixed_case_heading_matches(self):
-        self.assertEqual(bundle_capabilities.equipment_types_in(_text("## EQUIPMENT")),
+        self.assertEqual(equipment_scan.equipment_types_in(_text("## EQUIPMENT")),
                          ["psu", "eload"])
-        self.assertEqual(bundle_capabilities.equipment_types_in(_text("##equipment")),
+        self.assertEqual(equipment_scan.equipment_types_in(_text("##equipment")),
                          ["psu", "eload"])
 
     def test_no_equipment_section_yields_empty(self):
         text = "# TEST_X\n\n## Steps\n1. Do nothing.\n\n## Expected\n"
-        self.assertEqual(bundle_capabilities.equipment_types_in(text), [])
-        self.assertEqual(bundle_capabilities.equipment_types_in(""), [])
-        self.assertEqual(bundle_capabilities.equipment_types_in(None), [])
+        self.assertEqual(equipment_scan.equipment_types_in(text), [])
+        self.assertEqual(equipment_scan.equipment_types_in(""), [])
+        self.assertEqual(equipment_scan.equipment_types_in(None), [])
 
     def test_extra_spacing_tolerated(self):
-        self.assertEqual(bundle_capabilities.equipment_types_in(_text("##  Equipment")),
+        self.assertEqual(equipment_scan.equipment_types_in(_text("##  Equipment")),
                          ["psu", "eload"])
-        self.assertEqual(bundle_capabilities.equipment_types_in(_text("## Equipment  ")),
+        self.assertEqual(equipment_scan.equipment_types_in(_text("## Equipment  ")),
                          ["psu", "eload"])
 
 
@@ -71,24 +71,24 @@ class EquipmentTypesInBlockBoundaries(unittest.TestCase):
 
     def test_no_space_known_section_ends_block(self):
         text = _text("## Equipment", tail="##Steps\nPSU9 : siggen\n")
-        self.assertEqual(bundle_capabilities.equipment_types_in(text), ["psu", "eload"])
+        self.assertEqual(equipment_scan.equipment_types_in(text), ["psu", "eload"])
 
     def test_unknown_no_space_name_is_content_block_continues(self):
         # ``##note`` mirrors the wheel: NOT a heading, the block continues.
         text = _text("## Equipment",
                      tail="##note\nSIG1 : siggen\n\n## Steps\n1. X.\n")
-        self.assertEqual(bundle_capabilities.equipment_types_in(text),
+        self.assertEqual(equipment_scan.equipment_types_in(text),
                          ["psu", "eload", "siggen"])
 
     def test_spaced_unknown_section_ends_block(self):
         text = _text("## Equipment",
                      tail="## Anything\nSIG1 : siggen\n")
-        self.assertEqual(bundle_capabilities.equipment_types_in(text), ["psu", "eload"])
+        self.assertEqual(equipment_scan.equipment_types_in(text), ["psu", "eload"])
 
     def test_types_deduplicated_order_preserved(self):
         text = _text("##Equipment",
                      tail="PSU2 : psu\nSIG1 : siggen\n\n## Steps\n")
-        self.assertEqual(bundle_capabilities.equipment_types_in(text),
+        self.assertEqual(equipment_scan.equipment_types_in(text),
                          ["psu", "eload", "siggen"])
 
 
@@ -100,7 +100,7 @@ class EquipmentTypesInUniverseResolution(unittest.TestCase):
             pp, "get_section_ownership",
             return_value={"meta": "parser", "equipment": "llm", "steps": "llm"},
         ) as gso:
-            self.assertEqual(bundle_capabilities.equipment_types_in(_text("##Equipment")),
+            self.assertEqual(equipment_scan.equipment_types_in(_text("##Equipment")),
                              ["psu", "eload"])
         gso.assert_called_with(None)
 
@@ -109,7 +109,7 @@ class EquipmentTypesInUniverseResolution(unittest.TestCase):
             pp, "get_section_ownership",
             side_effect=engine_session.ParserUnavailable("no wheel"),
         ):
-            self.assertEqual(bundle_capabilities.equipment_types_in(_text("##Equipment")),
+            self.assertEqual(equipment_scan.equipment_types_in(_text("##Equipment")),
                              ["psu", "eload"])
 
     def test_section_outside_declared_universe_stays_content_in_no_space_form(self):
@@ -119,7 +119,7 @@ class EquipmentTypesInUniverseResolution(unittest.TestCase):
             return_value={"equipment": "llm", "expected": "llm"},
         ):
             text = _text("## Equipment", tail="##Steps\nSIG1 : siggen\n")
-            self.assertEqual(bundle_capabilities.equipment_types_in(text),
+            self.assertEqual(equipment_scan.equipment_types_in(text),
                              ["psu", "eload", "siggen"])
 
     def test_project_root_threaded_to_ownership_lookup(self):
@@ -129,7 +129,7 @@ class EquipmentTypesInUniverseResolution(unittest.TestCase):
             pp, "get_section_ownership",
             return_value={"equipment": "llm"},
         ) as gso:
-            bundle_capabilities.equipment_types_in(_text("## Equipment"), root)
+            equipment_scan.equipment_types_in(_text("## Equipment"), root)
         gso.assert_called_with(root)
 
 
@@ -146,5 +146,5 @@ def test_no_space_test_id_is_content_not_a_heading():
         "##test_id\n"
         "LOAD1 : eload\n"
     )
-    from procedo.studio.pack_ops.bundle_capabilities import equipment_types_in
+    from procedo.studio.pack_ops.equipment_scan import equipment_types_in
     assert equipment_types_in(text) == ["psu", "eload"]

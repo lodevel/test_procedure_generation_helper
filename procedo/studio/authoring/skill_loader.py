@@ -12,13 +12,12 @@ from typing import Any
 
 import yaml
 
+from procedo.core.bundle_generator import skill_file
+
 from .skill import SKILL_CHAT_KIND, Skill, SkillSource
 
 log = logging.getLogger(__name__)
 
-# A skill folder is identified by this file. Both casings are accepted; the
-# shipped convention is ``SKILL.md``.
-_SKILL_FILE_NAMES = ("SKILL.md", "skill.md")
 # Exact match only — unlike SKILL.md (the folder's identity, matched
 # case-insensitively), the optional tools module follows Python's own casing.
 _TOOLS_FILE = "tools.py"
@@ -27,21 +26,6 @@ _TOOLS_FILE = "tools.py"
 class SkillLoadError(Exception):
     """A skill folder exists but cannot be loaded (missing/empty SKILL.md, or
     malformed frontmatter). Discovery logs and skips these — never crashes."""
-
-
-def find_skill_file(folder: Path) -> Path | None:
-    """Return the ``SKILL.md`` in ``folder`` (case-insensitive), or None."""
-    if not folder.is_dir():
-        return None
-    for name in _SKILL_FILE_NAMES:
-        candidate = folder / name
-        if candidate.is_file():
-            return candidate
-    # Case-insensitive fallback for case-sensitive filesystems.
-    for child in folder.iterdir():
-        if child.is_file() and child.name.lower() == "skill.md":
-            return child
-    return None
 
 
 def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -70,10 +54,10 @@ def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 
 def load_skill(folder: Path, source: SkillSource) -> Skill:
     """Load one skill folder. Raises :class:`SkillLoadError` on any problem."""
-    skill_file = find_skill_file(folder)
-    if skill_file is None:
+    path = skill_file(folder)
+    if path is None:
         raise SkillLoadError(f"no SKILL.md in {folder}")
-    text = skill_file.read_text(encoding="utf-8-sig")
+    text = path.read_text(encoding="utf-8-sig")
     meta, body = split_frontmatter(text)
     body = body.strip()
     if not body:

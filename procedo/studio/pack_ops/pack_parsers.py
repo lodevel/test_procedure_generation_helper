@@ -164,7 +164,7 @@ def sync_equipment_from_steps(
     if controller_profiles is None:
         controller_profiles = [
             {**p, "pattern": p.get("id_pattern")}
-            for p in bundle_capabilities._load_bundle_equipment_profiles(project_root)
+            for p in bundle_capabilities.load_bundle_equipment_profiles(project_root)
             if p.get("equipment_type") == "controller"
         ]
 

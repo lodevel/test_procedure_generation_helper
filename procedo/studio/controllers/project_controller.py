@@ -79,9 +79,7 @@ class ProjectController(QObject):
 
         # Update the footer (project, rules)
         mw._update_project_rules_indicators()
-        mw.text_json_tab.refresh_parser_button()
-        mw.text_only_tab.refresh_parser_button()
-        mw.json_code_tab.refresh_parser_button()
+        refresh_parser_buttons(mw)
         watch_project_config(mw)
 
         # Show the Workspace column if hidden
@@ -104,9 +102,7 @@ class ProjectController(QObject):
         mw.project_manager.detect_rules_root()
         mw.task_config_manager.reload(mw.project_manager.project_root)
         mw._update_project_rules_indicators()
-        mw.text_json_tab.refresh_parser_button()
-        mw.text_only_tab.refresh_parser_button()
-        mw.json_code_tab.refresh_parser_button()
+        refresh_parser_buttons(mw)
         watch_project_config(mw)
         mw.toggle_workspace_action.setChecked(True)
         mw.llm_server.restart_for_project()
@@ -191,9 +187,7 @@ class ProjectController(QObject):
 
                 # Update the footer (project, rules)
                 mw._update_project_rules_indicators()
-                mw.text_json_tab.refresh_parser_button()
-                mw.text_only_tab.refresh_parser_button()
-                mw.json_code_tab.refresh_parser_button()
+                refresh_parser_buttons(mw)
                 watch_project_config(mw)
 
                 # Show the Workspace column
@@ -389,13 +383,18 @@ def on_config_dir_changed(mw, path: str) -> None:
         handle_config_change(mw)
 
 
+def refresh_parser_buttons(mw) -> None:
+    """Re-evaluate the Quick Parse button of the three text tabs."""
+    mw.text_json_tab.refresh_parser_button()
+    mw.text_only_tab.refresh_parser_button()
+    mw.json_code_tab.refresh_parser_button()
+
+
 def handle_config_change(mw) -> None:
     """Single funnel for hot-reload work — called by both the
     file-change and directory-change paths so logic stays in one
     place."""
-    mw.text_json_tab.refresh_parser_button()
-    mw.text_only_tab.refresh_parser_button()
-    mw.json_code_tab.refresh_parser_button()
+    refresh_parser_buttons(mw)
     try:
         project_root = mw.project_manager.project_root
         if project_root is not None:

@@ -257,11 +257,11 @@ class DocumentController:
 
         # Update tab contexts with real managers (fixes None reference issue)
         if hasattr(mw.text_only_tab, 'tab_context'):
-            mw.text_only_tab.tab_context.update_managers(mw.artifact_manager, mw.session_state)
+            mw.text_only_tab.tab_context.update_managers(mw.artifact_manager)
         if hasattr(mw.text_json_tab, 'tab_context'):
-            mw.text_json_tab.tab_context.update_managers(mw.artifact_manager, mw.session_state)
+            mw.text_json_tab.tab_context.update_managers(mw.artifact_manager)
         if hasattr(mw.json_code_tab, 'tab_context'):
-            mw.json_code_tab.tab_context.update_managers(mw.artifact_manager, mw.session_state)
+            mw.json_code_tab.tab_context.update_managers(mw.artifact_manager)
 
         # Point findings panel at the new session state (per-test findings)
         mw.dock.findings_panel.set_session(mw.session_state)

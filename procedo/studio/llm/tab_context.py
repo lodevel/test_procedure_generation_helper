@@ -94,7 +94,6 @@ class TabContext:
         project_manager: "ProjectManager",
         artifact_manager: "ArtifactManager",
         task_config_manager: "TaskConfigManager",
-        session_state: "SessionState" = None,  # Ignored - kept for backward compatibility
     ):
         """
         Initialize tab context.
@@ -106,7 +105,6 @@ class TabContext:
             artifact_manager: Artifact manager for current content
             task_config_manager: TaskConfigManager — owns per-task
                 ``selected_rules`` resolution after Phase 1.
-            session_state: DEPRECATED - ignored. Each tab creates its own SessionState.
         """
         self.tab_id = tab_id
         self.board_data_enabled = False
@@ -157,11 +155,7 @@ class TabContext:
                 self._backend = backend
         return backend
     
-    def update_managers(
-        self,
-        artifact_manager: "ArtifactManager",
-        session_state: "SessionState" = None  # Ignored - kept for backward compatibility
-    ):
+    def update_managers(self, artifact_manager: "ArtifactManager"):
         """Update manager references after test is opened.
         
         This fixes the issue where TabContext is created with None managers
@@ -173,10 +167,8 @@ class TabContext:
         
         Args:
             artifact_manager: Updated artifact manager instance
-            session_state: DEPRECATED - ignored. Each tab has its own SessionState.
         """
         self.artifact_manager = artifact_manager
-        # Note: session_state parameter is ignored - each tab has its own per-tab SessionState
 
         # Workflow config reloads are driven externally by MainWindow calling
         # ``task_config_manager.reload(project_root)`` when a project opens.

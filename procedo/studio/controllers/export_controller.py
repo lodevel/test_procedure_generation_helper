@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
 from procedo.core.report_export import create_default_sidecar
-from procedo.core.word_export_dialog import WordExportDialog
+from procedo.ui.word_export_dialog import WordExportDialog
 
 if TYPE_CHECKING:
     from ..main_window import StudioWorkspace

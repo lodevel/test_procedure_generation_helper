@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import NamedTuple, Optional
 from enum import Enum, auto
 
+from procedo.core import starter_test
 from procedo.core.config_manager import PROJECT_RULES, project_rule_doc_paths
 
 from .fileio import atomic_create
@@ -409,25 +410,7 @@ class ProjectManager:
         
         try:
             new_folder.mkdir(parents=True)
-            # Seed the canonical artifacts so the new test starts with
-            # id == sanitized folder name (folder is the source of truth;
-            # save-time enforcement keeps it that way afterwards).
-            from .test_id import sanitize_test_id
-            test_id = sanitize_test_id(new_folder.name)
-            (new_folder / "procedure_text.md").write_text(
-                f"# {test_id}\n", encoding="utf-8"
-            )
-            starter = {
-                "id": test_id,
-                "description": "",
-                "equipment": [],
-                "steps": [],
-                "expected": [],
-            }
-            (new_folder / "procedure.json").write_text(
-                json.dumps(starter, indent=2, ensure_ascii=False) + "\n",
-                encoding="utf-8",
-            )
+            starter_test.write_starter_procedure(new_folder)
             return new_folder
         except OSError:
             return None

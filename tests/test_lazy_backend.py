@@ -196,3 +196,38 @@ def test_a_skill_chat_follows_a_replaced_factory(skill_chat):
     llm._on_started((old, stale, True))
     assert stale.stopped and not new_backend.stopped
     assert fired == [new_backend] and llm.backend is new_backend and new.asked == ["my_wizard"]
+
+
+def test_stop_ends_a_turn_the_host_still_holds(skill_chat):
+    """The wizard's Abandon dropped its queued fire and stopped the chat: no worker and
+    nothing waiting for the server, so the chat stayed busy (locked) for good."""
+    queued = []
+    chat = skill_chat(_Factory(), dispatch_gate=lambda fire, *, interactive: queued.append(fire))
+    went = []
+    chat.busy_changed.connect(went.append)
+    assert chat.send_user_turn("hello")
+
+    chat.stop()
+
+    assert not chat.is_busy and went == [True, False]
+    assert chat._blocks[-1] == ("System", "Not sent: cancelled.") and chat._session.turns == []
+    assert chat.send_user_turn("again") and len(queued) == 2
+
+
+def test_a_turn_that_fails_to_start_once_the_backend_answers_unlocks_the_chat(
+    skill_chat, monkeypatch
+):
+    factory = _Factory()
+    chat = skill_chat(factory)
+    failed = []
+    chat.reply_failed.connect(failed.append)
+
+    def broken(*_args):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(chat, "_fire", broken)
+    chat._llm._requested = True  # a start is out: the turn waits for it
+    assert chat.send_user_turn("hello") and chat.is_busy
+    chat._llm._on_started((factory, _Backend(), True))
+
+    assert not chat.is_busy and failed == ["Failed to start — see logs."]

@@ -10,6 +10,7 @@ defaults.json via ``PROCEDO_BUNDLE_DEFAULTS_PATH``) and the
 Runs without PySide6:
     PYTHONPATH=. python3 -m pytest tests/test_pack_parsers_equipment_profiles.py --noconftest -q
 """
+
 from __future__ import annotations
 
 import json
@@ -34,8 +35,7 @@ CONTROLLER_PROFILE = {
     "id_pattern": "^fncore([-_0-9].*)?$",
     "aliases": ["fncore"],
     "session_policy_default": "per_step",
-    "remote": {"transport": "serial", "enable_field": "manual_override",
-               "inverted": True},
+    "remote": {"transport": "serial", "enable_field": "manual_override", "inverted": True},
     "override_suffix": "_MANUAL_OVERRIDE",
     "defaults": {},
 }
@@ -48,8 +48,7 @@ PSU_PROFILE = {
     "id_pattern": "^psu([-_0-9].*)?$",
     "aliases": [],
     "session_policy_default": "per_session",
-    "remote": {"transport": "visa", "enable_field": "remote",
-               "inverted": False},
+    "remote": {"transport": "visa", "enable_field": "remote", "inverted": False},
     "override_suffix": None,
     "defaults": {},
 }
@@ -76,7 +75,8 @@ def test_new_key_loads_all_records(monkeypatch, tmp_path):
         monkeypatch,
     )
     assert bundle_capabilities.load_bundle_equipment_profiles() == [
-        CONTROLLER_PROFILE, PSU_PROFILE,
+        CONTROLLER_PROFILE,
+        PSU_PROFILE,
     ]
 
 
@@ -129,7 +129,9 @@ def test_key_missing_entirely_raises_parser_unavailable(monkeypatch, tmp_path):
 
 def test_non_list_value_raises_parser_unavailable(monkeypatch, tmp_path):
     _write_defaults(
-        tmp_path, {"equipment_profiles": {"oops": "dict"}}, monkeypatch,
+        tmp_path,
+        {"equipment_profiles": {"oops": "dict"}},
+        monkeypatch,
     )
     with pytest.raises(engine_session.ParserUnavailable):
         bundle_capabilities.load_bundle_equipment_profiles()
@@ -208,7 +210,9 @@ def test_sync_explicit_profiles_bypass_bundle_load(monkeypatch, tmp_path):
     explicit = [{"subtype": "x", "pattern": "^x$"}]
 
     pp.sync_equipment_from_steps(
-        "## Steps\n", project_root=None, controller_profiles=explicit,
+        "## Steps\n",
+        project_root=None,
+        controller_profiles=explicit,
     )
 
     assert captured["profiles"] == explicit

@@ -74,7 +74,9 @@ def test_replace_all_regex_with_backreference(bar_and_editor):
     bar.regex_toggle.setChecked(True)
     bar.case_toggle.setChecked(True)
     out, n = bar._replace_all_in_string(
-        "key=value other=stuff", r"(\w+)=(\w+)", r"\2=\1",
+        "key=value other=stuff",
+        r"(\w+)=(\w+)",
+        r"\2=\1",
     )
     assert out == "value=key stuff=other"
     assert n == 2
@@ -156,8 +158,8 @@ def test_replace_one_replaces_selection_then_finds_next(bar_and_editor):
     editor.setPlainText("foo bar foo bar")
     bar.find_field.setText("foo")
     bar.replace_field.setText("X")
-    bar.find_next()                  # selects first "foo"
-    bar.replace_one()                # replaces it + advances
+    bar.find_next()  # selects first "foo"
+    bar.replace_one()  # replaces it + advances
     assert editor.toPlainText() == "X bar foo bar"
     assert editor.textCursor().selectedText() == "foo"
 

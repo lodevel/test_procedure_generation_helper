@@ -63,8 +63,12 @@ class LLMTabMixin:
 
     def _user_line(self, task: LLMTask, kwargs: dict) -> ChatMessage:
         """The chat's user line for a send (its prompt is added when it goes)."""
-        return ChatMessage(role="user", content=self._get_task_description(
-            task, kwargs.get('user_message'), custom_task_id=kwargs.get('custom_task_id')))
+        return ChatMessage(
+            role="user",
+            content=self._get_task_description(
+                task, kwargs.get("user_message"), custom_task_id=kwargs.get("custom_task_id")
+            ),
+        )
 
     def _await_backend(self, task: LLMTask, retry: bool, kwargs: dict) -> None:
         """Queue the send until the tab's backend has started off the GUI thread (the AI
@@ -76,8 +80,11 @@ class LLMTabMixin:
         line = self._user_line(task, kwargs)
         replaced = self._queued_send is not None
         if replaced:
-            what = ("a new message" if task == LLMTask.AD_HOC_CHAT
-                    and not kwargs.get('custom_task_id') else line.content)
+            what = (
+                "a new message"
+                if task == LLMTask.AD_HOC_CHAT and not kwargs.get("custom_task_id")
+                else line.content
+            )
             self._post_not_sent(f"replaced by {what}.", "warning")
         chat.post(self.tab_context, line)
         self._queued_send = (task, retry, kwargs, current_test(self.artifact_manager), line)
@@ -115,13 +122,15 @@ class LLMTabMixin:
     def _post_not_sent(self, reason: str, tone: str) -> None:
         """The chat note that a send did not go out (not replayed to the model)."""
         self.main_window.dock.chat_panel.post(
-            self.tab_context, ChatMessage(role="system", content=NOT_SENT + reason, tone=tone))
+            self.tab_context, ChatMessage(role="system", content=NOT_SENT + reason, tone=tone)
+        )
 
     def _request_backend(self) -> None:
         """Start the tab's backend off the GUI thread; :meth:`_on_backend_started` answers."""
         self._backend_requested = True
-        request_backend(self.tab_context.backend_factory, self.tab_context.tab_id,
-                        self._on_backend_started)
+        request_backend(
+            self.tab_context.backend_factory, self.tab_context.tab_id, self._on_backend_started
+        )
 
     def _on_backend_started(self, answer) -> None:
         """The backend start answered (GUI thread): the queued send runs on that backend (on a
@@ -142,14 +151,16 @@ class LLMTabMixin:
         task, retry, kwargs, test, line = self._queued_send
         self._queued_send = None
         if test != current_test(self.artifact_manager):
-            log.warning("Dropped the send queued for %s: its test was closed",
-                        test[1] if test else None)
+            log.warning(
+                "Dropped the send queued for %s: its test was closed", test[1] if test else None
+            )
             self._post_not_sent("the test changed while the AI server was starting.", "warning")
             return
         self._run_task_on(backend, task, retry, kwargs, line)
 
-    def _run_task_on(self, backend, task: LLMTask, retry: bool, kwargs: dict,
-                     line: ChatMessage) -> None:
+    def _run_task_on(
+        self, backend, task: LLMTask, retry: bool, kwargs: dict, line: ChatMessage
+    ) -> None:
         """:meth:`_run_task_async` on the tab's started *backend*; *line* is the send's user
         line (already in the chat when the send waited for the backend)."""
         # FSM bootstrap. Two entry paths:
@@ -162,8 +173,9 @@ class LLMTabMixin:
         self.validator_loop.drop()
         if not retry:
             run_state.reset_to_idle()
-            run_state.start_run(task, self._resolve_max_attempts(task),
-                                current_test(self.artifact_manager))
+            run_state.start_run(
+                task, self._resolve_max_attempts(task), current_test(self.artifact_manager)
+            )
         # Sync current editor content to artifact manager so the LLM sees
         # the latest unsaved state, not just the last saved version.
         self.sync_editors_to_artifacts()
@@ -203,14 +215,12 @@ class LLMTabMixin:
             task_config_manager=self.task_config_manager,
             tab_id=self.tab_id,
         )
-        ownership = pipeline_ownership(
-            self.tab_context.project_manager.project_root, override
-        )
+        ownership = pipeline_ownership(self.tab_context.project_manager.project_root, override)
         contract = get_contract_for_tab(self.tab_context.tab_id, ownership=ownership)
         # Effective id: bundle-declared CUSTOM tasks route via AD_HOC_CHAT
         # but resolve THEIR OWN prompt_template (threaded on the request by
         # _build_request; the builder reads request.custom_task_id).
-        custom_task_id = kwargs.get('custom_task_id', None)
+        custom_task_id = kwargs.get("custom_task_id", None)
         try:
             full_prompt = prompt_builder.build(request, output_contract_override=contract)
         except TaskPromptNotDeclaredError as exc:
@@ -225,7 +235,7 @@ class LLMTabMixin:
         request.prebuilt_prompt = full_prompt
 
         # Cancel any running worker before starting a new one.
-        if hasattr(self, '_worker') and self._worker and self._worker.isRunning():
+        if hasattr(self, "_worker") and self._worker and self._worker.isRunning():
             self._worker.cancel()
             self._worker.wait()
 
@@ -368,8 +378,10 @@ class LLMTabMixin:
         run_state = self._ensure_run_state()
         if run_state.test == current_test(self.artifact_manager):
             return False
-        log.warning("Dropped the LLM reply for %s: discarded, its test was closed",
-                    run_state.test[1] if run_state.test else None)
+        log.warning(
+            "Dropped the LLM reply for %s: discarded, its test was closed",
+            run_state.test[1] if run_state.test else None,
+        )
         self._pending_request = None
         self._end_thinking(self._is_active_tab())
         run_state.reset_to_idle()
@@ -390,7 +402,11 @@ class LLMTabMixin:
             self.main_window.dock.raw_viewer.show_response(response.raw_response)
 
     def _record_assistant_message(
-        self, parsed: dict, response, validation_issues: list, is_active: bool,
+        self,
+        parsed: dict,
+        response,
+        validation_issues: list,
+        is_active: bool,
     ) -> None:
         """Build the assistant :class:`ChatMessage` from the parsed
         response, append to ``tab_context.messages``, refresh the chat
@@ -428,7 +444,10 @@ class LLMTabMixin:
             self.main_window.dock.chat_panel.switch_context(self.tab_context)
 
     def _publish_response_issues(
-        self, response, validation_issues: list, is_active: bool,
+        self,
+        response,
+        validation_issues: list,
+        is_active: bool,
     ) -> None:
         """Promote contract-validation strings to ``ValidationIssue``
         objects on the response, then push the merged list into the
@@ -436,28 +455,32 @@ class LLMTabMixin:
         own issues to the same panel via :class:`ValidatorLoop`,
         so the operator sees one consolidated finding list per turn."""
         if validation_issues:
-            response.issues.extend([
-                ValidationIssue(
-                    message=issue,
-                    severity="warning",
-                    location="response_structure",
-                    code="OUTPUT_CONTRACT",
-                    suggested_fix="",
-                )
-                for issue in validation_issues
-            ])
+            response.issues.extend(
+                [
+                    ValidationIssue(
+                        message=issue,
+                        severity="warning",
+                        location="response_structure",
+                        code="OUTPUT_CONTRACT",
+                        suggested_fix="",
+                    )
+                    for issue in validation_issues
+                ]
+            )
 
         if response.has_issues and is_active:
-            self.main_window.dock.show_validation_result_from_list([
-                {
-                    "message": issue.message,
-                    "severity": issue.severity,
-                    "location": issue.location,
-                    "code": issue.code,
-                    "suggested_fix": issue.suggested_fix,
-                }
-                for issue in response.issues
-            ])
+            self.main_window.dock.show_validation_result_from_list(
+                [
+                    {
+                        "message": issue.message,
+                        "severity": issue.severity,
+                        "location": issue.location,
+                        "code": issue.code,
+                        "suggested_fix": issue.suggested_fix,
+                    }
+                    for issue in response.issues
+                ]
+            )
 
     def _handle_unsuccessful_response(self, response, is_active: bool) -> None:
         """Surface a transport-level LLM failure (response.success=False)
@@ -470,26 +493,32 @@ class LLMTabMixin:
 
     def _handle_parse_failure(self, response, error: Exception):
         """Handle catastrophic parse failures (cannot parse LLM response at all)."""
-        response.issues.append(ValidationIssue(
-            severity="error",
-            location="response_parsing",
-            code="PARSE_FAILURE",
-            message=f"Failed to parse LLM response: {str(error)}",
-        ))
+        response.issues.append(
+            ValidationIssue(
+                severity="error",
+                location="response_parsing",
+                code="PARSE_FAILURE",
+                message=f"Failed to parse LLM response: {str(error)}",
+            )
+        )
         issue = response.issues[-1]
-        self.main_window.dock.show_validation_result_from_list([{
-            "message": issue.message,
-            "severity": issue.severity,
-            "location": issue.location,
-            "code": issue.code,
-            "suggested_fix": issue.suggested_fix,
-        }])
+        self.main_window.dock.show_validation_result_from_list(
+            [
+                {
+                    "message": issue.message,
+                    "severity": issue.severity,
+                    "location": issue.location,
+                    "code": issue.code,
+                    "suggested_fix": issue.suggested_fix,
+                }
+            ]
+        )
 
         chat_message = _ChatMessage(
             role="assistant",
             content=f"⚠️ Parse Error: {str(error)}",
             full_response=response.raw_response,
-            thinking_content=getattr(response, 'thinking_content', ''),
+            thinking_content=getattr(response, "thinking_content", ""),
             prompt_tokens=response.prompt_tokens,
             completion_tokens=response.completion_tokens,
             total_tokens=response.total_tokens,
@@ -576,8 +605,7 @@ class LLMTabMixin:
         if parsed.get("propose_update") is True:
             artifact_fields = self._get_expected_artifact_fields()
             has_artifact = any(
-                parsed.get(field) and str(parsed.get(field)).strip()
-                for field in artifact_fields
+                parsed.get(field) and str(parsed.get(field)).strip() for field in artifact_fields
             )
             if not has_artifact:
                 msg = parsed.get("assistant_message", "")
@@ -598,11 +626,17 @@ class LLMTabMixin:
         """The tab's validator-in-the-loop, made on first use (the tab's context is set after
         ``BaseTab.__init__``)."""
         return ValidatorLoop(
-            main_window=self.main_window, tab_context=self.tab_context,
-            run_state=self._ensure_run_state(), status=self.status_message.emit,
-            section_override=self._task_section_override, drop_late_reply=self._drop_late_reply,
-            is_active=self._is_active_tab, show_error=self.show_error,
-            finish=self._finish_response, run_task=self._run_task_async)
+            main_window=self.main_window,
+            tab_context=self.tab_context,
+            run_state=self._ensure_run_state(),
+            status=self.status_message.emit,
+            section_override=self._task_section_override,
+            drop_late_reply=self._drop_late_reply,
+            is_active=self._is_active_tab,
+            show_error=self.show_error,
+            finish=self._finish_response,
+            run_task=self._run_task_async,
+        )
 
     def _ensure_run_state(self) -> LLMRunState:
         """Lazily attach the per-tab :class:`LLMRunState`. Lazy creation
@@ -655,6 +689,7 @@ class LLMTabMixin:
 
         # 2. Per-project setting from Validator-tab persistence, 3. the default.
         from ..llm.validator_loop_settings import max_attempts
+
         return max_attempts(getattr(self.tab_context.project_manager, "project_root", None))
 
     # ------------------------------------------------------------------ #
@@ -682,8 +717,8 @@ class LLMTabMixin:
             },
         }
 
-        if hasattr(response, 'session_delta') and response.session_delta:
-            if hasattr(response.session_delta, 'open_questions'):
+        if hasattr(response, "session_delta") and response.session_delta:
+            if hasattr(response.session_delta, "open_questions"):
                 message["metadata"]["open_questions"] = response.session_delta.open_questions
 
         return message

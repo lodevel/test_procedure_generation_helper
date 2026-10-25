@@ -84,8 +84,10 @@ def test_is_loop_available_runs_probe_when_enabled_true(tmp_path, monkeypatch):
     # in a venv where the wheel may or may not be installed; we don't
     # want availability tied to that).
     from procedo.studio.pack_ops import pack_parsers
+
     monkeypatch.setattr(
-        pack_parsers, "is_available",
+        pack_parsers,
+        "is_available",
         lambda project_root=None: (False, "rules_packager_base not importable in test venv"),
     )
     root = _project(tmp_path, {"enabled": True})
@@ -107,13 +109,16 @@ def test_is_loop_available_surfaces_wheel_import_error(tmp_path, monkeypatch):
     out because the host venv had a wheel missing `check_name_fidelity`.
     """
     from procedo.studio.pack_ops import pack_parsers
+
     fake_error = (
         "rules_packager_base.rules.v2_0_2.parser is not importable: "
         "cannot import name 'check_name_fidelity'. Reinstall the "
         "rules_packager_base wheel (>= 2.0.1)."
     )
     monkeypatch.setattr(
-        pack_parsers, "is_available", lambda project_root=None: (False, fake_error),
+        pack_parsers,
+        "is_available",
+        lambda project_root=None: (False, fake_error),
     )
     root = _project(tmp_path, {"enabled": True})
     available, reason = is_loop_available(root)
@@ -124,9 +129,7 @@ def test_is_loop_available_surfaces_wheel_import_error(tmp_path, monkeypatch):
 def test_save_setting_persists_enabled_flag(tmp_path):
     root = _project(tmp_path)
     save_setting(root, "enabled", False)
-    on_disk = json.loads(
-        (root / "config" / "config.json").read_text(encoding="utf-8")
-    )
+    on_disk = json.loads((root / "config" / "config.json").read_text(encoding="utf-8"))
     assert on_disk[SECTION_NAME]["enabled"] is False
     # Re-read via the helper.
     assert is_enabled(root) is False
@@ -156,9 +159,7 @@ def test_auto_correct_key_is_separate_from_enabled(tmp_path):
     # Operator separately toggles auto-correct on.
     save_setting(root, "auto_correct", True)
 
-    on_disk = json.loads(
-        (root / "config" / "config.json").read_text(encoding="utf-8")
-    )
+    on_disk = json.loads((root / "config" / "config.json").read_text(encoding="utf-8"))
     section = on_disk[SECTION_NAME]
     assert section["enabled"] is False
     assert section["auto_correct"] is True
@@ -180,6 +181,7 @@ def test_set_validator_status_unchecks_disabled_checkbox(tmp_path):
     from PySide6.QtWidgets import QApplication
     from unittest.mock import MagicMock
     from procedo.studio.dock.chat_panel import ChatPanel
+
     app = QApplication.instance() or QApplication([])  # noqa: F841
 
     panel = ChatPanel(main_window=MagicMock())
@@ -209,20 +211,24 @@ def test_validate_procedure_button_hidden_when_wheel_unavailable(monkeypatch, tm
     from PySide6.QtWidgets import QApplication, QVBoxLayout
     from types import SimpleNamespace
     from unittest.mock import MagicMock
+
     app = QApplication.instance() or QApplication([])  # noqa: F841
 
     from procedo.studio.core.task_config import TaskConfigManager
     from procedo.studio.core.validators_registry import (
-        ensure_builtins_registered, unregister_all,
+        ensure_builtins_registered,
+        unregister_all,
     )
     from procedo.studio.pack_ops import pack_parsers
     from procedo.studio.tabs.base_tab import BaseTab
+
     unregister_all()
     ensure_builtins_registered()
 
     # Wheel-unavailable → pack-shipped validators must hide.
     monkeypatch.setattr(
-        pack_parsers, "is_available",
+        pack_parsers,
+        "is_available",
         lambda project_root=None: (False, "rules_packager_base not in this venv"),
     )
 
@@ -230,18 +236,24 @@ def test_validate_procedure_button_hidden_when_wheel_unavailable(monkeypatch, tm
     cfg = tmp / "config"
     cfg.mkdir()
     import json as _json
-    (cfg / "config.json").write_text(_json.dumps({
-        "manifest": {"name": "test"},
-        "validator_loop": {"enabled": True},
-        "workflows": {
-            "text_json": {
-                "validators": [
-                    {"id": "rules_packager_base.validate_procedure", "enabled": True},
-                    {"id": "core.check_python_syntax", "enabled": True},
-                ],
-            },
-        },
-    }), encoding="utf-8")
+
+    (cfg / "config.json").write_text(
+        _json.dumps(
+            {
+                "manifest": {"name": "test"},
+                "validator_loop": {"enabled": True},
+                "workflows": {
+                    "text_json": {
+                        "validators": [
+                            {"id": "rules_packager_base.validate_procedure", "enabled": True},
+                            {"id": "core.check_python_syntax", "enabled": True},
+                        ],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
     manager = TaskConfigManager(tmp / "no_fallback.json", project_root=tmp)
     mw = MagicMock()
@@ -254,6 +266,7 @@ def test_validate_procedure_button_hidden_when_wheel_unavailable(monkeypatch, tm
 
     button_ids = []
     from PySide6.QtWidgets import QPushButton
+
     for i in range(layout.count()):
         w = layout.itemAt(i).widget()
         if isinstance(w, QPushButton) and w.property("validator_id"):
@@ -275,29 +288,37 @@ def test_all_validator_buttons_hidden_when_master_toggle_off(tmp_path):
     from unittest.mock import MagicMock
     from procedo.studio.core.task_config import TaskConfigManager
     from procedo.studio.core.validators_registry import (
-        ensure_builtins_registered, unregister_all,
+        ensure_builtins_registered,
+        unregister_all,
     )
     from procedo.studio.tabs.base_tab import BaseTab
+
     app = QApplication.instance() or QApplication([])  # noqa: F841
     unregister_all()
     ensure_builtins_registered()
 
     import json as _json
+
     tmp = tmp_path
     cfg = tmp / "config"
     cfg.mkdir()
-    (cfg / "config.json").write_text(_json.dumps({
-        "manifest": {"name": "test"},
-        "validator_loop": {"enabled": False},
-        "workflows": {
-            "text_json": {
-                "validators": [
-                    {"id": "rules_packager_base.validate_procedure", "enabled": True},
-                    {"id": "core.check_python_syntax", "enabled": True},
-                ],
-            },
-        },
-    }), encoding="utf-8")
+    (cfg / "config.json").write_text(
+        _json.dumps(
+            {
+                "manifest": {"name": "test"},
+                "validator_loop": {"enabled": False},
+                "workflows": {
+                    "text_json": {
+                        "validators": [
+                            {"id": "rules_packager_base.validate_procedure", "enabled": True},
+                            {"id": "core.check_python_syntax", "enabled": True},
+                        ],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
     manager = TaskConfigManager(tmp / "no_fallback.json", project_root=tmp)
     mw = MagicMock()
@@ -317,19 +338,16 @@ def test_chat_panel_toggle_writes_auto_correct_not_enabled(tmp_path):
     from types import SimpleNamespace
     from unittest.mock import MagicMock
     from procedo.studio.dock.chat_panel import ChatPanel
+
     app = QApplication.instance() or QApplication([])  # noqa: F841
 
     root = _project(tmp_path)
     panel = ChatPanel(main_window=MagicMock())
-    panel._current_tab_context = SimpleNamespace(
-        project_manager=SimpleNamespace(project_root=root)
-    )
+    panel._current_tab_context = SimpleNamespace(project_manager=SimpleNamespace(project_root=root))
     # Trigger the toggled handler directly.
     panel._on_auto_correct_toggled(False)
 
-    on_disk = json.loads(
-        (root / "config" / "config.json").read_text(encoding="utf-8")
-    )
+    on_disk = json.loads((root / "config" / "config.json").read_text(encoding="utf-8"))
     section = on_disk[SECTION_NAME]
     assert section["auto_correct"] is False
     # Master enable key must NOT have been touched.

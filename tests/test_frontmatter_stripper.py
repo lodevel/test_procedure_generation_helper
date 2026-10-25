@@ -38,14 +38,7 @@ def test_strips_related_list():
 
 
 def test_strips_audience_inline_list():
-    src = (
-        "---\n"
-        "doc_id: foo\n"
-        "audience: [llm, validator, codegen]\n"
-        "version: 2.0.0\n"
-        "---\n"
-        "body\n"
-    )
+    src = "---\ndoc_id: foo\naudience: [llm, validator, codegen]\nversion: 2.0.0\n---\nbody\n"
     out = _strip_llm_useless_frontmatter(src)
     assert "audience:" not in out
     assert "doc_id: foo" in out
@@ -72,15 +65,7 @@ def test_preserves_other_fields_with_colons_in_values():
 def test_strips_audience_keeps_related_when_only_audience_in_allowlist():
     """The allowlist behavior is captured by the module-level constant; this test
     documents that BOTH currently-allowlisted fields get stripped together."""
-    src = (
-        "---\n"
-        "doc_id: foo\n"
-        "related:\n"
-        "  - bar\n"
-        "audience: [llm]\n"
-        "---\n"
-        "body\n"
-    )
+    src = "---\ndoc_id: foo\nrelated:\n  - bar\naudience: [llm]\n---\nbody\n"
     out = _strip_llm_useless_frontmatter(src)
     assert "related:" not in out
     assert "audience:" not in out
@@ -90,35 +75,16 @@ def test_strips_audience_keeps_related_when_only_audience_in_allowlist():
 def test_body_is_byte_identical():
     """Stripping must not touch the body content after the frontmatter close marker."""
     body = (
-        "# Title\n"
-        "\n"
-        "Some text with `code` and **bold** and ---\n"
-        "fake frontmatter\n"
-        "---\n"
-        "more body.\n"
+        "# Title\n\nSome text with `code` and **bold** and ---\nfake frontmatter\n---\nmore body.\n"
     )
-    src = (
-        "---\n"
-        "doc_id: foo\n"
-        "related:\n"
-        "  - bar\n"
-        "---\n"
-        + body
-    )
+    src = "---\ndoc_id: foo\nrelated:\n  - bar\n---\n" + body
     out = _strip_llm_useless_frontmatter(src)
     assert out.endswith(body)
 
 
 def test_no_allowlisted_fields_still_yields_valid_frontmatter():
     """When nothing is stripped, the file remains valid YAML frontmatter."""
-    src = (
-        "---\n"
-        "doc_id: foo\n"
-        "title: Foo\n"
-        "version: 2.0.0\n"
-        "---\n"
-        "body\n"
-    )
+    src = "---\ndoc_id: foo\ntitle: Foo\nversion: 2.0.0\n---\nbody\n"
     out = _strip_llm_useless_frontmatter(src)
     # Output should still parse as a frontmatter doc.
     assert out.startswith("---\n")
@@ -129,17 +95,7 @@ def test_no_allowlisted_fields_still_yields_valid_frontmatter():
 
 
 def test_blank_line_between_fields_preserved():
-    src = (
-        "---\n"
-        "doc_id: foo\n"
-        "\n"
-        "title: Foo\n"
-        "related:\n"
-        "  - bar\n"
-        "version: 2.0.0\n"
-        "---\n"
-        "body\n"
-    )
+    src = "---\ndoc_id: foo\n\ntitle: Foo\nrelated:\n  - bar\nversion: 2.0.0\n---\nbody\n"
     out = _strip_llm_useless_frontmatter(src)
     assert "doc_id: foo" in out
     assert "title: Foo" in out

@@ -39,7 +39,13 @@ def _v2_text(requirement: str | None) -> str:
     `requirement=""` → emit `requirement:` (empty slot).
     `requirement="X"` → emit `requirement: X`.
     """
-    req_line = "requirement:" if requirement is None else f"requirement: {requirement}" if requirement else "requirement:"
+    req_line = (
+        "requirement:"
+        if requirement is None
+        else f"requirement: {requirement}"
+        if requirement
+        else "requirement:"
+    )
     return (
         "# DEMO\n"
         "Demo procedure.\n"
@@ -159,9 +165,7 @@ class AutoRestoreHappyPathTests(unittest.TestCase):
     def test_baseline_value_response_modified_restored_to_baseline(self) -> None:
         # Case (b): baseline `"X"` + JSON response `"Y"` → restore to `"X"`.
         baseline_text = _v2_text("IEC-62133 §4.3")
-        response = _make_response(
-            json_value="IEC-62133 §4.3 — annotated by LLM"
-        )
+        response = _make_response(json_value="IEC-62133 §4.3 — annotated by LLM")
         issues = _auto_restore_operator_only_fields(
             response, {"text": baseline_text, "json": "", "code": ""}
         )
@@ -178,8 +182,10 @@ class AutoRestoreHappyPathTests(unittest.TestCase):
         # An ABSENT proposal hits a different branch (no proposal).
         # Build a response with an empty-requirement text proposal.
         from procedo.studio.llm.backend_base import LLMProposal
+
         response.procedure_text = LLMProposal(
-            mode="replace", content=_v2_text(None),
+            mode="replace",
+            content=_v2_text(None),
         )
         issues = _auto_restore_operator_only_fields(
             response, {"text": baseline_text, "json": "", "code": ""}
@@ -214,7 +220,8 @@ class AutoRestoreEdgeCaseTests(unittest.TestCase):
         # The auto-restore must skip cleanly without raising.
         response = _make_response(text_value="anything invented")
         issues = _auto_restore_operator_only_fields(
-            response, {"text": None, "json": "", "code": ""}  # type: ignore[arg-type]
+            response,
+            {"text": None, "json": "", "code": ""},  # type: ignore[arg-type]
         )
         self.assertEqual(issues, [])
         # And the response was NOT mutated.
@@ -226,9 +233,7 @@ class AutoRestoreEdgeCaseTests(unittest.TestCase):
     def test_baseline_text_is_empty_string_noop(self) -> None:
         # Codex: GUI normalizes missing content to "".
         response = _make_response(text_value="something invented")
-        issues = _auto_restore_operator_only_fields(
-            response, {"text": "", "json": "", "code": ""}
-        )
+        issues = _auto_restore_operator_only_fields(response, {"text": "", "json": "", "code": ""})
         self.assertEqual(issues, [])
 
     def test_multi_slot_json_restored_text_untouched(self) -> None:

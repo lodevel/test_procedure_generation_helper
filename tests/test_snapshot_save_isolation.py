@@ -128,18 +128,26 @@ def test_project_override_save_keeps_pack_data_out(tmp_path, stub_pack_workflows
     project's workflows.text_json.tasks still has exactly one task
     (the override) — pack's other tasks did NOT migrate into the file."""
     root = _project_root(tmp_path)
-    _write_project_config(root, {
-        "workflows": {
-            "text_json": {
-                "tasks": [
-                    {"id": "derive_json_from_text", "name": "Derive",
-                     "button_label": "User Custom", "enabled": True,
-                     "prompt_template": None, "selected_rules": None,
-                     "max_validator_attempts": None},
-                ],
+    _write_project_config(
+        root,
+        {
+            "workflows": {
+                "text_json": {
+                    "tasks": [
+                        {
+                            "id": "derive_json_from_text",
+                            "name": "Derive",
+                            "button_label": "User Custom",
+                            "enabled": True,
+                            "prompt_template": None,
+                            "selected_rules": None,
+                            "max_validator_attempts": None,
+                        },
+                    ],
+                },
             },
         },
-    })
+    )
     mgr = TaskConfigManager(_shared_fallback(tmp_path), project_root=root)
     assert mgr.save_config()
 
@@ -149,9 +157,7 @@ def test_project_override_save_keeps_pack_data_out(tmp_path, stub_pack_workflows
     assert task_ids == ["derive_json_from_text"], (
         f"expected only the project-authored task; got {task_ids}"
     )
-    assert "validators" not in text_json, (
-        "pack validators must not be mirrored into project config"
-    )
+    assert "validators" not in text_json, "pack validators must not be mirrored into project config"
     assert "chat_config" not in text_json, (
         "pack chat_config must not be mirrored into project config"
     )
@@ -165,8 +171,7 @@ def test_mutate_pack_only_task_stamps_just_that_one(tmp_path, stub_pack_workflow
     _write_project_config(root, {"manifest": {"name": "p"}})
 
     mgr = TaskConfigManager(_shared_fallback(tmp_path), project_root=root)
-    assert mgr.update_task_config("text_json", "pack_only_task",
-                                  button_label="User Edited")
+    assert mgr.update_task_config("text_json", "pack_only_task", button_label="User Edited")
     assert mgr.save_config()
 
     on_disk = _read_project_config(root)
@@ -185,17 +190,19 @@ def test_validators_block_in_project_survives_pack_overlap(tmp_path, stub_pack_w
     verbatim; pack's block is NOT mirrored."""
     root = _project_root(tmp_path)
     project_validators = [{"id": "project.x", "enabled": True}]
-    _write_project_config(root, {
-        "workflows": {
-            "text_json": {
-                "validators": project_validators,
+    _write_project_config(
+        root,
+        {
+            "workflows": {
+                "text_json": {
+                    "validators": project_validators,
+                },
             },
         },
-    })
+    )
     mgr = TaskConfigManager(_shared_fallback(tmp_path), project_root=root)
     # Touch SOMETHING so save_config() actually runs the snapshot path.
-    mgr.update_task_config("text_json", "pack_only_task",
-                           button_label="touch")
+    mgr.update_task_config("text_json", "pack_only_task", button_label="touch")
     assert mgr.save_config()
 
     on_disk = _read_project_config(root)
@@ -247,11 +254,26 @@ def test_reload_clears_snapshot(tmp_path, stub_pack_workflows):
     """``reload(new_root)`` clears the snapshot; mutation against the
     new project doesn't leak data from the previous one."""
     root_a = _project_root(tmp_path / "a")
-    _write_project_config(root_a, {"workflows": {"text_json": {
-        "tasks": [{"id": "a_task", "name": "A", "button_label": "A",
-                   "enabled": True, "prompt_template": None,
-                   "selected_rules": None, "max_validator_attempts": None}]
-    }}})
+    _write_project_config(
+        root_a,
+        {
+            "workflows": {
+                "text_json": {
+                    "tasks": [
+                        {
+                            "id": "a_task",
+                            "name": "A",
+                            "button_label": "A",
+                            "enabled": True,
+                            "prompt_template": None,
+                            "selected_rules": None,
+                            "max_validator_attempts": None,
+                        }
+                    ]
+                }
+            }
+        },
+    )
 
     root_b = _project_root(tmp_path / "b")
     _write_project_config(root_b, {})
@@ -276,26 +298,37 @@ def test_workflows_writer_receives_snapshot_payload(tmp_path, stub_pack_workflow
     PROJECT-ONLY snapshot (NOT the merged caches) and does NOT touch
     the on-disk file directly."""
     root = _project_root(tmp_path)
-    _write_project_config(root, {
-        "workflows": {
-            "text_json": {
-                "tasks": [{"id": "derive_json_from_text", "name": "D",
-                           "button_label": "P", "enabled": True,
-                           "prompt_template": None, "selected_rules": None,
-                           "max_validator_attempts": None}],
+    _write_project_config(
+        root,
+        {
+            "workflows": {
+                "text_json": {
+                    "tasks": [
+                        {
+                            "id": "derive_json_from_text",
+                            "name": "D",
+                            "button_label": "P",
+                            "enabled": True,
+                            "prompt_template": None,
+                            "selected_rules": None,
+                            "max_validator_attempts": None,
+                        }
+                    ],
+                },
             },
         },
-    })
+    )
     mgr = TaskConfigManager(_shared_fallback(tmp_path), project_root=root)
 
     captured: list[dict] = []
+
     def _writer(payload: dict) -> bool:
         captured.append(payload)
         return True
+
     mgr.register_workflows_writer(_writer)
 
-    mgr.update_task_config("text_json", "derive_json_from_text",
-                           button_label="Edited")
+    mgr.update_task_config("text_json", "derive_json_from_text", button_label="Edited")
     assert mgr.save_config()
 
     assert len(captured) == 1
@@ -305,8 +338,9 @@ def test_workflows_writer_receives_snapshot_payload(tmp_path, stub_pack_workflow
     # Pack-only data must NOT be in the payload.
     assert "validators" not in payload["text_json"]
     assert "chat_config" not in payload["text_json"]
-    pack_only_ids = [t.get("id") for t in payload["text_json"]["tasks"]
-                     if t.get("id") == "pack_only_task"]
+    pack_only_ids = [
+        t.get("id") for t in payload["text_json"]["tasks"] if t.get("id") == "pack_only_task"
+    ]
     assert pack_only_ids == [], "pack-only tasks must not be in writer payload"
 
     # And the on-disk file must NOT have been touched by save_config().
@@ -346,7 +380,8 @@ def test_writer_unregister_reverts_to_direct_write(tmp_path, stub_pack_workflows
     assert mgr.save_config()
     on_disk = _read_project_config(root)
     assert on_disk["workflows"]["text_only"]["chat_config"] == {
-        "enabled": True, "system_prompt": "x"
+        "enabled": True,
+        "system_prompt": "x",
     }, "with writer cleared, save must write directly to config.json"
 
 
@@ -368,8 +403,14 @@ def test_a_config_unreadable_when_loaded_is_never_saved_over(tmp_path, stub_pack
     """config.json unreadable when the project was loaded (a share down), readable again
     at the save: the empty snapshot the load made must not replace the project's workflows."""
     root = _project_root(tmp_path)
-    cfg = _write_project_config(root, {"workflows": {"text_only": {"chat_config": {
-        "enabled": True, "system_prompt": "the project's"}}}})
+    cfg = _write_project_config(
+        root,
+        {
+            "workflows": {
+                "text_only": {"chat_config": {"enabled": True, "system_prompt": "the project's"}}
+            }
+        },
+    )
     good = cfg.read_text(encoding="utf-8")
     cfg.write_text('{"workflows": ', encoding="utf-8")
     mgr = TaskConfigManager(_shared_fallback(tmp_path), project_root=root)
@@ -383,8 +424,10 @@ def test_a_config_unreadable_when_loaded_is_never_saved_over(tmp_path, stub_pack
     mgr.reload(root)  # read again: saves go through
     mgr.set_chat_config("json_code", ChatConfig(enabled=False, system_prompt=None))
     assert mgr.save_config()
-    assert _read_project_config(root)["workflows"]["text_only"]["chat_config"]["system_prompt"] \
+    assert (
+        _read_project_config(root)["workflows"]["text_only"]["chat_config"]["system_prompt"]
         == "the project's"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -396,16 +439,26 @@ def test_reset_to_defaults_drops_tab_from_snapshot(tmp_path, stub_pack_workflows
     """``reset_to_defaults(tab)`` removes the tab from the snapshot so
     save reverts to pack / baked-in defaults rather than persisting them."""
     root = _project_root(tmp_path)
-    _write_project_config(root, {
-        "workflows": {
-            "text_json": {
-                "tasks": [{"id": "derive_json_from_text", "name": "D",
-                           "button_label": "Custom", "enabled": True,
-                           "prompt_template": None, "selected_rules": None,
-                           "max_validator_attempts": None}],
+    _write_project_config(
+        root,
+        {
+            "workflows": {
+                "text_json": {
+                    "tasks": [
+                        {
+                            "id": "derive_json_from_text",
+                            "name": "D",
+                            "button_label": "Custom",
+                            "enabled": True,
+                            "prompt_template": None,
+                            "selected_rules": None,
+                            "max_validator_attempts": None,
+                        }
+                    ],
+                },
             },
         },
-    })
+    )
     mgr = TaskConfigManager(_shared_fallback(tmp_path), project_root=root)
     assert mgr.reset_to_defaults("text_json")
     assert mgr.save_config()
@@ -477,20 +530,35 @@ def test_set_all_tasks_drops_deleted_from_snapshot(tmp_path, stub_pack_workflows
     it gets dropped — i.e. ``set_all_tasks_for_tab`` is treated as a
     replace, not a merge."""
     root = _project_root(tmp_path)
-    _write_project_config(root, {
-        "workflows": {
-            "text_json": {
-                "tasks": [
-                    {"id": "user_a", "name": "A", "button_label": "A",
-                     "enabled": True, "prompt_template": None,
-                     "selected_rules": None, "max_validator_attempts": None},
-                    {"id": "user_b", "name": "B", "button_label": "B",
-                     "enabled": True, "prompt_template": None,
-                     "selected_rules": None, "max_validator_attempts": None},
-                ],
+    _write_project_config(
+        root,
+        {
+            "workflows": {
+                "text_json": {
+                    "tasks": [
+                        {
+                            "id": "user_a",
+                            "name": "A",
+                            "button_label": "A",
+                            "enabled": True,
+                            "prompt_template": None,
+                            "selected_rules": None,
+                            "max_validator_attempts": None,
+                        },
+                        {
+                            "id": "user_b",
+                            "name": "B",
+                            "button_label": "B",
+                            "enabled": True,
+                            "prompt_template": None,
+                            "selected_rules": None,
+                            "max_validator_attempts": None,
+                        },
+                    ],
+                },
             },
         },
-    })
+    )
     mgr = TaskConfigManager(_shared_fallback(tmp_path), project_root=root)
 
     # Drop user_a, keep user_b (and the pack tasks the cache surfaces).
@@ -550,20 +618,35 @@ def test_set_all_tasks_preserves_per_task_extra_fields(tmp_path, stub_pack_workf
 
 def test_delete_task_removes_from_snapshot(tmp_path, stub_pack_workflows):
     root = _project_root(tmp_path)
-    _write_project_config(root, {
-        "workflows": {
-            "text_json": {
-                "tasks": [
-                    {"id": "a", "name": "A", "button_label": "A", "enabled": True,
-                     "prompt_template": None, "selected_rules": None,
-                     "max_validator_attempts": None},
-                    {"id": "b", "name": "B", "button_label": "B", "enabled": True,
-                     "prompt_template": None, "selected_rules": None,
-                     "max_validator_attempts": None},
-                ],
+    _write_project_config(
+        root,
+        {
+            "workflows": {
+                "text_json": {
+                    "tasks": [
+                        {
+                            "id": "a",
+                            "name": "A",
+                            "button_label": "A",
+                            "enabled": True,
+                            "prompt_template": None,
+                            "selected_rules": None,
+                            "max_validator_attempts": None,
+                        },
+                        {
+                            "id": "b",
+                            "name": "B",
+                            "button_label": "B",
+                            "enabled": True,
+                            "prompt_template": None,
+                            "selected_rules": None,
+                            "max_validator_attempts": None,
+                        },
+                    ],
+                },
             },
         },
-    })
+    )
     mgr = TaskConfigManager(_shared_fallback(tmp_path), project_root=root)
     assert mgr.delete_task("text_json", "a")
     assert mgr.save_config()

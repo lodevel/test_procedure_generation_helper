@@ -2,6 +2,7 @@
 
 Pure-Python: uses tmp_path only — no Qt, no procedo.core, no bundle.
 """
+
 import pytest
 
 from procedo.studio.authoring import (
@@ -43,6 +44,7 @@ def _make_skill(folder, body=_FRONTMATTER, filename="SKILL.md", tools=False):
 # split_frontmatter                                                            #
 # --------------------------------------------------------------------------- #
 
+
 def test_split_frontmatter_parses_yaml_and_body():
     meta, body = split_frontmatter(_FRONTMATTER)
     assert meta["kind"] == "authoring"
@@ -78,6 +80,7 @@ def test_split_frontmatter_non_mapping_raises():
 # skill_file / load_skill                                                      #
 # --------------------------------------------------------------------------- #
 
+
 def test_skill_file_accepts_both_casings(tmp_path):
     # Both casings must resolve to a real file. The returned name's casing is
     # filesystem-dependent (case-insensitive on Windows), so assert the file is
@@ -94,8 +97,8 @@ def test_skill_file_accepts_both_casings(tmp_path):
 def test_load_skill_populates_fields(tmp_path):
     folder = _make_skill(tmp_path / "dcdc_bringup")
     skill = load_skill(folder, SkillSource.LOCAL)
-    assert skill.skill_id == "dcdc_bringup"          # identity = folder name
-    assert skill.title == "DCDC bring-up test"        # display = frontmatter name
+    assert skill.skill_id == "dcdc_bringup"  # identity = folder name
+    assert skill.title == "DCDC bring-up test"  # display = frontmatter name
     assert skill.target == "dcdc"
     assert skill.version == "0.1.0"
     assert skill.kind == "authoring"
@@ -147,6 +150,7 @@ def test_load_skill_empty_body_raises(tmp_path):
 # discover_skills                                                              #
 # --------------------------------------------------------------------------- #
 
+
 def test_discover_finds_and_sorts_by_title(tmp_path):
     root = tmp_path / "user"
     _make_skill(root / "zebra", body="---\nname: Zebra skill\n---\nbody")
@@ -160,9 +164,7 @@ def test_discover_precedence_higher_source_wins(tmp_path):
     project = tmp_path / "project"
     _make_skill(bundled / "dcdc", body="---\nname: Bundled\n---\nbundled body")
     _make_skill(project / "dcdc", body="---\nname: Project\n---\nproject body")
-    skills = discover_skills(
-        [(bundled, SkillSource.BUNDLED), (project, SkillSource.PROJECT)]
-    )
+    skills = discover_skills([(bundled, SkillSource.BUNDLED), (project, SkillSource.PROJECT)])
     assert len(skills) == 1
     assert skills[0].source is SkillSource.PROJECT
     assert skills[0].title == "Project"
@@ -174,9 +176,7 @@ def test_discover_precedence_independent_of_root_order(tmp_path):
     _make_skill(bundled / "dcdc", body="---\nname: Bundled\n---\nb")
     _make_skill(project / "dcdc", body="---\nname: Project\n---\np")
     # project listed FIRST — bundled must still not override it.
-    skills = discover_skills(
-        [(project, SkillSource.PROJECT), (bundled, SkillSource.BUNDLED)]
-    )
+    skills = discover_skills([(project, SkillSource.PROJECT), (bundled, SkillSource.BUNDLED)])
     assert skills[0].source is SkillSource.PROJECT
 
 
@@ -203,9 +203,7 @@ def test_discover_builtin_is_lowest_precedence(tmp_path):
     local = tmp_path / "local"
     _make_skill(builtin / "dcdc", body="---\nname: Builtin\n---\nb")
     _make_skill(local / "dcdc", body="---\nname: Local\n---\nl")
-    skills = discover_skills(
-        [(builtin, SkillSource.BUILTIN), (local, SkillSource.LOCAL)]
-    )
+    skills = discover_skills([(builtin, SkillSource.BUILTIN), (local, SkillSource.LOCAL)])
     assert len(skills) == 1
     assert skills[0].source is SkillSource.LOCAL  # local overrides the built-in lib
     assert skills[0].title == "Local"
@@ -224,7 +222,7 @@ def test_discover_logs_same_source_duplicate(tmp_path, caplog):
     _make_skill(other / "dup", body="---\nname: Second\n---\nbody")
     with caplog.at_level("WARNING"):
         skills = discover_skills([(root, SkillSource.LOCAL), (other, SkillSource.LOCAL)])
-    assert len(skills) == 1                      # first seen kept
+    assert len(skills) == 1  # first seen kept
     assert skills[0].title == "First"
     assert any("duplicate skill_id" in r.message for r in caplog.records)
 
@@ -233,14 +231,13 @@ def test_discover_logs_same_source_duplicate(tmp_path, caplog):
 # encoding / line-ending edge cases (load-bearing, easy to silently regress)   #
 # --------------------------------------------------------------------------- #
 
+
 def test_load_skill_handles_utf8_bom(tmp_path):
     folder = tmp_path / "bom"
     folder.mkdir()
     # Write a UTF-8 BOM before the opening fence — utf-8-sig must strip it so
     # the first line is still "---".
-    (folder / "SKILL.md").write_bytes(
-        b"\xef\xbb\xbf---\nname: BOM skill\n---\nbody text"
-    )
+    (folder / "SKILL.md").write_bytes(b"\xef\xbb\xbf---\nname: BOM skill\n---\nbody text")
     skill = load_skill(folder, SkillSource.LOCAL)
     assert skill.title == "BOM skill"
     assert skill.system_prompt == "body text"
@@ -262,5 +259,5 @@ def test_load_skill_empty_frontmatter_block(tmp_path):
     # "---\n\n---\n" → yaml.safe_load returns None → guarded to {}.
     folder = _make_skill(tmp_path / "emptyfm", body="---\n\n---\nplain body")
     skill = load_skill(folder, SkillSource.LOCAL)
-    assert skill.title == "emptyfm"          # falls back to folder name
+    assert skill.title == "emptyfm"  # falls back to folder name
     assert skill.system_prompt == "plain body"

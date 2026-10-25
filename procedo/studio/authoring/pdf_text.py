@@ -8,6 +8,7 @@ This recovers the pin-function TABLES that matter for power-supply probing. It
 does NOT recover vector/raster pinout DIAGRAMS, which have no text layer — a
 vision read is the future upgrade for those (the procedure wizard's domain).
 """
+
 from __future__ import annotations
 
 import io

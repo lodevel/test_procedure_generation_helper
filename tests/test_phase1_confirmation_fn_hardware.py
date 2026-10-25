@@ -28,7 +28,9 @@ from procedo.studio.core.task_config import TaskConfigManager
 
 # Repo-relative anchors.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_FALLBACK_PATH = _REPO_ROOT / "external" / "test_procedure_generation_helper" / "config" / "tab_contexts.json"
+_FALLBACK_PATH = (
+    _REPO_ROOT / "external" / "test_procedure_generation_helper" / "config" / "tab_contexts.json"
+)
 _FN_HARDWARE = _REPO_ROOT / "customer_configs" / "FN_hardware"
 
 # Real customer data living OUTSIDE this repo — present on dev/bench machines
@@ -55,9 +57,7 @@ def fn_hardware_project(tmp_path):
         "profiles": fn_config.get("profiles", {}),
         # Intentionally NO "workflows" key — that's the test scenario.
     }
-    (cfg / "config.json").write_text(
-        json.dumps(project_config, indent=2), encoding="utf-8"
-    )
+    (cfg / "config.json").write_text(json.dumps(project_config, indent=2), encoding="utf-8")
     return root
 
 

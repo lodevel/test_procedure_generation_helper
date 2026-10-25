@@ -50,8 +50,9 @@ def _disk_hash(test_dir: Path, name: str, patterns: list[re.Pattern[str]]) -> st
     return digest
 
 
-def remember_written(test_dir: Path, name: str, content: str,
-                     patterns: list[re.Pattern[str]]) -> None:
+def remember_written(
+    test_dir: Path, name: str, content: str, patterns: list[re.Pattern[str]]
+) -> None:
     """Studio just wrote ``content`` to ``test_dir / name`` (atomically: a new file id): its hash
     is kept under the file's new stamp, so the Tests list does not read it back (the first read
     of a fresh file waits for the virus scanner, ~15 ms). Not a text holding a CR: written then
@@ -60,7 +61,10 @@ def remember_written(test_dir: Path, name: str, content: str,
         return
     path = test_dir / name
     try:
-        _hashes[path] = (_stamp(path, patterns), enforced_sync_hash(test_dir, name, content, patterns))
+        _hashes[path] = (
+            _stamp(path, patterns),
+            enforced_sync_hash(test_dir, name, content, patterns),
+        )
     except OSError:
         pass  # gone already: the next read finds it so
 

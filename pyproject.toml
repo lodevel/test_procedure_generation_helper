@@ -55,6 +55,19 @@ extend-exclude = [
     ".venv",
 ]
 
+[tool.ruff.format]
+# Vendored opencode_client is not ours to format. Mixed CRLF/LF files stay out: a format pass
+# would flip their endings (measure before adding; keep each file's style).
+exclude = [
+    "external/**",
+    "procedo/studio/__main__.py",
+    "procedo/studio/dock/chat_panel.py",
+    # Formatting grows these past the structure caps (test_size_budgets); carve first.
+    "procedo/engine_client/_bench_session_runner.py",
+    "procedo/studio/dock/skill_chat_widget.py",
+]
+line-ending = "auto"
+
 [tool.ruff.lint]
 select = ["E9", "F"]
 # Pervasive across the never-formatted tree; deferred to a dedicated cleanup.

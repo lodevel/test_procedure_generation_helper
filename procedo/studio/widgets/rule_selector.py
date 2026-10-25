@@ -70,8 +70,10 @@ class RuleSelectorDialog(QDialog):
         ok_btn = ui_kit.primary(QPushButton("OK"))
         ok_btn.clicked.connect(self.accept)
         add_btn = QPushButton("Add document…")
-        add_btn.setToolTip("Copy a .md, .txt or .pdf document into the project's rules "
-                           "(config/project_rules), ticked in every view")
+        add_btn.setToolTip(
+            "Copy a .md, .txt or .pdf document into the project's rules "
+            "(config/project_rules), ticked in every view"
+        )
         add_btn.clicked.connect(self._on_add_document)
         folder_btn = QPushButton("Open folder")
         folder_btn.setToolTip("Open the project's rules folder, to edit or delete its documents")
@@ -88,8 +90,14 @@ class RuleSelectorDialog(QDialog):
         select_all_btn.clicked.connect(lambda: self.rules.set_all(True))
         clear_all_btn = QPushButton("Clear all")
         clear_all_btn.clicked.connect(lambda: self.rules.set_all(False))
-        body.addLayout(ui_kit.hbox(ui_kit.note("Rules included in the LLM context for this view.",
-                                               wrap=False), None, select_all_btn, clear_all_btn))
+        body.addLayout(
+            ui_kit.hbox(
+                ui_kit.note("Rules included in the LLM context for this view.", wrap=False),
+                None,
+                select_all_btn,
+                clear_all_btn,
+            )
+        )
         self.rules = ui_kit.CheckList(mono=True)
         body.addWidget(self.rules, 1)
         self._fill()
@@ -110,14 +118,22 @@ class RuleSelectorDialog(QDialog):
         bundle = [doc for doc in docs if doc.origin == "bundle"]
         own = [doc for doc in docs if doc.origin == "project"]
         for doc in bundle:
-            self.rules.add(doc.key, doc.key, rule_doc_detail(doc, self._sizes[doc.key]),
-                           checked=doc.key in chosen)
+            self.rules.add(
+                doc.key,
+                doc.key,
+                rule_doc_detail(doc, self._sizes[doc.key]),
+                checked=doc.key in chosen,
+            )
         if not bundle:
             self.rules.add_message("No bundle rules")
         self.rules.add_message("Project")
         for doc in own:
-            self.rules.add(doc.key, doc.path.name, rule_doc_detail(doc, self._sizes[doc.key]),
-                           checked=doc.key in chosen)
+            self.rules.add(
+                doc.key,
+                doc.path.name,
+                rule_doc_detail(doc, self._sizes[doc.key]),
+                checked=doc.key in chosen,
+            )
         if self.project_manager.project_root is None:
             self.rules.add_message("Open a project to add documents")
         elif not own:
@@ -139,15 +155,18 @@ class RuleSelectorDialog(QDialog):
     def _update_count(self) -> None:
         checked = self.rules.checked()
         size = sum(self._sizes[key] for key in checked)
-        self.count_label.setText(f"{len(checked)} of {len(self.rules.keys())} rules selected"
-                                 + (f" · {kilobytes(size)}" if checked else ""))
+        self.count_label.setText(
+            f"{len(checked)} of {len(self.rules.keys())} rules selected"
+            + (f" · {kilobytes(size)}" if checked else "")
+        )
 
     def _on_add_document(self) -> None:
         """Copy a document the user picks into the project's rules, then tick it in every
         view's selection (owner decision 2026-10-19); refused when it cannot be added,
         a warning when it is large."""
         path, _ = QFileDialog.getOpenFileName(
-            self, "Add a project rule document", "", "Rule documents (*.md *.txt *.pdf)")
+            self, "Add a project rule document", "", "Rule documents (*.md *.txt *.pdf)"
+        )
         if not path:
             return
         try:
@@ -161,9 +180,11 @@ class RuleSelectorDialog(QDialog):
         size, limit = doc.path.stat().st_size, warn_above(doc.path)
         if size > limit:
             QMessageBox.warning(
-                self, "Add document",
+                self,
+                "Add document",
                 f"{doc.path.name} is {kilobytes(size)}: every selected document is sent with "
-                f"each request, keep each under {kilobytes(limit)}.")
+                f"each request, keep each under {kilobytes(limit)}.",
+            )
 
     def _on_open_folder(self) -> None:
         """Show the project's rules folder (created when missing) in the file manager."""

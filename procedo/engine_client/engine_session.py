@@ -4,6 +4,7 @@ one stdin writer, per-frame read timeout, stderr tail, venv claim, terminate and
 reap). :mod:`.engine` owns the instances, one per project and role;
 :mod:`.bench_client` adds the RUN frames; Studio's ``pack_parsers`` sends ops through it.
 """
+
 from __future__ import annotations
 
 import json
@@ -54,8 +55,9 @@ def _in_flight(ops, done: int) -> str:
     if done + 1 >= len(ops):
         return ""
     op = ops[done + 1].get("op") or {}
-    return (f" while running {op.get('device', '?')} {op.get('op', '?')}"
-            f" (op {done + 2} of {len(ops)})")
+    return (
+        f" while running {op.get('device', '?')} {op.get('op', '?')} (op {done + 2} of {len(ops)})"
+    )
 
 
 class RemoteSession:
@@ -83,7 +85,7 @@ class RemoteSession:
         self._write_lock = threading.RLock()  # one frame at a time on stdin, re-entrant: see _post
         self._dead = False
         self._bundle_dir: Optional[str] = None
-        self._claim: Optional[tuple[Optional[Path], int]] = None   # (venv folder, pid) claimed
+        self._claim: Optional[tuple[Optional[Path], int]] = None  # (venv folder, pid) claimed
 
     # -- lifecycle ---------------------------------------------------------
     def _start(self) -> None:
@@ -95,18 +97,23 @@ class RemoteSession:
         temp = str(temp_root.root())
         self._proc = subprocess.Popen(
             [str(venv.python), str(runner), "--role", self._role],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, bufsize=1, cwd=temp,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            cwd=temp,
             env={**os.environ, "TEMP": temp, "TMP": temp},
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         self._release_claim()
-        self._claim = (project_venv.claim_engine(self._project_root, self._proc.pid,
-                                                 self._role), self._proc.pid)
+        self._claim = (
+            project_venv.claim_engine(self._project_root, self._proc.pid, self._role),
+            self._proc.pid,
+        )
         self._dead = False
         self._stderr_tail.clear()
-        threading.Thread(target=self._drain_stderr, args=(self._proc,),
-                         daemon=True).start()
+        threading.Thread(target=self._drain_stderr, args=(self._proc,), daemon=True).start()
 
     def _post(self, frame: dict[str, Any]) -> None:
         """Write one frame, reading nothing back: the one stdin writer (no two frames interleave)."""
@@ -122,8 +129,7 @@ class RemoteSession:
             pass
 
     def _alive(self) -> bool:
-        return (self._proc is not None and self._proc.poll() is None
-                and not self._dead)
+        return self._proc is not None and self._proc.poll() is None and not self._dead
 
     def _terminate(self) -> None:
         """Terminate AND reap the daemon, so its serial/VISA handle is released
@@ -137,7 +143,7 @@ class RemoteSession:
             except Exception:  # noqa: BLE001
                 self._proc.kill()
                 try:
-                    self._proc.wait(timeout=5)   # reap -> device handle freed
+                    self._proc.wait(timeout=5)  # reap -> device handle freed
                 except Exception:  # noqa: BLE001
                     pass
         except Exception:  # noqa: BLE001
@@ -149,17 +155,18 @@ class RemoteSession:
         # safe-off never open a 2nd process on a device the old daemon still holds.
         self._dead = True
         self._terminate()
-        return {"ok": False, "kind": kind, "error": error,
-                "stderr": list(self._stderr_tail)}
+        return {"ok": False, "kind": kind, "error": error, "stderr": list(self._stderr_tail)}
 
     # -- transport ---------------------------------------------------------
-    def _request(self, frame: dict[str, Any], timeout: float,
-                 on_progress=None) -> dict[str, Any]:
+    def _request(self, frame: dict[str, Any], timeout: float, on_progress=None) -> dict[str, Any]:
         with self._lock:
             if self._dead:
-                return {"ok": False, "kind": "SessionDead",
-                        "error": "remote session already dead",
-                        "stderr": list(self._stderr_tail)}
+                return {
+                    "ok": False,
+                    "kind": "SessionDead",
+                    "error": "remote session already dead",
+                    "stderr": list(self._stderr_tail),
+                }
             try:
                 if not self._alive():
                     self._start()
@@ -174,7 +181,7 @@ class RemoteSession:
 
             # Read to the final frame past per-op ``progress`` frames; the timeout is per frame,
             # so a long batch with steady progress never wedges. ``on_progress`` runs on THIS thread.
-            done = -1                                 # index of the last op the daemon finished
+            done = -1  # index of the last op the daemon finished
             while True:
                 box: dict = {}
 
@@ -187,10 +194,12 @@ class RemoteSession:
                 reader = threading.Thread(target=_read, daemon=True)
                 reader.start()
                 reader.join(timeout)
-                if reader.is_alive():                     # wedged synchronous VISA read
-                    return self._dead_resp(               # _dead_resp terminates+reaps
-                        "SessionTimeout", f"daemon unresponsive after {timeout}s"
-                        + _in_flight(frame.get("ops"), done))
+                if reader.is_alive():  # wedged synchronous VISA read
+                    return self._dead_resp(  # _dead_resp terminates+reaps
+                        "SessionTimeout",
+                        f"daemon unresponsive after {timeout}s"
+                        + _in_flight(frame.get("ops"), done),
+                    )
                 if "err" in box or not box.get("line"):
                     rc = self._proc.poll()
                     return self._dead_resp("SessionDead", f"daemon closed pipe (exit={rc})")
@@ -211,11 +220,17 @@ class RemoteSession:
                 return msg
 
     # -- API ---------------------------------------------------------------
-    def exec_ops(self, ops: list[dict[str, Any]], bench_map: dict[str, Any],
-                 timeout: Optional[int] = None, on_progress=None,
-                 inputs: Optional[dict] = None,
-                 procedure_json: Optional[dict] = None,
-                 *, work_dir: Path) -> dict[str, Any]:
+    def exec_ops(
+        self,
+        ops: list[dict[str, Any]],
+        bench_map: dict[str, Any],
+        timeout: Optional[int] = None,
+        on_progress=None,
+        inputs: Optional[dict] = None,
+        procedure_json: Optional[dict] = None,
+        *,
+        work_dir: Path,
+    ) -> dict[str, Any]:
         """Run a contiguous batch of ``procedure_json`` (the holder's document; the
         daemon refuses a batch without one); per_session devices stay HELD afterward.
         The daemon runs it in ``work_dir`` (the guided run's folder), so a relative
@@ -231,50 +246,90 @@ class RemoteSession:
         call takes them. The daemon folds in each reading as it executes and
         materializes the live ``verdict`` via the same ``build_manual_run`` the
         caller uses at batch end (so they agree)."""
-        frame: dict[str, Any] = {"cmd": "exec_ops", "ops": ops, "bench_map": bench_map,
-                                 "procedure_json": procedure_json,
-                                 "work_dir": str(work_dir), **(inputs or {})}
+        frame: dict[str, Any] = {
+            "cmd": "exec_ops",
+            "ops": ops,
+            "bench_map": bench_map,
+            "procedure_json": procedure_json,
+            "work_dir": str(work_dir),
+            **(inputs or {}),
+        }
         # The deadline is per frame and the daemon streams one progress frame
         # per op, so one op's budget bounds the wait however long the batch.
         return self._request(frame, timeout or _TIMEOUT_REMOTE_EXEC, on_progress=on_progress)
 
-    def exec_op(self, target_op: dict[str, Any], bench: dict[str, Any],
-                timeout: Optional[int] = None,
-                procedure_json: Optional[dict] = None,
-                *, work_dir: Path) -> dict[str, Any]:
+    def exec_op(
+        self,
+        target_op: dict[str, Any],
+        bench: dict[str, Any],
+        timeout: Optional[int] = None,
+        procedure_json: Optional[dict] = None,
+        *,
+        work_dir: Path,
+    ) -> dict[str, Any]:
         """⚡ single op — batch of one, unwrapped to the flat shape the dialog
         consumes: ``{"ok", "has_value", "value", "unit", "ref", "log"}``."""
         device = target_op.get("device")
-        res = self.exec_ops([{"node_path": "", "op": target_op}], {device: bench}, timeout,
-                            procedure_json=procedure_json, work_dir=work_dir)
+        res = self.exec_ops(
+            [{"node_path": "", "op": target_op}],
+            {device: bench},
+            timeout,
+            procedure_json=procedure_json,
+            work_dir=work_dir,
+        )
         if not res.get("ok"):
             return res
         r0 = (res.get("results") or [{}])[0]
         if not r0.get("ok"):
-            out = {"ok": False, "kind": "ExecError",
-                   "error": r0.get("error", "remote execution failed"),
-                   "log": res.get("log", [])}
+            out = {
+                "ok": False,
+                "kind": "ExecError",
+                "error": r0.get("error", "remote execution failed"),
+                "log": res.get("log", []),
+            }
             if res.get("unsafe"):
                 out["unsafe"] = res["unsafe"]
             return out
-        out = {"ok": True, "has_value": r0.get("has_value", False),
-               "value": r0.get("value"), "unit": r0.get("unit", ""),
-               "ref": r0.get("ref"), "log": res.get("log", [])}
+        out = {
+            "ok": True,
+            "has_value": r0.get("has_value", False),
+            "value": r0.get("value"),
+            "unit": r0.get("unit", ""),
+            "ref": r0.get("ref"),
+            "log": res.get("log", []),
+        }
         if res.get("unsafe"):
             out["unsafe"] = res["unsafe"]
         return out
 
-    def safe_off(self, targets: list[dict[str, Any]], bench_map: dict[str, Any],
-                 timeout: Optional[int] = None,
-                 procedure_json: Optional[dict] = None) -> dict[str, Any]:
+    def safe_off(
+        self,
+        targets: list[dict[str, Any]],
+        bench_map: dict[str, Any],
+        timeout: Optional[int] = None,
+        procedure_json: Optional[dict] = None,
+    ) -> dict[str, Any]:
         """Turn the given outputs OFF (ELOAD before PSU), keeping devices held.
         ``procedure_json``, when the holder has one, becomes the daemon's document."""
-        return self._request({"cmd": "safe_off", "safe_off": targets, "bench_map": bench_map,
-                              "procedure_json": procedure_json}, timeout or _TIMEOUT_REMOTE_EXEC)
+        return self._request(
+            {
+                "cmd": "safe_off",
+                "safe_off": targets,
+                "bench_map": bench_map,
+                "procedure_json": procedure_json,
+            },
+            timeout or _TIMEOUT_REMOTE_EXEC,
+        )
 
-    def exec_raw_command(self, device: str, etype: str, subtype: str, text: str,
-                         bench: dict[str, Any],
-                         timeout: Optional[int] = None) -> dict[str, Any]:
+    def exec_raw_command(
+        self,
+        device: str,
+        etype: str,
+        subtype: str,
+        text: str,
+        bench: dict[str, Any],
+        timeout: Optional[int] = None,
+    ) -> dict[str, Any]:
         """Send ONE raw command line to ``device`` over the live session and
         return ``{"ok", "response", "log"}`` (or a typed failure).  ``etype`` is
         the DECLARED equipment type + ``subtype`` (the daemon resolves the pack
@@ -283,12 +338,18 @@ class RemoteSession:
         semantics as a per_step op.  ``"?"`` in ``text`` makes it a query (reply
         returned); otherwise it is a write (empty reply)."""
         return self._request(
-            {"cmd": "raw", "device": device, "etype": etype, "subtype": subtype,
-             "text": text, "bench_map": {device: bench}},
-            timeout or _TIMEOUT_REMOTE_EXEC)
+            {
+                "cmd": "raw",
+                "device": device,
+                "etype": etype,
+                "subtype": subtype,
+                "text": text,
+                "bench_map": {device: bench},
+            },
+            timeout or _TIMEOUT_REMOTE_EXEC,
+        )
 
-    def engine_op(self, op: str, timeout: Optional[int] = None,
-                  **fields: Any) -> dict[str, Any]:
+    def engine_op(self, op: str, timeout: Optional[int] = None, **fields: Any) -> dict[str, Any]:
         """One engine op (``engine_client/_engine_ops.py``) in this live daemon, with its
         document in ``fields`` (``procedure_json``). Returns the op's result
         dict, or the session's typed failure."""

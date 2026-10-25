@@ -48,11 +48,7 @@ _PRESERVED_SUFFIXES: tuple[str, ...] = (
 
 def _build_preserved_names(equipment_ids: list[str]) -> frozenset[str]:
     """All ``<EQUIPMENT_ID><SUFFIX>`` combinations the merge cares about."""
-    return frozenset(
-        eq_id + suffix
-        for eq_id in equipment_ids
-        for suffix in _PRESERVED_SUFFIXES
-    )
+    return frozenset(eq_id + suffix for eq_id in equipment_ids for suffix in _PRESERVED_SUFFIXES)
 
 
 def _assign_target_name(node: ast.AST) -> str | None:
@@ -217,7 +213,7 @@ def _format_literal(value: Any) -> str:
     if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):
         # NaN or infinity — invalid literal in source; fall back to a
         # safe parseable form via ``float("nan")``/``float("inf")``.
-        return f'float({value!r})'
+        return f"float({value!r})"
     return repr(value)
 
 

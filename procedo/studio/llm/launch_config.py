@@ -165,12 +165,14 @@ def _build_skill_tools_blocks(project_root: Optional[Path]) -> dict:
 
     blocks: dict = {}
     for tf in discover_tool_folders(skill_roots(project_root) + tool_roots(project_root)):
-        blocks.update(build_skill_tools_mcp_block(
-            server_name=tf.server,
-            venv_python_win=_python_win(),
-            mcp_script_win=_mcp_script_win("_skill_tools_mcp.py"),
-            tools_dir_win=str(tf.path),
-        ))
+        blocks.update(
+            build_skill_tools_mcp_block(
+                server_name=tf.server,
+                venv_python_win=_python_win(),
+                mcp_script_win=_mcp_script_win("_skill_tools_mcp.py"),
+                tools_dir_win=str(tf.path),
+            )
+        )
     return blocks
 
 
@@ -186,10 +188,10 @@ def _build_run_skill_block(project_root, launch_dir, run_skill_secret):
     from ..llm.mcp_config import build_run_skill_mcp_block
     from ..authoring.locations import skill_roots
     from ..authoring.tool_folders import build_skill_tools_universe
+
     # Sort roots by SkillSource (ASCENDING) so the child resolves the same body
     # the registry would (highest source wins), not by list order.
-    roots = [str(pth) for pth, _src in
-             sorted(skill_roots(project_root), key=lambda ps: ps[1])]
+    roots = [str(pth) for pth, _src in sorted(skill_roots(project_root), key=lambda ps: ps[1])]
     # Persist the skill-tools gate universe beside the config so the child can
     # force every NON-declared skill tool off (mirrors the parent gating).
     universe_file = ""
@@ -269,11 +271,11 @@ def build_launch_config(
     if proj_block:
         mcp.update(proj_block)
         from ..llm.board_chat import allow_complete_board_output
+
         allow_complete_board_output(data)
     run_skill_block = None
     try:
-        run_skill_block = _build_run_skill_block(
-            project_root, launch_dir, run_skill_secret)
+        run_skill_block = _build_run_skill_block(project_root, launch_dir, run_skill_secret)
     except Exception:
         log.exception("Failed to build run_skill MCP block")
     if run_skill_block:
@@ -290,6 +292,5 @@ def build_launch_config(
     target = launch_file_path(launch_dir, CONFIG_FILE)
     payload = json.dumps(data, indent=2)
     atomic_write_text(target, payload)  # never a half-written config
-    log.info("Built launch config (project=%s, mcp=%s)",
-             project_root, sorted(mcp.keys()))
+    log.info("Built launch config (project=%s, mcp=%s)", project_root, sorted(mcp.keys()))
     return launch_dir

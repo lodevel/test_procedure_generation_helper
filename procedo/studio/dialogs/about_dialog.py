@@ -23,8 +23,13 @@ class AboutDialog(QDialog):
         self.setWindowTitle("About Procedo Studio")
         ok_btn = ui_kit.primary(QPushButton("OK"))
         ok_btn.clicked.connect(self.accept)
-        body = ui_kit.framed(self, ui_kit.HeaderBand("About"), ui_kit.FooterBand([ok_btn]),
-                             margins=(20, 16, 20, 14), spacing=8)
+        body = ui_kit.framed(
+            self,
+            ui_kit.HeaderBand("About"),
+            ui_kit.FooterBand([ok_btn]),
+            margins=(20, 16, 20, 14),
+            spacing=8,
+        )
         procedo = ui_kit.bold("Procedo", 1.25)
         studio = QLabel("Studio")
         studio.setObjectName("studioName")

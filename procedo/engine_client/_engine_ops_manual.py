@@ -95,9 +95,11 @@ def _reading_expects_number(step: dict) -> bool:
     ``{1} = '1'``) — then a string is fine — or it has no expected criterion."""
     kind = step.get("kind", "")
     if kind in ("text", "prompt"):
-        return False   # a UART answer, a typed answer read as text: whatever the criterion looks like
+        return (
+            False  # a UART answer, a typed answer read as text: whatever the criterion looks like
+        )
     if kind in ("bytes", "read", "measure", "number"):
-        return True    # whatever an `or` / `and` hint quotes for another reading
+        return True  # whatever an `or` / `and` hint quotes for another reading
     et = step.get("expected_text") or ""
     return bool(et) and "'" not in et and '"' not in et
 
@@ -114,16 +116,24 @@ def _reading_refusal(step: dict, typed: str) -> str:
     value = _typed_int(typed) if typed.startswith("0x") else None
     if value is not None and high < value < 1 << 8 * count:
         if count == 1:
-            return (f"“{typed}” is out of a signed 1-byte read's range — the signed value of {typed} is "
-                    f"{value - 256}: type {value - 256}.")
+            return (
+                f"“{typed}” is out of a signed 1-byte read's range — the signed value of {typed} is "
+                f"{value - 256}: type {value - 256}."
+            )
         printed = value.to_bytes(count, "little" if little_endian else "big").hex(" ").upper()
-        return (f"“{typed}” is out of a signed {count}-byte read's range — paste the bytes as the board "
-                f"prints them, e.g. {printed}.")
+        return (
+            f"“{typed}” is out of a signed {count}-byte read's range — paste the bytes as the board "
+            f"prints them, e.g. {printed}."
+        )
     if count == 1:
-        return (f"“{typed}” is no 1-byte reading — type the value ({low} to {high}): 0x… as the board prints it, "
-                "or decimal.")
-    return (f"“{typed}” is no {count}-byte reading — type the value ({low} to {high}, 0x… for hex), "
-            "or paste the bytes as the board prints them.")
+        return (
+            f"“{typed}” is no 1-byte reading — type the value ({low} to {high}): 0x… as the board prints it, "
+            "or decimal."
+        )
+    return (
+        f"“{typed}” is no {count}-byte reading — type the value ({low} to {high}, 0x… for hex), "
+        "or paste the bytes as the board prints them."
+    )
 
 
 def _document(spec: dict):
@@ -135,8 +145,11 @@ def _document(spec: dict):
     directly instead of dying with a bare traceback."""
     doc = spec.get("procedure_json")
     if not isinstance(doc, dict):
-        return None, {"ok": False, "kind": "Other",
-                      "error": "the procedure document is not a JSON object"}
+        return None, {
+            "ok": False,
+            "kind": "Other",
+            "error": "the procedure document is not a JSON object",
+        }
     return doc, None
 
 
@@ -147,8 +160,13 @@ def run_inputs(spec: dict) -> dict:
     them here; JSON keeps a key as text, read back by the wheel's ref_key_from_json."""
     from rules_packager_base.Result import ref_key_from_json
 
-    return {"measurements": spec.get("measurements") or {}, "controls": spec.get("controls") or {},
-            "operator_verdicts": {ref_key_from_json(k): v for k, v in (spec.get("operator_verdicts") or {}).items()}}
+    return {
+        "measurements": spec.get("measurements") or {},
+        "controls": spec.get("controls") or {},
+        "operator_verdicts": {
+            ref_key_from_json(k): v for k, v in (spec.get("operator_verdicts") or {}).items()
+        },
+    }
 
 
 def op_build_manual_run(spec: dict) -> dict:
@@ -176,8 +194,10 @@ def _declared_channels(procedure_json: dict) -> dict:
     single-channel default, [1]."""
     from rules_packager_base.rules.v2_0_2 import extractors
 
-    return {eq.id: sorted({ch.channel for ch in eq.channels if isinstance(ch.channel, int)}) or [1]
-            for eq in extractors.extract_equipment_requirements(procedure_json)}
+    return {
+        eq.id: sorted({ch.channel for ch in eq.channels if isinstance(ch.channel, int)}) or [1]
+        for eq in extractors.extract_equipment_requirements(procedure_json)
+    }
 
 
 def _step_payload(step) -> dict:
@@ -189,6 +209,7 @@ def _step_payload(step) -> dict:
     op = d.get("resolved_op") or {}
     if d.get("op") == "wait" and op.get("duration") is not None:
         from rules_packager_base.test_helpers import setpoint
+
         try:
             d["wait_s"] = max(setpoint(op["duration"], op.get("duration_unit") or "s"), 0)
         except ValueError as exc:
@@ -198,7 +219,7 @@ def _step_payload(step) -> dict:
 
 # -- what the guided run's Values panel shows, read from the wheel's own walk ----
 
-_TURN_RE = re.compile(r"\.body\[\d+\]#(?:iter|run)=(\d+)")   # a loop's turn, after its node_path
+_TURN_RE = re.compile(r"\.body\[\d+\]#(?:iter|run)=(\d+)")  # a loop's turn, after its node_path
 
 
 @functools.cache
@@ -212,9 +233,9 @@ def _shown_session():
     class ShownSession(StepperSession):
         def __init__(self, procedure_json: dict):
             super().__init__(procedure_json)
-            self.loops: list = []   # the loops the walk is in: (node_path, origin, variables, " of N")
-            self.names: dict = {}   # row node_path -> its turns' names
-            self.binds: dict = {}   # Bind row node_path -> (value text, note)
+            self.loops: list = []  # the loops the walk is in: (node_path, origin, variables, " of N")
+            self.names: dict = {}  # row node_path -> its turns' names
+            self.binds: dict = {}  # Bind row node_path -> (value text, note)
 
         def _expand_for(self, block, block_path, bindings, ctx, skip):
             turns = for_turns(block, self.macros, bindings) or ()
@@ -234,7 +255,9 @@ def _shown_session():
 
         def _compute(self, row, raw, bindings, ctx):
             said = len(row.text)
-            super()._compute(row, raw, bindings, ctx)   # its row says " → <value>" or " → <why none>"
+            super()._compute(
+                row, raw, bindings, ctx
+            )  # its row says " → <value>" or " → <why none>"
             text = row.text[said:].removeprefix(" → ")
             self.binds[row.node_path] = (text, "") if row.ref in ctx.measurements else ("", text)
 
@@ -255,8 +278,10 @@ def _turn_names(loops: list, node_path: str, bindings: dict) -> list:
             value = bindings.get(var)
             cells = value.items() if isinstance(value, dict) else ((None, value),)
             bare = [var if key is None else f"{var}.{key}" for key, _cell in cells]
-            names += [{"name": f"${{{b}}}", "var": b, "value": shown_value(cell), "origin": origin}
-                      for b, (_key, cell) in zip(bare, cells, strict=True)]
+            names += [
+                {"name": f"${{{b}}}", "var": b, "value": shown_value(cell), "origin": origin}
+                for b, (_key, cell) in zip(bare, cells, strict=True)
+            ]
     return names
 
 
@@ -269,7 +294,9 @@ def _shown_steps(session, run, readings: dict) -> list:
     from rules_packager_base.test_helpers import entry_refs, value_text
 
     units: dict = {}
-    for entry in session._build_rules(run.measurements, []).values():   # the RULES test.py judges now
+    for entry in session._build_rules(
+        run.measurements, []
+    ).values():  # the RULES test.py judges now
         for ref in entry_refs(entry):
             if entry.get("units"):
                 units.setdefault(ref, entry["units"])
@@ -278,8 +305,14 @@ def _shown_steps(session, run, readings: dict) -> list:
         text, note = session.binds.get(step.node_path, ("", ""))
         if step.op != "call" and readings.get(step.node_path) is not None:
             text = value_text(readings[step.node_path], units.get(step.ref, ""))
-        out.append({**_step_payload(step), "value_text": text, "value_note": note,
-                    "names": session.names.get(step.node_path, [])})
+        out.append(
+            {
+                **_step_payload(step),
+                "value_text": text,
+                "value_note": note,
+                "names": session.names.get(step.node_path, []),
+            }
+        )
     return out
 
 
@@ -290,11 +323,17 @@ def _procedure_names(macros: dict) -> list:
     from rules_packager_base.test_helpers import shown_value
 
     bound = initial_static_bindings(macros)
-    names = [{"name": name, "value": shown_value(bound[name]), "origin": origin}
-             for key, origin in (("lets", "@LET"), ("allocations", "@ALLOC"))
-             for name in macros.get(key) or {} if name in bound]
-    return names + [{"name": name, "value": f"{len(rows)} rows", "origin": "@TABLE"}
-                    for name, rows in (macros.get("tables") or {}).items() if isinstance(rows, list)]
+    names = [
+        {"name": name, "value": shown_value(bound[name]), "origin": origin}
+        for key, origin in (("lets", "@LET"), ("allocations", "@ALLOC"))
+        for name in macros.get(key) or {}
+        if name in bound
+    ]
+    return names + [
+        {"name": name, "value": f"{len(rows)} rows", "origin": "@TABLE"}
+        for name, rows in (macros.get("tables") or {}).items()
+        if isinstance(rows, list)
+    ]
 
 
 def op_build_manual_result(spec: dict) -> dict:
@@ -303,12 +342,17 @@ def op_build_manual_result(spec: dict) -> dict:
         return err
     from rules_packager_base.rules.v2_0_2.parser import build_manual_result
 
-    result = build_manual_result(procedure_json, **run_inputs(spec), failures=spec.get("failures") or {},
-                                 operator_stop=bool(spec.get("operator_stop")))
+    result = build_manual_result(
+        procedure_json,
+        **run_inputs(spec),
+        failures=spec.get("failures") or {},
+        operator_stop=bool(spec.get("operator_stop")),
+    )
     return {"ok": True, "result": result}
 
 
 # -- a guided run's typed readings ----------------------------------------------
+
 
 def op_criterion_refs(spec: dict) -> dict:
     """The readings each results.json criterion judges (``spec["criteria"]``: key ->
@@ -317,4 +361,7 @@ def op_criterion_refs(spec: dict) -> dict:
     from rules_packager_base.test_helpers import entry_refs
 
     criteria = spec.get("criteria") or {}
-    return {"ok": True, "refs": {key: [str(r) for r in entry_refs(crit)] for key, crit in criteria.items()}}
+    return {
+        "ok": True,
+        "refs": {key: [str(r) for r in entry_refs(crit)] for key, crit in criteria.items()},
+    }

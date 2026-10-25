@@ -17,7 +17,9 @@ from procedo.studio.core.validation_outcome import ValidationOutcome
 
 from .test_proposal_cards import opened as opened  # noqa: F401
 from .test_main_window_characterization import (  # noqa: F401
-    make_window as make_window, mbox as mbox, qapp as qapp,
+    make_window as make_window,
+    mbox as mbox,
+    qapp as qapp,
 )
 
 OK = ValidationOutcome(ok=True, skipped=False, issues=[])
@@ -26,7 +28,8 @@ OK = ValidationOutcome(ok=True, skipped=False, issues=[])
 class _Asked:
     def __init__(self, *args, **kwargs):
         self.finished = self.error = self.thinking_chunk = self.text_chunk = SimpleNamespace(
-            connect=lambda slot: None)
+            connect=lambda slot: None
+        )
 
     def start(self):
         pass
@@ -147,9 +150,17 @@ def test_the_validator_unavailable_message_shows_once_per_view_and_never_after_a
 
     def loop():
         return llm_validator_loop.ValidatorLoop(
-            main_window=SimpleNamespace(dock=SimpleNamespace(chat_panel=chat)), tab_context=None,
-            run_state=None, status=None, section_override=None, drop_late_reply=None,
-            is_active=None, show_error=None, finish=None, run_task=None)
+            main_window=SimpleNamespace(dock=SimpleNamespace(chat_panel=chat)),
+            tab_context=None,
+            run_state=None,
+            status=None,
+            section_override=None,
+            drop_late_reply=None,
+            is_active=None,
+            show_error=None,
+            finish=None,
+            run_task=None,
+        )
 
     shown = loop()
     shown._maybe_warn_validator_unavailable("no engine")

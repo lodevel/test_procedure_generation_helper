@@ -13,8 +13,13 @@ from procedo.ui import ui_kit
 from procedo.ui.flow_layout import FlowLayout
 
 
-def task_button(label: str, callback: Callable, *, force_callback: Callable | None = None,
-                force_tooltip: str = "") -> QToolButton:
+def task_button(
+    label: str,
+    callback: Callable,
+    *,
+    force_callback: Callable | None = None,
+    force_tooltip: str = "",
+) -> QToolButton:
     """An assistant (LLM task) button; with *force_callback* a split button whose ▾ menu offers
     the task and its force variant (validation bypassed)."""
     button = QToolButton()
@@ -56,7 +61,7 @@ class _FileRow(QWidget):
     def event(self, event) -> bool:  # noqa: D401 (Qt)
         if event.type() == QEvent.Type.LayoutRequest:  # a button was shown, hidden, added
             items = [self.layout_.itemAt(i).widget() for i in range(self.layout_.count())]
-            after = items[items.index(self.divider) + 1:] if self.divider in items else []
+            after = items[items.index(self.divider) + 1 :] if self.divider in items else []
             self.divider.setVisible(any(not w.isHidden() for w in after if w is not None))
         return super().event(event)
 

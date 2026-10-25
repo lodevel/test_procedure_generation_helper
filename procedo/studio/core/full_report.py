@@ -10,6 +10,7 @@ Editor MVP: no ODB image pre-generation (that lives main-app side in
 The editor edits live text but the core reads ``procedure.json`` — so this exports
 the LAST GENERATED json for each test, not unsaved edits.
 """
+
 from __future__ import annotations
 
 import logging
@@ -60,43 +61,55 @@ def export_full_report(
         if doc is not None:
             procedures.append(doc)
     if not procedures:
-        raise FullReportError(
-            "None of the selected tests have a readable procedure.json.")
+        raise FullReportError("None of the selected tests have a readable procedure.json.")
 
     if sidecar is None:
         sidecar = report_export.create_default_sidecar()
     if template_path is None:
         template_path = report_export.get_project_template(
-            project_path=project_root, sidecar=sidecar)
+            project_path=project_root, sidecar=sidecar
+        )
     if not template_path or not Path(template_path).is_file():
         raise FullReportError(
-            "No Word template found in the project's config/templates/exports/ "
-            "directory.")
+            "No Word template found in the project's config/templates/exports/ directory."
+        )
 
     if report_export.images_included(sidecar):
         _generate_images(project_root, procedures, progress)
     report_export.render_report(
-        Path(template_path), sidecar, procedures, project_root, Path(output_path))
+        Path(template_path), sidecar, procedures, project_root, Path(output_path)
+    )
     return Path(output_path)
 
 
-def export_outcome(project_root: Path, test_folders: list[Path], output_path: Path, *,
-                   sidecar: dict, progress=None) -> dict:
+def export_outcome(
+    project_root: Path, test_folders: list[Path], output_path: Path, *, sidecar: dict, progress=None
+) -> dict:
     """:func:`export_full_report` as a worker runs it (each document's meta and equipment
     are the project engine's answers, never asked on the GUI thread), with its sidecar
     saved beside the report: ``{"path"}``, or why not as ``{"title", "text", "critical"}``."""
     try:
         report_export.save_sidecar(report_export.sidecar_path_for(output_path), sidecar)
-        return {"path": export_full_report(project_root, test_folders, output_path,
-                                           sidecar=sidecar, progress=progress)}
+        return {
+            "path": export_full_report(
+                project_root, test_folders, output_path, sidecar=sidecar, progress=progress
+            )
+        }
     except FullReportError as e:
         return {"title": "Export to Word", "text": str(e), "critical": False}
     except ImportError as e:
-        return {"title": "Word Export Unavailable", "critical": False, "text":
-                f"The full report needs the 'docxtpl' package in this environment.\n\n{e}"}
+        return {
+            "title": "Word Export Unavailable",
+            "critical": False,
+            "text": f"The full report needs the 'docxtpl' package in this environment.\n\n{e}",
+        }
     except Exception as e:  # noqa: BLE001 — shown to the operator, never a dead worker
         log.exception("Full report export failed")
-        return {"title": "Export Failed", "text": f"Could not generate the Word report:\n{e}", "critical": True}
+        return {
+            "title": "Export Failed",
+            "text": f"Could not generate the Word report:\n{e}",
+            "critical": True,
+        }
 
 
 def _generate_images(project_root: Path, procedures: list, progress=None) -> None:
@@ -111,6 +124,7 @@ def _generate_images(project_root: Path, procedures: list, progress=None) -> Non
         pin = ref.get("pin")
         if component:
             odb_inspect.render_target(
-                project_root, component, str(pin) if pin is not None else None)
+                project_root, component, str(pin) if pin is not None else None
+            )
         if progress is not None and not progress(i, total):
             break  # operator cancelled

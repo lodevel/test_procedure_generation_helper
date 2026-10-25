@@ -14,6 +14,7 @@ The FSM is intentionally narrow:
 Splitting it out means the auto-retry loop's transition logic is one
 small testable unit, not buried inside ``_handle_llm_response``.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -65,13 +66,15 @@ class RunStateKind(Enum):
 
 
 # Terminal states the FSM resets from before starting a new run.
-_TERMINAL = frozenset({
-    RunStateKind.IDLE,
-    RunStateKind.APPLIED,
-    RunStateKind.REJECTED,
-    RunStateKind.FAILED_OUT_OF_RETRIES,
-    RunStateKind.CANCELLED,
-})
+_TERMINAL = frozenset(
+    {
+        RunStateKind.IDLE,
+        RunStateKind.APPLIED,
+        RunStateKind.REJECTED,
+        RunStateKind.FAILED_OUT_OF_RETRIES,
+        RunStateKind.CANCELLED,
+    }
+)
 
 
 @dataclass
@@ -169,11 +172,15 @@ class LLMRunState:
         self.state = RunStateKind.FAILED_OUT_OF_RETRIES
 
     def on_review_accepted(self) -> None:
-        self._require_in({RunStateKind.AWAITING_REVIEW, RunStateKind.FAILED_OUT_OF_RETRIES}, "on_review_accepted")
+        self._require_in(
+            {RunStateKind.AWAITING_REVIEW, RunStateKind.FAILED_OUT_OF_RETRIES}, "on_review_accepted"
+        )
         self.state = RunStateKind.APPLIED
 
     def on_review_rejected(self) -> None:
-        self._require_in({RunStateKind.AWAITING_REVIEW, RunStateKind.FAILED_OUT_OF_RETRIES}, "on_review_rejected")
+        self._require_in(
+            {RunStateKind.AWAITING_REVIEW, RunStateKind.FAILED_OUT_OF_RETRIES}, "on_review_rejected"
+        )
         self.state = RunStateKind.REJECTED
 
     def cancel(self) -> None:

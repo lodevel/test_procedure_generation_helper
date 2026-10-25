@@ -20,6 +20,7 @@ and ``original_text`` it is handed. Asserting the reconstructed identity is
 Runs without PySide6:
     <venv>/python -m pytest tests/test_validator_dispatch_reconstruct.py --noconftest -q
 """
+
 from __future__ import annotations
 
 import unittest
@@ -74,10 +75,12 @@ class _CapturingValidateFn:
 
     def __call__(self, **kwargs):
         self.calls.append(kwargs)
+
         # Minimal duck-typed ValidationReport: ok=True, no errors.
         class _Report:
             ok = True
             errors: list = []
+
         return _Report()
 
 
@@ -94,7 +97,10 @@ class ValidateProposedTextReconstructsAgainstPriorTests(unittest.TestCase):
         # project_root=None: the engine stand-in reconstructs; the name-fidelity gate
         # defaults to enabled (no config.json), original_text threaded through.
         outcome = validator_dispatch._validate_proposed_text(
-            self.response, self.current, None, self.validate_fn,
+            self.response,
+            self.current,
+            None,
+            self.validate_fn,
         )
         self.assertIsNotNone(outcome)
         self.assertTrue(outcome.ok, msg=f"unexpected issues: {outcome.issues}")
@@ -119,7 +125,10 @@ class ValidateProposedTextReconstructsAgainstPriorTests(unittest.TestCase):
         # Name-fidelity needs the operator's pre-LLM text as original_text.
         # The bug fed it None; the fix passes the prior through.
         validator_dispatch._validate_proposed_text(
-            self.response, self.current, None, self.validate_fn,
+            self.response,
+            self.current,
+            None,
+            self.validate_fn,
         )
         self.assertEqual(len(self.validate_fn.calls), 1)
         self.assertEqual(self.validate_fn.calls[0]["original_text"], PRIOR)

@@ -94,13 +94,11 @@ class SkillChatDialog(QDialog):
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.close)
         self._insert_btn = ui_kit.primary(QPushButton("Insert into procedure"))
-        self._insert_btn.setToolTip(
-            "Append the latest draft to the procedure text editor.")
+        self._insert_btn.setToolTip("Append the latest draft to the procedure text editor.")
         self._insert_btn.setEnabled(False)
         self._insert_btn.clicked.connect(self._on_insert)
         self._footer = ui_kit.FooterBand([close_btn, self._insert_btn])
-        body = ui_kit.framed(self, self._chat.take_header(), self._footer,
-                             margins=(18, 14, 18, 14))
+        body = ui_kit.framed(self, self._chat.take_header(), self._footer, margins=(18, 14, 18, 14))
         body.addWidget(self._chat, 1)
 
         # Gate Insert on the widget's reply lifecycle: enable when an

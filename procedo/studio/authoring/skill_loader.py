@@ -4,6 +4,7 @@ Kept separate from discovery (:mod:`.registry`) so parsing one folder is
 independently testable. Frontmatter is YAML between ``---`` fences; the body
 after the closing fence is the LLM system prompt.
 """
+
 from __future__ import annotations
 
 import logging
@@ -41,7 +42,7 @@ def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     for i in range(1, len(lines)):
         if lines[i].strip() == "---":
             raw = "\n".join(lines[1:i])
-            body = "\n".join(lines[i + 1:])
+            body = "\n".join(lines[i + 1 :])
             try:
                 meta = yaml.safe_load(raw) or {}
             except yaml.YAMLError as exc:

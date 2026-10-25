@@ -4,6 +4,7 @@
 Pure-logic; runs without PySide6:
     PYTHONPATH=. python3 -m pytest tests/test_output_contracts_section_emit.py --noconftest -q
 """
+
 from __future__ import annotations
 
 import unittest
@@ -73,14 +74,10 @@ class GetContractEmitListTests(unittest.TestCase):
     """Text tabs append the emit-list; json_code stays untouched."""
 
     def test_text_json_has_emit_list(self) -> None:
-        self.assertIn(
-            "Author ONLY these sections", get_contract_for_tab("text_json")
-        )
+        self.assertIn("Author ONLY these sections", get_contract_for_tab("text_json"))
 
     def test_text_only_has_emit_list(self) -> None:
-        self.assertIn(
-            "Author ONLY these sections", get_contract_for_tab("text_only")
-        )
+        self.assertIn("Author ONLY these sections", get_contract_for_tab("text_only"))
 
     def test_json_code_has_no_emit_list(self) -> None:
         contract = get_contract_for_tab("json_code")
@@ -157,7 +154,7 @@ class RenderSectionEmitListCustomUniverseTests(unittest.TestCase):
 
     def test_parser_section_in_do_not_emit(self) -> None:
         marker = "Do NOT emit these"
-        do_not_emit = self.rendered[self.rendered.index(marker):]
+        do_not_emit = self.rendered[self.rendered.index(marker) :]
         self.assertIn("## Intro", do_not_emit)
 
 
@@ -168,6 +165,7 @@ class RenderSectionEmitListEmptyOrderFallbackTests(unittest.TestCase):
     def setUp(self) -> None:
         # Default frozenset construction with no section_order: equipment owned.
         from procedo.core.section_ownership import SectionOwnership
+
         self.rendered = render_section_emit_list(
             SectionOwnership(
                 llm_sections=frozenset({"equipment", "steps", "expected"}),
@@ -179,9 +177,7 @@ class RenderSectionEmitListEmptyOrderFallbackTests(unittest.TestCase):
         self.assertIn("## Equipment", self.rendered)
         self.assertIn("## Meta", self.rendered)
         # Owned order preserved from CANONICAL_SECTION_ORDER fallback.
-        self.assertLess(
-            self.rendered.index("## Equipment"), self.rendered.index("## Steps")
-        )
+        self.assertLess(self.rendered.index("## Equipment"), self.rendered.index("## Steps"))
 
 
 class CanonicalSectionConstantsTests(unittest.TestCase):

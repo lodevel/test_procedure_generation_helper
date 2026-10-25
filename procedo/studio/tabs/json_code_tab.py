@@ -36,28 +36,29 @@ log = logging.getLogger(__name__)
 #: The steps card's width on board S3.
 _STEPS_WIDTH = 210
 
+
 class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
     """
     JSON-Code tab showing both artifacts side-by-side.
-    
+
     LEFT: JSON editor (procedure.json)
     MIDDLE: the steps, ✓ when test.py has their block (click: jump in both)
     RIGHT: Code editor (test.py)
-    
+
     Actions:
     - JSON → Code: Primary direction (generate executable test from procedure)
     - Code → JSON: Reverse direction (reverse-engineer JSON from existing code)
     - Coherence checks between artifacts
     """
-    
+
     # Tab identifier for button label management
     tab_id = "json_code"
     _no_pack_tip = "No code generator for {names}. Use the LLM workflow."
     _proposal_fields = (("procedure_json", "procedure_json"), ("test_code", "test_code"))
-    
+
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
-        
+
         # Initialize TabContext for this tab
         self.tab_context = TabContext(
             tab_id="json_code",
@@ -66,7 +67,7 @@ class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
             artifact_manager=main_window.artifact_manager,
             task_config_manager=main_window.task_config_manager,
         )
-    
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -79,18 +80,20 @@ class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
         self._code_blocks_by_n: dict[int, Any] = {}
         # The project's functions as a Call step's tooltip shows them (by Call name).
         self._call_hints: dict[str, str] = {}
-        self._hints_asked: tuple = (0, None)   # (request number, project root) of the answer awaited
+        self._hints_asked: tuple = (0, None)  # (request number, project root) of the answer awaited
 
-        self.json_card = self.add_card(EditorCard(
-            self, ArtifactType.PROCEDURE_JSON, "procedure.json", wrap=False))
+        self.json_card = self.add_card(
+            EditorCard(self, ArtifactType.PROCEDURE_JSON, "procedure.json", wrap=False)
+        )
         self.json_editor = self.json_card.editor
         self.json_highlighter = JsonSyntaxHighlighter(self.json_editor.document())
 
         self.steps_card = StepListCard("Steps")
         self.steps_card.step_clicked.connect(self._on_step_clicked)
 
-        self.code_card = self.add_card(EditorCard(
-            self, ArtifactType.TEST_CODE, "test.py", wrap=False))
+        self.code_card = self.add_card(
+            EditorCard(self, ArtifactType.TEST_CODE, "test.py", wrap=False)
+        )
         self.code_editor = self.code_card.editor
         self.code_highlighter = PythonSyntaxHighlighter(self.code_editor.document())
         self.code_card.changed.connect(self._update_step_markers)
@@ -100,7 +103,9 @@ class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
         self.find_bar = FindReplaceBar(self)
         layout.addWidget(self.find_bar)
         install_find_shortcuts(
-            self, [self.json_editor, self.code_editor], self.find_bar,
+            self,
+            [self.json_editor, self.code_editor],
+            self.find_bar,
         )
 
         # Main splitter: JSON | Steps | Code
@@ -114,44 +119,72 @@ class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
         splitter.setSizes([400, _STEPS_WIDTH, 480])
         layout.addWidget(splitter, stretch=1)
 
-        self.save_both_btn = self.create_button("Save Both", self.save_all_artifacts,
-            tooltip="Save both JSON and code artifacts")
-        self.format_json_btn = self.create_button("Format JSON", self._on_format_json,
-            tooltip="Auto-format JSON with proper indentation")
+        self.save_both_btn = self.create_button(
+            "Save Both", self.save_all_artifacts, tooltip="Save both JSON and code artifacts"
+        )
+        self.format_json_btn = self.create_button(
+            "Format JSON", self._on_format_json, tooltip="Auto-format JSON with proper indentation"
+        )
         # Quick Code — hidden until the project provides a code generator
         self.quick_code_btn = self._pack_button(
-            "⚡ Quick Code", self._on_quick_code,
-            "Generate test code from JSON without LLM (rule-based, instant)")
-        layout.addWidget(self._create_action_bar(
-            [self.save_both_btn, self.format_json_btn], [self.quick_code_btn]))
+            "⚡ Quick Code",
+            self._on_quick_code,
+            "Generate test code from JSON without LLM (rule-based, instant)",
+        )
+        layout.addWidget(
+            self._create_action_bar(
+                [self.save_both_btn, self.format_json_btn], [self.quick_code_btn]
+            )
+        )
         self.json_card.changed.connect(self._regate_pack_buttons)  # gates Quick Code above
 
     # Task callback maps for dynamic LLM button building (see TaskButtonRow.rebuild)
-    
+
     def _get_task_callback_map(self) -> dict:
         """Return mapping of task_id -> (callback, tooltip)."""
         return {
-            LLMTask.GENERATE_CODE_FROM_JSON.value: (self._on_generate_code, "Generate executable test code from JSON procedure"),
-            LLMTask.DERIVE_JSON_FROM_CODE.value: (self._on_derive_json, "Extract JSON structure from existing test code"),
+            LLMTask.GENERATE_CODE_FROM_JSON.value: (
+                self._on_generate_code,
+                "Generate executable test code from JSON procedure",
+            ),
+            LLMTask.DERIVE_JSON_FROM_CODE.value: (
+                self._on_derive_json,
+                "Extract JSON structure from existing test code",
+            ),
             LLMTask.REVIEW_JSON.value: (self._on_review_json, "Review JSON structure and content"),
-            LLMTask.REVIEW_CODE.value: (self._on_review_code, "Review test code quality and structure"),
-            LLMTask.REVIEW_CODE_VS_JSON.value: (self._on_check_coherence, "Check coherence between JSON and code artifacts"),
+            LLMTask.REVIEW_CODE.value: (
+                self._on_review_code,
+                "Review test code quality and structure",
+            ),
+            LLMTask.REVIEW_CODE_VS_JSON.value: (
+                self._on_check_coherence,
+                "Check coherence between JSON and code artifacts",
+            ),
         }
-    
+
     def _get_force_callback_map(self) -> dict:
         """Return mapping of task_id -> (force_callback, tooltip) for force-mode buttons."""
         return {
-            LLMTask.GENERATE_CODE_FROM_JSON.value: (self._on_force_generate_code, "Force generate code (bypass validation checks)"),
-            LLMTask.DERIVE_JSON_FROM_CODE.value: (self._on_force_derive_json, "Force derive JSON (bypass validation checks)"),
+            LLMTask.GENERATE_CODE_FROM_JSON.value: (
+                self._on_force_generate_code,
+                "Force generate code (bypass validation checks)",
+            ),
+            LLMTask.DERIVE_JSON_FROM_CODE.value: (
+                self._on_force_derive_json,
+                "Force derive JSON (bypass validation checks)",
+            ),
         }
-    
+
     def _pack_gates(self):
         return [(self.quick_code_btn, "Deterministic JSON → Code", ("codegen",))]
 
     def _gated_equipment_types(self, project_root) -> list[str]:
         doc = json.loads(self.json_editor.toPlainText() or "{}")
-        return [e.get("type") for e in (doc.get("equipment") or [])
-                if isinstance(e, dict) and e.get("type")]
+        return [
+            e.get("type")
+            for e in (doc.get("equipment") or [])
+            if isinstance(e, dict) and e.get("type")
+        ]
 
     def _on_generate_code(self):
         """JSON → Code transformation (strict mode)."""
@@ -204,7 +237,7 @@ class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
             self.show_warning("No Code", "Code editor is empty.")
             return
         self._run_task_async(LLMTask.REVIEW_CODE_VS_JSON)
-    
+
     def _apply_proposals(self, response, task=None):
         """Dispatch per-artifact proposals from LLM response.
 
@@ -233,17 +266,20 @@ class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
             except json.JSONDecodeError:
                 procedure = None
             content_str = keep_pinned_constants(
-                content_str, self.code_editor.toPlainText(), procedure, "test.py proposal")
-            self.propose_edit(self.code_card, content_str,
-                              test=self._ensure_run_state().test)
+                content_str, self.code_editor.toPlainText(), procedure, "test.py proposal"
+            )
+            self.propose_edit(self.code_card, content_str, test=self._ensure_run_state().test)
 
     def _on_quick_code(self):
         """Deterministic JSON → Code without LLM (rule-based, instant)."""
         from ..pack_ops import pack_parsers
+
         sent = self.json_editor.toPlainText()
         json_text = sent.strip()
         if not json_text:
-            self.show_warning("No Content", "JSON editor is empty. Add JSON before generating code.")
+            self.show_warning(
+                "No Content", "JSON editor is empty. Add JSON before generating code."
+            )
             return
         try:
             procedure = json.loads(json_text)
@@ -253,12 +289,17 @@ class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
 
         project_root = getattr(self.project_manager, "project_root", None)
         engine_async.call(
-            project_root, lambda: pack_parsers.generate_code(procedure, project_root),
+            project_root,
+            lambda: pack_parsers.generate_code(procedure, project_root),
             lambda answer: self._quick_code_done(sent, procedure, answer),
-            button=self.quick_code_btn, cue=self.code_card.loading, cue_label="Generating code\u2026")
+            button=self.quick_code_btn,
+            cue=self.code_card.loading,
+            cue_label="Generating code\u2026",
+        )
 
     def _quick_code_done(self, sent: str, procedure: dict, answer) -> None:
         from procedo.engine_client import engine_session
+
         try:
             code_str, warnings = answer()
         except engine_session.ParserUnavailable as e:
@@ -267,6 +308,7 @@ class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
         except Exception as e:
             log.exception("Quick Code: codegen raised")
             from ..dialogs.validator_error_dialog import ValidatorErrorDialog
+
             ValidatorErrorDialog.show_from_exception(
                 e,
                 title="Quick Code — validator findings",
@@ -281,7 +323,8 @@ class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
             return
 
         code_str = keep_pinned_constants(
-            code_str, self.code_editor.toPlainText().strip(), procedure, "Quick Code")
+            code_str, self.code_editor.toPlainText().strip(), procedure, "Quick Code"
+        )
 
         def done() -> None:
             if warnings:
@@ -296,9 +339,14 @@ class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
                 )
             self.status_message.emit("⚡ Quick Code complete")
 
-        self.propose_edit(self.code_card, code_str, done=done,
-                          rejected="✗ Quick Code — changes rejected.", ask_when_empty=False)
-    
+        self.propose_edit(
+            self.code_card,
+            code_str,
+            done=done,
+            rejected="✗ Quick Code — changes rejected.",
+            ask_when_empty=False,
+        )
+
     def _on_step_clicked(self, step_num: int):
         """Click a step → jump in BOTH editors (JSON always; code when
         a matching block exists, its lines highlighted).
@@ -325,6 +373,7 @@ class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
         reformatting the JSON off the canonical ``indent=2`` shape, in
         which case we log debug and no-op rather than guess."""
         import re
+
         json_text = self.json_editor.toPlainText()
         # Line-anchored match on the indented JSON shape produced by
         # `json.dumps(..., indent=2)`. Word-boundary on the number
@@ -378,12 +427,19 @@ class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
             for block in self._parser.parse(code):
                 self._code_blocks_by_n[block.step_number] = block
 
-        rows = step_rows(json_steps, self._code_blocks_by_n,
-                         self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT), self._call_hints)
+        rows = step_rows(
+            json_steps,
+            self._code_blocks_by_n,
+            self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT),
+            self._call_hints,
+        )
         with_code = sum(1 for row in rows if row.block)
         total = len(json_steps)
-        pill = (("success", f"{total} = {with_code}") if with_code == total
-                else ("warning", f"{with_code} of {total}"))
+        pill = (
+            ("success", f"{total} = {with_code}")
+            if with_code == total
+            else ("warning", f"{with_code} of {total}")
+        )
         self.steps_card.show_steps(rows, f"{total} steps in JSON · {with_code} in code", pill)
 
     def load_content(self):
@@ -397,14 +453,19 @@ class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
         """Asks the project's engine for its functions' signatures, off the GUI thread, each
         time the tab loads (a function file may have changed); the steps re-show with them."""
         from ..pack_ops import call_hints
+
         root = getattr(self.project_manager, "project_root", None)
         asked = self._hints_asked = (self._hints_asked[0] + 1, root)
         if root is None or not is_dir_quiet(Path(root) / "functions"):
             self._call_hints = {}
             return
-        engine_async.call(root, lambda: call_hints.function_signatures(Path(root)),
-                          lambda answer: self._show_call_hints(asked, answer),
-                          cue=self.main_window.loading, cue_label="Reading function signatures\u2026")
+        engine_async.call(
+            root,
+            lambda: call_hints.function_signatures(Path(root)),
+            lambda answer: self._show_call_hints(asked, answer),
+            cue=self.main_window.loading,
+            cue_label="Reading function signatures\u2026",
+        )
 
     def _show_call_hints(self, asked: tuple, answer) -> None:
         """The signatures asked as ``asked``; a late answer (asked again since, another project)
@@ -421,7 +482,7 @@ class JsonCodeTab(PackGatingMixin, LLMTabMixin, BaseTab):
     def on_activated(self):
         """Called when tab becomes active."""
         self.load_content()
-    
+
     def refresh(self):
         """Refresh both artifacts."""
         self.load_content()

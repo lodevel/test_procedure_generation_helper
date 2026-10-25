@@ -73,6 +73,7 @@ Ops:
                    ``expected_validate``, run by the extractor the bundle declares;
                    one result per procedure, in order)
 """
+
 from __future__ import annotations
 
 import importlib
@@ -81,6 +82,7 @@ import logging
 import traceback
 from dataclasses import asdict
 from pathlib import Path
+
 
 # The guided-run and extractor ops live beside this module; imported however this one was loaded: as
 # procedo.engine_client's (the app) or by path, its folder on sys.path (the daemon's ``_sib``).
@@ -115,11 +117,13 @@ def _format_finding(f) -> str:
 
 def _import_wheel():
     import rules_packager_base.rules.v2_0_2.parser as _parser
+
     return _parser
 
 
 def _import_codegen():
     from rules_packager_base.rules.v2_0_2.parser import codegen as _codegen
+
     return _codegen
 
 
@@ -142,7 +146,8 @@ def _op_is_available(spec: dict) -> dict:
 def _op_parse_text(spec: dict) -> dict:
     raw_root = spec.get("project_root")
     result = _import_wheel().parse(
-        spec["text"], project_root=Path(raw_root) if raw_root is not None else None)
+        spec["text"], project_root=Path(raw_root) if raw_root is not None else None
+    )
     if not result.success or result.json is None:
         errors = result.errors
         primary = errors[0] if errors else None
@@ -156,9 +161,7 @@ def _op_parse_text(spec: dict) -> dict:
             "fix_hint": getattr(primary, "fix_hint", "") if primary else "",
             "findings": [_finding_to_dict(f) for f in result.findings],
         }
-    warnings = [
-        _format_finding(f) for f in result.findings if f.severity == "warning"
-    ]
+    warnings = [_format_finding(f) for f in result.findings if f.severity == "warning"]
     return {"ok": True, "json": result.json, "warnings": warnings}
 
 
@@ -166,6 +169,7 @@ def _op_refresh_media(spec: dict) -> dict:
     """Recompute a procedure JSON's derived media with the pack's one
     catalogue (what parse() does for its own output; a no-op there)."""
     from rules_packager_base.rules.v2_0_2 import media
+
     procedure_json = spec["procedure_json"]
     media.populate_media(procedure_json)
     return {"ok": True, "json": procedure_json}
@@ -189,13 +193,15 @@ def _op_export_rows(spec: dict) -> dict:
         for r in rows:
             media = []
             for m in r.media:
-                media.append({
-                    "component": m.component,
-                    "pin": m.pin,
-                    "is_tp": bool(getattr(m, "is_tp", False)),
-                    "caption": m.caption,
-                    "type": m.type,
-                })
+                media.append(
+                    {
+                        "component": m.component,
+                        "pin": m.pin,
+                        "is_tp": bool(getattr(m, "is_tp", False)),
+                        "caption": m.caption,
+                        "type": m.type,
+                    }
+                )
             out.append({"idx": r.idx, "text": r.text, "media": media})
         return out
 
@@ -226,7 +232,8 @@ def _op_sync_equipment(spec: dict) -> dict:
     profiles = spec.get("controller_profiles", [])
     wheel = _import_wheel()
     new_text, findings = wheel.sync_equipment_text(
-        text, controller_profiles=profiles,
+        text,
+        controller_profiles=profiles,
     )
     # Warnings come back as formatted strings (mirrors _op_parse_text)
     # so the GUI can display them without knowing the Finding shape.
@@ -291,8 +298,11 @@ def _call_findings(procedure_json: dict, text, spec: dict) -> list:
         from rules_packager_base.rules.v2_0_2.parser import function_catalog
 
         return function_catalog.call_findings(
-            procedure_json, Path(spec["project"]) / function_catalog.FUNCTIONS, text=text,
-            bundle=_bundle_label(spec))
+            procedure_json,
+            Path(spec["project"]) / function_catalog.FUNCTIONS,
+            text=text,
+            bundle=_bundle_label(spec),
+        )
     except Exception:  # noqa: BLE001 — a warning check, never the validation's failure
         log.warning("the Call steps' functions check failed", exc_info=True)
         return []
@@ -304,7 +314,8 @@ def _op_functions_check(spec: dict) -> dict:
     from rules_packager_base.rules.v2_0_2.parser import function_catalog
 
     problems = function_catalog.import_problems(
-        Path(spec["project"]) / function_catalog.FUNCTIONS, _bundle_label(spec))
+        Path(spec["project"]) / function_catalog.FUNCTIONS, _bundle_label(spec)
+    )
     return {"ok": True, "problems": problems}
 
 
@@ -321,7 +332,9 @@ def _bundle_label(spec: dict) -> str:
     """``<id> <version>`` of the frame's bundle, as a message names it; "" when its
     bundle.json cannot say."""
     try:
-        meta = json.loads((_extract.bundle_dir_of(spec) / "bundle.json").read_text(encoding="utf-8"))
+        meta = json.loads(
+            (_extract.bundle_dir_of(spec) / "bundle.json").read_text(encoding="utf-8")
+        )
         return f"{meta['id']} {meta['version']}"
     except (OSError, ValueError, KeyError, TypeError):
         return ""
@@ -362,7 +375,11 @@ def _op_bench_identity(spec: dict) -> dict:
             return None
 
     benches = spec.get("benches") or []
-    return {"ok": True, "endpoints": [endpoint(b) for b in benches], "channels": [channels_of(b) for b in benches]}
+    return {
+        "ok": True,
+        "endpoints": [endpoint(b) for b in benches],
+        "channels": [channels_of(b) for b in benches],
+    }
 
 
 def _op_pack_contract(spec: dict) -> dict:
@@ -396,7 +413,11 @@ def _rules_index(module_name: str) -> dict | None:
     for entry in entries:
         try:
             index = entry / "rules_index.json"
-            data = json.loads(index.read_text(encoding="utf-8")) if entry.is_dir() and index.is_file() else {}
+            data = (
+                json.loads(index.read_text(encoding="utf-8"))
+                if entry.is_dir() and index.is_file()
+                else {}
+            )
         except Exception:  # noqa: BLE001 — an unreadable index is no index
             continue
         caps = data.get("pack_capabilities")
@@ -458,8 +479,17 @@ def refusal(role: str, req: dict) -> dict | None:
 
 
 # The ops that need no pack (pack_contract names a broken pack in its own section), and the per-key ops.
-_PACK_FREE = frozenset({"is_available", "pack_contract", "bench_identity", "functions_check",
-                        "function_signatures", "section_ownership", "write_not_started"})
+_PACK_FREE = frozenset(
+    {
+        "is_available",
+        "pack_contract",
+        "bench_identity",
+        "functions_check",
+        "function_signatures",
+        "section_ownership",
+        "write_not_started",
+    }
+)
 _PER_KEY = frozenset({"display_snapshot", "extract"})
 
 
@@ -495,7 +525,11 @@ def run(spec: dict, registry=None) -> dict:
     load_error = _packs_error(spec, registry)
     op = spec.get("op")
     if op not in _OPS:
-        return {"ok": False, "kind": "Other", "error": f"Unknown op: {op!r}. Valid ops: {sorted(_OPS)}"}
+        return {
+            "ok": False,
+            "kind": "Other",
+            "error": f"Unknown op: {op!r}. Valid ops: {sorted(_OPS)}",
+        }
     if load_error and op not in _PACK_FREE | _PER_KEY:
         return {"ok": False, "kind": "ParserUnavailable", "error": load_error}
     try:

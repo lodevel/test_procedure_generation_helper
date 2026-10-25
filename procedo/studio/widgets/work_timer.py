@@ -9,6 +9,7 @@ uses, call :meth:`start` when the request goes out and :meth:`stop` when it
 returns. The clock is monotonic wall-time (``QElapsedTimer``), so it measures real
 elapsed seconds regardless of system-clock changes.
 """
+
 from __future__ import annotations
 
 from typing import Callable, Optional

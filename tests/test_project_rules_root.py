@@ -17,7 +17,8 @@ def _project(tmp_path, name, *rule_dirs, bundle=True):
     if bundle:
         (root / "bundle").mkdir()
         (root / "bundle" / "bundle.json").write_text(
-            json.dumps({"id": "baseline", "version": "2.10.0"}), encoding="utf-8")
+            json.dumps({"id": "baseline", "version": "2.10.0"}), encoding="utf-8"
+        )
         (root / "bundle" / "defaults.json").write_text("{}", encoding="utf-8")
     for rel in rule_dirs:
         (root / rel).mkdir(parents=True)

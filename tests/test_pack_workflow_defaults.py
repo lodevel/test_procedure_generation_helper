@@ -31,12 +31,17 @@ def test_bundle_env_var_loads_workflows(monkeypatch, tmp_path):
     workflows block from that file. The legacy manifest walk is
     gone; this is the only discovery path."""
     defaults_path = tmp_path / "defaults.json"
-    defaults_path.write_text(json.dumps({
-        "workflows": {
-            "text_json": {"validators": [{"id": "bundle.v"}]},
-        },
-        "extractors": {"equipment": {"module": "m"}},
-    }), encoding="utf-8")
+    defaults_path.write_text(
+        json.dumps(
+            {
+                "workflows": {
+                    "text_json": {"validators": [{"id": "bundle.v"}]},
+                },
+                "extractors": {"equipment": {"module": "m"}},
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(defaults_path))
 
     result = load_pack_workflow_defaults(None)
@@ -86,16 +91,23 @@ def test_sparse_pack_tasks_inherit_name_from_editor_defaults(monkeypatch, tmp_pa
     Pre-fix this raised ``TypeError`` because ``_load_config`` merged
     only pack + project with no editor base layer."""
     defaults_path = tmp_path / "defaults.json"
-    defaults_path.write_text(json.dumps({
-        "workflows": {
-            "text_json": {
-                "tasks": [
-                    {"id": "derive_json_from_text",
-                     "prompt_template": "BUNDLE-OWNED PROMPT"},
-                ],
-            },
-        },
-    }), encoding="utf-8")
+    defaults_path.write_text(
+        json.dumps(
+            {
+                "workflows": {
+                    "text_json": {
+                        "tasks": [
+                            {
+                                "id": "derive_json_from_text",
+                                "prompt_template": "BUNDLE-OWNED PROMPT",
+                            },
+                        ],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(defaults_path))
 
     project = tmp_path / "proj"
@@ -143,16 +155,23 @@ def test_sparse_pack_does_not_leak_inherited_fields_on_save(monkeypatch, tmp_pat
     `TaskConfig.to_dict()` produces — so the index has to be built
     from the editor⊕pack baseline, not from the raw sparse pack."""
     defaults_path = tmp_path / "defaults.json"
-    defaults_path.write_text(json.dumps({
-        "workflows": {
-            "text_json": {
-                "tasks": [
-                    {"id": "derive_json_from_text",
-                     "prompt_template": "BUNDLE-OWNED PROMPT"},
-                ],
-            },
-        },
-    }), encoding="utf-8")
+    defaults_path.write_text(
+        json.dumps(
+            {
+                "workflows": {
+                    "text_json": {
+                        "tasks": [
+                            {
+                                "id": "derive_json_from_text",
+                                "prompt_template": "BUNDLE-OWNED PROMPT",
+                            },
+                        ],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(defaults_path))
 
     project = tmp_path / "proj"

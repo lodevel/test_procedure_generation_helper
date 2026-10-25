@@ -15,6 +15,7 @@ Bench's stylesheet):
 ``QLabel#chatSystemLine[pill]``, ``QLabel#thinkingText``, ``QLabel#streamText``,
 ``QLabel#proposalPreview``).
 """
+
 from __future__ import annotations
 
 import html
@@ -101,9 +102,18 @@ class MessageWidget(QFrame):
 
     double_clicked = Signal(str)  # msg_id (UUID string)
 
-    def __init__(self, role: str, content: str, msg_id: str = "", thinking_content: str = "",
-                 prompt_tokens: int = 0, completion_tokens: int = 0, total_tokens: int = 0,
-                 tone: str = "neutral", parent=None):
+    def __init__(
+        self,
+        role: str,
+        content: str,
+        msg_id: str = "",
+        thinking_content: str = "",
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        total_tokens: int = 0,
+        tone: str = "neutral",
+        parent=None,
+    ):
         super().__init__(parent)
         self._msg_id = msg_id
         self.role = role.lower()
@@ -121,8 +131,9 @@ class MessageWidget(QFrame):
         else:
             self.setObjectName("chatBubble")
             self.setProperty("role", self.role)
-            self.align = (Qt.AlignmentFlag.AlignRight if self.role == "user"
-                          else Qt.AlignmentFlag.AlignLeft)
+            self.align = (
+                Qt.AlignmentFlag.AlignRight if self.role == "user" else Qt.AlignmentFlag.AlignLeft
+            )
             layout.setContentsMargins(11, 8, 11, 8)
             if thinking_content and self.role == "assistant":
                 self._add_thinking(layout, thinking_content)
@@ -147,7 +158,9 @@ class MessageWidget(QFrame):
             return limit
         margins = self.layout().contentsMargins()
         pill_padding = 24 if self.role == "system" else 2  # the pill's padding / the border
-        natural = _natural_width(self.content_label) + margins.left() + margins.right() + pill_padding
+        natural = (
+            _natural_width(self.content_label) + margins.left() + margins.right() + pill_padding
+        )
         return min(limit, natural)
 
     def _add_thinking(self, layout: QVBoxLayout, thinking: str) -> None:
@@ -208,7 +221,9 @@ class StreamingBubble(QFrame):
         self._thinking_text += text
         self._fold.button.setVisible(True)
         shown = self._thinking_text[-_MAX_THINKING:]
-        self._fold.label.setText(("..." if len(self._thinking_text) > _MAX_THINKING else "") + shown)
+        self._fold.label.setText(
+            ("..." if len(self._thinking_text) > _MAX_THINKING else "") + shown
+        )
 
     def append_response(self, text: str) -> None:
         if not self._response_text:  # the thought is over: fold it, show the reply
@@ -219,7 +234,9 @@ class StreamingBubble(QFrame):
             self._response_label.setVisible(True)
         self._response_text += text
         shown = self._response_text[-_MAX_RESPONSE:]
-        self._response_label.setText(("..." if len(self._response_text) > _MAX_RESPONSE else "") + shown)
+        self._response_label.setText(
+            ("..." if len(self._response_text) > _MAX_RESPONSE else "") + shown
+        )
 
     def stop(self) -> None:
         self._timer.stop()
@@ -254,8 +271,14 @@ def review_proposal(proposal: Proposal, parent=None) -> None:
     any rejects it, closing a window decides nothing."""
     files = len(proposal.changes)
     for number, change in enumerate(proposal.changes, 1):
-        decision = DiffViewer.review(change.read(), change.proposed, change.file_name, parent,
-                                     proposal.banner, (number, files))
+        decision = DiffViewer.review(
+            change.read(),
+            change.proposed,
+            change.file_name,
+            parent,
+            proposal.banner,
+            (number, files),
+        )
         if decision != "accept":
             if decision == "reject":
                 proposal.reject()
@@ -282,12 +305,17 @@ class ProposalCard(QFrame):
         added, removed = proposal.counts()
         files = ui_kit.monospace(QLabel(" + ".join(proposal.file_names)))
         files.setObjectName("proposalFiles")
-        head = ui_kit.hbox(ui_kit.bold("Proposal"), files, None,
-                           ui_kit.set_pill(QLabel(), "info", f"+{added} −{removed}"))
+        head = ui_kit.hbox(
+            ui_kit.bold("Proposal"),
+            files,
+            None,
+            ui_kit.set_pill(QLabel(), "info", f"+{added} −{removed}"),
+        )
         head.setContentsMargins(11, 8, 11, 8)
         head.setSpacing(8)
         preview = ui_kit.monospace(
-            _text_label("\n".join(proposal.preview()), "proposalPreview", rich=False))
+            _text_label("\n".join(proposal.preview()), "proposalPreview", rich=False)
+        )
         self.state_line = QLabel()  # one line: a pill
         self.state_line.setObjectName("proposalState")
         self.accept_button = QPushButton("✓ Accept")
@@ -369,8 +397,8 @@ def format_json_in_content(content: str) -> str:
         except (json.JSONDecodeError, ValueError):
             return match.group(0)
 
-    content = re.sub(r'```\n(.*?)\n```', format_json_match, content, flags=re.DOTALL)
-    return content.replace('\\n', '\n').replace('\n', '<br>')
+    content = re.sub(r"```\n(.*?)\n```", format_json_match, content, flags=re.DOTALL)
+    return content.replace("\\n", "\n").replace("\n", "<br>")
 
 
 #: The details window's subtitle, by the message's role.
@@ -398,8 +426,12 @@ class MessageDetailDialog(QDialog):
         copy.clicked.connect(lambda: QApplication.clipboard().setText(self.text.toPlainText()))
         close = ui_kit.primary(QPushButton("Close"))
         close.clicked.connect(self.accept)
-        body = ui_kit.framed(self, ui_kit.HeaderBand("Message details", subtitle, stacked=True),
-                             ui_kit.FooterBand([copy, close]), margins=(16, 12, 16, 12))
+        body = ui_kit.framed(
+            self,
+            ui_kit.HeaderBand("Message details", subtitle, stacked=True),
+            ui_kit.FooterBand([copy, close]),
+            margins=(16, 12, 16, 12),
+        )
         card = ui_kit.card_frame()
         inside = QVBoxLayout(card)
         inside.setContentsMargins(10, 4, 10, 4)
@@ -444,7 +476,9 @@ class MessageDetailDialog(QDialog):
         try:
             parsed = json.loads(text)
             # Recursively expand nested JSON strings
-            formatted_obj = MessageDetailDialog._recursively_format_nested_json(parsed, max_depth=10)
+            formatted_obj = MessageDetailDialog._recursively_format_nested_json(
+                parsed, max_depth=10
+            )
             return json.dumps(formatted_obj, indent=2, ensure_ascii=True)
         except (json.JSONDecodeError, ValueError, TypeError):
             return text
@@ -465,25 +499,31 @@ class MessageDetailDialog(QDialog):
             return obj
 
         if isinstance(obj, dict):
-            return {k: MessageDetailDialog._recursively_format_nested_json(v, max_depth - 1)
-                    for k, v in obj.items()}
+            return {
+                k: MessageDetailDialog._recursively_format_nested_json(v, max_depth - 1)
+                for k, v in obj.items()
+            }
 
         elif isinstance(obj, list):
-            return [MessageDetailDialog._recursively_format_nested_json(item, max_depth - 1)
-                    for item in obj]
+            return [
+                MessageDetailDialog._recursively_format_nested_json(item, max_depth - 1)
+                for item in obj
+            ]
 
         elif isinstance(obj, str):
             if len(obj) < 2:
                 return obj
 
             stripped = obj.strip()
-            if not (stripped.startswith('{') or stripped.startswith('[')):
+            if not (stripped.startswith("{") or stripped.startswith("[")):
                 return obj
 
             try:
                 parsed = json.loads(stripped)
                 if isinstance(parsed, (dict, list)):
-                    return MessageDetailDialog._recursively_format_nested_json(parsed, max_depth - 1)
+                    return MessageDetailDialog._recursively_format_nested_json(
+                        parsed, max_depth - 1
+                    )
                 else:
                     return obj
             except (json.JSONDecodeError, ValueError, TypeError):

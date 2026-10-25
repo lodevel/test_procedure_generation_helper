@@ -22,10 +22,21 @@ def studio_tab(tmp_path):
     project = tmp_path / "proj"
     (project / "config").mkdir(parents=True)
     (project / "bundle").mkdir()
-    (project / "bundle" / "defaults.json").write_text(json.dumps({"workflows": {"text_json": {
-        "tasks": [{"id": "derive_json_from_text", "prompt_template": "BUNDLE derive"}],
-        "chat_config": {"enabled": False},
-    }}}), encoding="utf-8")
+    (project / "bundle" / "defaults.json").write_text(
+        json.dumps(
+            {
+                "workflows": {
+                    "text_json": {
+                        "tasks": [
+                            {"id": "derive_json_from_text", "prompt_template": "BUNDLE derive"}
+                        ],
+                        "chat_config": {"enabled": False},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     window = MagicMock()
     window.task_config_manager = TaskConfigManager(tmp_path / "none.json", project_root=project)
     return BaseTab(window)
@@ -42,7 +53,12 @@ def _buttons(tab, tab_id):
 def test_a_bundle_tab_lists_the_editor_only_tasks_too(studio_tab):
     buttons = _buttons(studio_tab, "text_json")
     assert [b.text().removeprefix("✦ ") for b in buttons] == [
-        "Text → JSON", "JSON → Text", "Review Text", "Review JSON", "Check Text↔JSON"]
+        "Text → JSON",
+        "JSON → Text",
+        "Review Text",
+        "Review JSON",
+        "Check Text↔JSON",
+    ]
     assert [b.isEnabled() for b in buttons] == [True, False, False, False, False]
 
 
@@ -60,11 +76,23 @@ def _manager(tmp_path, project_workflows):
     project = tmp_path / "rules_proj"
     (project / "config").mkdir(parents=True)
     (project / "bundle").mkdir()
-    (project / "bundle" / "defaults.json").write_text(json.dumps({"workflows": {"text_json": {
-        "tasks": [{"id": "derive_json_from_text", "prompt_template": "BUNDLE derive"}]}}}),
-        encoding="utf-8")
+    (project / "bundle" / "defaults.json").write_text(
+        json.dumps(
+            {
+                "workflows": {
+                    "text_json": {
+                        "tasks": [
+                            {"id": "derive_json_from_text", "prompt_template": "BUNDLE derive"}
+                        ]
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     (project / "config" / "config.json").write_text(
-        json.dumps({"workflows": project_workflows}), encoding="utf-8")
+        json.dumps({"workflows": project_workflows}), encoding="utf-8"
+    )
     return project, TaskConfigManager(tmp_path / "none.json", project_root=project)
 
 
@@ -73,15 +101,18 @@ def _saved(project):
 
 
 def test_a_rule_tick_saves_only_the_bundle_and_project_tasks(tmp_path):
-    project, mgr = _manager(tmp_path, {"text_json": {"tasks": [
-        {"id": "review_json", "button_label": "Mine"}]}})
+    project, mgr = _manager(
+        tmp_path, {"text_json": {"tasks": [{"id": "review_json", "button_label": "Mine"}]}}
+    )
     mgr.set_selected_rules_for_tab("text_json", ["a.md"])
     mgr.add_rule_to_selections("project/b.md")
     assert mgr.save_config()
 
     saved = {t["id"]: t["selected_rules"] for t in _saved(project)["text_json"]["tasks"]}
-    assert saved == {"review_json": ["a.md", "project/b.md"],
-                     "derive_json_from_text": ["a.md", "project/b.md"]}
+    assert saved == {
+        "review_json": ["a.md", "project/b.md"],
+        "derive_json_from_text": ["a.md", "project/b.md"],
+    }
 
 
 def test_a_project_task_in_a_hidden_tab_survives_a_save(tmp_path):

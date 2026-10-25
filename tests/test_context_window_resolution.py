@@ -59,9 +59,7 @@ class TestResolveContextWindow:
     def test_model_id_with_internal_slash(self):
         # modelID itself contains '/': only the FIRST '/' splits provider/model.
         assert (
-            resolve_context_window(
-                "my_vllm/cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit", SAMPLE_PROVIDERS
-            )
+            resolve_context_window("my_vllm/cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit", SAMPLE_PROVIDERS)
             == 131072
         )
 

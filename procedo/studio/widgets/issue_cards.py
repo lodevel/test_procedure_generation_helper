@@ -29,7 +29,9 @@ def issue_card(issue: dict, *, tag: str = "", fix_label: str = "Fix") -> QFrame:
     column.setContentsMargins(10, 8, 10, 8)
     column.setSpacing(4)
     severity = str(issue.get("severity", "info"))
-    head = ui_kit.hbox(ui_kit.set_pill(QLabel(), _TONES.get(severity, "info"), tag or severity.upper()))
+    head = ui_kit.hbox(
+        ui_kit.set_pill(QLabel(), _TONES.get(severity, "info"), tag or severity.upper())
+    )
     if tag:  # a tone alone does not say error or warning
         head.addWidget(ui_kit.note(severity, wrap=False))
     head.addStretch(1)
@@ -54,10 +56,13 @@ def fill_counts(row: QHBoxLayout, issues: list) -> None:
     ui_kit.clear_layout(row)
     severities = [i.get("severity", "info") if isinstance(i, dict) else "info" for i in issues]
     errors, warnings = severities.count("error"), severities.count("warning")
-    pills = [("danger", _count(errors, "error")) if errors else None,
-             ("warning", _count(warnings, "warning")) if warnings else None,
-             ("info", _count(len(issues) - errors - warnings, "info"))
-             if len(issues) > errors + warnings else None]
+    pills = [
+        ("danger", _count(errors, "error")) if errors else None,
+        ("warning", _count(warnings, "warning")) if warnings else None,
+        ("info", _count(len(issues) - errors - warnings, "info"))
+        if len(issues) > errors + warnings
+        else None,
+    ]
     if not issues:
         pills = [("success", "No issues")]
     for tone, text in filter(None, pills):
@@ -89,4 +94,3 @@ def issues_text(issues: list) -> str:
         if fix:
             lines.append(f"  Fix: {fix}")
     return "\n".join(lines)
-

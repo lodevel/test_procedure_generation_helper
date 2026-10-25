@@ -51,7 +51,7 @@ class ValidatorContext:
     """
 
     artifact_text: Optional[str]
-    artifact_json: Optional[str]   # raw string; the validator parses if it cares
+    artifact_json: Optional[str]  # raw string; the validator parses if it cares
     artifact_code: Optional[str]
     project_root: Optional[Path]
     tab_id: str
@@ -118,7 +118,9 @@ def get(validator_id: str) -> Validator:
             if len(candidates) > 1:
                 log.info(
                     "Shorthand %r matched %d validators; picking %s",
-                    validator_id, len(candidates), chosen,
+                    validator_id,
+                    len(candidates),
+                    chosen,
                 )
             return _registry[chosen]
         raise KeyError(f"No validator registered for id {validator_id!r}")
@@ -168,6 +170,7 @@ def ensure_builtins_registered() -> None:
         # Imported lazily to avoid a circular dependency: validators_builtin
         # uses ``register`` from this module.
         from ..llm import validators_builtin  # noqa: F401 — import-side-effect
+
         validators_builtin.register_builtins()
         _builtins_registered = True
         log.debug("Built-in validators registered: %s", list_ids())

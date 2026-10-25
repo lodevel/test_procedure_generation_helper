@@ -9,7 +9,9 @@ from PySide6.QtWidgets import QMessageBox
 from procedo.core.off_gui import answer_to, run_off_gui
 
 from ..llm.launch_config import (
-    build_launch_config, ensure_master_config, get_opencode_launch_test_dir,
+    build_launch_config,
+    ensure_master_config,
+    get_opencode_launch_test_dir,
 )
 from ..llm.launch_files import remove_launch_files
 
@@ -18,22 +20,36 @@ class SettingsBackendProbe(QObject):
     """The probes behind the dialog's server row. A child of the dialog, so its UI-thread
     answers are dropped once the dialog is deleted (procedo.core.off_gui)."""
 
-    def __init__(self, owner, *, server_manager, project_root, backend, host, port,
-                 model_value, start_button, note, test_button, test_cue, populate_models):
+    def __init__(
+        self,
+        owner,
+        *,
+        server_manager,
+        project_root,
+        backend,
+        host,
+        port,
+        model_value,
+        start_button,
+        note,
+        test_button,
+        test_cue,
+        populate_models,
+    ):
         super().__init__(owner)
         self._owner = owner
         self._server_manager = server_manager
         self._project_root = project_root
-        self._backend = backend              # () -> the selected backend name
-        self._host = host                    # the host line edit
-        self._port = port                    # the port spin box
-        self._model_value = model_value      # () -> the model id typed/selected, '' = Default
+        self._backend = backend  # () -> the selected backend name
+        self._host = host  # the host line edit
+        self._port = port  # the port spin box
+        self._model_value = model_value  # () -> the model id typed/selected, '' = Default
         self._start_button = start_button
         self._note = note
         self._test_button = test_button
-        self._test_cue = test_cue            # the shared loading cue shown while a test runs
+        self._test_cue = test_cue  # the shared loading cue shown while a test runs
         self._test_running = False
-        self._start_was_enabled = True       # Start's state when the running test began
+        self._start_was_enabled = True  # Start's state when the running test began
         self._closed = False
         self._populate_models = populate_models  # re-query the model list
         # The Start-server liveness probe answers through this relay and never holds this object.
@@ -56,6 +72,7 @@ class SettingsBackendProbe(QObject):
         """
         import threading
         from PySide6.QtCore import QTimer
+
         sm = self._server_manager
         if sm is None or self._test_running:
             return
@@ -85,8 +102,8 @@ class SettingsBackendProbe(QObject):
             # timer is armed (nothing to poll), so just bail.
             self._start_button.setEnabled(True)
             self._note.setText(
-                "Could not start the server — check the OpenCode install / "
-                "logs, then try again.")
+                "Could not start the server — check the OpenCode install / logs, then try again."
+            )
             return
 
         # Poll liveness for up to ~startup timeout; refresh + re-enable on the UI
@@ -120,8 +137,8 @@ class SettingsBackendProbe(QObject):
                 timer.stop()
                 self._start_button.setEnabled(True)
                 self._note.setText(
-                    "Server did not come up — check the OpenCode install / logs, "
-                    "then try again.")
+                    "Server did not come up — check the OpenCode install / logs, then try again."
+                )
                 return
             # Kick off the next is_alive probe off the UI thread (one at a time).
             if self._start_probe_in_flight:
@@ -190,7 +207,9 @@ class SettingsBackendProbe(QObject):
         if timer is not None:
             timer.stop()
         self._start_poll_done = True
-        self._closed = True  # a Test connection still running shows nothing (its worker cleans up itself)
+        self._closed = (
+            True  # a Test connection still running shows nothing (its worker cleans up itself)
+        )
 
     def test_connection(self):
         """Test the LLM backend configuration, off the UI thread; the result dialog follows."""
@@ -206,11 +225,18 @@ class SettingsBackendProbe(QObject):
         self._start_was_enabled = self._start_button.isEnabled()
         self._start_button.setEnabled(False)  # both would use the same host:port
         self._test_cue.start("Testing connection…", at_once=True)
-        port, host, model = self._port.value(), self._host.text() or "127.0.0.1", self._model_value() or None
+        port, host, model = (
+            self._port.value(),
+            self._host.text() or "127.0.0.1",
+            self._model_value() or None,
+        )
         project_root = self._project_root
         try:
-            run_off_gui(lambda: self._run_test(backend, project_root, host, port, model),
-                        self._on_test_answer, name="settings-test-connection")
+            run_off_gui(
+                lambda: self._run_test(backend, project_root, host, port, model),
+                self._on_test_answer,
+                name="settings-test-connection",
+            )
         except Exception:
             self._end_test()
             raise
@@ -232,8 +258,11 @@ class SettingsBackendProbe(QObject):
             return
         self._end_test()
         if isinstance(answer, dict):  # the worker itself died
-            answer = ("critical", "Test Connection Failed",
-                      f"Error testing connection:\n\n{answer.get('error')}")
+            answer = (
+                "critical",
+                "Test Connection Failed",
+                f"Error testing connection:\n\n{answer.get('error')}",
+            )
         if answer is None:  # a backend with nothing to test
             return
         method, title, text = answer
@@ -260,7 +289,8 @@ class SettingsBackendProbe(QObject):
                 # orphan-left bug class. Isolating it means the probe's pid file +
                 # derived opencode.json never collide with the live ones.
                 ensure_master_config(
-                    seed_from=(project_root / "opencode.json") if project_root else None)
+                    seed_from=(project_root / "opencode.json") if project_root else None
+                )
                 test_launch_dir = get_opencode_launch_test_dir()
                 launch_dir = str(build_launch_config(project_root, launch_dir=test_launch_dir))
                 config = OpenCodeConfig(
@@ -274,6 +304,7 @@ class SettingsBackendProbe(QObject):
                 # "OpenCode was not found in the WSL PATH. Install it
                 # (npm i -g opencode-ai)...") instead of a vague "not available".
                 from ..llm.server_manager import OpenCodeServerManager
+
                 mgr = OpenCodeServerManager(config)
                 if not mgr.is_available():
                     status = mgr.last_status
@@ -295,14 +326,16 @@ class SettingsBackendProbe(QObject):
                         st = mgr.last_status
                         why = f"\n\n{st.message}" if st and not st.ok else ""
                         return (
-                            "warning", "Test Connection",
-                            f"✗ Could not start OpenCode\n\nHost: {config.server_hostname}\nPort: {config.server_port}{why}"
+                            "warning",
+                            "Test Connection",
+                            f"✗ Could not start OpenCode\n\nHost: {config.server_hostname}\nPort: {config.server_port}{why}",
                         )
                     if not mgr.health_check():
                         return (
-                            "warning", "Test Connection",
+                            "warning",
+                            "Test Connection",
                             f"✗ Server started but /health was not reachable\n\n"
-                            f"Host: {config.server_hostname}\nPort: {config.server_port}"
+                            f"Host: {config.server_hostname}\nPort: {config.server_port}",
                         )
 
                     # Always run a real end-to-end chat test (Default = auto-pick
@@ -314,8 +347,9 @@ class SettingsBackendProbe(QObject):
                         st = mgr.last_status
                         why = f"\n\n{st.message}" if st and not st.ok else ""
                         return (
-                            "warning", "Test Connection",
-                            f"✗ Could not start OpenCode\n\nHost: {config.server_hostname}\nPort: {config.server_port}{why}"
+                            "warning",
+                            "Test Connection",
+                            f"✗ Could not start OpenCode\n\nHost: {config.server_hostname}\nPort: {config.server_port}{why}",
                         )
                     test_request = LLMRequest(
                         task=LLMTask.AD_HOC_CHAT,
@@ -323,6 +357,7 @@ class SettingsBackendProbe(QObject):
                         user_message="Respond with just 'OK'",
                     )
                     import threading
+
                     result = {"response": None, "error": None}
 
                     def test_send():
@@ -337,22 +372,27 @@ class SettingsBackendProbe(QObject):
                     if thread.is_alive():
                         result["error"] = "Request timed out after 30 seconds"
 
-                    hint = ("\n\nIf you picked a specific model, your account "
-                            "may not support it — try leaving Model empty "
-                            "(auto-pick).")
+                    hint = (
+                        "\n\nIf you picked a specific model, your account "
+                        "may not support it — try leaving Model empty "
+                        "(auto-pick)."
+                    )
                     if result["error"]:
                         return (
-                            "warning", "Test Connection",
-                            f"✗ Chat test failed\n\nModel: {model_label}\n\nError: {result['error']}{hint}"
+                            "warning",
+                            "Test Connection",
+                            f"✗ Chat test failed\n\nModel: {model_label}\n\nError: {result['error']}{hint}",
                         )
                     if result["response"] and result["response"].error_message:
                         return (
-                            "warning", "Test Connection",
-                            f"✗ Chat test failed\n\nModel: {model_label}\n\nError: {result['response'].error_message}{hint}"
+                            "warning",
+                            "Test Connection",
+                            f"✗ Chat test failed\n\nModel: {model_label}\n\nError: {result['response'].error_message}{hint}",
                         )
                     return (
-                        "information", "Test Connection",
-                        f"✓ OpenCode is working\n\nHost: {config.server_hostname}\nPort: {config.server_port}\nModel: {model_label}"
+                        "information",
+                        "Test Connection",
+                        f"✓ OpenCode is working\n\nHost: {config.server_hostname}\nPort: {config.server_port}\nModel: {model_label}",
                     )
                 finally:
                     mgr.stop()

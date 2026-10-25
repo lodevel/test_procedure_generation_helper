@@ -3,6 +3,7 @@ tier, plus the build-side discovery in procedo.core.bundle_generator. The copy
 itself is the build's (generate_all --add-folder), tested in the host.
 Pure tmp_path — no real build, no Qt.
 """
+
 import json
 import shutil
 
@@ -64,9 +65,16 @@ def _local_skill(local_base, skill_id, name="L"):
 
 def _registry_for(tmp_path, project_root_rel="fake_pack"):
     reg = tmp_path / "drivers_registry.json"
-    reg.write_text(json.dumps({"packs": [
-        {"id": "p1", "enabled": True, "wheel": {"project_root": project_root_rel}},
-    ]}), encoding="utf-8")
+    reg.write_text(
+        json.dumps(
+            {
+                "packs": [
+                    {"id": "p1", "enabled": True, "wheel": {"project_root": project_root_rel}},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
     return reg
 
 
@@ -85,7 +93,8 @@ def test_discover_bundleable_includes_builtin_library(tmp_path):
     builtin = tmp_path / "builtin"
     _local_skill(builtin, "lib_skill")
     found = {
-        s["id"]: s for s in discover_bundleable_skills(
+        s["id"]: s
+        for s in discover_bundleable_skills(
             reg, local_base=tmp_path / "empty_local", builtin_base=builtin
         )
     }
@@ -98,18 +107,25 @@ def test_discover_local_overrides_pack_on_name_clash(tmp_path):
     local = tmp_path / "local_pkgs" / "authoring_skills"
     _local_skill(local, "dup")
     by_id = {s["id"]: s for s in discover_bundleable_skills(reg, local_base=local)}
-    assert by_id["dup"]["source"] == "local"   # standalone overrides pack-embedded
+    assert by_id["dup"]["source"] == "local"  # standalone overrides pack-embedded
 
 
 def test_enabled_pack_roots_resolves_only_enabled(tmp_path):
     (tmp_path / "fake_pack").mkdir()
     reg = tmp_path / "drivers_registry.json"
-    reg.write_text(json.dumps({"packs": [
-        {"id": "p1", "enabled": True, "wheel": {"project_root": "fake_pack"}},
-        {"id": "p2", "enabled": False, "wheel": {"project_root": "fake_pack"}},
-        {"id": "p3", "enabled": True, "rules": {"source": {"path": "fake_pack"}}},
-        {"id": "p4", "enabled": True, "wheel": {"project_root": "missing_dir"}},
-    ]}), encoding="utf-8")
+    reg.write_text(
+        json.dumps(
+            {
+                "packs": [
+                    {"id": "p1", "enabled": True, "wheel": {"project_root": "fake_pack"}},
+                    {"id": "p2", "enabled": False, "wheel": {"project_root": "fake_pack"}},
+                    {"id": "p3", "enabled": True, "rules": {"source": {"path": "fake_pack"}}},
+                    {"id": "p4", "enabled": True, "wheel": {"project_root": "missing_dir"}},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
     roots = enabled_pack_roots(reg)
     # p1 + p3 resolve to the existing dir; p2 disabled; p4 missing dir dropped.
     assert all(r.name == "fake_pack" for r in roots)
@@ -118,9 +134,11 @@ def test_enabled_pack_roots_resolves_only_enabled(tmp_path):
 
 def test_dirs_with_marker_selects_by_file(tmp_path):
     # builtin_wizard_dirs / builtin_tool_dirs are _dirs_with over the right marker.
-    (tmp_path / "a").mkdir(); (tmp_path / "a" / "SKILL.md").write_text("x")
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "SKILL.md").write_text("x")
     (tmp_path / "b").mkdir()  # no marker -> excluded
-    (tmp_path / "c").mkdir(); (tmp_path / "c" / "tools.json").write_text("{}")
+    (tmp_path / "c").mkdir()
+    (tmp_path / "c" / "tools.json").write_text("{}")
     assert [d.name for d in _dirs_with(tmp_path, ("SKILL.md", "skill.md"))] == ["a"]
     assert [d.name for d in _dirs_with(tmp_path, ("tools.json",))] == ["c"]
     assert _dirs_with(tmp_path / "missing", ("SKILL.md",)) == []
@@ -137,8 +155,9 @@ def test_discover_bundleable_wizards_builtin_pack_local(tmp_path):
     reg = _registry_for(tmp_path)
     local = tmp_path / "local_pkgs" / "wizards"
     _local_skill(local, "local_wiz")
-    by_id = {w["id"]: w for w in discover_bundleable_wizards(
-        reg, local_base=local, builtin_base=builtin)}
+    by_id = {
+        w["id"]: w for w in discover_bundleable_wizards(reg, local_base=local, builtin_base=builtin)
+    }
     assert by_id["lib_wiz"]["source"] == "builtin"
     assert by_id["pack_wiz"]["source"] == "pack:fake_pack"
     assert by_id["local_wiz"]["source"] == "local"
@@ -149,8 +168,7 @@ def test_wizard_flow_groups_stages_by_flow(tmp_path):
     for sid in ("stage_a", "stage_b"):
         d = tmp_path / "wizards" / sid
         d.mkdir(parents=True)
-        (d / "SKILL.md").write_text(
-            f"---\nname: {sid}\nflow: dcdc\n---\nbody", encoding="utf-8")
+        (d / "SKILL.md").write_text(f"---\nname: {sid}\nflow: dcdc\n---\nbody", encoding="utf-8")
     solo = tmp_path / "wizards" / "solo"
     solo.mkdir(parents=True)
     (solo / "SKILL.md").write_text("---\nname: solo\n---\nbody", encoding="utf-8")

@@ -16,13 +16,14 @@ in :mod:`rs_core`; this file is thin argv + serve wiring.
 Bootstraps ``sys.path`` from its own location so it imports ``_mcp_serve`` / ``rs_core``
 as bare siblings regardless of launch cwd (same as the sibling servers).
 """
+
 import argparse
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import rs_core        # noqa: E402  (bare sibling — see module docstring)
-import _mcp_serve     # noqa: E402
+import rs_core  # noqa: E402  (bare sibling — see module docstring)
+import _mcp_serve  # noqa: E402
 
 
 def _handle_run_skill(arguments, cfg):
@@ -36,8 +37,10 @@ def _handle_run_skill(arguments, cfg):
         return "run_skill REFUSED: skill_id is required."
     payload = rs_core.verify(token, cfg["secret"])
     if payload is None:
-        return ("run_skill REFUSED: missing or invalid chain_token (recursion is "
-                "only available to a skill that declares `mcp_tools: [run_skill]`).")
+        return (
+            "run_skill REFUSED: missing or invalid chain_token (recursion is "
+            "only available to a skill that declares `mcp_tools: [run_skill]`)."
+        )
     status, res = rs_core.guard(payload, skill_id, cfg["max_depth"])
     if status == "refused":
         return f"run_skill REFUSED: {res}"
@@ -50,22 +53,33 @@ def _handle_run_skill(arguments, cfg):
         return f"run_skill ERROR: cannot locate the OpenCode server ({exc})."
     try:
         text, child_sid = rs_core.run_child_skill(
-            server_url, cfg["roots"], skill_id, prompt,
-            child_payload, child_token, cfg["max_depth"],
-            universe=cfg["universe"], model=cfg["model"])
+            server_url,
+            cfg["roots"],
+            skill_id,
+            prompt,
+            child_payload,
+            child_token,
+            cfg["max_depth"],
+            universe=cfg["universe"],
+            model=cfg["model"],
+        )
     except ValueError as exc:  # skill not found / empty body
         return f"run_skill REFUSED: {exc}"
     except Exception as exc:  # noqa: BLE001 — surface as text, keep the loop alive
         return f"run_skill ERROR spawning child '{skill_id}': {exc}"
-    return (f"[child skill '{skill_id}' ran at depth {child_payload['depth']}, "
-            f"session {child_sid}]\n{text}")
+    return (
+        f"[child skill '{skill_id}' ran at depth {child_payload['depth']}, "
+        f"session {child_sid}]\n{text}"
+    )
 
 
 _TOOL = {
     "name": "run_skill",
-    "description": ("Delegate to another authoring skill: run `skill_id` as a child "
-                    "LLM session with `prompt` and return its result. You MUST pass "
-                    "the chain_token given to you by [HOST]."),
+    "description": (
+        "Delegate to another authoring skill: run `skill_id` as a child "
+        "LLM session with `prompt` and return its result. You MUST pass "
+        "the chain_token given to you by [HOST]."
+    ),
     "inputSchema": {
         "type": "object",
         "properties": {
@@ -80,15 +94,24 @@ _TOOL = {
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="run_skill MCP server")
-    ap.add_argument("--server-port-file", required=True,
-                    help="launch pid-file holding the OpenCode server port")
-    ap.add_argument("--skill-root", action="append", default=[],
-                    help="a skill root (repeatable, ASCENDING precedence)")
-    ap.add_argument("--universe-file", default="",
-                    help="JSON {server:[tools]} of skill-owned tools, to scope the child")
+    ap.add_argument(
+        "--server-port-file", required=True, help="launch pid-file holding the OpenCode server port"
+    )
+    ap.add_argument(
+        "--skill-root",
+        action="append",
+        default=[],
+        help="a skill root (repeatable, ASCENDING precedence)",
+    )
+    ap.add_argument(
+        "--universe-file",
+        default="",
+        help="JSON {server:[tools]} of skill-owned tools, to scope the child",
+    )
     ap.add_argument("--max-depth", type=int, default=rs_core.DEFAULT_MAX_DEPTH)
-    ap.add_argument("--model", default="",
-                    help="optional provider/model for the child (blank = auto-pick)")
+    ap.add_argument(
+        "--model", default="", help="optional provider/model for the child (blank = auto-pick)"
+    )
     a = ap.parse_args(sys.argv[1:] if argv is None else argv)
 
     cfg = {

@@ -19,6 +19,7 @@ single-renderer constraint keeps the rendering logic in exactly one
 place; adding a new error surface is one ``ValidatorErrorDialog.show_for``
 call.
 """
+
 from __future__ import annotations
 
 from typing import Optional
@@ -85,6 +86,7 @@ class ValidatorErrorDialog(QDialog):
         share one rendering call site (no duplicated five-line block at
         every catch)."""
         from ..core.validation_outcome import outcome_from_exception
+
         cls.show_for(
             outcome_from_exception(exc),
             title=title,
@@ -102,11 +104,15 @@ class ValidatorErrorDialog(QDialog):
         issues = [issue.to_dock_dict() for issue in outcome.issues]
         copy_btn = QPushButton("Copy all")
         copy_btn.clicked.connect(
-            lambda: QApplication.clipboard().setText(issue_cards.issues_text(issues)))
+            lambda: QApplication.clipboard().setText(issue_cards.issues_text(issues))
+        )
         close_btn = ui_kit.primary(QPushButton("Close"))
         close_btn.clicked.connect(self.accept)
-        body = ui_kit.framed(self, ui_kit.HeaderBand(self.windowTitle(), intro, stacked=True),
-                             ui_kit.FooterBand([copy_btn, close_btn]))
+        body = ui_kit.framed(
+            self,
+            ui_kit.HeaderBand(self.windowTitle(), intro, stacked=True),
+            ui_kit.FooterBand([copy_btn, close_btn]),
+        )
 
         self.counts = ui_kit.hbox()
         self.counts.setSpacing(6)

@@ -5,6 +5,7 @@ temporary file and handed to the evidence store — queued in this PC's outbox, 
 pushed; a push that fails leaves it queued. Any other folder is a plain file write.
 Nothing is ever written into the dropped in-project ``exports/`` tree.
 """
+
 import json
 import time
 from pathlib import Path
@@ -30,7 +31,9 @@ def _project(tmp_path: Path, *, evidence_folder: bool = True) -> Path:
     return root
 
 
-def _export(monkeypatch, root: Path, output: Path, evidence_folder: Path | None) -> tuple[Path, list, list]:
+def _export(
+    monkeypatch, root: Path, output: Path, evidence_folder: Path | None
+) -> tuple[Path, list, list]:
     """Run one job with the render faked; ``(rendered path, answers, rendered paths)``."""
     rendered: list[Path] = []
 
@@ -42,9 +45,15 @@ def _export(monkeypatch, root: Path, output: Path, evidence_folder: Path | None)
     monkeypatch.setattr(word_export_job, "export_outcome", fake_outcome)
     app = QApplication.instance() or QApplication([])
     window, answers = QWidget(), []
-    word_export_job.WordExportJob(window, root, [root / "tests" / "T1"], output, {"title": "T"},
-                                  lambda path, queued: answers.append((path, queued)),
-                                  evidence_folder=evidence_folder)
+    word_export_job.WordExportJob(
+        window,
+        root,
+        [root / "tests" / "T1"],
+        output,
+        {"title": "T"},
+        lambda path, queued: answers.append((path, queued)),
+        evidence_folder=evidence_folder,
+    )
     deadline = time.monotonic() + 10
     while not answers and time.monotonic() < deadline:
         app.processEvents()

@@ -29,5 +29,7 @@ def test_parser_unavailable_is_said_plainly(tmp_path, monkeypatch):
     monkeypatch.setattr(validator_dispatch, "_auto_restore_operator_only_fields", lambda *a: [])
     outcome = validator_dispatch.validate_response(None, {}, tmp_path)  # type: ignore[arg-type]
     assert outcome.skipped
-    assert "Validator could not run: parser not available (the engine was stopped)" in _message(outcome)
+    assert "Validator could not run: parser not available (the engine was stopped)" in _message(
+        outcome
+    )
     assert "crashed" not in _message(outcome)

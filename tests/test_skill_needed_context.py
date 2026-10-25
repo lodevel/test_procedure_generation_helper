@@ -23,8 +23,14 @@ _IDS = "Component part numbers (ICs — U*, IC*):\n- U5: Type='DC-DC'"
 
 def _skill(needs=None):
     meta = {"needs-context": needs} if needs is not None else {}
-    return Skill(skill_id="dcdc_classifier", title="DCDC classifier", system_prompt="SYSTEM",
-                 path=Path("/x"), source=SkillSource.BUNDLED, metadata=meta)
+    return Skill(
+        skill_id="dcdc_classifier",
+        title="DCDC classifier",
+        system_prompt="SYSTEM",
+        path=Path("/x"),
+        source=SkillSource.BUNDLED,
+        metadata=meta,
+    )
 
 
 @pytest.fixture
@@ -37,11 +43,18 @@ def chat(qapp, monkeypatch):
     def make(skill, ids=_IDS):
         def provide():
             return ids() if callable(ids) else ids
-        source = ArtifactsSource([
-            ArtifactProvider("netlist", "Netlist (connectivity)", lambda: "- U5: 1=VIN"),
-            ArtifactProvider("component_ids", "Component part numbers (ICs: U, IC)", provide,
-                             empty_hint="no ODB++ board archive in the project?"),
-        ])
+
+        source = ArtifactsSource(
+            [
+                ArtifactProvider("netlist", "Netlist (connectivity)", lambda: "- U5: 1=VIN"),
+                ArtifactProvider(
+                    "component_ids",
+                    "Component part numbers (ICs: U, IC)",
+                    provide,
+                    empty_hint="no ODB++ board archive in the project?",
+                ),
+            ]
+        )
         widget = scw.SkillChatWidget([skill], SimpleNamespace(), sources=[source])
         widget._really_dispatch = lambda prompt, files: sent.append(prompt)
         made.append(widget)
@@ -133,8 +146,11 @@ def test_enter_sends_and_shift_enter_starts_a_line_with_either_enter_key(chat, k
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
 
-    key, mods = ((Qt.Key.Key_Enter, Qt.KeyboardModifier.KeypadModifier) if keypad
-                 else (Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier))
+    key, mods = (
+        (Qt.Key.Key_Enter, Qt.KeyboardModifier.KeypadModifier)
+        if keypad
+        else (Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier)
+    )
     make, sent = chat
     widget = make(_skill())
     QTest.keyClicks(widget._input, "classify")
@@ -189,7 +205,10 @@ def test_sizing_a_slow_default_item_does_not_freeze_the_window(chat, qapp):
     widget._picker._update_readout()
     assert time.perf_counter() - start < 0.1
     assert widget._picker._readout.text() == "Context: 1 items"
-    assert widget._picker.loading.active and widget._picker.loading.label.text() == "Sizing the context…"
+    assert (
+        widget._picker.loading.active
+        and widget._picker.loading.label.text() == "Sizing the context…"
+    )
     assert _wait(qapp, lambda: "tokens (est.)" in widget._picker._readout.text())
     assert not widget._picker.loading.active
 

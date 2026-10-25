@@ -30,7 +30,9 @@ def migrate_project_tab_contexts(project_root: Path) -> None:
     """
     legacy = project_root / "config" / "tab_contexts.json"
     if reason := unreachable(legacy):
-        log.warning("Could not migrate %s: %s", legacy, reason)  # never write beside a config that cannot be read
+        log.warning(
+            "Could not migrate %s: %s", legacy, reason
+        )  # never write beside a config that cannot be read
         return
     if not legacy.exists():
         return
@@ -52,20 +54,27 @@ def migrate_project_tab_contexts(project_root: Path) -> None:
         try:
             existing_full = json.loads(project_cfg_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as e:
-            log.error("Project config %s is unreadable (%s); aborting migration to "
-                      "avoid clobbering. Repair config.json or remove tab_contexts.json.",
-                      project_cfg_path, e)
+            log.error(
+                "Project config %s is unreadable (%s); aborting migration to "
+                "avoid clobbering. Repair config.json or remove tab_contexts.json.",
+                project_cfg_path,
+                e,
+            )
             return
         if not isinstance(existing_full, dict):
-            log.error("Project config %s is not a JSON object; aborting migration.",
-                      project_cfg_path)
+            log.error(
+                "Project config %s is not a JSON object; aborting migration.", project_cfg_path
+            )
             return
         # If workflows section already exists, the migration already
         # happened on a prior load (or a user wrote one manually) —
         # don't overwrite it from a stale legacy file.
         if isinstance(existing_full.get("workflows"), dict) and existing_full["workflows"]:
-            log.info("Project %s already has a workflows section; deleting legacy %s.",
-                     project_cfg_path, legacy)
+            log.info(
+                "Project %s already has a workflows section; deleting legacy %s.",
+                project_cfg_path,
+                legacy,
+            )
             try:
                 legacy.unlink()
             except OSError as e:
@@ -100,17 +109,24 @@ def migrate_project_tab_contexts(project_root: Path) -> None:
     try:
         atomic_write_text(project_cfg_path, json.dumps(existing_full, indent=2, ensure_ascii=False))
     except OSError as e:
-        log.error("Failed to write migrated workflows to %s: %s — leaving %s in place.",
-                  project_cfg_path, e, legacy)
+        log.error(
+            "Failed to write migrated workflows to %s: %s — leaving %s in place.",
+            project_cfg_path,
+            e,
+            legacy,
+        )
         return
 
     # Read-back verification before unlinking the legacy file.
     verify = config_manager.read_unified_config(project_cfg_path.parent)
-    if not (isinstance(verify, dict)
-            and isinstance(verify.get("workflows"), dict)
-            and verify["workflows"]):
-        log.error("Read-back verification failed for %s; leaving %s untouched.",
-                  project_cfg_path, legacy)
+    if not (
+        isinstance(verify, dict)
+        and isinstance(verify.get("workflows"), dict)
+        and verify["workflows"]
+    ):
+        log.error(
+            "Read-back verification failed for %s; leaving %s untouched.", project_cfg_path, legacy
+        )
         return
 
     try:
@@ -143,18 +159,21 @@ def migrate_button_labels_in_place(raw: Dict[str, Any]) -> bool:
             custom = button_labels.get(name) if name else None
             if not custom:
                 custom = button_labels.get(default_task.id)
-            new_tasks.append(TaskConfig(
-                id=default_task.id,
-                name=default_task.name,
-                button_label=custom if custom else default_task.button_label,
-                prompt_template=default_task.prompt_template,
-                enabled=default_task.enabled,
-            ))
+            new_tasks.append(
+                TaskConfig(
+                    id=default_task.id,
+                    name=default_task.name,
+                    button_label=custom if custom else default_task.button_label,
+                    prompt_template=default_task.prompt_template,
+                    enabled=default_task.enabled,
+                )
+            )
         tab_config["tasks"] = [t.to_dict() for t in new_tasks]
         del tab_config["button_labels"]
         migrated = True
         log.info("Migrated tab '%s' from button_labels to tasks format", tab_id)
     return migrated
+
 
 # ------------------------------------------------------------------
 # Snapshot stamping (Codex H2: pack defaults never round-trip through save)

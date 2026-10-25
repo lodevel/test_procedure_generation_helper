@@ -21,6 +21,7 @@ Transport discipline (plan S3):
   stop button never waits on the channel (a request would wait for the run in
   flight); the base class's write lock keeps every writer's frame whole.
 """
+
 from __future__ import annotations
 
 import json
@@ -48,16 +49,17 @@ class BenchSessionClient(RemoteSession):
         super().__init__(project_root, role="run")
         # The run_test in flight, as a Stop's deadline judges it (read on the GUI thread):
         self.in_run_since: Optional[float] = None  # monotonic start of the run_test in flight
-        self.prompting = False     # ... and waits on the operator's answer
-        self.acked_at: Optional[float] = None  # ... and when the daemon acknowledged a cancel ("ack")
+        self.prompting = False  # ... and waits on the operator's answer
+        self.acked_at: Optional[float] = (
+            None  # ... and when the daemon acknowledged a cancel ("ack")
+        )
         self._call_stop: Optional[threading.Event] = None  # the Stop of the Call being sent
 
     # ``end_session`` IS shutdown (safe-off all held + close/unlock + exit).
     end_session = RemoteSession.shutdown
 
     # -- transport guard ----------------------------------------------------
-    def _request(self, frame: dict[str, Any], timeout: float,
-                 on_progress=None) -> dict[str, Any]:
+    def _request(self, frame: dict[str, Any], timeout: float, on_progress=None) -> dict[str, Any]:
         """Inherited transport MINUS its lazy respawn. Invariant: once this
         client has started a holder, a daemon found dead between exchanges
         is ``SessionDead`` on EVERY frame — the base ``_request``'s
@@ -67,12 +69,9 @@ class BenchSessionClient(RemoteSession):
         safe-off (design row 5). A NEVER-started client still lazy-starts
         on its first frame."""
         with self._lock:
-            if (not self._dead and self._proc is not None
-                    and not self._alive()):
+            if not self._dead and self._proc is not None and not self._alive():
                 rc = self._proc.poll()
-                return self._dead_resp(
-                    "SessionDead",
-                    f"daemon died between exchanges (exit={rc})")
+                return self._dead_resp("SessionDead", f"daemon died between exchanges (exit={rc})")
         return super()._request(frame, timeout, on_progress)
 
     def _post(self, frame: dict[str, Any]) -> None:
@@ -81,44 +80,59 @@ class BenchSessionClient(RemoteSession):
         never written, so a Stop is never lost — set before the frame, the frame does not go; after
         it, its ``cancel_call`` follows it."""
         with self._write_lock:
-            if frame.get("cmd") == "call" and self._call_stop is not None and self._call_stop.is_set():
+            if (
+                frame.get("cmd") == "call"
+                and self._call_stop is not None
+                and self._call_stop.is_set()
+            ):
                 raise _CallNotSent
             super()._post(frame)
 
     # -- control frames (short timeouts, inherited transport) ---------------
-    def acquire_run(self, claims: list[dict[str, Any]], *,
-                    policies: Optional[dict] = None, keep_state: bool = False,
-                    results_dir: str | Path = "",
-                    timeout: Optional[int] = None) -> dict[str, Any]:
+    def acquire_run(
+        self,
+        claims: list[dict[str, Any]],
+        *,
+        policies: Optional[dict] = None,
+        keep_state: bool = False,
+        results_dir: str | Path = "",
+        timeout: Optional[int] = None,
+    ) -> dict[str, Any]:
         """Reconcile ``claims`` into an endpoint plan and take the exclusive
         run handle.  ``claims`` = ``[{"test_id","local_name","etype",
         "subtype"?,"bench":{...}}]``; ``policies`` =
         ``{test_id: {local_name: "per_step"|"per_session"}}``."""
-        frame: dict[str, Any] = {"cmd": "acquire_run", "claims": claims,
-                                 "keep_state": bool(keep_state),
-                                 "results_dir": str(results_dir)}
+        frame: dict[str, Any] = {
+            "cmd": "acquire_run",
+            "claims": claims,
+            "keep_state": bool(keep_state),
+            "results_dir": str(results_dir),
+        }
         if policies:
             frame["policies"] = policies
         return self._request(frame, timeout or _TIMEOUT_REMOTE_EXEC)
 
-    def plan_only(self, claims: list[dict[str, Any]],
-                  policies: Optional[dict] = None, *,
-                  timeout: Optional[int] = None) -> dict[str, Any]:
+    def plan_only(
+        self,
+        claims: list[dict[str, Any]],
+        policies: Optional[dict] = None,
+        *,
+        timeout: Optional[int] = None,
+    ) -> dict[str, Any]:
         """Dry-run reconcile: the full endpoint plan (or precise conflict)
         WITHOUT opening any endpoint, holding anything, creating a run, or
         reading identities.  Same claims/policies shapes as ``acquire_run``;
         allowed even while a run holds the bench (it takes nothing)."""
-        frame: dict[str, Any] = {"cmd": "acquire_run", "claims": claims,
-                                 "dry_run": True}
+        frame: dict[str, Any] = {"cmd": "acquire_run", "claims": claims, "dry_run": True}
         if policies:
             frame["policies"] = policies
         return self._request(frame, timeout or _TIMEOUT_REMOTE_EXEC)
 
-    def release_run(self, run_id: str,
-                    timeout: Optional[int] = None) -> dict[str, Any]:
+    def release_run(self, run_id: str, timeout: Optional[int] = None) -> dict[str, Any]:
         """Release the run handle; held devices STAY open (persistent session)."""
-        return self._request({"cmd": "release_run", "run_id": run_id},
-                             timeout or _TIMEOUT_REMOTE_EXEC)
+        return self._request(
+            {"cmd": "release_run", "run_id": run_id}, timeout or _TIMEOUT_REMOTE_EXEC
+        )
 
     def cancel_run(self, run_id: str) -> dict[str, Any]:
         """Request an operator stop, never waiting: the frame is POSTED. Read
@@ -133,8 +147,16 @@ class BenchSessionClient(RemoteSession):
         return {"ok": True, "run_id": run_id, "posted": True}
 
     # -- a guided run's Call (its function in the engine's own worker) ------
-    def call_function(self, node_path: str, inputs: dict, procedure_json: dict, *, work_dir: Path,
-                      stop: threading.Event, timeout: Optional[int] = None) -> dict[str, Any]:
+    def call_function(
+        self,
+        node_path: str,
+        inputs: dict,
+        procedure_json: dict,
+        *,
+        work_dir: Path,
+        stop: threading.Event,
+        timeout: Optional[int] = None,
+    ) -> dict[str, Any]:
         """Make the guided run's Call at ``node_path`` (the run's ``inputs``): the daemon runs it in
         a one-call functions worker in ``work_dir`` (the run's folder, its functions snapshot
         there). ``{"ok": true, "reading"}`` — the row's reading — or a typed failure: ``Stopped``
@@ -144,10 +166,22 @@ class BenchSessionClient(RemoteSession):
         never a long function."""
         self._call_stop = stop
         try:
-            return self._request({"cmd": "call", "node_path": node_path, "procedure_json": procedure_json,
-                                  "work_dir": str(work_dir), **inputs}, timeout or _TIMEOUT_REMOTE_EXEC)
+            return self._request(
+                {
+                    "cmd": "call",
+                    "node_path": node_path,
+                    "procedure_json": procedure_json,
+                    "work_dir": str(work_dir),
+                    **inputs,
+                },
+                timeout or _TIMEOUT_REMOTE_EXEC,
+            )
         except _CallNotSent:
-            return {"ok": False, "kind": "Stopped", "error": "the call was stopped before it started"}
+            return {
+                "ok": False,
+                "kind": "Stopped",
+                "error": "the call was stopped before it started",
+            }
         finally:
             self._call_stop = None
 
@@ -161,10 +195,17 @@ class BenchSessionClient(RemoteSession):
             pass
 
     # -- the long exchange ---------------------------------------------------
-    def run_test(self, run_id: str, module_path: str | Path,
-                 results_dir: str | Path, *, on_output=None,
-                 on_prompt=None, stop_at_first_fail: bool = False,
-                 switch_off_on_stop: bool = True) -> dict[str, Any]:
+    def run_test(
+        self,
+        run_id: str,
+        module_path: str | Path,
+        results_dir: str | Path,
+        *,
+        on_output=None,
+        on_prompt=None,
+        stop_at_first_fail: bool = False,
+        switch_off_on_stop: bool = True,
+    ) -> dict[str, Any]:
         """Run one generated test in the holder.  BLOCKS (no per-frame
         timeout) until the daemon's final response.
 
@@ -179,32 +220,36 @@ class BenchSessionClient(RemoteSession):
 
         ``stop_at_first_fail`` / ``switch_off_on_stop`` ride the frame only
         when they differ from the defaults, so default frames are unchanged."""
-        frame = {"cmd": "run_test", "run_id": run_id,
-                 "module_path": str(module_path),
-                 "results_dir": str(results_dir)}
+        frame = {
+            "cmd": "run_test",
+            "run_id": run_id,
+            "module_path": str(module_path),
+            "results_dir": str(results_dir),
+        }
         if stop_at_first_fail:
             frame["stop_at_first_fail"] = True
         if not switch_off_on_stop:
             frame["switch_off_on_stop"] = False
         with self._lock:
             if self._dead:
-                return {"ok": False, "kind": "SessionDead",
-                        "error": "remote session already dead",
-                        "stderr": list(self._stderr_tail)}
+                return {
+                    "ok": False,
+                    "kind": "SessionDead",
+                    "error": "remote session already dead",
+                    "stderr": list(self._stderr_tail),
+                }
             if self._proc is not None and not self._alive():
                 # The holder died BETWEEN exchanges (e.g. killed). Lazy
                 # respawn here would hand the run to a FRESH daemon holding
                 # nothing (UnknownRun) and silently skip the host's
                 # crash-recovery safe-off (design row 5) — report the crash.
                 rc = self._proc.poll()
-                return self._dead_resp(
-                    "SessionDead", f"daemon died between exchanges (exit={rc})")
+                return self._dead_resp("SessionDead", f"daemon died between exchanges (exit={rc})")
             try:
                 if not self._alive():
                     self._start()
             except Exception as exc:  # noqa: BLE001 — ParserUnavailable included
-                return self._dead_resp("SessionDead",
-                                       f"failed to start daemon: {exc}")
+                return self._dead_resp("SessionDead", f"failed to start daemon: {exc}")
             self.in_run_since, self.acked_at = time.monotonic(), None
             try:
                 try:
@@ -215,22 +260,19 @@ class BenchSessionClient(RemoteSession):
                     try:
                         line = self._proc.stdout.readline()  # NO timeout: liveness = poll
                     except Exception as exc:  # noqa: BLE001
-                        return self._dead_resp("SessionDead",
-                                               f"read failed: {exc}")
+                        return self._dead_resp("SessionDead", f"read failed: {exc}")
                     if not line:
                         rc = self._proc.poll()
-                        return self._dead_resp(
-                            "SessionDead", f"daemon closed pipe (exit={rc})")
+                        return self._dead_resp("SessionDead", f"daemon closed pipe (exit={rc})")
                     try:
                         msg = json.loads(line)
                     except json.JSONDecodeError as exc:
-                        return self._dead_resp("SessionDead",
-                                               f"corrupt frame: {exc}")
+                        return self._dead_resp("SessionDead", f"corrupt frame: {exc}")
                     kind = msg.get("kind") if isinstance(msg, dict) else None
-                    if kind not in _STREAM_KINDS:   # the final response
+                    if kind not in _STREAM_KINDS:  # the final response
                         if isinstance(msg, dict) and msg.get("session_ended"):
-                            self._dead = True       # daemon exits after this
-                            self._terminate()       # reap -> device handles freed
+                            self._dead = True  # daemon exits after this
+                            self._terminate()  # reap -> device handles freed
                         return msg
                     if kind == "output":
                         if on_output is not None:
@@ -247,11 +289,11 @@ class BenchSessionClient(RemoteSession):
                             except Exception:  # noqa: BLE001
                                 answer = ""
                         try:
-                            self._post({"cmd": "prompt_response",
-                                        "id": msg.get("id"), "text": answer})
+                            self._post(
+                                {"cmd": "prompt_response", "id": msg.get("id"), "text": answer}
+                            )
                         except (BrokenPipeError, OSError, ValueError) as exc:
-                            return self._dead_resp("SessionDead",
-                                                   f"write failed: {exc}")
+                            return self._dead_resp("SessionDead", f"write failed: {exc}")
                         self.prompting = False
                     elif kind == "ack" and msg.get("cmd") == "cancel_run" and self.acked_at is None:
                         self.acked_at = time.monotonic()

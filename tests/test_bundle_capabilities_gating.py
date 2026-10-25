@@ -1,4 +1,5 @@
 """can_for_types: a bundle without a capabilities block provides no pack (no pre-capability fallback)."""
+
 from __future__ import annotations
 
 import json

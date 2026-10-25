@@ -13,8 +13,16 @@ from pathlib import Path
 from PySide6.QtCore import QItemSelectionModel, Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QAbstractItemView, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QMenu, QMessageBox, QPushButton, QVBoxLayout,
+    QAbstractItemView,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
 )
 
 from procedo.core import studio_launch_env
@@ -31,9 +39,11 @@ from ..core.project_manager import TestFolderInfo
 #: The header's legend of the row letters.
 LEGEND = "T text · J JSON · C code"
 #: A row's artifacts: letter, name, the TestFolderInfo flag that says it is there, its file.
-_ARTIFACTS = (("T", "Text", "has_text", ArtifactManager.PROCEDURE_TEXT_NAME),
-              ("J", "JSON", "has_json", ArtifactManager.PROCEDURE_JSON_NAME),
-              ("C", "Code", "has_code", ArtifactManager.TEST_CODE_NAME))
+_ARTIFACTS = (
+    ("T", "Text", "has_text", ArtifactManager.PROCEDURE_TEXT_NAME),
+    ("J", "JSON", "has_json", ArtifactManager.PROCEDURE_JSON_NAME),
+    ("C", "Code", "has_code", ArtifactManager.TEST_CODE_NAME),
+)
 #: An artifact's state and its square's tone: there, there but not acknowledged as in sync with
 #: the others (Mark Procedure In Sync clears it), not there. Which artifact is out of sync comes
 #: from core.test_sync.stale_artifacts: the file(s) changed since the acknowledged baseline, or
@@ -46,9 +56,14 @@ _SQUARE = 17
 def artifact_states(info, stale: tuple[str, ...]) -> list[tuple[str, str, str]]:
     """``(letter, name, state)`` of the test's text, JSON and code (states: :data:`_TONES`);
     ``stale``: the file names test_sync.stale_artifacts gives."""
-    return [(letter, name, ("out of sync" if file in stale else "present")
-             if getattr(info, flag) else "missing")
-            for letter, name, flag, file in _ARTIFACTS]
+    return [
+        (
+            letter,
+            name,
+            ("out of sync" if file in stale else "present") if getattr(info, flag) else "missing",
+        )
+        for letter, name, flag, file in _ARTIFACTS
+    ]
 
 
 def _show_state(item: QListWidgetItem, info, stale: tuple[str, ...], badges: bool) -> None:
@@ -78,8 +93,8 @@ def _padded(widget, left: int, top: int, right: int, bottom: int) -> QVBoxLayout
 class WorkspaceTab(BaseTab):
     """The Tests column of Procedo Studio (a project's tests; open, rename, delete, create)."""
 
-    test_opened = Signal(Path)    # Emitted when a test should be opened
-    test_deleted = Signal(Path)   # Emitted when a test folder was deleted
+    test_opened = Signal(Path)  # Emitted when a test should be opened
+    test_deleted = Signal(Path)  # Emitted when a test folder was deleted
     # Right-clicking the currently-loaded test → Mark Procedure In Sync.
     # The loaded test holds in-memory session_state that would overwrite
     # any disk-only write; main_window connects this signal to the
@@ -90,8 +105,9 @@ class WorkspaceTab(BaseTab):
         self._current_opened_test = None
         self.count_label = QLabel()
         self.count_label.setProperty("muted", True)
-        head = ui_kit.hbox(ui_kit.bold("Tests"), self.count_label, None,
-                           ui_kit.note(LEGEND, wrap=False))
+        head = ui_kit.hbox(
+            ui_kit.bold("Tests"), self.count_label, None, ui_kit.note(LEGEND, wrap=False)
+        )
         head.setContentsMargins(14, 10, 14, 8)
 
         # Same semantics as Bench's test search: a case-insensitive substring of the
@@ -106,7 +122,8 @@ class WorkspaceTab(BaseTab):
         self.test_list.setObjectName("testList")
         self.test_list.setProperty("marks", "open")
         self.test_list.setItemDelegate(
-            BadgeDelegate(self.test_list, row_height=_ROW_HEIGHT, square=_SQUARE))
+            BadgeDelegate(self.test_list, row_height=_ROW_HEIGHT, square=_SQUARE)
+        )
         self.test_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.test_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.test_list.setTextElideMode(Qt.TextElideMode.ElideRight)
@@ -180,8 +197,9 @@ class WorkspaceTab(BaseTab):
             item = self.test_list.item(i)
             is_open = item.data(Qt.UserRole) == self._current_opened_test
             if is_open:
-                selection.select(self.test_list.indexFromItem(item),
-                                 QItemSelectionModel.SelectionFlag.Select)
+                selection.select(
+                    self.test_list.indexFromItem(item), QItemSelectionModel.SelectionFlag.Select
+                )
             item.setData(Qt.FontRole, bold if is_open else None)
 
     def _on_test_double_clicked(self, item: QListWidgetItem):
@@ -209,7 +227,7 @@ class WorkspaceTab(BaseTab):
         # acknowledgment flow (in-memory + disk atomically), unloaded
         # writes the hash baseline directly to .llm_session.json.
         out_of_sync = bool(self._stale_artifacts(path))
-        is_loaded = (path == self._current_opened_test)
+        is_loaded = path == self._current_opened_test
         mark_sync_action = menu.addAction("Mark Procedure In Sync")
         mark_sync_action.setEnabled(out_of_sync)
         if not out_of_sync:
@@ -229,8 +247,7 @@ class WorkspaceTab(BaseTab):
         rename_action.setEnabled(not is_loaded)
         if is_loaded:
             rename_action.setToolTip(
-                "Close the test first — the loaded editor session pins "
-                "the old folder path."
+                "Close the test first — the loaded editor session pins the old folder path."
             )
         else:
             rename_action.setToolTip(
@@ -264,19 +281,24 @@ class WorkspaceTab(BaseTab):
         try:
             test_sync.mark_in_sync(path, self.project_manager.get_equipment_patterns())
         except (OSError, ValueError) as e:
-            QMessageBox.critical(self, "Mark In Sync Failed", f"Could not mark {path.name} in sync:\n{e}")
+            QMessageBox.critical(
+                self, "Mark In Sync Failed", f"Could not mark {path.name} in sync:\n{e}"
+            )
             return
         self.refresh()
 
     def _stale_artifacts(self, path: Path) -> tuple[str, ...]:
         return test_sync.stale_artifacts(path, self.project_manager.get_equipment_patterns())
-    
+
     def _rename_test(self, path: Path):
         """Rename a test folder; the id, its sync state and the project's
         references follow (core.test_folder_ops). Only offered for a test that
         is not open — the context menu disables it for the open one."""
         raw, ok = QInputDialog.getText(
-            self, "Rename Test", "New test name:", text=path.name,
+            self,
+            "Rename Test",
+            "New test name:",
+            text=path.name,
         )
         if not ok or not raw.strip():
             return
@@ -286,7 +308,10 @@ class WorkspaceTab(BaseTab):
         pm = self.project_manager
         try:
             new_path, warnings = test_folder_ops.rename_test(
-                pm.project_root, pm.get_tests_dir(), path, new_name,
+                pm.project_root,
+                pm.get_tests_dir(),
+                path,
+                new_name,
                 pm.get_equipment_patterns(),
             )
         except test_folder_ops.TestFolderError as e:
@@ -294,10 +319,10 @@ class WorkspaceTab(BaseTab):
             return
         if warnings:
             QMessageBox.warning(
-                self, "Renamed With Warnings",
+                self,
+                "Renamed With Warnings",
                 "The folder was renamed, but these could not follow "
-                "(ids re-sync on the next save):\n\n"
-                + "\n".join(warnings),
+                "(ids re-sync on the next save):\n\n" + "\n".join(warnings),
             )
 
         self.refresh()
@@ -319,7 +344,7 @@ class WorkspaceTab(BaseTab):
             f"This will remove the folder and all {file_count} file(s) inside it.\n\n"
             "This cannot be undone.",
             QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+            QMessageBox.No,
         )
 
         if result != QMessageBox.Yes:
@@ -330,7 +355,9 @@ class WorkspaceTab(BaseTab):
             test_folder_ops.delete_test(pm.get_tests_dir(), path)
         except test_folder_ops.TestFolderError as e:
             QMessageBox.critical(self, "Delete Failed", str(e))
-            if not exists_quiet(path) and unreachable(path) is None:  # moved aside, partly deleted: it is gone as a test
+            if (
+                not exists_quiet(path) and unreachable(path) is None
+            ):  # moved aside, partly deleted: it is gone as a test
                 self.test_deleted.emit(path)
                 self.refresh()
             return
@@ -340,7 +367,7 @@ class WorkspaceTab(BaseTab):
 
         # Refresh the list
         self.refresh()
-    
+
     def _on_create_new_test(self):
         """Create a new test folder."""
         name, ok = QInputDialog.getText(
@@ -348,10 +375,10 @@ class WorkspaceTab(BaseTab):
             "Create New Test",
             "Enter test name:",
         )
-        
+
         if not ok or not name:
             return
-        
+
         path = self.project_manager.create_test_folder(name)
         if path:
             self._load_test_list()
@@ -361,9 +388,9 @@ class WorkspaceTab(BaseTab):
             self.show_error(
                 "Failed to Create Test",
                 f"Could not create test folder '{name}'.\n"
-                "It may already exist or the path is invalid."
+                "It may already exist or the path is invalid.",
             )
-    
+
     def refresh_opened_test(self):
         """Re-read the open test's row only: saving or acknowledging it changes no other test.
         The whole list when that row or its folder is not there."""
@@ -372,8 +399,9 @@ class WorkspaceTab(BaseTab):
             for i in range(self.test_list.count()):
                 item = self.test_list.item(i)
                 if item.data(Qt.UserRole) == path:
-                    _show_state(item, TestFolderInfo.of(path), self._stale_artifacts(path),
-                                _uses_badges())
+                    _show_state(
+                        item, TestFolderInfo.of(path), self._stale_artifacts(path), _uses_badges()
+                    )
                     return
         self.refresh()
 
@@ -384,7 +412,7 @@ class WorkspaceTab(BaseTab):
             self.new_test_btn.setEnabled(True)
         else:
             self.new_test_btn.setEnabled(False)
-    
+
     def set_project_root(self, path: Path):
         """Set project root programmatically (from CLI)."""
         if self.project_manager.set_project_root(path):

@@ -13,6 +13,7 @@ Covers the three seams:
   debounced reload, unrelated writes fire none, and the
   ``.bundle_installed.json`` stamp is a belt-and-braces trigger.
 """
+
 from __future__ import annotations
 
 import json
@@ -45,6 +46,7 @@ def qapp():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _task(task_id: str, prompt: str) -> dict:
     return {
@@ -87,7 +89,8 @@ def _make_project(tmp_path: Path, tasks: list, name: str = "proj") -> Path:
     (root / "config").mkdir(parents=True)
     (root / "bundle" / "wheels").mkdir(parents=True)
     (root / "bundle" / "bundle.json").write_text(
-        json.dumps({"name": "b", "id": "b", "version": "1.0.0"}), encoding="utf-8")
+        json.dumps({"name": "b", "id": "b", "version": "1.0.0"}), encoding="utf-8"
+    )
     # The install stamp lives beside the venv, and the venv is keyed by the bundle:
     # a manifest plus a wheels/requirements.txt are what make a folder one the host
     # can answer about at all. Without them the stamp below is simply ``None``.
@@ -111,18 +114,19 @@ def _spin_until(app, cond, timeout_s: float) -> bool:
 # TaskConfigManager: project-root-first + reload picks up a changed bundle
 # ---------------------------------------------------------------------------
 
+
 def test_project_bundle_beats_stale_env_var(tmp_path, monkeypatch):
     """The launch-time env var is a snapshot; the ACTIVE project's
     bundle/defaults.json must win."""
     decoy = tmp_path / "decoy.json"
-    decoy.write_text(json.dumps(
-        {"workflows": {"text_json": {"tasks": [_task("decoy_task", "DECOY")]}}}
-    ), encoding="utf-8")
+    decoy.write_text(
+        json.dumps({"workflows": {"text_json": {"tasks": [_task("decoy_task", "DECOY")]}}}),
+        encoding="utf-8",
+    )
     monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(decoy))
 
     root = _make_project(tmp_path, [_task("task_a", "PROMPT V1")])
-    mgr = TaskConfigManager(fallback_path=tmp_path / "none.json",
-                            project_root=root)
+    mgr = TaskConfigManager(fallback_path=tmp_path / "none.json", project_root=root)
 
     ids = mgr.get_task_ids_for_tab("text_json")
     assert "task_a" in ids
@@ -134,10 +138,8 @@ def test_reload_rebuilds_gating_from_changed_defaults(tmp_path, monkeypatch):
     disappears, a new one appears, an existing prompt template swaps,
     and the reload callback (the button-rebuild chain) fires."""
     monkeypatch.delenv(BUNDLE_DEFAULTS_PATH, raising=False)
-    root = _make_project(
-        tmp_path, [_task("task_a", "PROMPT V1"), _task("task_old", "OLD")])
-    mgr = TaskConfigManager(fallback_path=tmp_path / "none.json",
-                            project_root=root)
+    root = _make_project(tmp_path, [_task("task_a", "PROMPT V1"), _task("task_old", "OLD")])
+    mgr = TaskConfigManager(fallback_path=tmp_path / "none.json", project_root=root)
 
     # The bundle's tasks, then the editor's own (listed, not runnable).
     assert mgr.get_task_ids_for_tab("text_json")[:2] == ["task_a", "task_old"]
@@ -147,8 +149,7 @@ def test_reload_rebuilds_gating_from_changed_defaults(tmp_path, monkeypatch):
     mgr.register_reload_callback(lambda: fired.append(True))
 
     # The "import": defaults.json replaced with a new bundle's view.
-    _write_defaults(
-        root, [_task("task_a", "PROMPT V2"), _task("task_new", "NEW")])
+    _write_defaults(root, [_task("task_a", "PROMPT V2"), _task("task_new", "NEW")])
     mgr.reload(root)
 
     ids = mgr.get_task_ids_for_tab("text_json")
@@ -162,15 +163,15 @@ def test_reload_rebuilds_gating_from_changed_defaults(tmp_path, monkeypatch):
 def test_env_fallback_when_project_has_no_bundle(tmp_path, monkeypatch):
     """No <project>/bundle → the env var still works (legacy launch)."""
     env_defaults = tmp_path / "envd.json"
-    env_defaults.write_text(json.dumps(
-        {"workflows": {"text_json": {"tasks": [_task("env_task", "ENV")]}}}
-    ), encoding="utf-8")
+    env_defaults.write_text(
+        json.dumps({"workflows": {"text_json": {"tasks": [_task("env_task", "ENV")]}}}),
+        encoding="utf-8",
+    )
     monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(env_defaults))
 
     root = tmp_path / "nobundle"
     (root / "config").mkdir(parents=True)
-    mgr = TaskConfigManager(fallback_path=tmp_path / "none.json",
-                            project_root=root)
+    mgr = TaskConfigManager(fallback_path=tmp_path / "none.json", project_root=root)
     assert "env_task" in mgr.get_task_ids_for_tab("text_json")
 
 
@@ -178,13 +179,13 @@ def test_env_fallback_when_project_has_no_bundle(tmp_path, monkeypatch):
 # pack_parsers equipment profiles: project-root-first
 # ---------------------------------------------------------------------------
 
+
 def test_equipment_profiles_project_first(tmp_path, monkeypatch):
     env_profile = {"equipment_type": "psu", "id_pattern": "^psu"}
     proj_profile = {"equipment_type": "controller", "id_pattern": "^fn"}
 
     decoy = tmp_path / "envd.json"
-    decoy.write_text(json.dumps({"equipment_profiles": [env_profile]}),
-                     encoding="utf-8")
+    decoy.write_text(json.dumps({"equipment_profiles": [env_profile]}), encoding="utf-8")
     monkeypatch.setenv(BUNDLE_DEFAULTS_PATH, str(decoy))
 
     root = _make_project(tmp_path, [], name="proj_eq")
@@ -199,6 +200,7 @@ def test_equipment_profiles_project_first(tmp_path, monkeypatch):
 # Watcher plumbing — real project_controller functions on a light harness
 # ---------------------------------------------------------------------------
 
+
 class _WatcherHarness:
     """Carries exactly the state the bundle-watch functions touch; the
     functions themselves are the REAL ``project_controller`` ones."""
@@ -211,9 +213,11 @@ class _WatcherHarness:
         )
         self._config_watcher = QFileSystemWatcher()
         self._config_watcher.fileChanged.connect(
-            lambda path: project_controller.on_config_file_changed(self, path))
+            lambda path: project_controller.on_config_file_changed(self, path)
+        )
         self._config_watcher.directoryChanged.connect(
-            lambda path: project_controller.on_config_dir_changed(self, path))
+            lambda path: project_controller.on_config_dir_changed(self, path)
+        )
         self._watched_config_path = None
         self._watched_config_dir = None
         self._watched_bundle_dir = None
@@ -224,7 +228,8 @@ class _WatcherHarness:
         self._bundle_change_timer.setSingleShot(True)
         self._bundle_change_timer.setInterval(debounce_ms)
         self._bundle_change_timer.timeout.connect(
-            lambda: project_controller.on_bundle_change_debounced(self))
+            lambda: project_controller.on_bundle_change_debounced(self)
+        )
         self.funnel_calls = 0
 
     def _update_project_rules_indicators(self):
@@ -243,8 +248,9 @@ def _armed_harness(tmp_path, qapp, monkeypatch, tasks=None, name="wproj"):
     )
     h = _WatcherHarness(root)
     # The funnel counts on the harness (the real one regates the window's tabs).
-    monkeypatch.setattr(project_controller, "handle_config_change",
-                        lambda mw: mw._handle_config_change())
+    monkeypatch.setattr(
+        project_controller, "handle_config_change", lambda mw: mw._handle_config_change()
+    )
     project_controller.watch_project_config(h)
     return root, h
 
@@ -282,10 +288,14 @@ def test_bundle_dir_swap_rearms_watch(qapp, tmp_path, monkeypatch):
     staging = root / "bundle.new"
     staging.mkdir()
     (staging / "bundle.json").write_text(
-        json.dumps({"name": "b2", "version": "2.0.0"}), encoding="utf-8")
-    (staging / "defaults.json").write_text(json.dumps(
-        {"workflows": {"text_json": {"tasks": [_task("t3", "P3")]}},
-         "equipment_profiles": []}), encoding="utf-8")
+        json.dumps({"name": "b2", "version": "2.0.0"}), encoding="utf-8"
+    )
+    (staging / "defaults.json").write_text(
+        json.dumps(
+            {"workflows": {"text_json": {"tasks": [_task("t3", "P3")]}}, "equipment_profiles": []}
+        ),
+        encoding="utf-8",
+    )
     old = root / "bundle.old"
     os.replace(root / "bundle", old)
     os.replace(staging, root / "bundle")

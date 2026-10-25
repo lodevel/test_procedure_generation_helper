@@ -49,9 +49,9 @@ class TestLatestMessageTotal:
     def test_picks_last_message_with_tokens(self):
         msgs = [
             SimpleNamespace(total_tokens=1000),
-            SimpleNamespace(total_tokens=0),   # a user turn carries no total
+            SimpleNamespace(total_tokens=0),  # a user turn carries no total
             SimpleNamespace(total_tokens=4200),
-            SimpleNamespace(total_tokens=0),   # trailing user turn
+            SimpleNamespace(total_tokens=0),  # trailing user turn
         ]
         # Compaction-correct: latest *reported* total, NOT the sum (5200).
         assert latest_message_total(msgs) == 4200

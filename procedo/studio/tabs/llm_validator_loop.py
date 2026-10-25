@@ -98,9 +98,13 @@ class ValidatorLoop:
         token = self._awaited = object()
         self._main_window.dock.chat_panel.set_llm_active(True, cancellable=False)
         self._status("Checking the proposal…")
-        engine_async.call(getattr(self._tab_context.project_manager, "project_root", None), check,
-                          lambda answer: self._on_answer(token, answer),
-                          cue=self._main_window.loading, cue_label="Checking the proposal\u2026")
+        engine_async.call(
+            getattr(self._tab_context.project_manager, "project_root", None),
+            check,
+            lambda answer: self._on_answer(token, answer),
+            cue=self._main_window.loading,
+            cue_label="Checking the proposal\u2026",
+        )
 
     def _claim(self, token) -> bool:
         """True when *token*'s check is the one still awaited (it no longer is, the chat unlocks);
@@ -162,7 +166,8 @@ class ValidatorLoop:
             self._main_window.dock.show_validation_result_from_list([])
             self._main_window.dock.chat_panel.add_message(
                 "system",
-                self._format_pass_message(run_state), tone="success",
+                self._format_pass_message(run_state),
+                tone="success",
             )
             run_state.on_validator_pass(outcome)
             return "continue"
@@ -183,7 +188,8 @@ class ValidatorLoop:
                 "Validator rejected the response, but every error is in an "
                 "operator-only field (test ID, description, or pack version) "
                 "that the LLM rewriter does not modify. Edit the original "
-                "procedure to fix the flagged lines, then retry.", tone="warning",
+                "procedure to fix the flagged lines, then retry.",
+                tone="warning",
             )
             return "halt_for_operator"
 
@@ -193,7 +199,8 @@ class ValidatorLoop:
             run_state.give_up_now(outcome)
             self._main_window.dock.chat_panel.add_message(
                 "system",
-                self._format_give_up_message(run_state, auto_correct_off=True), tone="warning",
+                self._format_give_up_message(run_state, auto_correct_off=True),
+                tone="warning",
             )
             return "continue"
 
@@ -201,7 +208,8 @@ class ValidatorLoop:
         if decision == "retry":
             self._main_window.dock.chat_panel.add_message(
                 "system",
-                self._format_retry_message(run_state), tone="warning",
+                self._format_retry_message(run_state),
+                tone="warning",
             )
             self._spawn_retry(outcome)
             return "retry"
@@ -209,7 +217,8 @@ class ValidatorLoop:
         # Out of retries — fall through to operator review with banner.
         self._main_window.dock.chat_panel.add_message(
             "system",
-            self._format_give_up_message(run_state, auto_correct_off=False), tone="warning",
+            self._format_give_up_message(run_state, auto_correct_off=False),
+            tone="warning",
         )
         return "continue"
 
@@ -275,9 +284,7 @@ class ValidatorLoop:
         )
 
     @staticmethod
-    def _format_give_up_message(
-        run_state: LLMRunState, *, auto_correct_off: bool
-    ) -> str:
+    def _format_give_up_message(run_state: LLMRunState, *, auto_correct_off: bool) -> str:
         n = len(run_state.last_outcome.issues) if run_state.last_outcome else 0
         if auto_correct_off:
             return (

@@ -69,17 +69,17 @@ def fetch_opencode_models(server_url: str, timeout: float = 2.0) -> list:
 class OpenCodeServerManager:
     """
     Manages the OpenCode WSL server lifecycle.
-    
+
     This class is responsible for:
     - Starting the OpenCode server in WSL
     - Monitoring server health
     - Stopping the server on application exit
-    
+
     Design:
     - ONE server instance per application (not per tab)
     - Multiple sessions can connect to the same server
     - Thread-safe server start/stop operations
-    
+
     Usage:
         manager = OpenCodeServerManager(config)
         if manager.start():
@@ -88,11 +88,11 @@ class OpenCodeServerManager:
             pass
         manager.stop()  # Call on app exit
     """
-    
+
     def __init__(self, config: Optional[OpenCodeConfig] = None):
         """
         Initialize the server manager with OpenCode configuration.
-        
+
         Args:
             config: OpenCode configuration. Uses defaults if not provided.
         """
@@ -117,22 +117,22 @@ class OpenCodeServerManager:
         # The current spawn's (Linux pid, port), the pid parsed from its stderr
         # marker by the drain thread (see _PID_MARKER). None until a spawn.
         self._spawned: "Optional[Future[tuple[int, int]]]" = None
-    
+
     @property
     def config(self) -> OpenCodeConfig:
         """Get the current configuration."""
         return self._config
-    
+
     @property
     def server_url(self) -> str:
         """
         Get the server URL (http://host:port).
-        
+
         Returns:
             Server URL string, e.g., "http://127.0.0.1:4096"
         """
         return self._config.server_url
-    
+
     def _process_is_alive_locked(self) -> bool:
         """REAL process liveness — the caller MUST already hold ``self._lock``.
 
@@ -248,15 +248,16 @@ class OpenCodeServerManager:
         if not self._lock.acquire(blocking=False):
             log.debug(
                 "ensure_running: a start/stop is already in flight — deferring "
-                "to it instead of relaunching")
+                "to it instead of relaunching"
+            )
             return False
         self._lock.release()
         # Wedge guard: process alive but /health dead -> kill the corpse so
         # start()'s poll-only reuse-guard does not short-circuit on it.
         if self.is_running:
             log.warning(
-                "Server wedged (process alive, /health dead) — tearing down "
-                "before relaunch")
+                "Server wedged (process alive, /health dead) — tearing down before relaunch"
+            )
             self._force_stop_for_relaunch()
         log.info("Server found down — attempting auto-recovery (relaunch)")
         return self.start()
@@ -405,8 +406,10 @@ class OpenCodeServerManager:
         (``-i`` so the user's PATH resolves ``opencode``). ``exec`` keeps the pid,
         so the recorded pid IS the server's. Two quoting levels: sh parses the
         whole, bash the serve command, each value quoted at its own level."""
-        launch = (f"{self._orphans.record_command(port)}"
-                  f"exec bash -ic {shlex.quote(self._build_serve_command(port))}")
+        launch = (
+            f"{self._orphans.record_command(port)}"
+            f"exec bash -ic {shlex.quote(self._build_serve_command(port))}"
+        )
         return [self._config.wsl_path, "-e", "sh", "-c", launch]
 
     def _build_serve_command(self, port: int) -> str:
@@ -435,22 +438,23 @@ class OpenCodeServerManager:
         # names + `opencode serve` literal are fixed and need no quoting.
         env = "OPENCODE_ENABLE_EXA=1 " + "".join(
             f"{name}={shlex.quote(value)} "
-            for name, value in config_env(self._config.working_directory).items())
+            for name, value in config_env(self._config.working_directory).items()
+        )
         return (
             f"echo {self._PID_MARKER}$$ >&2; "
             f"{env}{SERVE_EXEC}{int(port)} "
             f"--hostname {shlex.quote(str(self._config.server_hostname))}"
         )
-    
+
     def stop(self) -> None:
         """
         Stop the server if running.
-        
+
         This method:
         1. Terminates the server process gracefully
         2. Force kills if termination times out
         3. Cleans up internal state
-        
+
         Safe to call multiple times.
 
         Retirement is set BEFORE the lock so a boot already holding the lock
@@ -462,26 +466,23 @@ class OpenCodeServerManager:
         with self._lock:
             self._running = False
             self._stop_process()
-    
+
     def health_check(self) -> bool:
         """
         Check server health by calling the health endpoint.
-        
+
         This performs an HTTP health check to verify the server
         is responsive and accepting requests.
-        
+
         Returns:
             True if server is healthy and responsive.
             False if server is not responding or returned an error.
         """
         if not self.is_running:
             return False
-        
+
         try:
-            response = requests.get(
-                f"{self.server_url}/health",
-                timeout=2
-            )
+            response = requests.get(f"{self.server_url}/health", timeout=2)
             healthy = response.status_code == 200
             if healthy:
                 log.debug("Server health check passed")
@@ -491,7 +492,7 @@ class OpenCodeServerManager:
         except requests.exceptions.RequestException as e:
             log.warning(f"Server health check failed: {e}")
             return False
-    
+
     def is_available(self) -> bool:
         """
         Check whether OpenCode can be USED — i.e. WSL and the ``opencode``
@@ -514,7 +515,9 @@ class OpenCodeServerManager:
         try:
             result = subprocess.run(
                 [self._config.wsl_path, "--version"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
                 cwd=safe_wsl_cwd(),
             )
             wsl_ok = result.returncode == 0
@@ -528,7 +531,9 @@ class OpenCodeServerManager:
             try:
                 result = subprocess.run(
                     [self._config.wsl_path, "bash", "-ic", "opencode --version"],
-                    capture_output=True, text=True, timeout=self._config.startup_timeout,
+                    capture_output=True,
+                    text=True,
+                    timeout=self._config.startup_timeout,
                     cwd=safe_wsl_cwd(),
                 )
                 opencode_ok = result.returncode == 0
@@ -540,8 +545,9 @@ class OpenCodeServerManager:
                 return ServerStatus.failure(ServerError.OPENCODE_MISSING, str(e))
 
         err = classify_install(wsl_ok, opencode_ok)
-        return ServerStatus.healthy() if err is ServerError.NONE \
-            else ServerStatus.failure(err, detail)
+        return (
+            ServerStatus.healthy() if err is ServerError.NONE else ServerStatus.failure(err, detail)
+        )
 
     def _start_stderr_drain(self, port: int) -> None:
         """Drain the server's stderr into a bounded tail on a daemon thread —
@@ -564,9 +570,8 @@ class OpenCodeServerManager:
             try:
                 for line in proc.stderr:
                     text = line.strip()
-                    pid = text[len(self._PID_MARKER):]
-                    if (not spawned.done() and text.startswith(self._PID_MARKER)
-                            and pid.isdigit()):
+                    pid = text[len(self._PID_MARKER) :]
+                    if not spawned.done() and text.startswith(self._PID_MARKER) and pid.isdigit():
                         spawned.set_result((int(pid), port))
                         continue
                     tail.append(line)
@@ -577,11 +582,11 @@ class OpenCodeServerManager:
             target=_drain, daemon=True, name="opencode-stderr-drain"
         )
         self._stderr_thread.start()
-    
+
     def _wait_for_server(self) -> bool:
         """
         Wait for server to be ready by polling health endpoint.
-        
+
         Returns:
             True if server became ready within timeout.
             False if timeout expired or process died.
@@ -589,7 +594,7 @@ class OpenCodeServerManager:
         log.debug("Waiting for server to be ready...")
         start_time = time.time()
         attempt = 0
-        
+
         while time.time() - start_time < self._config.startup_timeout:
             # A stop() during boot retires us — bail within one tick so the
             # synchronous wait never holds the caller (e.g. a swap on the UI
@@ -601,27 +606,24 @@ class OpenCodeServerManager:
             attempt += 1
             log.debug(f"Health check attempt {attempt}...")
             try:
-                response = requests.get(
-                    f"{self.server_url}/health",
-                    timeout=1
-                )
+                response = requests.get(f"{self.server_url}/health", timeout=1)
                 if response.status_code == 200:
                     log.debug(f"Server ready after {attempt} attempts")
                     return True
             except requests.exceptions.RequestException as e:
                 # Expected while the server is still booting; keep polling.
                 log.debug(f"Health check attempt {attempt} not ready yet: {e}")
-            
+
             # Check if process died (stderr is captured by the drain thread).
             if self._server_process and self._server_process.poll() is not None:
                 log.error("Server process died during startup")
                 return False
-            
+
             time.sleep(0.5)
-        
+
         log.error(f"Server failed to start within {self._config.startup_timeout}s timeout")
         return False
-    
+
     def _stop_process(self) -> None:
         """
         Stop the server process if we own it — and only what we started.

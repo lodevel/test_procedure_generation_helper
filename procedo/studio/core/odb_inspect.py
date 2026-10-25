@@ -35,13 +35,11 @@ def load_board(project_root: Optional[Path]) -> dict:
         return {**empty, "error": NO_PROJECT}
     tgz = odb_archive.find(project_root)
     if tgz is None:
-        return {**empty, "error":
-                f"No ODB++ .tgz archive in the project folder:\n{project_root}"}
+        return {**empty, "error": f"No ODB++ .tgz archive in the project folder:\n{project_root}"}
     return board_images.list_board(tgz, None)
 
 
-def cached_image_paths(project_root: Optional[Path], refdes: str,
-                       pad: Optional[str]) -> tuple:
+def cached_image_paths(project_root: Optional[Path], refdes: str, pad: Optional[str]) -> tuple:
     """(zoomed, wide) cached PNG paths of the location in the project's MACHINE-LOCAL
     media cache — the same folder the main GUI uses, which is why it is asked of the
     host rather than composed (:mod:`procedo.studio._project_local_state`); a cache
@@ -51,11 +49,11 @@ def cached_image_paths(project_root: Optional[Path], refdes: str,
     if not refdes:
         return (None, None)
     return board_images.cached_image_paths(
-        _project_local_state.media_cache(project_root), refdes, pad, exact=True)
+        _project_local_state.media_cache(project_root), refdes, pad, exact=True
+    )
 
 
-def render_target(project_root: Optional[Path], refdes: str,
-                  pad: Optional[str]) -> tuple:
+def render_target(project_root: Optional[Path], refdes: str, pad: Optional[str]) -> tuple:
     """Render ONE component/pin board image into the SHARED machine-local media
     cache (zoomed + wide, with the user's image settings) and return its
     ``(zoomed, wide)`` cached paths. Cache-first. **Graceful** ``(None, None)``
@@ -70,7 +68,10 @@ def render_target(project_root: Optional[Path], refdes: str,
     if tgz is None or cache is None or not refdes:  # no project_id: nothing to render into
         return (None, None)
     board_images.OdbImageWorker(
-        tgz, cache, [MediaRef({"ref": {"component": refdes, "pin": pad}})],
-        get_image_generator_settings(project_root), lambda _text: None,
+        tgz,
+        cache,
+        [MediaRef({"ref": {"component": refdes, "pin": pad}})],
+        get_image_generator_settings(project_root),
+        lambda _text: None,
     ).run()
     return cached_image_paths(project_root, refdes, pad)

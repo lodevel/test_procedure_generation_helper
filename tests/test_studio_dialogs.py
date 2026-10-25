@@ -48,22 +48,28 @@ def _frame(dialog):
 
 # ---- S8 DSL Syntax Reference -----------------------------------------------------------------
 
+
 @pytest.fixture
 def rules_root(tmp_path):
     project = tmp_path / "proj"
     (project / "bundle" / "rules").mkdir(parents=True)
     (project / "bundle" / "bundle.json").write_text(
-        json.dumps({"id": "baseline", "version": "2.8.1"}), encoding="utf-8")
+        json.dumps({"id": "baseline", "version": "2.8.1"}), encoding="utf-8"
+    )
     (project / "bundle" / "defaults.json").write_text("{}", encoding="utf-8")
     rules = project / "bundle" / "rules"
     (rules / "001_text.md").write_text(
         "# Canonical Text Procedure\n\n## Canonical verbs\n\n| Verb | Used by |\n|---|---|\n"
-        "| `Connect` | manual wiring |\n| `Measure` | readout binding |\n", encoding="utf-8")
+        "| `Connect` | manual wiring |\n| `Measure` | readout binding |\n",
+        encoding="utf-8",
+    )
     (rules / "002_dmm.md").write_text("# DMM rules\n\nThe DMM reads volts.\n", encoding="utf-8")
     return rules
 
 
-def test_the_syntax_reference_names_the_bundle_lists_its_pages_and_finds_in_the_page(qapp, rules_root):
+def test_the_syntax_reference_names_the_bundle_lists_its_pages_and_finds_in_the_page(
+    qapp, rules_root
+):
     SyntaxReferenceDialog._instance = None
     bundle = shell.bundle_name(rules_root.parent.parent)  # the footer's and the header's resolver
     assert bundle == "baseline 2.8.1"
@@ -105,7 +111,9 @@ def test_enter_in_the_syntax_references_search_finds_once(qapp, rules_root):
     finally:
         dlg.close()
 
+
 # ---- S9 Skill chat ---------------------------------------------------------------------------
+
 
 class _Rules(ContextSource):
     def __init__(self):
@@ -119,16 +127,24 @@ class _Rules(ContextSource):
 
 
 def _skill(skill_id, title, when):
-    return SimpleNamespace(skill_id=skill_id, title=title, version="0.11.9", when_to_use=when,
-                           system_prompt="", metadata={})
+    return SimpleNamespace(
+        skill_id=skill_id,
+        title=title,
+        version="0.11.9",
+        when_to_use=when,
+        system_prompt="",
+        metadata={},
+    )
 
 
 @pytest.fixture
 def chat_dialog(qapp, monkeypatch):
     monkeypatch.setattr("procedo.studio.core.studio_settings.load_settings", lambda: {})
     inserted = []
-    skills = [_skill("dcdc", "DCDC test builder", "Find a power IC."),
-              _skill("board", "Board bring-up", "Bring a board up.")]
+    skills = [
+        _skill("dcdc", "DCDC test builder", "Find a power IC."),
+        _skill("board", "Board bring-up", "Bring a board up."),
+    ]
     dlg = SkillChatDialog(skills, [_Rules()], SimpleNamespace(), None, inserted.append)
     yield dlg, inserted
     dlg.close()
@@ -141,10 +157,15 @@ def test_the_skill_chat_has_the_skill_picker_in_its_header_and_insert_as_its_pri
     combo = header.findChild(QComboBox)
     assert header.title.text() == "Skill chat"
     assert [combo.itemText(i) for i in range(combo.count())] == [
-        "DCDC test builder · v0.11.9", "Board bring-up · v0.11.9"]
+        "DCDC test builder · v0.11.9",
+        "Board bring-up · v0.11.9",
+    ]
     assert header.subtitle.text() == "Find a power IC."
     assert [b.text() for b in primaries] == ["▶ Run skill", "Insert into procedure"]
-    assert [b.text() for b in footer.findChildren(QPushButton)] == ["Close", "Insert into procedure"]
+    assert [b.text() for b in footer.findChildren(QPushButton)] == [
+        "Close",
+        "Insert into procedure",
+    ]
 
     combo.setCurrentIndex(1)  # the skill picker switches the skill and its description
     assert dlg._chat._skill.skill_id == "board"
@@ -172,7 +193,9 @@ def test_the_context_card_counts_the_ticks_per_tab_and_in_its_readout(chat_dialo
     picker.set_checked("rules", ["001_rule.md", "003_rule.md"])
     picker._update_readout()
     assert picker._tabs.tabText(0) == "Rules 2"
-    assert picker._readout.text() == "Context: 2 items" and picker.loading.active  # sized on a worker
+    assert (
+        picker._readout.text() == "Context: 2 items" and picker.loading.active
+    )  # sized on a worker
     end = time.monotonic() + 3
     while "~" not in picker._readout.text() and time.monotonic() < end:
         QApplication.processEvents()
@@ -193,7 +216,8 @@ def test_the_chat_draws_the_turns_as_bubbles_and_its_icon_buttons_are_wired(chat
     page = chat._transcript.toHtml()
     assert "Build &lt;U86&gt;" in page and "U86 is a buck." in page
     assert [b.objectName() for b in (chat._stop_btn, chat._trash_btn, chat._restart_btn)] == [
-        "lineIconButton"] * 3
+        "lineIconButton"
+    ] * 3
     chat._trash_btn.click()
     assert chat._transcript.toPlainText() == ""
 
@@ -215,30 +239,63 @@ def test_a_bare_chat_shows_its_own_skill_picker_and_elides_a_long_status(qapp, m
 def test_an_embedded_chat_with_a_pinned_skill_has_no_header():
     """The DCDC wizard's embed: no skill picker, no window header, the same public API."""
     QApplication.instance() or QApplication([])
-    widget = SkillChatWidget([_skill("dcdc", "DCDC", "")], SimpleNamespace(),
-                             show_skill_selector=False, show_run_button=False,
-                             backend_tab_id="dcdc_classifier")
+    widget = SkillChatWidget(
+        [_skill("dcdc", "DCDC", "")],
+        SimpleNamespace(),
+        show_skill_selector=False,
+        show_run_button=False,
+        backend_tab_id="dcdc_classifier",
+    )
     assert widget.header is None and widget._run_btn is None
-    for name in ("reply_finished", "reply_failed", "busy_changed", "conversation_reset",
-                 "shutdown", "stop", "set_skill", "set_pushed_context", "resolved_context",
-                 "run_kickoff", "send_user_turn", "set_status", "is_busy", "latest_reply"):
+    for name in (
+        "reply_finished",
+        "reply_failed",
+        "busy_changed",
+        "conversation_reset",
+        "shutdown",
+        "stop",
+        "set_skill",
+        "set_pushed_context",
+        "resolved_context",
+        "run_kickoff",
+        "send_user_turn",
+        "set_status",
+        "is_busy",
+        "latest_reply",
+    ):
         assert hasattr(widget, name), name
 
 
 # ---- S10 Validator errors and Select rules ---------------------------------------------------
 
+
 def test_the_validator_dialog_shows_the_counts_and_one_card_per_issue(qapp):
-    outcome = ValidationOutcome(ok=False, reason="schema", issues=[
-        ValidationIssueView(code="E-EQUIP-UNKNOWN", message="PSU2 is not declared.",
-                            severity="error", location="step 7", fix_hint="Declare PSU2."),
-        ValidationIssueView(code="W-UNIT", message="'ms' expected.", severity="warning",
-                            location="step 25"),
-    ])
-    dlg = ValidatorErrorDialog(outcome, title="Validator rejected the proposal",
-                               intro="Text → JSON · procedure.json was not changed")
+    outcome = ValidationOutcome(
+        ok=False,
+        reason="schema",
+        issues=[
+            ValidationIssueView(
+                code="E-EQUIP-UNKNOWN",
+                message="PSU2 is not declared.",
+                severity="error",
+                location="step 7",
+                fix_hint="Declare PSU2.",
+            ),
+            ValidationIssueView(
+                code="W-UNIT", message="'ms' expected.", severity="warning", location="step 25"
+            ),
+        ],
+    )
+    dlg = ValidatorErrorDialog(
+        outcome,
+        title="Validator rejected the proposal",
+        intro="Text → JSON · procedure.json was not changed",
+    )
     header, footer, primaries = _frame(dlg)
     assert (header.title.text(), header.subtitle.text()) == (
-        "Validator rejected the proposal", "Text → JSON · procedure.json was not changed")
+        "Validator rejected the proposal",
+        "Text → JSON · procedure.json was not changed",
+    )
     assert [b.text() for b in primaries] == ["Close"]
     pills = [dlg.counts.itemAt(i).widget().text() for i in range(dlg.counts.count() - 1)]
     assert pills == ["1 error", "1 warning"]
@@ -258,11 +315,17 @@ def test_the_rule_selector_counts_the_ticked_rules_and_saves_each_tick(qapp, tmp
     tcm = SimpleNamespace(
         get_all_tasks_for_tab=lambda tab: [SimpleNamespace(selected_rules=["a.md", "c.md"])],
         set_selected_rules_for_tab=lambda tab, rules: saved.append((tab, rules)),
-        save_config=lambda: True)
+        save_config=lambda: True,
+    )
     for name in ("a.md", "b.md", "c.md"):
         (tmp_path / name).write_text("x" * 1500, encoding="utf-8")
-    pm = SimpleNamespace(project_root=None, get_rule_docs=lambda: [
-        project_manager.RuleDoc(name, tmp_path / name, "bundle") for name in ("a.md", "b.md", "c.md")])
+    pm = SimpleNamespace(
+        project_root=None,
+        get_rule_docs=lambda: [
+            project_manager.RuleDoc(name, tmp_path / name, "bundle")
+            for name in ("a.md", "b.md", "c.md")
+        ],
+    )
     dlg = RuleSelectorDialog("text_json", pm, tcm, view=shell.VIEWS[1][0])
     header, footer, primaries = _frame(dlg)
     assert (header.title.text(), header.subtitle.text()) == ("Select rules", "Text–JSON view")
@@ -277,14 +340,20 @@ def test_the_rule_selector_counts_the_ticked_rules_and_saves_each_tick(qapp, tmp
 
 # ---- S12 the small ones ----------------------------------------------------------------------
 
+
 def test_the_export_selection_returns_the_ticked_tests_and_greys_those_without_the_artifact(qapp):
     info = project_manager.TestFolderInfo
-    folders = [info(Path("a"), "AUX0_output", has_json=True, has_text=True),
-               info(Path("b"), "AUX1_output", has_json=True, has_text=True, has_code=True),
-               info(Path("c"), "EPO", has_text=True)]
+    folders = [
+        info(Path("a"), "AUX0_output", has_json=True, has_text=True),
+        info(Path("b"), "AUX1_output", has_json=True, has_text=True, has_code=True),
+        info(Path("c"), "EPO", has_text=True),
+    ]
     dlg = test_selection_dialog.TestSelectionDialog(folders, require="json")
     header, footer, primaries = _frame(dlg)
-    assert (header.title.text(), header.subtitle.text()) == ("Export procedures", "Procedure to Word")
+    assert (header.title.text(), header.subtitle.text()) == (
+        "Export procedures",
+        "Procedure to Word",
+    )
     assert [b.text() for b in primaries] == ["Export"]
     assert footer.note.text() == "2 of 3"
     assert [f.name for f in dlg.selected_folders()] == ["AUX0_output", "AUX1_output"]
@@ -303,15 +372,25 @@ def test_word_keywords_shows_the_main_apps_reference_in_its_own_dialog(qapp):
     assert "Word Export Template Keywords" in dlg.page.toPlainText()
     document = dlg.page.document()
     blocks = [document.findBlockByNumber(i) for i in range(document.blockCount())]
-    headings = [(b.blockFormat().headingLevel(), b.text()) for b in blocks if b.blockFormat().headingLevel()]
-    assert headings[:3] == [(1, "Word Export Template Keywords"), (2, "Template Location"),
-                            (2, "Template Resolution")]
+    headings = [
+        (b.blockFormat().headingLevel(), b.text()) for b in blocks if b.blockFormat().headingLevel()
+    ]
+    assert headings[:3] == [
+        (1, "Word Export Template Keywords"),
+        (2, "Template Location"),
+        (2, "Template Resolution"),
+    ]
     tables = ui_kit._tables(document.rootFrame())
     assert [tables[0].cellAt(0, c).firstCursorPosition().block().text() for c in range(2)] == [
-        "Syntax", "Purpose"]
-    assert any(b.blockFormat().nonBreakableLines() and "{{ author.name }}" in b.text() for b in blocks)
+        "Syntax",
+        "Purpose",
+    ]
+    assert any(
+        b.blockFormat().nonBreakableLines() and "{{ author.name }}" in b.text() for b in blocks
+    )
     assert document.find("docxtpl docs").charFormat().anchorHref() == (
-        "https://docxtpl.readthedocs.io/en/latest/#jinja2-like-syntax")
+        "https://docxtpl.readthedocs.io/en/latest/#jinja2-like-syntax"
+    )
 
 
 def test_about_shows_the_studio_mark_its_name_and_version(qapp):
@@ -324,7 +403,9 @@ def test_about_shows_the_studio_mark_its_name_and_version(qapp):
     assert any(not label.pixmap().isNull() for label in dlg.findChildren(QLabel))  # the mark
 
 
-def test_the_board_view_shows_at_the_boards_angle_and_its_popup_is_benchs(qapp, tmp_path, monkeypatch):
+def test_the_board_view_shows_at_the_boards_angle_and_its_popup_is_benchs(
+    qapp, tmp_path, monkeypatch
+):
     config_manager.write_config_section(tmp_path / "config", "board_view", {"rotation": 90})
     panel = NetlistPanel()
     panel._viewer.board, panel._viewer.subtitle = tmp_path, "KC30_revC.tgz"  # what load() sets
@@ -353,8 +434,9 @@ def test_the_board_view_shows_at_the_boards_angle_and_its_popup_is_benchs(qapp, 
     panel.close()
 
 
-def test_a_row_picked_while_one_renders_renders_next_and_a_cached_one_shows_at_once(qapp, tmp_path,
-                                                                                    monkeypatch):
+def test_a_row_picked_while_one_renders_renders_next_and_a_cached_one_shows_at_once(
+    qapp, tmp_path, monkeypatch
+):
     from procedo.studio.widgets import netlist_panel
 
     started, cached = [], {}
@@ -372,8 +454,11 @@ def test_a_row_picked_while_one_renders_renders_next_and_a_cached_one_shows_at_o
 
     monkeypatch.setattr(netlist_panel, "_RenderWorker", _Worker)
     monkeypatch.setattr(netlist_panel, "_LIVE_WORKERS", set())
-    monkeypatch.setattr(netlist_panel.odb_inspect, "cached_image_paths",
-                        lambda _root, refdes, pin: cached.get((refdes, pin), (None, None)))
+    monkeypatch.setattr(
+        netlist_panel.odb_inspect,
+        "cached_image_paths",
+        lambda _root, refdes, pin: cached.get((refdes, pin), (None, None)),
+    )
     panel = NetlistPanel()
     panel._project_root = tmp_path
     panel._render("R1", "")
@@ -394,6 +479,7 @@ def test_a_row_picked_while_one_renders_renders_next_and_a_cached_one_shows_at_o
 
 def _flush_deletes():
     from PySide6.QtCore import QEvent
+
     QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 

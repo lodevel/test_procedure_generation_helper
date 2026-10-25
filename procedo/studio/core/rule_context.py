@@ -42,7 +42,7 @@ def _strip_llm_useless_frontmatter(content: str) -> str:
     if end_marker_idx == -1:
         return content
     fm_body = content[4:end_marker_idx]
-    rest = content[end_marker_idx + len("\n---\n"):]
+    rest = content[end_marker_idx + len("\n---\n") :]
 
     kept_lines: list[str] = []
     skipping = False
@@ -97,9 +97,12 @@ def rule_doc_texts(docs: Sequence[RuleDoc]) -> list[tuple[RuleDoc, str]]:
 def _project_rules_preamble(attached: bool) -> str:
     """Heads the project's own rule documents, sent after the bundle rules: they win (owner
     decision 2026-10-19); *attached*: some come as files attached to the message."""
-    return (f"\n{'='*60}\n# Project rules\n{'='*60}\n"
-            + PROJECT_RULES_WIN + "\n"
-            + ("Some of them are attached to this message as files.\n" if attached else ""))
+    return (
+        f"\n{'=' * 60}\n# Project rules\n{'=' * 60}\n"
+        + PROJECT_RULES_WIN
+        + "\n"
+        + ("Some of them are attached to this message as files.\n" if attached else "")
+    )
 
 
 def rules_prompt_text(docs: Sequence[RuleDoc]) -> Optional[str]:
@@ -114,7 +117,8 @@ def rules_prompt_text(docs: Sequence[RuleDoc]) -> Optional[str]:
             text += "\n"
         title = "Project rules" if doc.origin == "project" else "Rules"
         parts[doc.origin].append(
-            f"\n{'='*60}\n# {title} from: {doc.path.name}\n{'='*60}\n{text}")
+            f"\n{'=' * 60}\n# {title} from: {doc.path.name}\n{'=' * 60}\n{text}"
+        )
     if parts["project"]:
         parts["project"].insert(0, _project_rules_preamble(attached))
     contents = parts["bundle"] + parts["project"]

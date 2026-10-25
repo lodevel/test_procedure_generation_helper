@@ -8,6 +8,7 @@ command handlers (``_cmd_exec_ops`` / ``_cmd_safe_off`` / ``_cmd_shutdown`` /
 ``_teardown``) on a single ``_Session``, the way the daemon loop drives them.
 Packs are registered directly because the test env has no installed bundle.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -30,46 +31,71 @@ pytest.importorskip(
 import rules_packager_base.rules.v2_0_2.parser._default_registry as reg
 import labscpi_pack.rules.v2_0_1.parser as labpack
 
-reg._DEFAULT_PACK_PARSERS.update({
-    "psu": labpack.PACK_PARSER, "eload": labpack.PACK_PARSER,
-    "scope": labpack.PACK_PARSER,
-})
+reg._DEFAULT_PACK_PARSERS.update(
+    {
+        "psu": labpack.PACK_PARSER,
+        "eload": labpack.PACK_PARSER,
+        "scope": labpack.PACK_PARSER,
+    }
+)
 reg.register_lifecycle(labpack.LIFECYCLE)
 # C1: lifecycle is keyed by OP NAMESPACE — fncore ops live under "fncore"
 # (serial pack: remote False, no output cleanup).
 reg.register_lifecycle({"fncore": {"remote": False, "cleanup": None}})
 
-_RUNNER = (Path(__file__).resolve().parent.parent
-           / "procedo" / "engine_client" / "_execute_op_subprocess.py")
+_RUNNER = (
+    Path(__file__).resolve().parent.parent
+    / "procedo"
+    / "engine_client"
+    / "_execute_op_subprocess.py"
+)
 _spec = importlib.util.spec_from_file_location("_exec_op_runner", _RUNNER)
 er = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(er)
-_ops = sys.modules["_instrument_ops"]   # the bare-name sibling the daemon just loaded
+_ops = sys.modules["_instrument_ops"]  # the bare-name sibling the daemon just loaded
 
-_PROC = {"equipment": [{"id": "PSU1", "type": "psu"},
-                       {"id": "ELOAD1", "type": "eload"}]}
-_BENCH = {"PSU1": {"visa": "MOCK", "_dev": "PSU1"},
-          "ELOAD1": {"visa": "MOCK", "_dev": "ELOAD1"}}
+_PROC = {"equipment": [{"id": "PSU1", "type": "psu"}, {"id": "ELOAD1", "type": "eload"}]}
+_BENCH = {"PSU1": {"visa": "MOCK", "_dev": "PSU1"}, "ELOAD1": {"visa": "MOCK", "_dev": "ELOAD1"}}
 
 
 def _set_v(device, node="s", volts=5.0):
-    return {"node_path": node, "op": {"op": "psu.set_voltage", "device": device,
-                                      "channel": 1, "volts": volts, "volts_unit": "V"}}
+    return {
+        "node_path": node,
+        "op": {
+            "op": "psu.set_voltage",
+            "device": device,
+            "channel": 1,
+            "volts": volts,
+            "volts_unit": "V",
+        },
+    }
 
 
 def _meas_v(device, node="s", ref=7):
-    return {"node_path": node, "op": {"op": "psu.measure_voltage",
-                                      "device": device, "channel": 1, "ref": ref}}
+    return {
+        "node_path": node,
+        "op": {"op": "psu.measure_voltage", "device": device, "channel": 1, "ref": ref},
+    }
 
 
 def _set_i(device, node="s", amps=2.0):
-    return {"node_path": node, "op": {"op": "eload.set_current", "device": device,
-                                      "channel": 1, "amps": amps, "amps_unit": "A"}}
+    return {
+        "node_path": node,
+        "op": {
+            "op": "eload.set_current",
+            "device": device,
+            "channel": 1,
+            "amps": amps,
+            "amps_unit": "A",
+        },
+    }
 
 
 def _meas_i(device, node="s", ref=8):
-    return {"node_path": node, "op": {"op": "eload.measure_current",
-                                      "device": device, "channel": 1, "ref": ref}}
+    return {
+        "node_path": node,
+        "op": {"op": "eload.measure_current", "device": device, "channel": 1, "ref": ref},
+    }
 
 
 class _Fake:
@@ -82,19 +108,24 @@ class _Fake:
         def rec(*a, **k):
             self._calls.append((self._e, self._d, name, dict(k)))
             return 1.23
+
         return rec
 
 
 class DaemonRunnerTests(unittest.TestCase):
     def setUp(self):
         self.calls: list = []
-        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _Fake(
-            etype, bench["_dev"], self.calls))
+        rebind(
+            self,
+            er,
+            "_build_device",
+            lambda bench, etype, lifecycle, log: _Fake(etype, bench["_dev"], self.calls),
+        )
 
     def _session(self, proc: dict = _PROC):
         s = er._Session()
         s.lifecycle = reg.get_lifecycle()
-        s.procedure_json = proc          # the document the frame carried (_take_document)
+        s.procedure_json = proc  # the document the frame carried (_take_document)
         return s
 
     def _devcalls(self, device, method):
@@ -106,8 +137,9 @@ class DaemonRunnerTests(unittest.TestCase):
     # -- held session: no close until teardown, no reset ever -----------------
     def test_per_session_devices_held_until_teardown(self):
         s = self._session()
-        r = er._cmd_exec_ops(s, {"ops": [_meas_v("PSU1", "s0"), _meas_i("ELOAD1", "s1")],
-                                 "bench_map": _BENCH})
+        r = er._cmd_exec_ops(
+            s, {"ops": [_meas_v("PSU1", "s0"), _meas_i("ELOAD1", "s1")], "bench_map": _BENCH}
+        )
         self.assertFalse(r["aborted"])
         self.assertEqual([x["node_path"] for x in r["results"]], ["s0", "s1"])
         self.assertTrue(all(x["ok"] and x["has_value"] for x in r["results"]))
@@ -117,9 +149,9 @@ class DaemonRunnerTests(unittest.TestCase):
         for d in ("PSU1", "ELOAD1"):
             self.assertEqual(len(self._devcalls(d, "connect")), 1)
             self.assertEqual(len(self._devcalls(d, "initialize")), 1)
-            self.assertEqual(len(self._devcalls(d, "close")), 0)   # HELD, not closed
+            self.assertEqual(len(self._devcalls(d, "close")), 0)  # HELD, not closed
         self.assertFalse(any(c[2] == "reset" for c in self.calls))
-        self.assertFalse(self._offs())              # read-only batch: no power-down
+        self.assertFalse(self._offs())  # read-only batch: no power-down
         self.assertEqual(set(s.held), {"PSU1", "ELOAD1"})
         # teardown closes (and unlocks) each device exactly once
         er._teardown(s)
@@ -132,7 +164,7 @@ class DaemonRunnerTests(unittest.TestCase):
         s = self._session()
         er._cmd_exec_ops(s, {"ops": [_set_v("PSU1")], "bench_map": _BENCH})
         er._cmd_exec_ops(s, {"ops": [_meas_v("PSU1")], "bench_map": _BENCH})
-        self.assertEqual(len(self._devcalls("PSU1", "connect")), 1)   # NOT 2
+        self.assertEqual(len(self._devcalls("PSU1", "connect")), 1)  # NOT 2
         self.assertEqual(len(self._devcalls("PSU1", "initialize")), 1)
         self.assertEqual(len(self._devcalls("PSU1", "close")), 0)
         er._teardown(s)
@@ -142,8 +174,7 @@ class DaemonRunnerTests(unittest.TestCase):
     def test_mixed_policy_transient_does_not_drop_held(self):
         bench = dict(_BENCH)
         bench["PSU2"] = {"visa": "MOCK", "_dev": "PSU2", "session_policy": "per_step"}
-        proc = {"equipment": [{"id": "PSU1", "type": "psu"},
-                              {"id": "PSU2", "type": "psu"}]}
+        proc = {"equipment": [{"id": "PSU1", "type": "psu"}, {"id": "PSU2", "type": "psu"}]}
         s = self._session(proc)
         ops = [_set_v("PSU1", "a"), _meas_v("PSU2", "b", ref=1), _meas_v("PSU1", "c", ref=2)]
         r = er._cmd_exec_ops(s, {"ops": ops, "bench_map": bench})
@@ -162,8 +193,11 @@ class DaemonRunnerTests(unittest.TestCase):
     # -- partial failure: safe-off energized held, ELOAD before PSU, no close --
     def test_partial_failure_safe_off_keeps_held_until_teardown(self):
         s = self._session()
-        ops = [_set_v("PSU1", "s0"), _set_i("ELOAD1", "s1"),
-               _set_v("PSU2", "s2")]   # PSU2 absent from bench -> _NotRemote, aborts
+        ops = [
+            _set_v("PSU1", "s0"),
+            _set_i("ELOAD1", "s1"),
+            _set_v("PSU2", "s2"),
+        ]  # PSU2 absent from bench -> _NotRemote, aborts
         r = er._cmd_exec_ops(s, {"ops": ops, "bench_map": _BENCH})
         self.assertTrue(r["aborted"])
         self.assertEqual([x["ok"] for x in r["results"]], [True, True, False])
@@ -174,36 +208,51 @@ class DaemonRunnerTests(unittest.TestCase):
         self.assertEqual(len(self._devcalls("PSU1", "close")), 0)
         self.assertEqual(len(self._devcalls("ELOAD1", "close")), 0)
         self.assertFalse(any(c[2] == "reset" for c in self.calls))
-        er._teardown(s)   # only now do they close
+        er._teardown(s)  # only now do they close
 
     # -- explicit safe_off command: open, off, keep held ----------------------
     def test_safe_off_command(self):
         s = self._session()
-        r = er._cmd_safe_off(s, {
-            "bench_map": _BENCH,
-            "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]},
-                         {"device": "ELOAD1", "etype": "eload", "channels": [1]}]})
+        r = er._cmd_safe_off(
+            s,
+            {
+                "bench_map": _BENCH,
+                "safe_off": [
+                    {"device": "PSU1", "etype": "psu", "channels": [1]},
+                    {"device": "ELOAD1", "etype": "eload", "channels": [1]},
+                ],
+            },
+        )
         self.assertTrue(r["ok"])
         self.assertEqual(self._offs(), [("ELOAD1", "set_output"), ("PSU1", "output")])
         self.assertFalse(any(c[2] == "reset" for c in self.calls))
-        self.assertEqual(len(self._devcalls("PSU1", "close")), 0)   # kept held
+        self.assertEqual(len(self._devcalls("PSU1", "close")), 0)  # kept held
         er._teardown(s)
         self.assertEqual(len(self._devcalls("PSU1", "close")), 1)
 
     # -- shutdown safe-offs ALL held by declared channels (Codex #2) ----------
     def test_shutdown_safe_offs_all_declared_before_close(self):
-        proc = {"equipment": [{"id": "PSU1", "type": "psu", "channels": [1, 2]},
-                              {"id": "ELOAD1", "type": "eload", "channels": [1]}]}
+        proc = {
+            "equipment": [
+                {"id": "PSU1", "type": "psu", "channels": [1, 2]},
+                {"id": "ELOAD1", "type": "eload", "channels": [1]},
+            ]
+        }
         s = self._session(proc)
-        er._cmd_exec_ops(s, {"ops": [_meas_v("PSU1", "r", ref=1), _meas_i("ELOAD1", "r2", ref=2)],
-                             "bench_map": _BENCH})
-        self.assertFalse(self._offs())          # nothing powered down during the batch
+        er._cmd_exec_ops(
+            s,
+            {
+                "ops": [_meas_v("PSU1", "r", ref=1), _meas_i("ELOAD1", "r2", ref=2)],
+                "bench_map": _BENCH,
+            },
+        )
+        self.assertFalse(self._offs())  # nothing powered down during the batch
         er._cmd_shutdown(s, {})
         offs = self._offs()
-        self.assertEqual(offs[0], ("ELOAD1", "set_output"))   # ELOAD before PSU
+        self.assertEqual(offs[0], ("ELOAD1", "set_output"))  # ELOAD before PSU
         # a read-only session STILL safe-offs every declared psu channel at end
         psu_offs = [c for c in self.calls if c[1] == "PSU1" and c[3].get("on") is False]
-        self.assertEqual(len(psu_offs), 2)                    # both declared channels
+        self.assertEqual(len(psu_offs), 2)  # both declared channels
         seq = [(c[1], c[2]) for c in self.calls]
         self.assertLess(seq.index(("ELOAD1", "set_output")), seq.index(("ELOAD1", "close")))
         self.assertFalse(s.held)
@@ -211,14 +260,18 @@ class DaemonRunnerTests(unittest.TestCase):
     # -- safe-off OP verb is metadata-driven (off_op), default "output" --------
     def test_safe_off_uses_pack_off_op_verb(self):
         recorded: list = []
-        rebind(self, er, "_exec_op", lambda proc, op, ns: (recorded.append(op["op"]),
-                                                          (False, None, "", None))[1])
+        rebind(
+            self,
+            er,
+            "_exec_op",
+            lambda proc, op, ns: (recorded.append(op["op"]), (False, None, "", None))[1],
+        )
         res = _ops._ResStub()
         # a future state-holding pack whose off op-verb is NOT "output"
         lc = {"siggen": {"cleanup": {"off_op": "rf_off", "priority": 5}}}
         failures = er._safe_off({}, {}, {"SG1": {1}}, {"SG1": "siggen"}, lc, res)
         self.assertEqual(failures, [])
-        self.assertIn("siggen.rf_off", recorded)      # honored the declared verb
+        self.assertIn("siggen.rf_off", recorded)  # honored the declared verb
         self.assertNotIn("siggen.output", recorded)
         # default convention when off_op absent -> "output"
         recorded.clear()
@@ -230,6 +283,7 @@ class DaemonRunnerTests(unittest.TestCase):
     def test_safe_off_failure_returns_unsafe_and_logs(self):
         def _boom(*a, **k):
             raise RuntimeError("no comms")
+
         rebind(self, er, "_exec_op", _boom)
         res = _ops._ResStub()
         lc = {"psu": {"cleanup": {"off_op": "output", "priority": 20}}}
@@ -239,14 +293,18 @@ class DaemonRunnerTests(unittest.TestCase):
 
     # -- no bundle/lifecycle -> hard visible error, never a silent no-power-down
     def test_exec_ops_without_lifecycle_errors(self):
-        s = er._Session()                     # lifecycle empty (bundle never loaded)
+        s = er._Session()  # lifecycle empty (bundle never loaded)
         r = er._cmd_exec_ops(s, {"ops": [_meas_v("PSU1")], "bench_map": _BENCH})
         self.assertFalse(r["ok"])
         self.assertEqual(r["kind"], "NoLifecycle")
-        self.assertEqual(self.calls, [])      # nothing opened
-        r2 = er._cmd_safe_off(s, {"bench_map": _BENCH,
-                                  "safe_off": [{"device": "PSU1", "etype": "psu",
-                                                "channels": [1]}]})
+        self.assertEqual(self.calls, [])  # nothing opened
+        r2 = er._cmd_safe_off(
+            s,
+            {
+                "bench_map": _BENCH,
+                "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}],
+            },
+        )
         self.assertEqual(r2["kind"], "NoLifecycle")
 
     # -- a frame without its document: only exec is refused --------------------
@@ -254,18 +312,20 @@ class DaemonRunnerTests(unittest.TestCase):
         """exec_ops runs only on the document sent with it — never on an earlier
         frame's; safe_off, ping and shutdown proceed (recovery safe-off is the
         last line of defense and must never be blocked by a missing document)."""
-        s = self._session()                   # an earlier frame's document is held
+        s = self._session()  # an earlier frame's document is held
         for bad in ({}, {"procedure_json": "not a document"}):
-            resp, stop = er._dispatch(s, {"cmd": "exec_ops", "ops": [_meas_v("PSU1")],
-                                          "bench_map": _BENCH, **bad})
+            resp, stop = er._dispatch(
+                s, {"cmd": "exec_ops", "ops": [_meas_v("PSU1")], "bench_map": _BENCH, **bad}
+            )
             self.assertEqual((resp["ok"], resp["kind"]), (False, "NoProcedure"))
             self.assertEqual(self.calls, [])  # nothing opened
             resp, stop = er._dispatch(s, {"cmd": "ping", **bad})
             self.assertTrue(resp.get("pong"))
-            resp, stop = er._dispatch(s, {"cmd": "safe_off", "safe_off": [],
-                                          "bench_map": {}, **bad})
+            resp, stop = er._dispatch(
+                s, {"cmd": "safe_off", "safe_off": [], "bench_map": {}, **bad}
+            )
             self.assertTrue(resp["ok"])
-            self.assertIs(s.procedure_json, _PROC)   # kept, for the teardown
+            self.assertIs(s.procedure_json, _PROC)  # kept, for the teardown
         resp, stop = er._dispatch(s, {"cmd": "shutdown"})
         self.assertTrue(stop)
 
@@ -280,77 +340,104 @@ class DaemonRunnerTests(unittest.TestCase):
         one = {"equipment": [{"id": "PSU1", "type": "psu", "channels": [1]}]}
         three = {"equipment": [{"id": "PSU1", "type": "psu", "channels": [1, 2, 3]}]}
         for doc in (one, three):
-            resp, _ = er._dispatch(s, {"cmd": "exec_ops", "ops": [_meas_v("PSU1")],
-                                       "bench_map": _BENCH, "procedure_json": doc,
-                                       "work_dir": os.getcwd()})
+            resp, _ = er._dispatch(
+                s,
+                {
+                    "cmd": "exec_ops",
+                    "ops": [_meas_v("PSU1")],
+                    "bench_map": _BENCH,
+                    "procedure_json": doc,
+                    "work_dir": os.getcwd(),
+                },
+            )
             self.assertTrue(resp["ok"] and not resp["aborted"], resp)
-        resp, _ = er._dispatch(s, {"cmd": "ping"})   # a frame without one keeps it
+        resp, _ = er._dispatch(s, {"cmd": "ping"})  # a frame without one keeps it
         self.assertIs(s.procedure_json, three)
         er._dispatch(s, {"cmd": "shutdown"})
-        psu_offs = sorted(c[3]["channel"] for c in self.calls
-                          if c[1] == "PSU1" and c[3].get("on") is False)
+        psu_offs = sorted(
+            c[3]["channel"] for c in self.calls if c[1] == "PSU1" and c[3].get("on") is False
+        )
         self.assertEqual(psu_offs, [1, 2, 3])
 
     def test_exec_ops_without_procedure_document_errors(self):
         s = er._Session()
-        s.lifecycle = reg.get_lifecycle()     # bundle loaded, document never latched
+        s.lifecycle = reg.get_lifecycle()  # bundle loaded, document never latched
         r = er._cmd_exec_ops(s, {"ops": [_meas_v("PSU1")], "bench_map": _BENCH})
         self.assertFalse(r["ok"])
         self.assertEqual(r["kind"], "NoProcedure")
-        self.assertEqual(self.calls, [])      # nothing opened
+        self.assertEqual(self.calls, [])  # nothing opened
 
     # -- scope: no cleanup -> never state-changing, closed but never safe-off'd -
     def test_scope_no_cleanup_held_not_safe_off(self):
         lc = reg.get_lifecycle()
-        self.assertFalse(er._is_state_changing(
-            {"op": "scope.measure_stats", "device": "SCOPE1"}, lc))
+        self.assertFalse(
+            er._is_state_changing({"op": "scope.measure_stats", "device": "SCOPE1"}, lc)
+        )
         s = self._session()
         s.held["SCOPE1"] = _Fake("scope", "SCOPE1", self.calls)
         s.etype_of["SCOPE1"] = "scope"
         s.procedure_json = {"equipment": [{"id": "SCOPE1", "type": "scope"}]}
         er._teardown(s)
-        self.assertEqual(len(self._devcalls("SCOPE1", "close")), 1)   # closed
-        self.assertFalse(self._offs())                                # never powered down
+        self.assertEqual(len(self._devcalls("SCOPE1", "close")), 1)  # closed
+        self.assertFalse(self._offs())  # never powered down
 
     # -- policy: GUI stamp authoritative, fallback by lifecycle remote flag -----
     def test_policy_fallback_is_lifecycle_metadata_driven(self):
         lc = reg.get_lifecycle()
-        self.assertEqual(er._policy_for({"session_policy": "per_session"},
-                                        "fncore", lc), "per_session")  # stamp wins
-        self.assertEqual(er._policy_for({}, "fncore", lc), "per_step")    # remote False
-        self.assertEqual(er._policy_for({}, "psu", lc), "per_session")    # remote True
+        self.assertEqual(
+            er._policy_for({"session_policy": "per_session"}, "fncore", lc), "per_session"
+        )  # stamp wins
+        self.assertEqual(er._policy_for({}, "fncore", lc), "per_step")  # remote False
+        self.assertEqual(er._policy_for({}, "psu", lc), "per_session")  # remote True
         self.assertEqual(er._policy_for({}, "nopack", lc), "per_session")  # unknown ns
 
     # -- a per_step op that fails mid-op still closes its transient device ------
     def test_per_step_failure_still_closes_transient(self):
         def _boom(*a, **k):
             raise RuntimeError("boom")
+
         rebind(self, er, "_exec_op", _boom)
         # no session_policy stamp: the fncore lifecycle (remote False) fallback
         # routes per_step; the DECLARED equipment type stays "controller".
         bench = {"CTRL1": {"port": "COM1", "_dev": "CTRL1"}}
         proc = {"equipment": [{"id": "CTRL1", "type": "controller"}]}
         s = self._session(proc)
-        r = er._cmd_exec_ops(s, {"bench_map": bench,
-                                 "ops": [{"node_path": "a", "op": {
-                                     "op": "fncore.write_digital", "device": "CTRL1"}}]})
+        r = er._cmd_exec_ops(
+            s,
+            {
+                "bench_map": bench,
+                "ops": [
+                    {"node_path": "a", "op": {"op": "fncore.write_digital", "device": "CTRL1"}}
+                ],
+            },
+        )
         self.assertTrue(r["aborted"])
         self.assertEqual(len(self._devcalls("CTRL1", "connect")), 1)
-        self.assertEqual(len(self._devcalls("CTRL1", "close")), 1)    # finally closed it
+        self.assertEqual(len(self._devcalls("CTRL1", "close")), 1)  # finally closed it
         self.assertNotIn("CTRL1", s.held)
 
     # -- an instrument's error names it with the address it was opened at ------
     def test_a_failed_serial_op_names_the_port_and_baud(self):
         def _no_reply(*a, **k):
             raise TimeoutError("'writeAnalog DSC DAC#DSC0 1241': no reply prompt within 2.0 s")
+
         rebind(self, er, "_exec_op", _no_reply)
         bench = {"FNCORE_DSC": {"port": "COM28", "baud": 115200, "_dev": "FNCORE_DSC"}}
         s = self._session({"equipment": [{"id": "FNCORE_DSC", "type": "controller"}]})
-        r = er._cmd_exec_ops(s, {"bench_map": bench, "ops": [{"node_path": "a", "op": {
-            "op": "fncore.write_analog", "device": "FNCORE_DSC"}}]})
-        self.assertEqual(r["results"][0]["error"],
-                         "FNCORE_DSC at COM28 (115200 baud): TimeoutError: "
-                         "'writeAnalog DSC DAC#DSC0 1241': no reply prompt within 2.0 s")
+        r = er._cmd_exec_ops(
+            s,
+            {
+                "bench_map": bench,
+                "ops": [
+                    {"node_path": "a", "op": {"op": "fncore.write_analog", "device": "FNCORE_DSC"}}
+                ],
+            },
+        )
+        self.assertEqual(
+            r["results"][0]["error"],
+            "FNCORE_DSC at COM28 (115200 baud): TimeoutError: "
+            "'writeAnalog DSC DAC#DSC0 1241': no reply prompt within 2.0 s",
+        )
 
     def test_a_failed_visa_op_names_the_resource(self):
         calls = self.calls
@@ -358,21 +445,30 @@ class DaemonRunnerTests(unittest.TestCase):
         class _Failing(_Fake):
             def set_voltage(self, **kwargs):
                 raise TimeoutError("VI_ERROR_TMO")
-        rebind(self, er, "_build_device",
-               lambda bench, etype, lifecycle, log: _Failing(etype, "PSU1", calls))
+
+        rebind(
+            self,
+            er,
+            "_build_device",
+            lambda bench, etype, lifecycle, log: _Failing(etype, "PSU1", calls),
+        )
         bench = {"PSU1": {"visa": "TCPIP0::10.0.0.5::INSTR", "timeout_ms": 5000}}
         r = er._cmd_exec_ops(self._session(), {"ops": [_set_v("PSU1")], "bench_map": bench})
-        self.assertEqual(r["results"][0]["error"],
-                         "PSU1 at TCPIP0::10.0.0.5::INSTR: TimeoutError: VI_ERROR_TMO")
+        self.assertEqual(
+            r["results"][0]["error"], "PSU1 at TCPIP0::10.0.0.5::INSTR: TimeoutError: VI_ERROR_TMO"
+        )
 
     def test_a_failed_connect_names_the_address_once(self):
         def _unopenable(bench, etype, lifecycle, log):
             raise OSError("could not open port 'COM28': FileNotFoundError")
+
         rebind(self, er, "_build_device", _unopenable)
         bench = {"PSU1": {"port": "COM28", "baud": 9600}}
         r = er._cmd_exec_ops(self._session(), {"ops": [_set_v("PSU1")], "bench_map": bench})
-        self.assertEqual(r["results"][0]["error"], "PSU1 (9600 baud): OSError: "
-                         "could not open port 'COM28': FileNotFoundError")
+        self.assertEqual(
+            r["results"][0]["error"],
+            "PSU1 (9600 baud): OSError: could not open port 'COM28': FileNotFoundError",
+        )
 
 
 class ProtocolLoopTests(unittest.TestCase):
@@ -380,14 +476,19 @@ class ProtocolLoopTests(unittest.TestCase):
 
     def test_framed_loop_ping_unknown_badframe_shutdown(self):
         inp = '{"cmd":"ping"}\n{"cmd":"bogus"}\nnot json\n{"cmd":"shutdown"}\n'
-        proc = subprocess.run([sys.executable, str(_RUNNER), "--role", "run"], input=inp,
-                              capture_output=True, text=True, timeout=30)
+        proc = subprocess.run(
+            [sys.executable, str(_RUNNER), "--role", "run"],
+            input=inp,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
         objs = [json.loads(ln) for ln in proc.stdout.splitlines() if ln.strip()]
         self.assertEqual(proc.returncode, 0)
-        self.assertEqual(objs[0], {"ok": True, "pong": True})         # ping
-        self.assertEqual(objs[1]["kind"], "Protocol")                 # unknown cmd
-        self.assertIn("bad frame", objs[2]["error"])                  # corrupt frame
-        self.assertTrue(objs[3]["ok"])                                # shutdown
+        self.assertEqual(objs[0], {"ok": True, "pong": True})  # ping
+        self.assertEqual(objs[1]["kind"], "Protocol")  # unknown cmd
+        self.assertIn("bad frame", objs[2]["error"])  # corrupt frame
+        self.assertTrue(objs[3]["ok"])  # shutdown
         # a stray write to fd-1 must NOT have corrupted any frame (all parsed)
         self.assertEqual(len(objs), 4)
 
@@ -397,12 +498,17 @@ class ProtocolLoopTests(unittest.TestCase):
         (Bench would otherwise wait 5 s, then kill a live python.exe)."""
         bundle = tempfile.TemporaryDirectory()
         self.addCleanup(bundle.cleanup)
-        Path(bundle.name, "defaults.json").write_text(json.dumps(
-            {"pack_dispatch": {"namespace_to_module": {"x": "no_such_pack_xyz"}}}))
+        Path(bundle.name, "defaults.json").write_text(
+            json.dumps({"pack_dispatch": {"namespace_to_module": {"x": "no_such_pack_xyz"}}})
+        )
         for role in ("run", "tools"):
-            proc = subprocess.Popen([sys.executable, str(_RUNNER), "--role", role],
-                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                    stderr=subprocess.DEVNULL, text=True)
+            proc = subprocess.Popen(
+                [sys.executable, str(_RUNNER), "--role", role],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
             self.addCleanup(proc.stdout.close)
             self.addCleanup(proc.stdin.close)
             self.addCleanup(proc.kill)
@@ -418,8 +524,10 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
 
     def _engine_session(self):
         from tests._qt_stub import ensure_workflow_editor_importable
+
         ensure_workflow_editor_importable()
         from procedo.engine_client import engine_session
+
         return engine_session
 
     def _session(self, batch_result):
@@ -431,32 +539,53 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
         return s
 
     def test_unwrap_measure(self):
-        s = self._session({
-            "ok": True, "aborted": False,
-            "results": [{"node_path": "", "ok": True, "has_value": True,
-                         "value": 3.3, "unit": "V", "ref": 7}],
-            "log": ["x"]})
-        out = s.exec_op({"op": "psu.measure_voltage", "device": "PSU1"}, {"visa": "MOCK"},
-                        work_dir=Path("run"))
-        self.assertEqual(out, {"ok": True, "has_value": True, "value": 3.3,
-                               "unit": "V", "ref": 7, "log": ["x"]})
+        s = self._session(
+            {
+                "ok": True,
+                "aborted": False,
+                "results": [
+                    {
+                        "node_path": "",
+                        "ok": True,
+                        "has_value": True,
+                        "value": 3.3,
+                        "unit": "V",
+                        "ref": 7,
+                    }
+                ],
+                "log": ["x"],
+            }
+        )
+        out = s.exec_op(
+            {"op": "psu.measure_voltage", "device": "PSU1"}, {"visa": "MOCK"}, work_dir=Path("run")
+        )
+        self.assertEqual(
+            out, {"ok": True, "has_value": True, "value": 3.3, "unit": "V", "ref": 7, "log": ["x"]}
+        )
 
     def test_unwrap_failure(self):
-        s = self._session({
-            "ok": True, "aborted": True,
-            "results": [{"node_path": "", "ok": False, "error": "boom"}],
-            "log": []})
-        out = s.exec_op({"op": "psu.set_voltage", "device": "PSU1"}, {"visa": "MOCK"},
-                        work_dir=Path("run"))
+        s = self._session(
+            {
+                "ok": True,
+                "aborted": True,
+                "results": [{"node_path": "", "ok": False, "error": "boom"}],
+                "log": [],
+            }
+        )
+        out = s.exec_op(
+            {"op": "psu.set_voltage", "device": "PSU1"}, {"visa": "MOCK"}, work_dir=Path("run")
+        )
         self.assertFalse(out["ok"])
         self.assertEqual(out["error"], "boom")
 
     def test_no_venv_marks_session_dead(self):
         engine_session = self._engine_session()
-        s = engine_session.RemoteSession(Path("/nonexistent"))   # real transport, no venv
-        out = s.exec_ops([{"node_path": "a", "op": {
-            "op": "psu.measure_voltage", "device": "PSU1"}}], {"PSU1": {"visa": "X"}},
-            work_dir=Path("run"))
+        s = engine_session.RemoteSession(Path("/nonexistent"))  # real transport, no venv
+        out = s.exec_ops(
+            [{"node_path": "a", "op": {"op": "psu.measure_voltage", "device": "PSU1"}}],
+            {"PSU1": {"visa": "X"}},
+            work_dir=Path("run"),
+        )
         self.assertFalse(out["ok"])
         self.assertIn(out["kind"], ("ParserUnavailable", "SessionDead"))
         self.assertTrue(s.dead)
@@ -468,16 +597,26 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
         s = engine_session.RemoteSession(Path("/x"))
 
         class _FP:
-            def __init__(self): self.killed = False
-            def terminate(self): self.killed = True
-            def wait(self, timeout=None): return 0
-            def kill(self): self.killed = True
-            def poll(self): return 0
+            def __init__(self):
+                self.killed = False
+
+            def terminate(self):
+                self.killed = True
+
+            def wait(self, timeout=None):
+                return 0
+
+            def kill(self):
+                self.killed = True
+
+            def poll(self):
+                return 0
+
         fp = _FP()
         s._proc = fp
         out = s._dead_resp("SessionDead", "boom")
         self.assertTrue(s.dead)
-        self.assertTrue(fp.killed)               # proc terminated as part of dead
+        self.assertTrue(fp.killed)  # proc terminated as part of dead
         self.assertEqual(out["kind"], "SessionDead")
 
     # -- frames carry the document itself, never a path ------------------------
@@ -487,29 +626,42 @@ class RemoteSessionUnwrapTests(unittest.TestCase):
 
         class _In:
             lines: list = []
-            def write(self, data): self.lines.append(data)
-            def flush(self): pass
+
+            def write(self, data):
+                self.lines.append(data)
+
+            def flush(self):
+                pass
 
         class _Out:
-            def readline(self): return '{"ok": true, "results": [], "log": []}\n'
+            def readline(self):
+                return '{"ok": true, "results": [], "log": []}\n'
 
         class _FP:
-            stdin = _In(); stdout = _Out()
-            def poll(self): return None          # "alive" -> _start never runs
-            def wait(self, timeout=None): return 0
+            stdin = _In()
+            stdout = _Out()
+
+            def poll(self):
+                return None  # "alive" -> _start never runs
+
+            def wait(self, timeout=None):
+                return 0
+
         s._proc = _FP()
-        s.exec_ops([{"node_path": "a", "op": _meas_v("PSU1")["op"]}],
-                   {"PSU1": {"visa": "X"}}, procedure_json=_PROC, work_dir=Path("run"))
-        s.exec_op(_meas_v("PSU1")["op"], {"visa": "X"}, procedure_json=_PROC,
-                  work_dir=Path("run"))
-        s.safe_off([{"device": "PSU1", "etype": "psu", "channels": [1]}], {},
-                   procedure_json=_PROC)
+        s.exec_ops(
+            [{"node_path": "a", "op": _meas_v("PSU1")["op"]}],
+            {"PSU1": {"visa": "X"}},
+            procedure_json=_PROC,
+            work_dir=Path("run"),
+        )
+        s.exec_op(_meas_v("PSU1")["op"], {"visa": "X"}, procedure_json=_PROC, work_dir=Path("run"))
+        s.safe_off([{"device": "PSU1", "etype": "psu", "channels": [1]}], {}, procedure_json=_PROC)
         s.shutdown()
         frames = [json.loads(line) for line in _In.lines]
-        self.assertEqual([f["cmd"] for f in frames],
-                         ["exec_ops", "exec_ops", "safe_off", "shutdown"])
-        self.assertEqual([f.get("procedure_json") for f in frames],
-                         [_PROC, _PROC, _PROC, None])
+        self.assertEqual(
+            [f["cmd"] for f in frames], ["exec_ops", "exec_ops", "safe_off", "shutdown"]
+        )
+        self.assertEqual([f.get("procedure_json") for f in frames], [_PROC, _PROC, _PROC, None])
         # ⚡ and batch frames name the guided run's folder: the daemon works in it
         self.assertEqual([f.get("work_dir") for f in frames[:2]], ["run", "run"])
         for f in frames:
@@ -523,18 +675,25 @@ class RemoteSessionLiveTransportTests(unittest.TestCase):
 
     def _live_session(self):
         from tests._qt_stub import ensure_workflow_editor_importable
+
         ensure_workflow_editor_importable()
         from procedo.engine_client import engine_session
-        s = engine_session.RemoteSession(Path("/nonexistent"))
-        runner = _RUNNER   # the engine_client/ daemon script (module-level, verified on import)
 
-        def _start():               # use THIS interpreter (no project venv in test env)
+        s = engine_session.RemoteSession(Path("/nonexistent"))
+        runner = _RUNNER  # the engine_client/ daemon script (module-level, verified on import)
+
+        def _start():  # use THIS interpreter (no project venv in test env)
             s._bundle_dir = None
             s._proc = subprocess.Popen(
                 [sys.executable, str(runner), "--role", "run"],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, text=True, bufsize=1)
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
             s._dead = False
+
         s._start = _start
         self.addCleanup(s.kill)
         return s
@@ -543,7 +702,7 @@ class RemoteSessionLiveTransportTests(unittest.TestCase):
         s = self._live_session()
         self.assertEqual(s.ping().get("pong"), True)
         pid1 = s._proc.pid
-        self.assertEqual(s.ping().get("pong"), True)   # same long-lived process
+        self.assertEqual(s.ping().get("pong"), True)  # same long-lived process
         self.assertEqual(s._proc.pid, pid1)
         out = s.shutdown()
         self.assertTrue(out["ok"])

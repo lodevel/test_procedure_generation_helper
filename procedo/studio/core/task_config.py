@@ -135,7 +135,9 @@ class TaskConfigManager:
         self._load_config()
         log.info(
             "TaskConfigManager initialized (project_root=%s, fallback=%s, active=%s)",
-            self._project_root, self._fallback_path, self._active_source(),
+            self._project_root,
+            self._fallback_path,
+            self._active_source(),
         )
 
     # ------------------------------------------------------------------
@@ -178,8 +180,11 @@ class TaskConfigManager:
             self._bundle_workflows = bundle
             self._pack_task_dicts_by_tab = {}
             for tab_id, tab_cfg in effective_workflows(bundle, {}).items():
-                index = {t["id"]: t for t in tab_cfg.get("tasks") or []
-                         if isinstance(t, dict) and isinstance(t.get("id"), str)}
+                index = {
+                    t["id"]: t
+                    for t in tab_cfg.get("tasks") or []
+                    if isinstance(t, dict) and isinstance(t.get("id"), str)
+                }
                 if index:
                     self._pack_task_dicts_by_tab[tab_id] = index
 
@@ -198,9 +203,13 @@ class TaskConfigManager:
             self._project_workflow_snapshot = deepcopy(project_workflows)
 
             merged = effective_workflows(bundle, project_workflows)
-            for tab in merged.values():  # no runnable task: the tab lists none (the snapshot keeps its rows)
-                if not any(isinstance(t, dict) and is_runnable(t.get("prompt_template"))
-                           for t in tab.get("tasks") or []):
+            for tab in (
+                merged.values()
+            ):  # no runnable task: the tab lists none (the snapshot keeps its rows)
+                if not any(
+                    isinstance(t, dict) and is_runnable(t.get("prompt_template"))
+                    for t in tab.get("tasks") or []
+                ):
                     tab["tasks"] = []
             # Run button-label migration on the merged dict so older
             # per-project configs upgrade cleanly. Also migrate the
@@ -227,8 +236,9 @@ class TaskConfigManager:
                 self._auto_recover_config()  # back it up and rebuild
                 return
             except Exception as e:
-                log.error("Error loading config from %s: %s.",
-                          self._fallback_path, e, exc_info=True)
+                log.error(
+                    "Error loading config from %s: %s.", self._fallback_path, e, exc_info=True
+                )
                 self._auto_recover_config()
                 return
 
@@ -240,9 +250,7 @@ class TaskConfigManager:
     # Pack discovery (Phase 3)
     # ------------------------------------------------------------------
 
-    def _populate_caches(
-        self, workflows: Dict[str, Any], *, drop_tab_selected_rules: bool
-    ) -> None:
+    def _populate_caches(self, workflows: Dict[str, Any], *, drop_tab_selected_rules: bool) -> None:
         tasks, chats, extras = task_config_defaults.workflows_to_caches(
             workflows, drop_tab_selected_rules=drop_tab_selected_rules
         )
@@ -330,17 +338,14 @@ class TaskConfigManager:
         if not isinstance(tasks_list, list):
             return
         tab_snap["tasks"] = [
-            t for t in tasks_list
-            if not (isinstance(t, dict) and t.get("id") == task_id)
+            t for t in tasks_list if not (isinstance(t, dict) and t.get("id") == task_id)
         ]
 
     # ------------------------------------------------------------------
     # Single-writer injection (Codex H1.D / Q7)
     # ------------------------------------------------------------------
 
-    def register_workflows_writer(
-        self, writer: Optional[Callable[[Dict[str, Any]], bool]]
-    ) -> None:
+    def register_workflows_writer(self, writer: Optional[Callable[[Dict[str, Any]], bool]]) -> None:
         """Register the function that persists the workflows section in
         project mode. When set, ``save_config()`` calls ``writer(payload)``
         instead of writing ``<project>/config/config.json`` directly,
@@ -384,8 +389,10 @@ class TaskConfigManager:
         """
         if self._project_root is not None:
             if self._load_error:  # a save would replace the workflows it could not read
-                raise OSError(f"the project's config could not be read when it was opened "
-                              f"({self._load_error}); reopen the project")
+                raise OSError(
+                    f"the project's config could not be read when it was opened "
+                    f"({self._load_error}); reopen the project"
+                )
             payload = deepcopy(self._project_workflow_snapshot)
             if self._workflows_writer is not None:
                 ok = bool(self._workflows_writer(payload))
@@ -406,7 +413,10 @@ class TaskConfigManager:
         if self._fallback_path is None:
             log.error("No save target — project_root=None and no fallback path")
             return
-        atomic_write_text(self._fallback_path, json.dumps(self._build_workflows_section(), indent=2, ensure_ascii=False))
+        atomic_write_text(
+            self._fallback_path,
+            json.dumps(self._build_workflows_section(), indent=2, ensure_ascii=False),
+        )
 
     def save_config(self) -> bool:
         """Thread-safe atomic save to the active sink; False when it failed (``save_error``)."""
@@ -442,8 +452,11 @@ class TaskConfigManager:
             self._project_root = new_root
             self._load_config()
 
-        log.info("TaskConfigManager reloaded (project_root=%s, active=%s)",
-                 self._project_root, self._active_source())
+        log.info(
+            "TaskConfigManager reloaded (project_root=%s, active=%s)",
+            self._project_root,
+            self._active_source(),
+        )
         for cb in list(self._reload_callbacks):
             try:
                 cb()
@@ -534,9 +547,7 @@ class TaskConfigManager:
                 return []
             return [dict(v) for v in validators if isinstance(v, dict) and v.get("id")]
 
-    def get_selected_rules_for_task(
-        self, tab_id: str, task_id: str
-    ) -> SelectedRules:
+    def get_selected_rules_for_task(self, tab_id: str, task_id: str) -> SelectedRules:
         """Per-task selected_rules. Returns the raw value (list, ``"all"``,
         or ``None``); consumer expands ``"all"`` against the project's
         available rule files."""
@@ -589,9 +600,8 @@ class TaskConfigManager:
                 return False
             current = self._task_configs.get(tab_id, [])
             defaults = DEFAULT_TASK_CONFIGS[tab_id]
-            differs = (
-                len(current) != len(defaults)
-                or any(asdict(c) != asdict(d) for c, d in zip(current, defaults))
+            differs = len(current) != len(defaults) or any(
+                asdict(c) != asdict(d) for c, d in zip(current, defaults)
             )
             # Backup the live file (legacy mode) before clobbering caches.
             source = self._project_config_path() if self._project_root else self._fallback_path
@@ -609,7 +619,9 @@ class TaskConfigManager:
     def set_task_enabled(self, tab_id: str, task_id: str, enabled: bool) -> bool:
         with self._lock:
             if tab_id not in self._task_configs and tab_id in DEFAULT_TASK_CONFIGS:
-                self._task_configs[tab_id] = [TaskConfig(**asdict(t)) for t in DEFAULT_TASK_CONFIGS[tab_id]]
+                self._task_configs[tab_id] = [
+                    TaskConfig(**asdict(t)) for t in DEFAULT_TASK_CONFIGS[tab_id]
+                ]
             for task in self._task_configs.get(tab_id, []):
                 if task.id == task_id:
                     task.enabled = enabled
@@ -636,10 +648,7 @@ class TaskConfigManager:
             if isinstance(tab_snap, dict):
                 existing = tab_snap.get("tasks")
                 if isinstance(existing, list):
-                    kept = [
-                        t for t in existing
-                        if isinstance(t, dict) and t.get("id") in new_ids
-                    ]
+                    kept = [t for t in existing if isinstance(t, dict) and t.get("id") in new_ids]
                     if kept:
                         tab_snap["tasks"] = kept
                     else:
@@ -675,9 +684,7 @@ class TaskConfigManager:
             task.enabled = enabled
         return self.update_task(tab_id, task)
 
-    def set_selected_rules_for_tab(
-        self, tab_id: str, selected: SelectedRules
-    ) -> None:
+    def set_selected_rules_for_tab(self, tab_id: str, selected: SelectedRules) -> None:
         """Propagate a selected_rules list to every task in *tab_id*.
 
         Phase 1 keeps the rule-selector UI tab-level (one list per tab).
@@ -702,8 +709,11 @@ class TaskConfigManager:
         with self._lock:
             for tab_id, tasks in self._task_configs.items():
                 for task in tasks:
-                    if task.selected_rules and isinstance(task.selected_rules, list) \
-                            and key not in task.selected_rules:
+                    if (
+                        task.selected_rules
+                        and isinstance(task.selected_rules, list)
+                        and key not in task.selected_rules
+                    ):
                         task.selected_rules.append(key)
                         self._stamp_owned_task(tab_id, task.id)
 
@@ -718,7 +728,8 @@ def _declares(workflows: Dict[str, Any], tab_id: str, task_id: str) -> bool:
     tab = workflows.get(tab_id, {})
     tasks = tab.get("tasks", []) if isinstance(tab, dict) else []
     return isinstance(tasks, list) and any(
-        isinstance(t, dict) and t.get("id") == task_id for t in tasks)
+        isinstance(t, dict) and t.get("id") == task_id for t in tasks
+    )
 
 
 def _task_dicts_equal(a: Dict[str, Any], b: Dict[str, Any]) -> bool:

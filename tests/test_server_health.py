@@ -1,4 +1,5 @@
 """Tests for the OpenCode server-health value objects + free-port selection."""
+
 import socket
 from unittest.mock import MagicMock, patch
 
@@ -25,24 +26,35 @@ def test_fetch_models_lists_provider_models_sorted():
             "openai": {"models": {"gpt-5.2-low": {}}},
         },
     }
-    with patch("procedo.studio.llm.server_manager.requests.get",
-               return_value=_fake_resp(200, "application/json", body)):
+    with patch(
+        "procedo.studio.llm.server_manager.requests.get",
+        return_value=_fake_resp(200, "application/json", body),
+    ):
         assert fetch_opencode_models("http://x:4096") == [
-            "my_vllm/gemma", "my_vllm/qwen", "openai/gpt-5.2-low",
+            "my_vllm/gemma",
+            "my_vllm/qwen",
+            "openai/gpt-5.2-low",
         ]
 
 
 def test_fetch_models_empty_when_not_opencode():
-    with patch("procedo.studio.llm.server_manager.requests.get",
-               return_value=_fake_resp(200, "text/html", None)):
+    with patch(
+        "procedo.studio.llm.server_manager.requests.get",
+        return_value=_fake_resp(200, "text/html", None),
+    ):
         assert fetch_opencode_models("http://x:4096") == []
 
 
 def test_fetch_models_empty_on_unreachable():
     import requests as _rq
-    with patch("procedo.studio.llm.server_manager.requests.get",
-               side_effect=_rq.exceptions.ConnectionError()):
+
+    with patch(
+        "procedo.studio.llm.server_manager.requests.get",
+        side_effect=_rq.exceptions.ConnectionError(),
+    ):
         assert fetch_opencode_models("http://x:4096") == []
+
+
 from procedo.studio.llm.server_health import (
     ServerError,
     ServerStatus,
@@ -55,6 +67,7 @@ from procedo.studio.llm.server_health import (
 # --------------------------------------------------------------------------- #
 # ServerStatus / messages                                                      #
 # --------------------------------------------------------------------------- #
+
 
 def test_healthy_status_message():
     s = ServerStatus.healthy()
@@ -83,6 +96,7 @@ def test_failure_message_blank_detail_is_clean():
 # classify_install                                                             #
 # --------------------------------------------------------------------------- #
 
+
 def test_classify_install_wsl_missing():
     assert classify_install(False, False) is ServerError.WSL_MISSING
     assert classify_install(False, True) is ServerError.WSL_MISSING
@@ -107,6 +121,7 @@ def test_is_port_conflict_detects_common_messages():
 # find_free_port                                                               #
 # --------------------------------------------------------------------------- #
 
+
 def test_find_free_port_returns_preferred_when_free():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
@@ -124,15 +139,17 @@ def test_find_free_port_avoids_busy_port():
         assert chosen != taken
         # the chosen port must actually be bindable.
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-            probe.bind(("127.0.0.1", chosen))   # must not raise
+            probe.bind(("127.0.0.1", chosen))  # must not raise
 
 
 # --------------------------------------------------------------------------- #
 # NoneBackend carries the classified reason                                    #
 # --------------------------------------------------------------------------- #
 
+
 def test_none_backend_surfaces_reason():
     from procedo.studio.llm.backend_base import LLMRequest, LLMTask
+
     reason = "OpenCode was not found in the WSL PATH."
     backend = NoneBackend(reason=reason)
     resp = backend.send_request(LLMRequest(task=LLMTask.AD_HOC_CHAT))
@@ -143,5 +160,6 @@ def test_none_backend_surfaces_reason():
 
 def test_none_backend_default_reason():
     from procedo.studio.llm.backend_base import LLMRequest, LLMTask
+
     resp = NoneBackend().send_request(LLMRequest(task=LLMTask.AD_HOC_CHAT))
     assert "disabled" in resp.assistant_message.lower()

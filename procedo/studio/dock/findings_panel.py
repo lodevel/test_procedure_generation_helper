@@ -12,8 +12,14 @@ Callers write issues to session_state.validation_issues, then call display().
 """
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QListWidget, QListWidgetItem,
-    QPushButton, QApplication, QMenu, QFrame
+    QWidget,
+    QVBoxLayout,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QApplication,
+    QMenu,
+    QFrame,
 )
 from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -85,7 +91,7 @@ class FindingsPanel(QWidget):
 
     # Signals
     issue_selected = Signal(object)  # Emitted when an issue is selected
-    issues_changed = Signal(int)     # Emitted with new count when display changes
+    issues_changed = Signal(int)  # Emitted with new count when display changes
 
     def __init__(self, main_window: "MainWindow", parent=None):
         super().__init__(parent)
@@ -101,8 +107,7 @@ class FindingsPanel(QWidget):
 
         self.copy_btn = QPushButton("Copy")
         self.copy_btn.setToolTip(
-            "Copy selected issues as text (or all issues if none selected). "
-            "Ctrl+C also works."
+            "Copy selected issues as text (or all issues if none selected). Ctrl+C also works."
         )
         self.copy_btn.clicked.connect(self._on_copy)
         self.clear_btn = QPushButton("Clear")
@@ -204,4 +209,5 @@ class FindingsPanel(QWidget):
         """Put *items*' issues on the clipboard as plain markdown bullets (nothing: no-op)."""
         if items:
             QApplication.clipboard().setText(
-                issue_cards.issues_text([item.data(Qt.UserRole) for item in items]))
+                issue_cards.issues_text([item.data(Qt.UserRole) for item in items])
+            )

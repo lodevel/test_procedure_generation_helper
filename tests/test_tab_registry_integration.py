@@ -77,12 +77,15 @@ def _seed_project(root: Path, validators: list[dict]) -> None:
     cfg = root / "config"
     cfg.mkdir(parents=True, exist_ok=True)
     (cfg / "config.json").write_text(
-        json.dumps({
-            "manifest": {"name": "integration test"},
-            # No selected_packs → no pack defaults aggregated → the
-            # project's validators list is the only contribution.
-            "workflows": {"text_json": {"validators": validators}},
-        }, indent=2),
+        json.dumps(
+            {
+                "manifest": {"name": "integration test"},
+                # No selected_packs → no pack defaults aggregated → the
+                # project's validators list is the only contribution.
+                "workflows": {"text_json": {"validators": validators}},
+            },
+            indent=2,
+        ),
         encoding="utf-8",
     )
 
@@ -141,9 +144,12 @@ def test_validator_run_posts_chat_message(tmp_path, qapp):
     know it executed?"
     """
     project_root = tmp_path / "proj"
-    _seed_project(project_root, validators=[
-        {"id": "core.check_python_syntax", "enabled": True},
-    ])
+    _seed_project(
+        project_root,
+        validators=[
+            {"id": "core.check_python_syntax", "enabled": True},
+        ],
+    )
     ensure_builtins_registered()
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     mw = _mock_main_window(tmp_path, manager, project_root)
@@ -172,10 +178,13 @@ def test_buttons_built_from_project_validators(tmp_path, qapp):
     enabled, registered validator."""
     project_root = tmp_path / "proj"
     stub_id = _register_stub_validator()
-    _seed_project(project_root, validators=[
-        {"id": stub_id,                    "enabled": True},
-        {"id": "core.check_python_syntax", "enabled": True},
-    ])
+    _seed_project(
+        project_root,
+        validators=[
+            {"id": stub_id, "enabled": True},
+            {"id": "core.check_python_syntax", "enabled": True},
+        ],
+    )
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     mw = _mock_main_window(tmp_path, manager, project_root)
     tab = _make_tab(qapp, mw)
@@ -195,10 +204,13 @@ def test_buttons_built_from_project_validators(tmp_path, qapp):
 def test_disabled_spec_skipped(tmp_path, qapp):
     project_root = tmp_path / "proj"
     stub_id = _register_stub_validator()
-    _seed_project(project_root, validators=[
-        {"id": stub_id,                    "enabled": True},
-        {"id": "core.check_python_syntax", "enabled": False},
-    ])
+    _seed_project(
+        project_root,
+        validators=[
+            {"id": stub_id, "enabled": True},
+            {"id": "core.check_python_syntax", "enabled": False},
+        ],
+    )
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     tab = _make_tab(qapp, _mock_main_window(tmp_path, manager, project_root))
 
@@ -211,10 +223,13 @@ def test_unregistered_id_skipped_with_warning(tmp_path, qapp, caplog):
     the button row but emits a warning so the operator can diagnose the
     config error."""
     project_root = tmp_path / "proj"
-    _seed_project(project_root, validators=[
-        {"id": "core.check_python_syntax", "enabled": True},
-        {"id": "made.up.never_registered", "enabled": True},
-    ])
+    _seed_project(
+        project_root,
+        validators=[
+            {"id": "core.check_python_syntax", "enabled": True},
+            {"id": "made.up.never_registered", "enabled": True},
+        ],
+    )
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     tab = _make_tab(qapp, _mock_main_window(tmp_path, manager, project_root))
 
@@ -230,9 +245,12 @@ def test_rebuild_validator_buttons_swaps_set(tmp_path, qapp):
     manager is reloaded."""
     project_root = tmp_path / "proj"
     stub_id = _register_stub_validator()
-    _seed_project(project_root, validators=[
-        {"id": stub_id, "enabled": True},
-    ])
+    _seed_project(
+        project_root,
+        validators=[
+            {"id": stub_id, "enabled": True},
+        ],
+    )
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     tab = _make_tab(qapp, _mock_main_window(tmp_path, manager, project_root))
 
@@ -241,10 +259,13 @@ def test_rebuild_validator_buttons_swaps_set(tmp_path, qapp):
 
     # Rewrite the project config and reload — the new validators list
     # should win after rebuild.
-    _seed_project(project_root, validators=[
-        {"id": "core.check_python_syntax", "enabled": True},
-        {"id": stub_id, "enabled": True},
-    ])
+    _seed_project(
+        project_root,
+        validators=[
+            {"id": "core.check_python_syntax", "enabled": True},
+            {"id": stub_id, "enabled": True},
+        ],
+    )
     manager.reload(project_root)
     tab.validator_buttons.rebuild()
     assert _count_validator_buttons(layout) == 2
@@ -255,9 +276,12 @@ def test_rebuild_preserves_non_validator_widgets(tmp_path, qapp):
     ``validator_id`` property — sibling widgets (e.g. a Format JSON button
     a tab put in the same row) survive."""
     project_root = tmp_path / "proj"
-    _seed_project(project_root, validators=[
-        {"id": "core.check_python_syntax", "enabled": True},
-    ])
+    _seed_project(
+        project_root,
+        validators=[
+            {"id": "core.check_python_syntax", "enabled": True},
+        ],
+    )
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     tab = _make_tab(qapp, _mock_main_window(tmp_path, manager, project_root))
 
@@ -280,9 +304,12 @@ def test_click_dispatches_through_registry_to_dock(tmp_path, qapp):
     ``ValidatorContext`` populated from the artifact_manager, and the
     outcome's issues land on the dock panel."""
     project_root = tmp_path / "proj"
-    _seed_project(project_root, validators=[
-        {"id": "pack.under_test.recording_validator", "enabled": True},
-    ])
+    _seed_project(
+        project_root,
+        validators=[
+            {"id": "pack.under_test.recording_validator", "enabled": True},
+        ],
+    )
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     mw = _mock_main_window(tmp_path, manager, project_root)
     tab = _make_tab(qapp, mw)
@@ -297,7 +324,8 @@ def test_click_dispatches_through_registry_to_dock(tmp_path, qapp):
 
     layout = _build_row(tab)
     button = next(
-        layout.itemAt(i).widget() for i in range(layout.count())
+        layout.itemAt(i).widget()
+        for i in range(layout.count())
         if isinstance(layout.itemAt(i).widget(), QPushButton)
         and layout.itemAt(i).widget().property("validator_id")
         == "pack.under_test.recording_validator"
@@ -322,22 +350,28 @@ def test_click_skipped_outcome_surfaces_info_row_in_dock(tmp_path, qapp):
     Validate isn't a silent no-op. Status hint also fires. No modal
     popup (plan 2026-05-10)."""
     project_root = tmp_path / "proj"
-    _seed_project(project_root, validators=[
-        {"id": "pack.skip.always", "enabled": True},
-    ])
+    _seed_project(
+        project_root,
+        validators=[
+            {"id": "pack.skip.always", "enabled": True},
+        ],
+    )
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     mw = _mock_main_window(tmp_path, manager, project_root)
     tab = _make_tab(qapp, mw)
 
-    register("pack.skip.always",
-             lambda _ctx: ValidationOutcome(ok=True, skipped=True, reason="not applicable", issues=[]))
+    register(
+        "pack.skip.always",
+        lambda _ctx: ValidationOutcome(ok=True, skipped=True, reason="not applicable", issues=[]),
+    )
 
     status_msgs: list[str] = []
     tab.status_message.connect(status_msgs.append)
 
     layout = _build_row(tab)
     button = next(
-        layout.itemAt(i).widget() for i in range(layout.count())
+        layout.itemAt(i).widget()
+        for i in range(layout.count())
         if isinstance(layout.itemAt(i).widget(), QPushButton)
     )
     button.click()
@@ -356,9 +390,12 @@ def test_validator_crash_is_reported_not_propagated(tmp_path, qapp, caplog):
     """A raising validator must not blow up the click handler. The status
     bar receives a hint and the exception is logged with traceback."""
     project_root = tmp_path / "proj"
-    _seed_project(project_root, validators=[
-        {"id": "pack.broken.exploder", "enabled": True},
-    ])
+    _seed_project(
+        project_root,
+        validators=[
+            {"id": "pack.broken.exploder", "enabled": True},
+        ],
+    )
     manager = TaskConfigManager(tmp_path / "no_fallback.json", project_root=project_root)
     mw = _mock_main_window(tmp_path, manager, project_root)
     tab = _make_tab(qapp, mw)
@@ -373,7 +410,8 @@ def test_validator_crash_is_reported_not_propagated(tmp_path, qapp, caplog):
 
     layout = _build_row(tab)
     button = next(
-        layout.itemAt(i).widget() for i in range(layout.count())
+        layout.itemAt(i).widget()
+        for i in range(layout.count())
         if isinstance(layout.itemAt(i).widget(), QPushButton)
     )
     with caplog.at_level("ERROR"):
@@ -390,7 +428,8 @@ def test_validator_crash_is_reported_not_propagated(tmp_path, qapp, caplog):
 
 def _count_validator_buttons(layout) -> int:
     return sum(
-        1 for i in range(layout.count())
+        1
+        for i in range(layout.count())
         if isinstance(layout.itemAt(i).widget(), QPushButton)
         and layout.itemAt(i).widget().property("validator_id")
     )

@@ -67,10 +67,12 @@ class ExportController:
             return
         folders = self._mw.project_manager.enumerate_test_folders()
         if not folders:
-            QMessageBox.information(self._mw, "Export to Markdown",
-                                    "This project has no test folders.")
+            QMessageBox.information(
+                self._mw, "Export to Markdown", "This project has no test folders."
+            )
             return
         from ..dialogs.test_selection_dialog import TestSelectionDialog
+
         sel = TestSelectionDialog(folders, require="text", parent=self._mw)
         if sel.exec() != QDialog.Accepted:
             return
@@ -80,8 +82,8 @@ class ExportController:
             return
         default = self._export_default_path(".md")
         path, _ = QFileDialog.getSaveFileName(
-            self._mw, "Export Tests to Markdown", str(default),
-            "Markdown (*.md);;All Files (*)")
+            self._mw, "Export Tests to Markdown", str(default), "Markdown (*.md);;All Files (*)"
+        )
         if not path:
             return
         try:
@@ -92,34 +94,35 @@ class ExportController:
             Path(path).write_text("\n\n".join(parts), encoding="utf-8")
         except Exception as e:
             log.exception("Markdown export failed")
-            QMessageBox.critical(self._mw, "Export Failed",
-                                 f"Could not write Markdown:\n{e}")
+            QMessageBox.critical(self._mw, "Export Failed", f"Could not write Markdown:\n{e}")
             return
         self._mw.footer.show_message(
-            f"Exported {len(selected)} test(s) to Markdown -> {path}", 5000)
+            f"Exported {len(selected)} test(s) to Markdown -> {path}", 5000
+        )
 
     def _export_markdown_single(self):
         """Quick dump of the open procedure's text (used when no project is open)."""
         text = self._current_procedure_text()
         if not text:
             QMessageBox.information(
-                self._mw, "Export to Markdown",
-                "There is no procedure text to export.\n"
-                "Open or author a procedure first.")
+                self._mw,
+                "Export to Markdown",
+                "There is no procedure text to export.\nOpen or author a procedure first.",
+            )
             return
         default = self._export_default_path(".md")
         path, _ = QFileDialog.getSaveFileName(
-            self._mw, "Export Procedure to Markdown", str(default),
-            "Markdown (*.md);;All Files (*)")
+            self._mw, "Export Procedure to Markdown", str(default), "Markdown (*.md);;All Files (*)"
+        )
         if not path:
             return
         try:
             from ..core.procedure_export import write_markdown
+
             write_markdown(text, Path(path))
         except Exception as e:
             log.exception("Markdown export failed")
-            QMessageBox.critical(self._mw, "Export Failed",
-                                 f"Could not write Markdown:\n{e}")
+            QMessageBox.critical(self._mw, "Export Failed", f"Could not write Markdown:\n{e}")
             return
         self._mw.footer.show_message(f"Exported Markdown -> {path}", 5000)
 
@@ -133,10 +136,10 @@ class ExportController:
             return
         folders = self._mw.project_manager.enumerate_test_folders()
         if not folders:
-            QMessageBox.information(self._mw, "Export to Word",
-                                    "This project has no test folders.")
+            QMessageBox.information(self._mw, "Export to Word", "This project has no test folders.")
             return
         from ..dialogs.test_selection_dialog import TestSelectionDialog
+
         sel = TestSelectionDialog(folders, require="json", parent=self._mw)
         if sel.exec() != QDialog.Accepted:
             return
@@ -147,11 +150,16 @@ class ExportController:
         from ..core.full_report import has_active_bundle
 
         if not has_active_bundle(root):
-            if QMessageBox.question(
-                self._mw, "No active bundle",
-                "This project has no active bundle, so the report will contain "
-                "metadata only — no test steps or expected results.\n\n"
-                "Export anyway?") != QMessageBox.StandardButton.Yes:
+            if (
+                QMessageBox.question(
+                    self._mw,
+                    "No active bundle",
+                    "This project has no active bundle, so the report will contain "
+                    "metadata only — no test steps or expected results.\n\n"
+                    "Export anyway?",
+                )
+                != QMessageBox.StandardButton.Yes
+            ):
                 return
 
         from procedo.core import project_exports
@@ -163,16 +171,24 @@ class ExportController:
             export_folder = evidence_folder = project_exports.exports_folder(Path(root))
         except EvidenceError as exc:  # no default inside the project: the user picks one
             evidence_folder = None
-            QMessageBox.warning(self._mw, "Export to Word",
-                                f"The project's evidence folder cannot be opened:\n{exc}\n\n"
-                                "Choose another folder for the report.")
+            QMessageBox.warning(
+                self._mw,
+                "Export to Word",
+                f"The project's evidence folder cannot be opened:\n{exc}\n\n"
+                "Choose another folder for the report.",
+            )
             chosen = QFileDialog.getExistingDirectory(self._mw, "Export to Word", str(Path.home()))
             if not chosen:
                 return
             export_folder = Path(chosen)
         sidecar = create_default_sidecar()
-        dlg = WordExportDialog(sidecar, Path(root), export_folder,
-                               default_docx_name="test_report.docx", parent=self._mw)
+        dlg = WordExportDialog(
+            sidecar,
+            Path(root),
+            export_folder,
+            default_docx_name="test_report.docx",
+            parent=self._mw,
+        )
         if dlg.exec() != QDialog.Accepted:
             return
         output_path = dlg.get_output_path()
@@ -182,28 +198,40 @@ class ExportController:
         def exported(path: Path, queued: bool) -> None:
             later = " (waiting in this PC's outbox: Bench uploads it once the evidence folder is reachable)"
             self._mw.footer.show_message(
-                f"Exported {len(selected)}-test report -> {path}" + (later if queued else ""), 5000)
+                f"Exported {len(selected)}-test report -> {path}" + (later if queued else ""), 5000
+            )
 
         self._word_export = WordExportJob(  # rendered on a worker: the GUI never asks the engine
-            self._mw, Path(root), [f.path for f in selected], output_path, sidecar,
-            on_exported=exported, evidence_folder=evidence_folder)
+            self._mw,
+            Path(root),
+            [f.path for f in selected],
+            output_path,
+            sidecar,
+            on_exported=exported,
+            evidence_folder=evidence_folder,
+        )
 
     def _export_word_single(self):
         """Quick dump of the open procedure as a plain .docx (used when no project)."""
         text = self._current_procedure_text()
         if not text:
             QMessageBox.information(
-                self._mw, "Export to Word",
-                "There is no procedure text to export.\n"
-                "Open or author a procedure first.")
+                self._mw,
+                "Export to Word",
+                "There is no procedure text to export.\nOpen or author a procedure first.",
+            )
             return
         default = self._export_default_path(".docx")
         path, _ = QFileDialog.getSaveFileName(
-            self._mw, "Export Procedure to Word", str(default),
-            "Word Document (*.docx);;All Files (*)")
+            self._mw,
+            "Export Procedure to Word",
+            str(default),
+            "Word Document (*.docx);;All Files (*)",
+        )
         if not path:
             return
         from ..core.procedure_export import write_word, WordExportUnavailable
+
         try:
             write_word(text, Path(path), title=None)
         except WordExportUnavailable as e:
@@ -211,7 +239,6 @@ class ExportController:
             return
         except Exception as e:
             log.exception("Word export failed")
-            QMessageBox.critical(self._mw, "Export Failed",
-                                 f"Could not write Word document:\n{e}")
+            QMessageBox.critical(self._mw, "Export Failed", f"Could not write Word document:\n{e}")
             return
         self._mw.footer.show_message(f"Exported Word -> {path}", 5000)

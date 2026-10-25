@@ -172,8 +172,10 @@ class SkillContextPicker(ui_kit.Card):
             item = next((i for i in tab.source.list_items() if i.key == key), None)
             label = item.label if item else key
             if key not in tab.items.checked():
-                return (f"This skill needs '{label}': tick it under Context to push "
-                        f"→ {tab.source.title}.")
+                return (
+                    f"This skill needs '{label}': tick it under Context to push "
+                    f"→ {tab.source.title}."
+                )
             if not tab.source.materialize([key]).strip():
                 why = f" ({item.empty_hint})" if item and item.empty_hint else ""
                 return f"This skill needs '{label}', but it is empty for this project{why}."
@@ -193,7 +195,7 @@ class SkillContextPicker(ui_kit.Card):
         self._readout_timer.start()
 
     def _on_selection_changed(self) -> None:
-        self._readout_timer.start()   # debounced (assemble can be costly)
+        self._readout_timer.start()  # debounced (assemble can be costly)
         self.selectionChanged.emit()
 
     def _update_readout(self) -> None:

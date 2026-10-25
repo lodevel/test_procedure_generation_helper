@@ -17,27 +17,24 @@ from procedo.studio.core.task_config import TaskConfigManager
 
 class TestBaseTabButtonLabels:
     """Test BaseTab button label methods."""
-    
+
     def test_create_task_button_basic(self, row):
         """Test creating basic task button."""
         callback_called = []
-        
+
         def callback():
             callback_called.append(True)
-        
-        button = row.create_button(
-            task=LLMTask.REVIEW_JSON,
-            callback=callback
-        )
-        
+
+        button = row.create_button(task=LLMTask.REVIEW_JSON, callback=callback)
+
         assert isinstance(button, QToolButton)
         assert button.isEnabled()
         assert button.menu() is None  # no force variant: a plain button
-        
+
         # Verify callback works
         button.click()
         assert callback_called == [True]
-    
+
     def test_force_variant_is_the_split_buttons_menu(self, row):
         """A task with a force variant is ONE split button (owner decision): a
         click runs the task, its ▾ menu offers the task and its force variant,
@@ -59,66 +56,56 @@ class TestBaseTabButtonLabels:
         force.trigger()
         strict.trigger()
         assert calls == ["strict", "force", "strict"]
-    
+
     def test_create_task_button_disabled(self, row):
         """Test creating disabled task button."""
-        button = row.create_button(
-            task=LLMTask.REVIEW_CODE,
-            callback=lambda: None,
-            enabled=False
-        )
-        
+        button = row.create_button(task=LLMTask.REVIEW_CODE, callback=lambda: None, enabled=False)
+
         assert not button.isEnabled()
-    
+
     def test_create_task_button_custom_tooltip(self, row):
         """Test creating task button with custom tooltip."""
         custom_tooltip = "This is a custom tooltip"
         button = row.create_button(
-            task=LLMTask.GENERATE_CODE_FROM_JSON,
-            callback=lambda: None,
-            tooltip=custom_tooltip
+            task=LLMTask.GENERATE_CODE_FROM_JSON, callback=lambda: None, tooltip=custom_tooltip
         )
-        
+
         assert button.toolTip() == custom_tooltip
-    
+
     def test_create_task_button_custom_tab_name(self, row):
         """A custom tab name is the label lookup's: a tab without the task falls back."""
         button = row.create_button(
-            task=LLMTask.AD_HOC_CHAT,
-            callback=lambda: None,
-            tab_name="custom_tab"
+            task=LLMTask.AD_HOC_CHAT, callback=lambda: None, tab_name="custom_tab"
         )
-        
+
         assert button.text() == "✦ " + LLMTask.AD_HOC_CHAT.value.replace("_", " ").title()
-    
+
     def test_create_task_button_uses_task_config_manager(self, row, mock_main_window):
         """Test that create_button uses TaskConfigManager for labels."""
         # Add the task to base tab if not exists (since "base" is not in defaults)
-        if not mock_main_window.task_config_manager.get_task_config("base", LLMTask.REVIEW_JSON.value):
+        if not mock_main_window.task_config_manager.get_task_config(
+            "base", LLMTask.REVIEW_JSON.value
+        ):
             from procedo.studio.core.task_config_model import TaskConfig
+
             task = TaskConfig(
                 id=LLMTask.REVIEW_JSON.value,
                 name="Review JSON",
                 button_label="Review JSON",
                 prompt_template=None,
-                enabled=True
+                enabled=True,
             )
             mock_main_window.task_config_manager.add_task("base", task)
-        
+
         # Set a custom label
         mock_main_window.task_config_manager.update_task_config(
-            tab_id="base",
-            task_id=LLMTask.REVIEW_JSON.value,
-            button_label="Custom Review Label"
+            tab_id="base", task_id=LLMTask.REVIEW_JSON.value, button_label="Custom Review Label"
         )
-        
-        button = row.create_button(
-            task=LLMTask.REVIEW_JSON,
-            callback=lambda: None
-        )
-        
+
+        button = row.create_button(task=LLMTask.REVIEW_JSON, callback=lambda: None)
+
         assert button.text() == "✦ Custom Review Label"
-    
+
     def test_task_config_manager_property(self, base_tab, mock_main_window):
         """Test task_config_manager property accessor."""
         assert base_tab.task_config_manager is mock_main_window.task_config_manager
@@ -142,8 +129,11 @@ class TestLLMButtonCapabilityGating:
     @classmethod
     def _by_id(cls, tab):
         """The task buttons by task id: one per enabled task but the chat, in order."""
-        ids = [t.id for t in tab.task_config_manager.get_enabled_tasks_for_tab(tab.tab_id)
-               if t.id != LLMTask.AD_HOC_CHAT.value]
+        ids = [
+            t.id
+            for t in tab.task_config_manager.get_enabled_tasks_for_tab(tab.tab_id)
+            if t.id != LLMTask.AD_HOC_CHAT.value
+        ]
         buttons = cls._collect_task_buttons(tab)
         assert len(buttons) == len(ids)
         return dict(zip(ids, buttons))
@@ -193,16 +183,20 @@ class TestLLMButtonCapabilityGating:
         from procedo.studio.core.task_config_model import TaskConfig
 
         base_tab.tab_id = "json_code"
-        mock_main_window.task_config_manager.add_task("json_code", TaskConfig(
-            id=LLMTask.AD_HOC_CHAT.value, name="Chat", button_label="Chat", enabled=True))
+        mock_main_window.task_config_manager.add_task(
+            "json_code",
+            TaskConfig(
+                id=LLMTask.AD_HOC_CHAT.value, name="Chat", button_label="Chat", enabled=True
+            ),
+        )
         base_tab._create_action_bar()
-        enabled = [t.id for t in base_tab.task_config_manager.get_enabled_tasks_for_tab("json_code")]
+        enabled = [
+            t.id for t in base_tab.task_config_manager.get_enabled_tasks_for_tab("json_code")
+        ]
         assert LLMTask.AD_HOC_CHAT.value in enabled
         assert len(self._collect_task_buttons(base_tab)) == len(enabled) - 1
 
-    def test_declared_custom_task_click_threads_custom_task_id(
-        self, base_tab, mock_main_window
-    ):
+    def test_declared_custom_task_click_threads_custom_task_id(self, base_tab, mock_main_window):
         """A bundle-declared CUSTOM task's button is enabled and clicking
         runs AD_HOC_CHAT with custom_task_id (gpt-5.5 finding)."""
         from unittest.mock import MagicMock
@@ -211,9 +205,12 @@ class TestLLMButtonCapabilityGating:
         base_tab.tab_id = "text_json"
         mock_main_window.task_config_manager.add_task(
             "text_json",
-            TaskConfig(id="verify_shunt", name="Verify Shunt",
-                       button_label="Verify Shunt",
-                       prompt_template="Verify the shunt wiring."),
+            TaskConfig(
+                id="verify_shunt",
+                name="Verify Shunt",
+                button_label="Verify Shunt",
+                prompt_template="Verify the shunt wiring.",
+            ),
         )
         base_tab._run_task_async = MagicMock()
         base_tab._create_action_bar()
@@ -227,9 +224,7 @@ class TestLLMButtonCapabilityGating:
             LLMTask.AD_HOC_CHAT, custom_task_id="verify_shunt"
         )
 
-    def test_generic_callback_guards_undeclared_custom_task(
-        self, base_tab, mock_main_window
-    ):
+    def test_generic_callback_guards_undeclared_custom_task(self, base_tab, mock_main_window):
         """Defense in depth: the generic callback re-checks invocability,
         so a programmatic call with an undeclared id never dispatches."""
         from unittest.mock import MagicMock
@@ -269,11 +264,11 @@ def qapp():
 def mock_main_window(tmp_path):
     """Create a mock MainWindow with TaskConfigManager."""
     from unittest.mock import MagicMock
-    
+
     main_window = MagicMock()
-    
+
     # Create a real TaskConfigManager with temp config
     config_path = tmp_path / "test_config.json"
     main_window.task_config_manager = TaskConfigManager(config_path)
-    
+
     return main_window

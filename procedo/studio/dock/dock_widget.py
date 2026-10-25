@@ -34,7 +34,8 @@ class DockWidget(QWidget):
         self.rules_picker = QPushButton("Rules ▾")
         self.rules_picker.setObjectName("rulesPicker")
         self.rules_picker.setToolTip(
-            "Select Rules… — which rule documents go into the LLM context of the current view")
+            "Select Rules… — which rule documents go into the LLM context of the current view"
+        )
         self.rules_picker.clicked.connect(self._on_select_rules)
         head = QWidget()
         head.setLayout(ui_kit.hbox(ui_kit.bold("Assistant"), None, self.rules_picker))
@@ -68,14 +69,15 @@ class DockWidget(QWidget):
         return getattr(self.main_window.view_stack.currentWidget(), "tab_context", None)
 
     def refresh_rules_picker(self, *_) -> None:
-        """"Rules · n of N ▾": how many of the project's rule documents the current view sends."""
+        """ "Rules · n of N ▾": how many of the project's rule documents the current view sends."""
         tab_context = self._current_tab_context()
         if tab_context is None:
             self.rules_picker.setText("Rules ▾")
             return
         available = [doc.key for doc in self.main_window.project_manager.get_rule_docs()]
-        chosen = set(current_selection(self.main_window.task_config_manager, tab_context.tab_id,
-                                       available))
+        chosen = set(
+            current_selection(self.main_window.task_config_manager, tab_context.tab_id, available)
+        )
         count = sum(1 for name in available if name in chosen)
         self.rules_picker.setText(f"Rules · {count} of {len(available)} ▾")
 
@@ -86,10 +88,13 @@ class DockWidget(QWidget):
             QMessageBox.information(
                 self,
                 "Not Available",
-                "Rule selection is only available for tabs with LLM context (Text-JSON, JSON-Code)."
+                "Rule selection is only available for tabs with LLM context (Text-JSON, JSON-Code).",
             )
             return
-        from .. import shell  # the views' names, the footer (shell builds the window: imported late)
+        from .. import (
+            shell,
+        )  # the views' names, the footer (shell builds the window: imported late)
+
         tab_id = tab_context.tab_id
         dialog = RuleSelectorDialog(
             tab_id,
@@ -106,19 +111,21 @@ class DockWidget(QWidget):
         shell.refresh_footer(self.main_window)
         if accepted and not saved:
             QMessageBox.warning(
-                self, "Rules Not Saved",
+                self,
+                "Rules Not Saved",
                 "The rule selection applies now but was not saved:\n\n"
-                + self.main_window.task_config_manager.save_error)
+                + self.main_window.task_config_manager.save_error,
+            )
         elif saved:
             QMessageBox.information(
                 self,
                 "Rules Updated",
-                f"Updated rules for {tab_id} tab: {len(selected_rules)} rules selected."
+                f"Updated rules for {tab_id} tab: {len(selected_rules)} rules selected.",
             )
 
     def show_validation_result_from_list(self, issues: list):
         """Show validation issues from a list of dicts."""
-        ss = getattr(self.main_window, 'session_state', None)
+        ss = getattr(self.main_window, "session_state", None)
         if ss is not None:
             ss.validation_issues = list(issues)
         self.findings_panel.display()

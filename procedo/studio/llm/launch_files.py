@@ -33,7 +33,7 @@ def launch_file_owners(launch_dir) -> list[int]:
     """The Studio processes that own a launch file in *launch_dir*, in order."""
     owners = set()
     for path in Path(launch_dir).glob(f"{_PREFIX}*"):
-        owner = path.name[len(_PREFIX):].split(".", 1)[0]
+        owner = path.name[len(_PREFIX) :].split(".", 1)[0]
         if owner.isdigit():
             owners.add(int(owner))
     return sorted(owners)

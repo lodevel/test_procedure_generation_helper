@@ -12,6 +12,7 @@ Neither is there since projects moved to a share. Both live under the per-user
 app-data root, and only the host's ``procedo.core.project_local_state`` knows
 where — so this module asks it, and never composes a path of its own.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

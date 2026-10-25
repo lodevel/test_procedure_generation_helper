@@ -7,6 +7,7 @@ Usage in a test file (before importing any ``procedo.studio`` submodule)::
 
 Calling it multiple times is safe — stubs are registered idempotently.
 """
+
 from __future__ import annotations
 
 import sys

@@ -22,6 +22,10 @@ def keep_pinned_constants(code: str, current_code: str, procedure, source: str) 
     ids = equipment_ids_from_procedure(procedure) if isinstance(procedure, dict) else []
     code, replaced = preserve_bench_constants(code, current_code, ids)
     if replaced:
-        log.info("%s: preserved %d operator-pinned constant(s): %s",
-                 source, len(replaced), ", ".join(replaced))
+        log.info(
+            "%s: preserved %d operator-pinned constant(s): %s",
+            source,
+            len(replaced),
+            ", ".join(replaced),
+        )
     return code

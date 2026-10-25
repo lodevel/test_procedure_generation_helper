@@ -7,6 +7,7 @@ several locations and drive the skill-chat window.
 These are immutable value objects with no behaviour — loading
 (:mod:`.skill_loader`) and discovery (:mod:`.registry`) own all of it.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -29,7 +30,7 @@ class SkillSource(IntEnum):
 
     BUILTIN = 1  # <repo>/authoring_skills — committed library, ships with the app
     BUNDLED = 2  # <project>/bundle/authoring_skills — shipped in a built bundle
-    LOCAL = 3    # <repo>/local_packages/authoring_skills — drop-in (uncommitted)
+    LOCAL = 3  # <repo>/local_packages/authoring_skills — drop-in (uncommitted)
     PROJECT = 4  # <project>/authoring_skills — this project only
 
 

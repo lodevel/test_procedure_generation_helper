@@ -25,9 +25,7 @@ from .task_config_model import ChatConfig, SelectedRules, TaskConfig, clone_sele
 # empty defaults.
 
 
-def _build_default_task_configs(
-    raw: Dict[str, Any]
-) -> Dict[str, List[TaskConfig]]:
+def _build_default_task_configs(raw: Dict[str, Any]) -> Dict[str, List[TaskConfig]]:
     out: Dict[str, List[TaskConfig]] = {}
     for tab_id, tab_cfg in raw.items():
         if not isinstance(tab_cfg, dict):
@@ -35,9 +33,7 @@ def _build_default_task_configs(
         tasks = tab_cfg.get("tasks")
         if not isinstance(tasks, list):
             continue
-        out[tab_id] = [
-            TaskConfig.from_dict(t) for t in tasks if isinstance(t, dict)
-        ]
+        out[tab_id] = [TaskConfig.from_dict(t) for t in tasks if isinstance(t, dict)]
     return out
 
 
@@ -56,9 +52,7 @@ _DEFAULT_WORKFLOWS_RAW: Dict[str, Any] = read_editor_defaults()
 DEFAULT_TASK_CONFIGS: Dict[str, List[TaskConfig]] = _build_default_task_configs(
     _DEFAULT_WORKFLOWS_RAW
 )
-DEFAULT_CHAT_CONFIG: Dict[str, ChatConfig] = _build_default_chat_config(
-    _DEFAULT_WORKFLOWS_RAW
-)
+DEFAULT_CHAT_CONFIG: Dict[str, ChatConfig] = _build_default_chat_config(_DEFAULT_WORKFLOWS_RAW)
 
 
 # Keys we model directly on the tab dict. Everything else (including the
@@ -108,9 +102,7 @@ def workflows_to_caches(
     workflows: Dict[str, Any],
     *,
     drop_tab_selected_rules: bool,
-) -> Tuple[
-    Dict[str, List[TaskConfig]], Dict[str, ChatConfig], Dict[str, Dict[str, Any]]
-]:
+) -> Tuple[Dict[str, List[TaskConfig]], Dict[str, ChatConfig], Dict[str, Dict[str, Any]]]:
     """Build the (tasks, chat configs, raw extras) caches from a
     ``workflows``-shaped dict.
 
@@ -142,7 +134,9 @@ def workflows_to_caches(
                 if task.selected_rules is None and tab_level_selected is not None:
                     task.selected_rules = clone_selected_rules(tab_level_selected)
                 tasks.append(task)
-        elif tasks_data is None and tab_level_selected is not None and tab_id in DEFAULT_TASK_CONFIGS:
+        elif (
+            tasks_data is None and tab_level_selected is not None and tab_id in DEFAULT_TASK_CONFIGS
+        ):
             # Tab declares selected_rules but no tasks: fill in defaults
             # so the rules propagate (was a silent drop pre-Codex review).
             # An empty list is a tab that lists no task (none runnable): kept empty.

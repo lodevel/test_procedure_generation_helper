@@ -6,6 +6,7 @@ between Project and Packages. Everything host-specific is reached through the
 passed-in ``StudioWorkspace`` (project root, backend factory, the text tab for the
 insert, the context sources).
 """
+
 from __future__ import annotations
 
 import logging
@@ -49,6 +50,7 @@ def install_skills_menu(main_window) -> None:
 # --------------------------------------------------------------------------- #
 # menu population                                                             #
 # --------------------------------------------------------------------------- #
+
 
 def _project_root(main_window) -> Optional[Path]:
     pm = getattr(main_window, "project_manager", None)
@@ -94,9 +96,7 @@ def _open_authoring_guide(main_window) -> None:
     # procedo/studio/authoring/skill_menu.py → up 4 → <editor>/docs/.
     doc = Path(__file__).resolve().parents[3] / "docs" / _AUTHORING_GUIDE
     if not doc.is_file():
-        QMessageBox.information(
-            main_window, "Skills", f"Authoring guide not found at:\n{doc}"
-        )
+        QMessageBox.information(main_window, "Skills", f"Authoring guide not found at:\n{doc}")
         return
     os_open.open_or_log(doc)
 
@@ -110,6 +110,7 @@ def _open_skills_folder(main_window) -> None:
 # --------------------------------------------------------------------------- #
 # launching a skill                                                           #
 # --------------------------------------------------------------------------- #
+
 
 def build_sources(main_window, root: Optional[Path]):
     """Build the picker's (Rules, Documents, Artifacts) sources + the documents
@@ -127,15 +128,24 @@ def build_sources(main_window, root: Optional[Path]):
     providers = []
     if am is not None:
         from ..core.artifact_manager import ArtifactType
+
         providers += [
-            ArtifactProvider("procedure_text", "Procedure text",
-                             lambda: am.get_content(ArtifactType.PROCEDURE_TEXT)),
-            ArtifactProvider("procedure_json", "Procedure JSON",
-                             lambda: am.get_content(ArtifactType.PROCEDURE_JSON)),
-            ArtifactProvider("test_code", "Test code",
-                             lambda: am.get_content(ArtifactType.TEST_CODE)),
+            ArtifactProvider(
+                "procedure_text",
+                "Procedure text",
+                lambda: am.get_content(ArtifactType.PROCEDURE_TEXT),
+            ),
+            ArtifactProvider(
+                "procedure_json",
+                "Procedure JSON",
+                lambda: am.get_content(ArtifactType.PROCEDURE_JSON),
+            ),
+            ArtifactProvider(
+                "test_code", "Test code", lambda: am.get_content(ArtifactType.TEST_CODE)
+            ),
         ]
     from ..core import odb_inspect
+
     # Cache the loaded board for the dialog's lifetime: load_board spawns an ODB
     # CLI subprocess (~seconds), and the picker re-materializes on every checkbox
     # toggle for the token readout — without this each toggle would re-run it.
@@ -154,15 +164,26 @@ def build_sources(main_window, root: Optional[Path]):
     # Connectivity and part numbers are SEPARATE toggles: connectivity is small
     # and broadly useful; the IC part-number block is larger and only some skills
     # need it.
-    providers.append(ArtifactProvider(
-        "netlist", "Netlist (connectivity)", lambda: format_netlist(_board())))
+    providers.append(
+        ArtifactProvider("netlist", "Netlist (connectivity)", lambda: format_netlist(_board()))
+    )
     no_parts = "no ODB++ board archive in the project, or no part numbers on it?"
-    providers.append(ArtifactProvider(
-        "component_ids", "Component part numbers (ICs: U, IC)",
-        lambda: format_component_ids(_board()), empty_hint=no_parts))
-    providers.append(ArtifactProvider(
-        "other_component_ids", "Component part numbers (other: non-IC)",
-        lambda: format_other_component_ids(_board()), empty_hint=no_parts))
+    providers.append(
+        ArtifactProvider(
+            "component_ids",
+            "Component part numbers (ICs: U, IC)",
+            lambda: format_component_ids(_board()),
+            empty_hint=no_parts,
+        )
+    )
+    providers.append(
+        ArtifactProvider(
+            "other_component_ids",
+            "Component part numbers (other: non-IC)",
+            lambda: format_other_component_ids(_board()),
+            empty_hint=no_parts,
+        )
+    )
     sources.append(ArtifactsSource(providers))
     return sources, documents_dir
 
@@ -175,10 +196,12 @@ def _make_insert_callback(main_window):
     No test open → no procedure to insert into: warn and do nothing rather than
     dump the draft into an unbound editor. ``artifact_manager`` is None until a
     test is opened from the workspace/tests widget."""
+
     def insert(draft: str) -> None:
         if getattr(main_window, "artifact_manager", None) is None:
             QMessageBox.information(
-                main_window, "No test open",
+                main_window,
+                "No test open",
                 "Open or create a test first — the draft is inserted into the "
                 "open test's procedure.",
             )
@@ -204,13 +227,15 @@ def _launch_wizard_flow(main_window, flow) -> None:
     wiring. Resolve/import/version/construction errors are surfaced to the user."""
     import inspect
     from PySide6.QtWidgets import QMessageBox
+
     try:
         entry = wizard_flows.resolve_launch(flow)
         api = wizard_api.StudioAuthoringApi(main_window)
         if not inspect.isclass(entry):
             if not callable(entry):
                 raise wizard_flows.WizardLaunchError(
-                    f"its entry is neither a class nor a callable: {entry!r}")
+                    f"its entry is neither a class nor a callable: {entry!r}"
+                )
             entry(api)
             return
         dlg = entry(api, parent=main_window)
@@ -230,6 +255,7 @@ def _hold_modeless(main_window, attr: str, dialog) -> None:
     """Keep a modeless dialog alive on ``main_window.<attr>`` (the GC would collect it);
     closing it deletes it and drops the entry."""
     from PySide6.QtCore import Qt
+
     refs = getattr(main_window, attr, None)
     if refs is None:
         refs = []
@@ -241,6 +267,7 @@ def _hold_modeless(main_window, attr: str, dialog) -> None:
 
 def _refresh_main_after_wizard(main_window, result) -> None:
     from PySide6.QtWidgets import QDialog
+
     if result != QDialog.DialogCode.Accepted:
         return
     try:
@@ -297,7 +324,8 @@ def launch_skill_chat(main_window) -> None:
     skills = load_skills(project_root=root)
     if not skills:
         QMessageBox.information(
-            main_window, "Skills",
+            main_window,
+            "Skills",
             "No skills found. Use 'Open skills folder…' to add one, or ship one "
             "in the built-in library.",
         )

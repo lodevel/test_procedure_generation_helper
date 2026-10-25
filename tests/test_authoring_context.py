@@ -2,6 +2,7 @@
 
 Pure-Python: tmp_path + fakes only — no Qt, no managers, no ODB CLI.
 """
+
 from procedo.studio.authoring import (
     ArtifactProvider,
     ArtifactsSource,
@@ -16,8 +17,9 @@ from procedo.studio.core.project_manager import RuleDoc
 
 def test_context_bundle_approx_tokens():
     assert ContextBundle("", 0).approx_tokens == 0
-    assert ContextBundle("x" * 8, 8).approx_tokens == 2     # 8//4
-    assert ContextBundle("x" * 10, 10).approx_tokens == 3   # ceil-ish (10+3)//4
+    assert ContextBundle("x" * 8, 8).approx_tokens == 2  # 8//4
+    assert ContextBundle("x" * 10, 10).approx_tokens == 3  # ceil-ish (10+3)//4
+
 
 # --------------------------------------------------------------------------- #
 # format_netlist                                                              #
@@ -25,11 +27,15 @@ def test_context_bundle_approx_tokens():
 
 _BOARD = {
     "components": [
-        {"refdes": "U1", "side": "top", "pins": [
-            {"name": "1", "net": "VIN"},
-            {"name": "4", "net": "EN"},
-            {"name": "5", "net": "VOUT"},
-        ]},
+        {
+            "refdes": "U1",
+            "side": "top",
+            "pins": [
+                {"name": "1", "net": "VIN"},
+                {"name": "4", "net": "EN"},
+                {"name": "5", "net": "VOUT"},
+            ],
+        },
         {"refdes": "TP4", "side": "top", "pins": [{"name": "1", "net": "VOUT"}]},
     ],
     "nets": [
@@ -57,22 +63,28 @@ def test_format_netlist_empty_no_error():
 
 
 def test_format_netlist_pin_without_net_and_component_without_pins():
-    board = {"components": [
-        {"refdes": "R1", "pins": [{"name": "1"}]},   # pin has no net
-        {"refdes": "MTG1", "pins": []},              # no pins at all
-    ], "nets": []}
+    board = {
+        "components": [
+            {"refdes": "R1", "pins": [{"name": "1"}]},  # pin has no net
+            {"refdes": "MTG1", "pins": []},  # no pins at all
+        ],
+        "nets": [],
+    }
     text = format_netlist(board)
-    assert "- R1: 1=-" in text          # missing net rendered as "-"
-    assert "- MTG1" in text             # no-pin component still listed
+    assert "- R1: 1=-" in text  # missing net rendered as "-"
+    assert "- MTG1" in text  # no-pin component still listed
 
 
 def test_format_netlist_node_missing_pin_does_not_leak_none():
-    board = {"components": [], "nets": [
-        {"net": "GND", "nodes": [{"refdes": "R1", "pin": "0"}, {"refdes": "R2"}]},
-    ]}
+    board = {
+        "components": [],
+        "nets": [
+            {"net": "GND", "nodes": [{"refdes": "R1", "pin": "0"}, {"refdes": "R2"}]},
+        ],
+    }
     text = format_netlist(board)
-    assert "R1.0" in text               # pin "0" preserved (not falsy-dropped)
-    assert "R2.?" in text               # missing pin → "?", never "None"
+    assert "R1.0" in text  # pin "0" preserved (not falsy-dropped)
+    assert "R2.?" in text  # missing pin → "?", never "None"
     assert ".None" not in text
 
 
@@ -82,7 +94,7 @@ def test_format_netlist_ignores_non_dict_entries():
         "nets": ["junk", {"net": "V", "nodes": [None, {"refdes": "U1", "pin": "1"}]}],
     }
     text = format_netlist(board)
-    assert "- U1: 1=V" in text          # junk pins/components/nodes dropped silently
+    assert "- U1: 1=V" in text  # junk pins/components/nodes dropped silently
     assert "- V: U1.1" in text
     assert "junk" not in text and "None" not in text
 
@@ -90,6 +102,7 @@ def test_format_netlist_ignores_non_dict_entries():
 # --------------------------------------------------------------------------- #
 # DocumentsSource                                                             #
 # --------------------------------------------------------------------------- #
+
 
 def test_documents_source_lists_sorted_skips_hidden(tmp_path):
     (tmp_path / "b.md").write_text("B", encoding="utf-8")
@@ -124,13 +137,14 @@ def test_documents_source_missing_dir_is_empty(tmp_path):
 # RulesSource                                                                 #
 # --------------------------------------------------------------------------- #
 
+
 def test_rules_source_lists_and_strips_the_pipeline_frontmatter(tmp_path):
     r1 = tmp_path / "r1.md"
     r1.write_text("---\nid: one\nrelated:\n  - r2.md\n---\nrule one body", encoding="utf-8")
     r2 = tmp_path / "r2.md"
     r2.write_text("rule two body", encoding="utf-8")
     src = RulesSource(lambda: [RuleDoc("r1.md", r1, "bundle"), RuleDoc("r2.md", r2, "bundle")])
-    assert [i.key for i in src.list_items()] == ["r1.md", "r2.md"]   # the documents' order
+    assert [i.key for i in src.list_items()] == ["r1.md", "r2.md"]  # the documents' order
     out = src.materialize(["r1.md"])
     assert out == "## r1.md\n\n---\nid: one\n---\nrule one body"
 
@@ -145,6 +159,7 @@ def test_rules_source_ignores_unknown_key(tmp_path):
 # --------------------------------------------------------------------------- #
 # ArtifactsSource                                                             #
 # --------------------------------------------------------------------------- #
+
 
 def _providers():
     return [
@@ -167,6 +182,7 @@ def test_artifacts_source_materialize_and_resilience():
 # assemble                                                                    #
 # --------------------------------------------------------------------------- #
 
+
 def test_assemble_concatenates_with_headers_and_counts(tmp_path):
     (tmp_path / "a.txt").write_text("alpha", encoding="utf-8")
     docs = DocumentsSource(tmp_path)
@@ -178,7 +194,7 @@ def test_assemble_concatenates_with_headers_and_counts(tmp_path):
 
 
 def test_assemble_skips_empty_selection_and_content(tmp_path):
-    docs = DocumentsSource(tmp_path)            # empty dir
+    docs = DocumentsSource(tmp_path)  # empty dir
     arts = ArtifactsSource([ArtifactProvider("text", "T", lambda: "x")])
     bundle = assemble([(docs, []), (docs, ["nothing"]), (arts, ["text"])])
     assert bundle.text == "# Artifacts\n\n## T\n\nx"

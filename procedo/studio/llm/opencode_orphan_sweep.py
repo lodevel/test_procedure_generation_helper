@@ -78,9 +78,11 @@ class PidIdentity(Enum):
     orphan. On UNKNOWN the sweep keeps the pid file and retries next launch.
     """
 
-    OURS = "ours"          # live, an opencode serve, carries OUR config → kill
+    OURS = "ours"  # live, an opencode serve, carries OUR config → kill
     NOT_OURS = "not_ours"  # definitely dead/recycled/unrelated → safe to forget
-    UNKNOWN = "unknown"    # read error / timeout / WSL hiccup / launch not exec'd yet → keep, retry later
+    UNKNOWN = (
+        "unknown"  # read error / timeout / WSL hiccup / launch not exec'd yet → keep, retry later
+    )
 
 
 def signal_linux_tree(wsl_path: str, pid: int, sig: str, port: int) -> None:
@@ -99,7 +101,9 @@ def signal_linux_tree(wsl_path: str, pid: int, sig: str, port: int) -> None:
     try:
         subprocess.run(
             [wsl_path, "-e", "bash", "-c", script],
-            capture_output=True, timeout=5, cwd=safe_wsl_cwd(),
+            capture_output=True,
+            timeout=5,
+            cwd=safe_wsl_cwd(),
         )
     except Exception as e:  # noqa: BLE001 — best-effort cleanup
         log.debug(f"Linux-side kill -{sig} of pid {pid} failed (best-effort): {e}")
@@ -110,8 +114,9 @@ def sweep_launch_test_dir(config: OpenCodeConfig) -> None:
     rules: a Studio that exited mid-test leaves its throwaway server and files there. This
     Studio's own record, written since it started, is left alone: it is a Test connection
     started meanwhile (which sweeps a leftover of its own before it spawns)."""
-    OrphanSweeper(dataclasses.replace(
-        config, working_directory=str(get_opencode_launch_test_dir()))).sweep_orphan(include_own=False)
+    OrphanSweeper(
+        dataclasses.replace(config, working_directory=str(get_opencode_launch_test_dir()))
+    ).sweep_orphan(include_own=False)
 
 
 class OrphanSweeper:
@@ -224,8 +229,11 @@ class OrphanSweeper:
         try:
             result = subprocess.run(
                 [self._config.wsl_path, "-e", "bash", "-c", script],
-                capture_output=True, encoding="utf-8", errors="replace",
-                timeout=3, cwd=safe_wsl_cwd(),
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=3,
+                cwd=safe_wsl_cwd(),
             )
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
             return PidIdentity.UNKNOWN
@@ -290,8 +298,7 @@ class OrphanSweeper:
         for i, tok in enumerate(cmd_tokens):
             if tok == joined:
                 return True
-            if tok == "--config" and i + 1 < len(cmd_tokens) \
-                    and cmd_tokens[i + 1] == our_cfg:
+            if tok == "--config" and i + 1 < len(cmd_tokens) and cmd_tokens[i + 1] == our_cfg:
                 return True
         return False
 
@@ -314,8 +321,12 @@ class OrphanSweeper:
             path = launch_file_path(launch_dir, PID_FILE, owner)
             text = _record_text(path)
             data = _parse_record(text)
-            if (data is not None and owner == os.getpid() and not include_own
-                    and data.get("started_at", 0) >= _PROCESS_STARTED):
+            if (
+                data is not None
+                and owner == os.getpid()
+                and not include_own
+                and data.get("started_at", 0) >= _PROCESS_STARTED
+            ):
                 continue
             if data is not None:
                 self._sweep_record(path, data, owner)

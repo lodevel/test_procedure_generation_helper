@@ -10,6 +10,7 @@ wheel codegen (parse + generate) so the ExecutionContext seam is pinned end to
 end.  The daemon-side reader is fed by a scripted host-side stream (the reader
 thread is the ONE allowed thread; scripts sleep/wait on it, not on extra
 threads)."""
+
 from __future__ import annotations
 
 import functools
@@ -49,17 +50,25 @@ def setUpModule() -> None:
     their skip probes against the registry state at COLLECTION (import), and
     an import-time lifecycle/dispatch registration here would flip those
     decisions suite-wide."""
-    reg._DEFAULT_PACK_PARSERS.update({
-        "psu": labpack.PACK_PARSER, "eload": labpack.PACK_PARSER,
-        "scope": labpack.PACK_PARSER,
-    })
+    reg._DEFAULT_PACK_PARSERS.update(
+        {
+            "psu": labpack.PACK_PARSER,
+            "eload": labpack.PACK_PARSER,
+            "scope": labpack.PACK_PARSER,
+        }
+    )
     reg.register_lifecycle(labpack.LIFECYCLE)
     # codegen resolves lifecycle through the equipment dispatch (etype ->
     # pack namespace); labscpi is single-variant so namespace == etype.
     reg.set_equipment_dispatch({e: {"": e} for e in ("psu", "eload", "scope")})
 
-_RUNNER = (Path(__file__).resolve().parent.parent
-           / "procedo" / "engine_client" / "_execute_op_subprocess.py")
+
+_RUNNER = (
+    Path(__file__).resolve().parent.parent
+    / "procedo"
+    / "engine_client"
+    / "_execute_op_subprocess.py"
+)
 _BSR_PATH = _RUNNER.parent / "_bench_session_runner.py"
 
 # Load the sibling FIRST under its canonical name so the daemon's lazy
@@ -67,8 +76,7 @@ _BSR_PATH = _RUNNER.parent / "_bench_session_runner.py"
 if "_bench_session_runner" in sys.modules:
     bsr = sys.modules["_bench_session_runner"]
 else:
-    _bspec = importlib.util.spec_from_file_location(
-        "_bench_session_runner", _BSR_PATH)
+    _bspec = importlib.util.spec_from_file_location("_bench_session_runner", _BSR_PATH)
     bsr = importlib.util.module_from_spec(_bspec)
     sys.modules["_bench_session_runner"] = bsr
     _bspec.loader.exec_module(bsr)
@@ -111,14 +119,18 @@ _TEXT_WAIT = _TEXT_QUICK.replace(
 ).replace("# BENCH-Q", "# BENCH-W")
 
 # Same, plus a scope screenshot (a RELATIVE artifact filename) before the read.
-_TEXT_SHOT = _TEXT_QUICK.replace(
-    "3. Operator: read DC voltage on TP VOUT with DMM1 as {1}.",
-    '3. Save SCOPE1 screenshot as "shot.png".\n'
-    "4. Operator: read DC voltage on TP VOUT with DMM1 as {1}.",
-).replace(
-    "DMM1 : dmm",
-    "SCOPE1 : scope channels=[1]\nDMM1 : dmm",
-).replace("# BENCH-Q", "# BENCH-S")
+_TEXT_SHOT = (
+    _TEXT_QUICK.replace(
+        "3. Operator: read DC voltage on TP VOUT with DMM1 as {1}.",
+        '3. Save SCOPE1 screenshot as "shot.png".\n'
+        "4. Operator: read DC voltage on TP VOUT with DMM1 as {1}.",
+    )
+    .replace(
+        "DMM1 : dmm",
+        "SCOPE1 : scope channels=[1]\nDMM1 : dmm",
+    )
+    .replace("# BENCH-Q", "# BENCH-S")
+)
 
 # Two manual instruments (the run patches their *_REMOTE to False), then a wait.
 _TEXT_MANUAL = """# BENCH-M
@@ -145,16 +157,21 @@ _TEXT_ABORT = _TEXT_QUICK.replace(
     "3. Operator: read DC voltage on TP VOUT with DMM1 as {1}.\n@IF {1} > 5 V\n@ABORT\n@ENDIF",
 ).replace("# BENCH-Q", "# BENCH-A")
 
-_TEXTS = {"quick": _TEXT_QUICK, "wait": _TEXT_WAIT, "shot": _TEXT_SHOT, "abort": _TEXT_ABORT,
-          "manual": _TEXT_MANUAL,
-          "manual_wait": _TEXT_MANUAL.replace(
-              "\n\n## Equipment", "\n3. Wait 30 s.\n\n## Equipment")}
+_TEXTS = {
+    "quick": _TEXT_QUICK,
+    "wait": _TEXT_WAIT,
+    "shot": _TEXT_SHOT,
+    "abort": _TEXT_ABORT,
+    "manual": _TEXT_MANUAL,
+    "manual_wait": _TEXT_MANUAL.replace("\n\n## Equipment", "\n3. Wait 30 s.\n\n## Equipment"),
+}
 
 
 @functools.lru_cache(maxsize=None)
 def _code(kind: str) -> str:
     from rules_packager_base.rules.v2_0_2.parser import parse
     from rules_packager_base.rules.v2_0_2.parser.codegen import generate
+
     r = parse(_TEXTS[kind])
     assert r.success and not r.findings, [f.code for f in r.findings]
     code = generate(r.json)
@@ -177,6 +194,7 @@ class _Fake:
         def rec(*a, **k):
             self._calls.append((self._e, self._d, name, dict(k)))
             return 1.23
+
         return rec
 
 
@@ -189,8 +207,10 @@ class _RaisingFake(_Fake):
 
     def __getattr__(self, name):
         if name == self._boom:
+
             def boom(*a, **k):
                 raise RuntimeError(f"driver failure in {name}")
+
             return boom
         return super().__getattr__(name)
 
@@ -201,8 +221,7 @@ class _ShotFake(_Fake):
     CWD."""
 
     def save_screenshot(self, filename=None, **k):
-        self._calls.append((self._e, self._d, "save_screenshot",
-                            {"filename": filename}))
+        self._calls.append((self._e, self._d, "save_screenshot", {"filename": filename}))
         Path(filename).write_bytes(b"PNG")
 
 
@@ -280,29 +299,33 @@ def _line(obj) -> str:
 # Shared harness.
 # ---------------------------------------------------------------------------
 
-_ADDR_A = "TCPIP0::10.0.0.5::INSTR"          # canonical: visa:tcpip::10.0.0.5
-_ADDR_A2 = "TCPIP::10.0.0.5::inst0::INSTR"   # same endpoint, other spelling
-_ADDR_B = "TCPIP0::10.0.0.6::INSTR"          # canonical: visa:tcpip::10.0.0.6
-_ADDR_B2 = "TCPIP::10.0.0.6::inst0::INSTR"   # same endpoint as B, other spelling
-_ADDR_C = "TCPIP0::10.0.0.7::INSTR"          # canonical: visa:tcpip::10.0.0.7
+_ADDR_A = "TCPIP0::10.0.0.5::INSTR"  # canonical: visa:tcpip::10.0.0.5
+_ADDR_A2 = "TCPIP::10.0.0.5::inst0::INSTR"  # same endpoint, other spelling
+_ADDR_B = "TCPIP0::10.0.0.6::INSTR"  # canonical: visa:tcpip::10.0.0.6
+_ADDR_B2 = "TCPIP::10.0.0.6::inst0::INSTR"  # same endpoint as B, other spelling
+_ADDR_C = "TCPIP0::10.0.0.7::INSTR"  # canonical: visa:tcpip::10.0.0.7
 _EP_A = "visa:tcpip::10.0.0.5"
 _EP_B = "visa:tcpip::10.0.0.6"
 _EP_C = "visa:tcpip::10.0.0.7"
 
 
 def _claim(test_id, name, visa=_ADDR_A, etype="psu", dev=None, **extra):
-    bench = {"visa": visa, "_dev": dev or name, "channels": [1],
-             "timeout_ms": 5000}
+    bench = {"visa": visa, "_dev": dev or name, "channels": [1], "timeout_ms": 5000}
     bench.update(extra)
-    return {"test_id": test_id, "local_name": name, "etype": etype,
-            "bench": bench}
+    return {"test_id": test_id, "local_name": name, "etype": etype, "bench": bench}
 
 
 class _BenchBase(unittest.TestCase):
     def setUp(self):
         self.calls: list = []
-        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _Fake(
-            etype, bench.get("_dev", bench.get("visa", "?")), self.calls))
+        rebind(
+            self,
+            er,
+            "_build_device",
+            lambda bench, etype, lifecycle, log: _Fake(
+                etype, bench.get("_dev", bench.get("visa", "?")), self.calls
+            ),
+        )
         self.proto = _ProtoCapture()
         er._PROTO_OUT = self.proto
         self.addCleanup(lambda: setattr(er, "_PROTO_OUT", None))
@@ -332,8 +355,7 @@ class _BenchBase(unittest.TestCase):
         return resp, stop
 
     def _acquire(self, s, claims, **kw):
-        resp, stop = self._dispatch(s, {"cmd": "acquire_run",
-                                        "claims": claims, **kw})
+        resp, stop = self._dispatch(s, {"cmd": "acquire_run", "claims": claims, **kw})
         self.assertFalse(stop)
         return resp
 
@@ -352,10 +374,15 @@ class _BenchBase(unittest.TestCase):
 
     def _run(self, s, run_id, module: Path, script):
         self._reader(script)
-        return self._dispatch(s, {
-            "cmd": "run_test", "run_id": run_id,
-            "module_path": str(module),
-            "results_dir": str(self._results_dir())})
+        return self._dispatch(
+            s,
+            {
+                "cmd": "run_test",
+                "run_id": run_id,
+                "module_path": str(module),
+                "results_dir": str(self._results_dir()),
+            },
+        )
 
     def _devcalls(self, dev, method):
         return [c for c in self.calls if c[1] == dev and c[2] == method]
@@ -366,9 +393,7 @@ class _BenchBase(unittest.TestCase):
 
 def _answer(text="3.3"):
     """Script item answering the next prompt with ``text``."""
-    return ("prompt",
-            lambda f: _line({"cmd": "prompt_response", "id": f["id"],
-                             "text": text}))
+    return ("prompt", lambda f: _line({"cmd": "prompt_response", "id": f["id"], "text": text}))
 
 
 # ---------------------------------------------------------------------------
@@ -379,18 +404,20 @@ def _answer(text="3.3"):
 class EndpointRekeyTests(_BenchBase):
     def test_two_names_one_endpoint_one_held_instance(self):
         s = self._session()
-        resp = self._acquire(s, [
-            _claim("T-A", "PSU1", _ADDR_A, dev="PHYS"),
-            _claim("T-C", "MAIN_SUPPLY", _ADDR_A2, dev="PHYS"),
-        ])
+        resp = self._acquire(
+            s,
+            [
+                _claim("T-A", "PSU1", _ADDR_A, dev="PHYS"),
+                _claim("T-C", "MAIN_SUPPLY", _ADDR_A2, dev="PHYS"),
+            ],
+        )
         self.assertTrue(resp["ok"], resp)
-        self.assertEqual(set(s.held), {_EP_A})            # ONE endpoint key
+        self.assertEqual(set(s.held), {_EP_A})  # ONE endpoint key
         self.assertEqual(len(self._devcalls("PHYS", "connect")), 1)
         self.assertEqual(len(self._devcalls("PHYS", "initialize")), 1)
         self.assertFalse(any(c[2] == "reset" for c in self.calls))
         run = s.bench.runs[resp["run_id"]]
-        self.assertEqual(run.view,
-                         {"PSU1": _EP_A, "MAIN_SUPPLY": _EP_A})
+        self.assertEqual(run.view, {"PSU1": _EP_A, "MAIN_SUPPLY": _EP_A})
         usages = resp["plan"]["endpoints"][0]["usages"]
         self.assertEqual(sorted(usages), ["T-A/PSU1", "T-C/MAIN_SUPPLY"])
 
@@ -398,12 +425,11 @@ class EndpointRekeyTests(_BenchBase):
         s = self._session()
         r1 = self._acquire(s, [_claim("T-A", "PSU1", _ADDR_A, dev="P-A")])
         self.assertTrue(r1["ok"], r1)
-        resp, _ = self._dispatch(s, {"cmd": "release_run",
-                                     "run_id": r1["run_id"]})
+        resp, _ = self._dispatch(s, {"cmd": "release_run", "run_id": r1["run_id"]})
         self.assertTrue(resp["ok"])
         r2 = self._acquire(s, [_claim("T-B", "PSU1", _ADDR_B, dev="P-B")])
         self.assertTrue(r2["ok"], r2)
-        self.assertEqual(set(s.held), {_EP_A, _EP_B})     # TWO endpoints
+        self.assertEqual(set(s.held), {_EP_A, _EP_B})  # TWO endpoints
         self.assertEqual(len(self._devcalls("P-A", "connect")), 1)
         self.assertEqual(len(self._devcalls("P-B", "connect")), 1)
         self.assertEqual(s.bench.runs[r2["run_id"]].view, {"PSU1": _EP_B})
@@ -412,25 +438,28 @@ class EndpointRekeyTests(_BenchBase):
 
     def test_type_mismatch_is_conflict_nothing_opened(self):
         s = self._session()
-        resp = self._acquire(s, [
-            _claim("T-A", "PSU1", _ADDR_A, etype="psu"),
-            _claim("T-B", "LOAD", _ADDR_A, etype="eload"),
-        ])
+        resp = self._acquire(
+            s,
+            [
+                _claim("T-A", "PSU1", _ADDR_A, etype="psu"),
+                _claim("T-B", "LOAD", _ADDR_A, etype="eload"),
+            ],
+        )
         self.assertFalse(resp["ok"])
         self.assertEqual(resp["kind"], "EndpointConflict")
         self.assertTrue(resp["conflicts"])
-        self.assertEqual(self.calls, [])                  # nothing opened
+        self.assertEqual(self.calls, [])  # nothing opened
         self.assertFalse(s.held)
 
     def test_acquire_that_cannot_open_names_the_instrument_and_address(self):
         def _unopenable(bench, etype, lifecycle, log):
             raise OSError("VI_ERROR_RSRC_NFOUND")
+
         rebind(self, er, "_build_device", _unopenable)
         s = self._session()
         resp = self._acquire(s, [_claim("T-A", "PSU1", _ADDR_A)])
         self.assertFalse(resp["ok"])
-        self.assertEqual(resp["error"],
-                         f"PSU1 at {_ADDR_A}: OSError: VI_ERROR_RSRC_NFOUND")
+        self.assertEqual(resp["error"], f"PSU1 at {_ADDR_A}: OSError: VI_ERROR_RSRC_NFOUND")
         self.assertEqual(resp["exception_type"], "OSError")  # the not-started result's code
 
     def test_acquire_is_exclusive_until_release(self):
@@ -447,8 +476,15 @@ class EndpointRekeyTests(_BenchBase):
     def test_identities_from_idn_attribute(self):
         class _IdnFake(_Fake):
             idn = "ACME PSU 9080,SN123"
-        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _IdnFake(
-            etype, bench.get("_dev", "?"), self.calls))
+
+        rebind(
+            self,
+            er,
+            "_build_device",
+            lambda bench, etype, lifecycle, log: _IdnFake(
+                etype, bench.get("_dev", "?"), self.calls
+            ),
+        )
         s = self._session()
         resp = self._acquire(s, [_claim("T-A", "PSU1")])
         self.assertTrue(resp["ok"])
@@ -462,17 +498,16 @@ class EndpointRekeyTests(_BenchBase):
         claims = [
             _claim("T-A", "PSU1", _ADDR_A, dev="PHYS"),
             _claim("T-C", "MAIN_SUPPLY", _ADDR_A2, dev="PHYS"),
-            {"test_id": "T-A", "local_name": "DMM1", "etype": "dmm",
-             "bench": {"remote": False}},
+            {"test_id": "T-A", "local_name": "DMM1", "etype": "dmm", "bench": {"remote": False}},
         ]
         dry = self._acquire(s, claims, dry_run=True)
         self.assertTrue(dry["ok"], dry)
         self.assertTrue(dry["dry_run"])
         self.assertNotIn("run_id", dry)
-        self.assertNotIn("identities", dry)         # no identity reads
-        self.assertFalse(s.held)                    # nothing opened or held
+        self.assertNotIn("identities", dry)  # no identity reads
+        self.assertFalse(s.held)  # nothing opened or held
         self.assertEqual(self.calls, [])
-        self.assertFalse(s.bench.runs)              # no run created
+        self.assertFalse(s.bench.runs)  # no run created
         # the dry plan IS the real plan: a following real acquire matches
         real = self._acquire(s, claims)
         self.assertTrue(real["ok"], real)
@@ -484,10 +519,14 @@ class EndpointRekeyTests(_BenchBase):
 
     def test_dry_run_conflict_reported_nothing_opened(self):
         s = self._session()
-        resp = self._acquire(s, [
-            _claim("T-A", "PSU1", _ADDR_A, etype="psu"),
-            _claim("T-B", "LOAD", _ADDR_A, etype="eload"),
-        ], dry_run=True)
+        resp = self._acquire(
+            s,
+            [
+                _claim("T-A", "PSU1", _ADDR_A, etype="psu"),
+                _claim("T-B", "LOAD", _ADDR_A, etype="eload"),
+            ],
+            dry_run=True,
+        )
         self.assertFalse(resp["ok"])
         self.assertEqual(resp["kind"], "EndpointConflict")
         self.assertTrue(resp["conflicts"])
@@ -496,9 +535,10 @@ class EndpointRekeyTests(_BenchBase):
 
     def test_manual_claims_never_form_endpoints(self):
         s = self._session()
-        resp = self._acquire(s, [
-            {"test_id": "T-A", "local_name": "DMM1", "etype": "dmm",
-             "bench": {"remote": False}}])
+        resp = self._acquire(
+            s,
+            [{"test_id": "T-A", "local_name": "DMM1", "etype": "dmm", "bench": {"remote": False}}],
+        )
         self.assertTrue(resp["ok"], resp)
         self.assertEqual(resp["plan"]["endpoints"], [])
         self.assertEqual(resp["plan"]["manual"], ["T-A/DMM1"])
@@ -512,24 +552,35 @@ class EndpointRekeyTests(_BenchBase):
 
 class GuidedRoutingTests(_BenchBase):
     def _set_v(self, device, volts=5.0):
-        return {"node_path": "s", "op": {
-            "op": "psu.set_voltage", "device": device, "channel": 1,
-            "volts": volts, "volts_unit": "V"}}
+        return {
+            "node_path": "s",
+            "op": {
+                "op": "psu.set_voltage",
+                "device": device,
+                "channel": 1,
+                "volts": volts,
+                "volts_unit": "V",
+            },
+        }
 
     def test_named_op_routes_to_held_endpoint_while_run_active(self):
         s = self._session()
         s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
         r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
         self.assertTrue(r1["ok"])
-        r = er._cmd_exec_ops(s, {"ops": [self._set_v("PSU1")],
-                                 "bench_map": {"PSU1": {"visa": _ADDR_A,
-                                                        "_dev": "GUIDED"}}})
+        r = er._cmd_exec_ops(
+            s,
+            {
+                "ops": [self._set_v("PSU1")],
+                "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
+            },
+        )
         self.assertFalse(r["aborted"], r)
         # routed onto the RUN-HELD instance: no second open, op landed on PHYS
         self.assertEqual(len(self._devcalls("PHYS", "connect")), 1)
         self.assertEqual(len(self._devcalls("GUIDED", "connect")), 0)
         self.assertEqual(len(self._devcalls("PHYS", "set_voltage")), 1)
-        self.assertEqual(set(s.held), {_EP_A})            # no name key added
+        self.assertEqual(set(s.held), {_EP_A})  # no name key added
 
     def test_named_op_reuses_held_endpoint_without_a_run(self):
         # F-H1: with NO active run, a name-keyed guided op whose bench dict
@@ -540,14 +591,18 @@ class GuidedRoutingTests(_BenchBase):
         s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
         r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
         self._dispatch(s, {"cmd": "release_run", "run_id": r1["run_id"]})
-        r = er._cmd_exec_ops(s, {"ops": [self._set_v("PSU1")],
-                                 "bench_map": {"PSU1": {"visa": _ADDR_A2,
-                                                        "_dev": "GUIDED"}}})
+        r = er._cmd_exec_ops(
+            s,
+            {
+                "ops": [self._set_v("PSU1")],
+                "bench_map": {"PSU1": {"visa": _ADDR_A2, "_dev": "GUIDED"}},
+            },
+        )
         self.assertFalse(r["aborted"], r)
         self.assertEqual(len(self._devcalls("GUIDED", "connect")), 0)
         self.assertEqual(len(self._devcalls("PHYS", "connect")), 1)
         self.assertEqual(len(self._devcalls("PHYS", "set_voltage")), 1)
-        self.assertEqual(set(s.held), {_EP_A})            # no name key added
+        self.assertEqual(set(s.held), {_EP_A})  # no name key added
 
     def test_named_op_opens_own_device_for_unheld_endpoint(self):
         # Fallback preserved: a genuinely UN-HELD endpoint still opens
@@ -556,9 +611,13 @@ class GuidedRoutingTests(_BenchBase):
         s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
         r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
         self._dispatch(s, {"cmd": "release_run", "run_id": r1["run_id"]})
-        r = er._cmd_exec_ops(s, {"ops": [self._set_v("PSU1")],
-                                 "bench_map": {"PSU1": {"visa": _ADDR_B,
-                                                        "_dev": "GUIDED"}}})
+        r = er._cmd_exec_ops(
+            s,
+            {
+                "ops": [self._set_v("PSU1")],
+                "bench_map": {"PSU1": {"visa": _ADDR_B, "_dev": "GUIDED"}},
+            },
+        )
         self.assertFalse(r["aborted"], r)
         self.assertEqual(len(self._devcalls("GUIDED", "connect")), 1)
         self.assertEqual(len(self._devcalls("GUIDED", "set_voltage")), 1)
@@ -574,16 +633,25 @@ class GuidedRoutingTests(_BenchBase):
 def _kill_link(dev) -> None:
     """Dead physical link: the live *IDN? probe raises (the _RaisingFake
     idiom, applied to the ONE held instance's probe method)."""
+
     def boom(*a, **k):
         raise RuntimeError("VISA link dead")
+
     dev.query_raw = boom
 
 
 class HealthCheckTests(_BenchBase):
     def _set_v(self, device, volts=5.0):
-        return {"node_path": "s", "op": {
-            "op": "psu.set_voltage", "device": device, "channel": 1,
-            "volts": volts, "volts_unit": "V"}}
+        return {
+            "node_path": "s",
+            "op": {
+                "op": "psu.set_voltage",
+                "device": device,
+                "channel": 1,
+                "volts": volts,
+                "volts_unit": "V",
+            },
+        }
 
     def _held_acquire_release(self, s, claims, **kw):
         r = self._acquire(s, claims, **kw)
@@ -604,17 +672,31 @@ class HealthCheckTests(_BenchBase):
 
     def test_dead_held_endpoint_rebuilt_and_run_proceeds(self):
         s = self._session()
-        self._held_acquire_release(s, [
-            _claim("BENCH-Q", "PSU1", dev="PHYS"),
-            {"test_id": "BENCH-Q", "local_name": "DMM1", "etype": "dmm",
-             "bench": {"remote": False}},
-        ])
+        self._held_acquire_release(
+            s,
+            [
+                _claim("BENCH-Q", "PSU1", dev="PHYS"),
+                {
+                    "test_id": "BENCH-Q",
+                    "local_name": "DMM1",
+                    "etype": "dmm",
+                    "bench": {"remote": False},
+                },
+            ],
+        )
         _kill_link(s.held[_EP_A])
-        r2 = self._acquire(s, [
-            _claim("BENCH-Q", "PSU1", dev="PHYS"),
-            {"test_id": "BENCH-Q", "local_name": "DMM1", "etype": "dmm",
-             "bench": {"remote": False}},
-        ])
+        r2 = self._acquire(
+            s,
+            [
+                _claim("BENCH-Q", "PSU1", dev="PHYS"),
+                {
+                    "test_id": "BENCH-Q",
+                    "local_name": "DMM1",
+                    "etype": "dmm",
+                    "bench": {"remote": False},
+                },
+            ],
+        )
         self.assertTrue(r2["ok"], r2)
         self.assertEqual(r2["reconnected"], [_EP_A])
         # dead instance dropped (best-effort close), ONE fresh construction
@@ -622,8 +704,9 @@ class HealthCheckTests(_BenchBase):
         self.assertEqual(len(self._devcalls("PHYS", "connect")), 2)
         self.assertIn("re-established", " ".join(s.res.log))
         # the run proceeds on the rebuilt instance
-        resp, stop = self._run(s, r2["run_id"], self._module(_code("quick")),
-                               [_answer("3.3"), self._hold()])
+        resp, stop = self._run(
+            s, r2["run_id"], self._module(_code("quick")), [_answer("3.3"), self._hold()]
+        )
         self.assertFalse(stop)
         self.assertEqual(resp["result"]["overall"], "PASS", resp)
 
@@ -634,19 +717,27 @@ class HealthCheckTests(_BenchBase):
             def __init__(self, *a):
                 super().__init__(*a)
                 self.idn = idn_box["idn"]
-        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _IdnFake(
-            etype, bench.get("_dev", "?"), self.calls))
+
+        rebind(
+            self,
+            er,
+            "_build_device",
+            lambda bench, etype, lifecycle, log: _IdnFake(
+                etype, bench.get("_dev", "?"), self.calls
+            ),
+        )
         s = self._session()
         self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
         self.assertEqual(s.bench.fingerprints, {_EP_A: "ACME PSU,SN1"})
         _kill_link(s.held[_EP_A])
-        idn_box["idn"] = "ACME PSU,SN9"      # a DIFFERENT instrument answers
+        idn_box["idn"] = "ACME PSU,SN9"  # a DIFFERENT instrument answers
         r2 = self._acquire(s, [_claim("T-B", "PSU1", dev="PHYS")])
         self.assertFalse(r2["ok"])
         self.assertEqual(r2["kind"], "IdentityChanged")
         self.assertEqual(r2["endpoints"], [_EP_A])
-        self.assertEqual(r2["changes"][_EP_A],
-                         {"cached": "ACME PSU,SN1", "current": "ACME PSU,SN9"})
+        self.assertEqual(
+            r2["changes"][_EP_A], {"cached": "ACME PSU,SN1", "current": "ACME PSU,SN9"}
+        )
         # fingerprint cache untouched; rebuilt instance held; no run created
         self.assertEqual(s.bench.fingerprints[_EP_A], "ACME PSU,SN1")
         self.assertIn(_EP_A, s.held)
@@ -654,14 +745,20 @@ class HealthCheckTests(_BenchBase):
 
     def test_rebuild_failure_runs_gone_ladder(self):
         s = self._session()
-        claims = [_claim("T-A", "PSU1", _ADDR_A, dev="P-A"),
-                  _claim("T-A", "PSU2", _ADDR_B, dev="P-B")]
+        claims = [
+            _claim("T-A", "PSU1", _ADDR_A, dev="P-A"),
+            _claim("T-A", "PSU2", _ADDR_B, dev="P-B"),
+        ]
         self._held_acquire_release(s, claims)
         _kill_link(s.held[_EP_A])
-        rebind(self, er, "_build_device", lambda *a, **k: (_ for _ in ()).throw(
-            RuntimeError("no route to host")))
+        rebind(
+            self,
+            er,
+            "_build_device",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no route to host")),
+        )
         resp, stop = self._dispatch(s, {"cmd": "acquire_run", "claims": claims})
-        self.assertTrue(stop)                       # respond then STOP
+        self.assertTrue(stop)  # respond then STOP
         self.assertFalse(resp["ok"])
         self.assertTrue(resp["session_ended"])
         self.assertIn("gone", resp["error"])
@@ -695,13 +792,13 @@ class HealthCheckTests(_BenchBase):
         self._held_acquire_release(s, claims, keep_state=True)
         _kill_link(s.held[_EP_B])
         r2 = self._acquire(s, claims, keep_state=True)
-        self.assertTrue(r2["ok"], r2)               # scope: no off action
+        self.assertTrue(r2["ok"], r2)  # scope: no off action
         self.assertEqual(r2["reconnected"], [_EP_B])
 
     def test_keep_state_off_power_rebuild_proceeds(self):
         s = self._session()
         claims = [_claim("T-A", "PSU1", dev="PHYS")]
-        self._held_acquire_release(s, claims)       # keep_state OFF (default)
+        self._held_acquire_release(s, claims)  # keep_state OFF (default)
         _kill_link(s.held[_EP_A])
         r2 = self._acquire(s, claims)
         self.assertTrue(r2["ok"], r2)
@@ -712,12 +809,13 @@ class HealthCheckTests(_BenchBase):
         self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
         dead = s.held[_EP_A]
         _kill_link(dead)
-        r2 = self._acquire(s, [_claim("T-B", "PSU1", dev="PHYS")],
-                           policies={"T-B": {"PSU1": "per_step"}})
-        self.assertTrue(r2["ok"], r2)               # a probe would have laddered
+        r2 = self._acquire(
+            s, [_claim("T-B", "PSU1", dev="PHYS")], policies={"T-B": {"PSU1": "per_step"}}
+        )
+        self.assertTrue(r2["ok"], r2)  # a probe would have laddered
         self.assertNotIn("reconnected", r2)
         self.assertEqual(r2["plan"]["per_step"], [_EP_A])
-        self.assertIs(s.held[_EP_A], dead)          # untouched, never rebuilt
+        self.assertIs(s.held[_EP_A], dead)  # untouched, never rebuilt
         self.assertEqual(len(self._devcalls("PHYS", "connect")), 1)
 
     def test_guided_reuse_probes_and_rebuilds(self):
@@ -725,9 +823,13 @@ class HealthCheckTests(_BenchBase):
         s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
         self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
         _kill_link(s.held[_EP_A])
-        r = er._cmd_exec_ops(s, {"ops": [self._set_v("PSU1")],
-                                 "bench_map": {"PSU1": {"visa": _ADDR_A2,
-                                                        "_dev": "GUIDED"}}})
+        r = er._cmd_exec_ops(
+            s,
+            {
+                "ops": [self._set_v("PSU1")],
+                "bench_map": {"PSU1": {"visa": _ADDR_A2, "_dev": "GUIDED"}},
+            },
+        )
         self.assertFalse(r["aborted"], r)
         # rebuilt from the STORED admission bench, not the guided op's dict
         self.assertEqual(len(self._devcalls("GUIDED", "connect")), 0)
@@ -738,20 +840,27 @@ class HealthCheckTests(_BenchBase):
     def test_guided_reuse_state_lost_refusal_then_proceeds(self):
         s = self._session()
         s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
-        self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")],
-                                   keep_state=True)
+        self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")], keep_state=True)
         _kill_link(s.held[_EP_A])
-        r = er._cmd_exec_ops(s, {"ops": [self._set_v("PSU1")],
-                                 "bench_map": {"PSU1": {"visa": _ADDR_A,
-                                                        "_dev": "GUIDED"}}})
+        r = er._cmd_exec_ops(
+            s,
+            {
+                "ops": [self._set_v("PSU1")],
+                "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
+            },
+        )
         self.assertFalse(r["ok"])
         self.assertEqual(r["kind"], "StateLost")
         self.assertEqual(r["endpoints"], [_EP_A])
         self.assertEqual(len(self._devcalls("PHYS", "set_voltage")), 0)
         # rebuilt instance stays held: the next batch probes healthy and runs
-        r2 = er._cmd_exec_ops(s, {"ops": [self._set_v("PSU1")],
-                                  "bench_map": {"PSU1": {"visa": _ADDR_A,
-                                                         "_dev": "GUIDED"}}})
+        r2 = er._cmd_exec_ops(
+            s,
+            {
+                "ops": [self._set_v("PSU1")],
+                "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
+            },
+        )
         self.assertFalse(r2["aborted"], r2)
         self.assertEqual(len(self._devcalls("PHYS", "set_voltage")), 1)
 
@@ -762,12 +871,15 @@ class HealthCheckTests(_BenchBase):
         # off runs on the rebuilt instance.  No StateLost, no unsafe entry.
         s = self._session()
         s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
-        self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")],
-                                   keep_state=True)
+        self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")], keep_state=True)
         _kill_link(s.held[_EP_A])
-        r = er._cmd_safe_off(s, {
-            "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
-            "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}]})
+        r = er._cmd_safe_off(
+            s,
+            {
+                "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
+                "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}],
+            },
+        )
         self.assertTrue(r["ok"], r)
         self.assertNotIn("unsafe", r)
         self.assertNotIn("StateLost", json.dumps(r))
@@ -785,11 +897,19 @@ class HealthCheckTests(_BenchBase):
         s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
         self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
         _kill_link(s.held[_EP_A])
-        rebind(self, er, "_build_device", lambda *a, **k: (_ for _ in ()).throw(
-            RuntimeError("no route to host")))
-        r = er._cmd_safe_off(s, {
-            "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
-            "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}]})
+        rebind(
+            self,
+            er,
+            "_build_device",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no route to host")),
+        )
+        r = er._cmd_safe_off(
+            s,
+            {
+                "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
+                "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}],
+            },
+        )
         self.assertTrue(r["ok"], r)
         self.assertEqual(r["unsafe"], ["PSU1 CH1"])
         self.assertTrue(any("UNSAFE" in ln for ln in r["log"]), r)
@@ -799,18 +919,27 @@ class HealthCheckTests(_BenchBase):
         # that ALREADY executed (a re-run must not re-execute state-changing
         # ops), plus the typed refusal for the endpoint that ran nothing.
         s = self._session()
-        s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"},
-                                          {"id": "PSU2", "type": "psu"}]}
+        s.procedure_json = {
+            "equipment": [{"id": "PSU1", "type": "psu"}, {"id": "PSU2", "type": "psu"}]
+        }
         self._held_acquire_release(
-            s, [_claim("T-A", "PSU2", _ADDR_B, dev="PHYS-B")], keep_state=True)
+            s, [_claim("T-A", "PSU2", _ADDR_B, dev="PHYS-B")], keep_state=True
+        )
         _kill_link(s.held[_EP_B])
-        meas = {"node_path": "a", "op": {"op": "psu.measure_voltage",
-                                        "device": "PSU1", "channel": 1,
-                                        "ref": 7}}
-        r = er._cmd_exec_ops(s, {
-            "ops": [meas, self._set_v("PSU2")],
-            "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED-A"},
-                          "PSU2": {"visa": _ADDR_B, "_dev": "GUIDED-B"}}})
+        meas = {
+            "node_path": "a",
+            "op": {"op": "psu.measure_voltage", "device": "PSU1", "channel": 1, "ref": 7},
+        }
+        r = er._cmd_exec_ops(
+            s,
+            {
+                "ops": [meas, self._set_v("PSU2")],
+                "bench_map": {
+                    "PSU1": {"visa": _ADDR_A, "_dev": "GUIDED-A"},
+                    "PSU2": {"visa": _ADDR_B, "_dev": "GUIDED-B"},
+                },
+            },
+        )
         self.assertFalse(r["ok"])
         self.assertEqual(r["kind"], "StateLost")
         self.assertEqual(r["endpoints"], [_EP_B])
@@ -831,33 +960,51 @@ class HealthCheckTests(_BenchBase):
             def __init__(self, *a):
                 super().__init__(*a)
                 self.idn = idn_box["idn"]
-        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _IdnFake(
-            etype, bench.get("_dev", "?"), self.calls))
+
+        rebind(
+            self,
+            er,
+            "_build_device",
+            lambda bench, etype, lifecycle, log: _IdnFake(
+                etype, bench.get("_dev", "?"), self.calls
+            ),
+        )
         s = self._session()
         self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
         _kill_link(s.held[_EP_A])
-        idn_box["idn"] = "ACME PSU,SN9"      # a DIFFERENT instrument answers
-        r = er._cmd_raw(s, {"device": "PSU1", "etype": "psu", "subtype": "",
-                            "text": "MEAS:VOLT?",
-                            "bench_map": {"PSU1": {"visa": _ADDR_A,
-                                                   "_dev": "GUIDED"}}})
+        idn_box["idn"] = "ACME PSU,SN9"  # a DIFFERENT instrument answers
+        r = er._cmd_raw(
+            s,
+            {
+                "device": "PSU1",
+                "etype": "psu",
+                "subtype": "",
+                "text": "MEAS:VOLT?",
+                "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
+            },
+        )
         self.assertFalse(r["ok"])
         self.assertEqual(r["kind"], "IdentityChanged")
         self.assertNotIn("HealthRefusal", json.dumps(r))
         self.assertIn("identity changed", r["error"])
-        self.assertIn(_EP_A, s.held)         # rebuilt instance stays held
+        self.assertIn(_EP_A, s.held)  # rebuilt instance stays held
 
     def test_raw_dead_held_rebuilds_and_sends_no_state_lost(self):
         # Raw context: probe + rebuild are welcome; StateLost never fires
         # (keep_state semantics do not apply to a terminal line).
         s = self._session()
-        self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")],
-                                   keep_state=True)
+        self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")], keep_state=True)
         _kill_link(s.held[_EP_A])
-        r = er._cmd_raw(s, {"device": "PSU1", "etype": "psu", "subtype": "",
-                            "text": "MEAS:VOLT?",
-                            "bench_map": {"PSU1": {"visa": _ADDR_A,
-                                                   "_dev": "GUIDED"}}})
+        r = er._cmd_raw(
+            s,
+            {
+                "device": "PSU1",
+                "etype": "psu",
+                "subtype": "",
+                "text": "MEAS:VOLT?",
+                "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
+            },
+        )
         self.assertTrue(r["ok"], r)
         self.assertNotIn("StateLost", json.dumps(r))
         self.assertEqual(r["response"], "1.23")
@@ -891,14 +1038,22 @@ class UnconfirmedOffTests(_BenchBase):
         """The reviewer's steps 1-2: dead link + failing rebuild at safe-off
         time -> unsafe response, endpoint gone from held, memory keeps it."""
         _kill_link(s.held[_EP_A])
-        rebind(self, er, "_build_device", lambda *a, **k: (_ for _ in ()).throw(
-            RuntimeError("no route to host")))
-        r = er._cmd_safe_off(s, {
-            "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
-            "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}]})
+        rebind(
+            self,
+            er,
+            "_build_device",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no route to host")),
+        )
+        r = er._cmd_safe_off(
+            s,
+            {
+                "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
+                "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}],
+            },
+        )
         self.assertTrue(r["ok"], r)
         self.assertEqual(r["unsafe"], ["PSU1 CH1"])
-        self.assertFalse(s.held)                    # handle dropped...
+        self.assertFalse(s.held)  # handle dropped...
         self.assertEqual(set(s.unconfirmed_off), {_EP_A})  # ...memory holds it
         return r
 
@@ -927,11 +1082,21 @@ class UnconfirmedOffTests(_BenchBase):
         self._held_acquire_release(s, [_claim("T-A", "PSU1", dev="PHYS")])
         self._fail_safe_off(s)
         calls = self.calls
-        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _Fake(
-            etype, bench.get("_dev", bench.get("visa", "?")), calls))
-        r2 = er._cmd_safe_off(s, {
-            "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED2"}},
-            "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}]})
+        rebind(
+            self,
+            er,
+            "_build_device",
+            lambda bench, etype, lifecycle, log: _Fake(
+                etype, bench.get("_dev", bench.get("visa", "?")), calls
+            ),
+        )
+        r2 = er._cmd_safe_off(
+            s,
+            {
+                "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED2"}},
+                "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}],
+            },
+        )
         self.assertTrue(r2["ok"], r2)
         self.assertNotIn("unsafe", r2)
         self.assertNotIn("unsafe_targets", r2)  # clean == neither form
@@ -957,15 +1122,20 @@ class UnconfirmedOffTests(_BenchBase):
 
         def boom(*a, **k):
             raise RuntimeError("SCPI error")
+
         held.output = boom
-        r = er._cmd_safe_off(s, {
-            "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
-            "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}]})
+        r = er._cmd_safe_off(
+            s,
+            {
+                "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
+                "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}],
+            },
+        )
         self.assertTrue(r["ok"], r)
         self.assertEqual(r["unsafe"], ["PSU1 CH1"])
-        self.assertIn(_EP_A, s.held)                # still held (no drop)
+        self.assertIn(_EP_A, s.held)  # still held (no drop)
         self.assertEqual(set(s.unconfirmed_off), {_EP_A})
-        del held.output                             # instrument answers again
+        del held.output  # instrument answers again
         resp, stop = self._dispatch(s, {"cmd": "shutdown"})
         self.assertTrue(stop)
         self.assertTrue(resp["ok"], resp)
@@ -989,8 +1159,7 @@ class UnconfirmedOffTests(_BenchBase):
         # CH1, residual CH2 — endpoint-keyed with reconnect data, so the
         # host recovery can drive the EXACT channel the claims never named.
         (rec,) = resp["unsafe_targets"]
-        self.assertEqual((rec["device"], rec["etype"], rec["channels"]),
-                         (_EP_A, "psu", [2]))
+        self.assertEqual((rec["device"], rec["etype"], rec["channels"]), (_EP_A, "psu", [2]))
         self.assertTrue(rec["bench"], rec)  # stored admission bench
 
     def test_unsafe_targets_structured_snapshot_rides_unsafe(self):
@@ -1022,8 +1191,7 @@ class UnconfirmedOffTests(_BenchBase):
         resp = er._attach_unsafe(s, {"ok": True}, [f"{_EP_B} CH2"])
         self.assertEqual(resp["unsafe"], [f"{_EP_B} CH2"])
         (rec,) = resp["unsafe_targets"]
-        self.assertEqual((rec["device"], rec["channels"], rec["bench"]),
-                         (_EP_B, [2], None))
+        self.assertEqual((rec["device"], rec["channels"], rec["bench"]), (_EP_B, [2], None))
 
 
 # ---------------------------------------------------------------------------
@@ -1041,8 +1209,7 @@ class MultiChannelContractTests(_BenchBase):
     def test_claim_channels_new_and_old_shapes(self):
         cc = bsr._claim_channels
         # New contract: dict entries (codegen refs) and bare ints.
-        self.assertEqual(cc({"channels": [{"channel": 1}, {"channel": 2}]}),
-                         {1, 2})
+        self.assertEqual(cc({"channels": [{"channel": 1}, {"channel": 2}]}), {1, 2})
         self.assertEqual(cc({"channels": [2, 3]}), {2, 3})
         # Old generated tests: singular only.
         self.assertEqual(cc({"channel": 2}), {2})
@@ -1054,9 +1221,9 @@ class MultiChannelContractTests(_BenchBase):
 
     def test_acquire_unions_declared_channels_into_state(self):
         s = self._session()
-        r = self._acquire(s, [_claim(
-            "T-A", "PSU1", dev="PHYS",
-            channels=[{"channel": 1}, {"channel": 2}])])
+        r = self._acquire(
+            s, [_claim("T-A", "PSU1", dev="PHYS", channels=[{"channel": 1}, {"channel": 2}])]
+        )
         self.assertTrue(r["ok"], r)
         self.assertEqual(s.bench.channels[_EP_A], {1, 2})
         self._dispatch(s, {"cmd": "release_run", "run_id": r["run_id"]})
@@ -1066,17 +1233,16 @@ class MultiChannelContractTests(_BenchBase):
         # the shutdown sweep must still drive BOTH channels off.
         s = self._session()
         s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
-        r = self._acquire(s, [_claim(
-            "T-A", "PSU1", dev="PHYS",
-            channels=[{"channel": 1}, {"channel": 2}])])
+        r = self._acquire(
+            s, [_claim("T-A", "PSU1", dev="PHYS", channels=[{"channel": 1}, {"channel": 2}])]
+        )
         self.assertTrue(r["ok"], r)
         self._dispatch(s, {"cmd": "release_run", "run_id": r["run_id"]})
         resp, stop = self._dispatch(s, {"cmd": "shutdown"})
         self.assertTrue(stop)
         self.assertTrue(resp["ok"], resp)
         self.assertNotIn("unsafe", resp)
-        off_channels = {c[3].get("channel")
-                        for c in self._offs() if c[1] == "PHYS"}
+        off_channels = {c[3].get("channel") for c in self._offs() if c[1] == "PHYS"}
         self.assertEqual(off_channels, {1, 2})
 
 
@@ -1102,18 +1268,34 @@ class StickyIdentityTests(_BenchBase):
             def __init__(self, *a):
                 super().__init__(*a)
                 self.idn = idn_box["idn"]
-        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _IdnFake(
-            etype, bench.get("_dev", "?"), calls))
+
+        rebind(
+            self,
+            er,
+            "_build_device",
+            lambda bench, etype, lifecycle, log: _IdnFake(etype, bench.get("_dev", "?"), calls),
+        )
 
     def _set_v(self, device, volts=5.0):
-        return {"node_path": "s", "op": {
-            "op": "psu.set_voltage", "device": device, "channel": 1,
-            "volts": volts, "volts_unit": "V"}}
+        return {
+            "node_path": "s",
+            "op": {
+                "op": "psu.set_voltage",
+                "device": device,
+                "channel": 1,
+                "volts": volts,
+                "volts_unit": "V",
+            },
+        }
 
     def _guided(self, s):
-        return er._cmd_exec_ops(s, {
-            "ops": [self._set_v("PSU1")],
-            "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}}})
+        return er._cmd_exec_ops(
+            s,
+            {
+                "ops": [self._set_v("PSU1")],
+                "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
+            },
+        )
 
     def _flag(self, s):
         """Acquire+release PSU1, kill the link, swap the instrument, then a
@@ -1123,7 +1305,7 @@ class StickyIdentityTests(_BenchBase):
         self.assertTrue(r["ok"], r)
         self._dispatch(s, {"cmd": "release_run", "run_id": r["run_id"]})
         _kill_link(s.held[_EP_A])
-        self.idn_box["idn"] = "ACME PSU,SN9"   # a DIFFERENT instrument answers
+        self.idn_box["idn"] = "ACME PSU,SN9"  # a DIFFERENT instrument answers
         first = self._guided(s)
         self.assertEqual(first["kind"], "IdentityChanged")
 
@@ -1137,18 +1319,25 @@ class StickyIdentityTests(_BenchBase):
         self.assertFalse(r2["ok"])
         self.assertEqual(r2["kind"], "IdentityChanged")
         self.assertEqual(r2["endpoints"], [_EP_A])
-        self.assertEqual(r2["changes"][_EP_A],
-                         {"cached": "ACME PSU,SN1", "current": "ACME PSU,SN9"})
+        self.assertEqual(
+            r2["changes"][_EP_A], {"cached": "ACME PSU,SN1", "current": "ACME PSU,SN9"}
+        )
         self.assertEqual(len(self._devcalls("PHYS", "set_voltage")), 0)
         self.assertEqual(s.bench.fingerprints[_EP_A], "ACME PSU,SN1")
 
     def test_raw_second_call_still_refused(self):
         s = self._session()
         self._flag(s)
-        r2 = er._cmd_raw(s, {"device": "PSU1", "etype": "psu", "subtype": "",
-                             "text": "MEAS:VOLT?",
-                             "bench_map": {"PSU1": {"visa": _ADDR_A,
-                                                    "_dev": "GUIDED"}}})
+        r2 = er._cmd_raw(
+            s,
+            {
+                "device": "PSU1",
+                "etype": "psu",
+                "subtype": "",
+                "text": "MEAS:VOLT?",
+                "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
+            },
+        )
         self.assertFalse(r2["ok"])
         self.assertEqual(r2["kind"], "IdentityChanged")
         self.assertNotIn("HealthRefusal", json.dumps(r2))
@@ -1163,7 +1352,7 @@ class StickyIdentityTests(_BenchBase):
         self.assertFalse(r2["ok"])
         self.assertEqual(r2["kind"], "IdentityChanged")
         self.assertEqual(r2["endpoints"], [_EP_A])
-        self.assertIsNone(s.bench.active)          # no run created
+        self.assertIsNone(s.bench.active)  # no run created
         self.assertEqual(s.bench.fingerprints[_EP_A], "ACME PSU,SN1")
 
     def test_run_test_on_stale_handle_refused_after_flag(self):
@@ -1177,14 +1366,20 @@ class StickyIdentityTests(_BenchBase):
         self.idn_box["idn"] = "ACME PSU,SN9"
         g = self._guided(s)
         self.assertEqual(g["kind"], "IdentityChanged")
-        resp, stop = self._dispatch(s, {
-            "cmd": "run_test", "run_id": r["run_id"],
-            "module_path": "unused.py", "results_dir": self.tmp.name})
-        self.assertFalse(stop)                     # benign refusal, no ladder
+        resp, stop = self._dispatch(
+            s,
+            {
+                "cmd": "run_test",
+                "run_id": r["run_id"],
+                "module_path": "unused.py",
+                "results_dir": self.tmp.name,
+            },
+        )
+        self.assertFalse(stop)  # benign refusal, no ladder
         self.assertFalse(resp["ok"])
         self.assertEqual(resp["kind"], "IdentityChanged")
         self.assertEqual(len(self._devcalls("PHYS", "set_voltage")), 0)
-        self.assertIn(_EP_A, s.held)               # session untouched
+        self.assertIn(_EP_A, s.held)  # session untouched
 
     def test_safe_off_bypasses_flag_and_offs_the_impostor(self):
         # A SAFETY action ignores the sticky flag: whatever instrument
@@ -1192,21 +1387,25 @@ class StickyIdentityTests(_BenchBase):
         # flag survives (safe-off is not a resolution).
         s = self._session()
         self._flag(s)
-        r = er._cmd_safe_off(s, {
-            "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
-            "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}]})
+        r = er._cmd_safe_off(
+            s,
+            {
+                "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED"}},
+                "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}],
+            },
+        )
         self.assertTrue(r["ok"], r)
         self.assertNotIn("unsafe", r)
         self.assertEqual([c[1] for c in self._offs()], ["PHYS"])
         self.assertIn(_EP_A, s.bench.identity_mismatch)
-        r2 = self._guided(s)                       # still refused after
+        r2 = self._guided(s)  # still refused after
         self.assertEqual(r2["kind"], "IdentityChanged")
 
     def test_flag_dies_with_session_matching_identity_proceeds(self):
         s = self._session()
         self._flag(s)
         resp, stop = self._dispatch(s, {"cmd": "shutdown"})
-        self.assertTrue(stop)                      # end_session == shutdown
+        self.assertTrue(stop)  # end_session == shutdown
         # fresh daemon session; the RIGHT instrument answers again
         s2 = self._session()
         self.idn_box["idn"] = "ACME PSU,SN1"
@@ -1223,19 +1422,26 @@ class StickyIdentityTests(_BenchBase):
 
 class RunTestTests(_BenchBase):
     def _acquired(self, s, **kw):
-        resp = self._acquire(s, [
-            _claim("BENCH-Q", "PSU1", dev="PHYS"),
-            {"test_id": "BENCH-Q", "local_name": "DMM1", "etype": "dmm",
-             "bench": {"remote": False}},
-        ], **kw)
+        resp = self._acquire(
+            s,
+            [
+                _claim("BENCH-Q", "PSU1", dev="PHYS"),
+                {
+                    "test_id": "BENCH-Q",
+                    "local_name": "DMM1",
+                    "etype": "dmm",
+                    "bench": {"remote": False},
+                },
+            ],
+            **kw,
+        )
         self.assertTrue(resp["ok"], resp)
         return resp["run_id"]
 
     def test_happy_path_prompt_roundtrip_output_frames_results(self):
         s = self._session()
         rid = self._acquired(s)
-        resp, stop = self._run(s, rid, self._module(_code("quick")),
-                               [_answer("3.3"), self._hold()])
+        resp, stop = self._run(s, rid, self._module(_code("quick")), [_answer("3.3"), self._hold()])
         self.assertFalse(stop)
         self.assertTrue(resp["ok"], resp)
         self.assertEqual(resp["result"]["overall"], "PASS")
@@ -1243,8 +1449,7 @@ class RunTestTests(_BenchBase):
         self.assertFalse(resp["result"]["error"])
         self.assertNotIn("session_ended", resp)
         # the held instance ran the steps; never reset/closed by the test
-        self.assertEqual([c[3].get("volts") for c in
-                          self._devcalls("PHYS", "set_voltage")], [5.0])
+        self.assertEqual([c[3].get("volts") for c in self._devcalls("PHYS", "set_voltage")], [5.0])
         self.assertFalse(any(c[2] == "reset" for c in self.calls))
         self.assertFalse(any(c[2] == "close" for c in self.calls))
         # keep_state False (default): the test's own cleanup off fired
@@ -1257,21 +1462,20 @@ class RunTestTests(_BenchBase):
         self.assertEqual(len(prompts), 1)
         self.assertIn("Read DC voltage", prompts[0])
         # verdicts land host-side via results.json in the EXPLICIT results dir
-        data = json.loads((self._results_dir() / "results.json")
-                          .read_text(encoding="utf-8"))
+        data = json.loads((self._results_dir() / "results.json").read_text(encoding="utf-8"))
         self.assertEqual(data["measurements"], {"1": 3.3})
         self.assertEqual(set(data["verdicts"].values()), {"PASS"})
         # prompt hook restored after the run
         from rules_packager_base import test_helpers
+
         self.assertIs(test_helpers._prompt_hook, test_helpers._default_prompt_hook)
 
     def test_keep_state_true_leaves_outputs_untouched(self):
         s = self._session()
         rid = self._acquired(s, keep_state=True)
-        resp, _ = self._run(s, rid, self._module(_code("quick")),
-                            [_answer("3.3"), self._hold()])
+        resp, _ = self._run(s, rid, self._module(_code("quick")), [_answer("3.3"), self._hold()])
         self.assertEqual(resp["result"]["overall"], "PASS")
-        self.assertFalse(self._offs())        # no off anywhere: bench stays hot
+        self.assertFalse(self._offs())  # no off anywhere: bench stays hot
 
     def test_unique_module_name_reimport_runs_new_code(self):
         s = self._session()
@@ -1280,21 +1484,20 @@ class RunTestTests(_BenchBase):
         resp, _ = self._run(s, rid, module, [_answer("3.3"), self._hold()])
         self.assertEqual(resp["result"]["overall"], "PASS")
         # regenerate the SAME path mid-session with different code
-        module.write_text(_code("quick").replace("volts=5.0", "volts=7.5"),
-                          encoding="utf-8")
+        module.write_text(_code("quick").replace("volts=5.0", "volts=7.5"), encoding="utf-8")
         resp2, _ = self._run(s, rid, module, [_answer("3.3"), self._hold()])
         self.assertEqual(resp2["result"]["overall"], "PASS")
-        self.assertEqual([c[3].get("volts") for c in
-                          self._devcalls("PHYS", "set_voltage")], [5.0, 7.5])
+        self.assertEqual(
+            [c[3].get("volts") for c in self._devcalls("PHYS", "set_voltage")], [5.0, 7.5]
+        )
 
     def test_cancel_mid_sleep_aborts_safe_off_session_survives(self):
         s = self._session()
-        rid = self._acquired(s, keep_state=True)   # isolate the LADDER's off
+        rid = self._acquired(s, keep_state=True)  # isolate the LADDER's off
         cancel = _line({"cmd": "cancel_run", "run_id": rid})
         t0 = time.monotonic()
-        resp, stop = self._run(s, rid, self._module(_code("wait")),
-                               [("delay", 0.6, cancel)])
-        self.assertLess(time.monotonic() - t0, 15)     # not the full 30 s wait
+        resp, stop = self._run(s, rid, self._module(_code("wait")), [("delay", 0.6, cancel)])
+        self.assertLess(time.monotonic() - t0, 15)  # not the full 30 s wait
         self.assertFalse(stop)
         self.assertTrue(resp["ok"], resp)
         self.assertTrue(resp["result"]["aborted"])
@@ -1315,14 +1518,19 @@ class RunTestTests(_BenchBase):
         self.assertTrue(r2["ok"], r2)
 
     def test_error_ladder_safe_off_close_session_ends(self):
-        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _RaisingFake(
-            etype, bench.get("_dev", "?"), self.calls, "set_voltage"))
+        rebind(
+            self,
+            er,
+            "_build_device",
+            lambda bench, etype, lifecycle, log: _RaisingFake(
+                etype, bench.get("_dev", "?"), self.calls, "set_voltage"
+            ),
+        )
         s = self._session()
         rid = self._acquired(s)
         cwd_before = os.getcwd()
-        resp, stop = self._run(s, rid, self._module(_code("quick")),
-                               [self._hold()])
-        self.assertTrue(stop)                       # respond then STOP (like shutdown)
+        resp, stop = self._run(s, rid, self._module(_code("quick")), [self._hold()])
+        self.assertTrue(stop)  # respond then STOP (like shutdown)
         self.assertTrue(resp["ok"], resp)
         self.assertTrue(resp["session_ended"])
         self.assertTrue(resp["result"]["error"])
@@ -1338,13 +1546,15 @@ class RunTestTests(_BenchBase):
         """@ABORT is a FAIL in the result (OpenHTF), but the bench treats the condition the
         procedure detected as unsafe: every held output off, devices closed, session ended."""
         s = self._session()
-        rid = self._acquired(s, keep_state=True)    # isolate the LADDER's off
+        rid = self._acquired(s, keep_state=True)  # isolate the LADDER's off
         resp, stop = self._run(s, rid, self._module(_code("abort")), [_answer("9"), self._hold()])
         self.assertTrue(stop)
         self.assertTrue(resp["ok"], resp)
         self.assertTrue(resp["session_ended"])
-        self.assertEqual((resp["result"]["overall"], resp["result"]["error"], resp["result"]["aborted"]),
-                         ("FAIL", False, False))
+        self.assertEqual(
+            (resp["result"]["overall"], resp["result"]["error"], resp["result"]["aborted"]),
+            ("FAIL", False, False),
+        )
         self.assertEqual(resp["result"]["stopped"], "by @ABORT after step 3")
         self.assertTrue(self._offs())
         self.assertEqual(len(self._devcalls("PHYS", "close")), 1)
@@ -1360,17 +1570,23 @@ class RunTestTests(_BenchBase):
         module = Path(self.tmp.name) / "broken_import.py"
         module.write_text("this is not python !!!\n", encoding="utf-8")
         self._reader([])
-        resp, stop = self._dispatch(s, {"cmd": "run_test", "run_id": rid,
-                                        "module_path": str(module),
-                                        "results_dir": self.tmp.name})
-        self.assertTrue(stop)                       # respond then STOP
+        resp, stop = self._dispatch(
+            s,
+            {
+                "cmd": "run_test",
+                "run_id": rid,
+                "module_path": str(module),
+                "results_dir": self.tmp.name,
+            },
+        )
+        self.assertTrue(stop)  # respond then STOP
         self.assertTrue(resp["ok"], resp)
         self.assertTrue(resp["session_ended"])
         self.assertTrue(resp["result"]["error"])
         self.assertEqual(resp["result"]["overall"], "ERROR")
         self.assertEqual(resp["result"]["exception_type"], "SyntaxError")
         self.assertIn("traceback", resp["result"])
-        self.assertTrue(self._offs())               # safe-off all held ran
+        self.assertTrue(self._offs())  # safe-off all held ran
         self.assertEqual(len(self._devcalls("PHYS", "close")), 1)
         self.assertFalse(s.held)
 
@@ -1381,42 +1597,43 @@ class RunTestTests(_BenchBase):
         "def main(ctx):\n"
         "    pathlib.Path(ctx.results_dir, 'seen.json').write_text(json.dumps(\n"
         "        [ctx.stop_at_first_fail, ctx.switch_off_on_stop]))\n"
-        "    return {'overall': 'PASS', 'aborted': False, 'error': False}\n")
+        "    return {'overall': 'PASS', 'aborted': False, 'error': False}\n"
+    )
 
     def _seen(self, extra, ctx_class=None):
         s = self._session()
         rid = self._acquired(s)
         self._reader([])
-        req = {"cmd": "run_test", "run_id": rid,
-               "module_path": str(self._module(self._RECORDER)),
-               "results_dir": self.tmp.name, **extra}
+        req = {
+            "cmd": "run_test",
+            "run_id": rid,
+            "module_path": str(self._module(self._RECORDER)),
+            "results_dir": self.tmp.name,
+            **extra,
+        }
         if ctx_class is None:
             resp, _ = self._dispatch(s, req)
         else:
             from unittest import mock
-            with mock.patch("rules_packager_base.execution_context."
-                            "ExecutionContext", ctx_class):
+
+            with mock.patch("rules_packager_base.execution_context.ExecutionContext", ctx_class):
                 resp, _ = self._dispatch(s, req)
-        return resp, json.loads(
-            (Path(self.tmp.name) / "seen.json").read_text(encoding="utf-8"))
+        return resp, json.loads((Path(self.tmp.name) / "seen.json").read_text(encoding="utf-8"))
 
     def test_stop_at_first_fail_frame_sets_ctx(self):
-        self.assertEqual(self._seen({"stop_at_first_fail": True})[1],
-                         [True, True])
+        self.assertEqual(self._seen({"stop_at_first_fail": True})[1], [True, True])
 
     def test_stop_at_first_fail_absent_is_off(self):
         self.assertEqual(self._seen({})[1], [False, True])
 
     def test_switch_off_on_stop_false_frame_sets_ctx(self):
-        self.assertEqual(self._seen({"switch_off_on_stop": False})[1],
-                         [False, False])
+        self.assertEqual(self._seen({"switch_off_on_stop": False})[1], [False, False])
 
     def test_old_wheel_context_without_the_fields_does_not_raise(self):
         # An older bundle's ExecutionContext has no such fields and its
         # __init__ rejects unknown kwargs: the daemon must set attributes.
         class Old:
-            def __init__(self, devices, owned, keep_state, results_dir,
-                         prompt, cancelled):
+            def __init__(self, devices, owned, keep_state, results_dir, prompt, cancelled):
                 self.results_dir = results_dir
 
             def install(self):
@@ -1425,8 +1642,9 @@ class RunTestTests(_BenchBase):
             def restore(self):
                 pass
 
-        resp, seen = self._seen({"stop_at_first_fail": True,
-                                 "switch_off_on_stop": False}, ctx_class=Old)
+        resp, seen = self._seen(
+            {"stop_at_first_fail": True, "switch_off_on_stop": False}, ctx_class=Old
+        )
         self.assertTrue(resp["ok"], resp)
         self.assertEqual(seen, [True, False])
 
@@ -1435,26 +1653,31 @@ class RunTestTests(_BenchBase):
         # same unexpected-failure ladder — session ends, stop.
         s = self._session()
         rid = self._acquired(s)
-        s.held.clear()                    # the held instance vanished
+        s.held.clear()  # the held instance vanished
         self._reader([])
-        resp, stop = self._dispatch(s, {"cmd": "run_test", "run_id": rid,
-                                        "module_path":
-                                            str(self._module(_code("quick"))),
-                                        "results_dir": self.tmp.name})
+        resp, stop = self._dispatch(
+            s,
+            {
+                "cmd": "run_test",
+                "run_id": rid,
+                "module_path": str(self._module(_code("quick"))),
+                "results_dir": self.tmp.name,
+            },
+        )
         self.assertTrue(stop)
         self.assertTrue(resp["session_ended"])
         self.assertTrue(resp["result"]["error"])
-        self.assertIn("restart the bench session",
-                      resp["result"]["exception_message"])
+        self.assertIn("restart the bench session", resp["result"]["exception_message"])
 
     def test_unknown_run_refusal_is_benign_session_untouched(self):
         # F-H3a counterpart: the genuinely-benign refusal class stays a
         # plain error — no ladder, no teardown, session hot.
         s = self._session()
         self._acquired(s)
-        resp, stop = self._dispatch(s, {"cmd": "run_test", "run_id": "nope",
-                                        "module_path": "x",
-                                        "results_dir": self.tmp.name})
+        resp, stop = self._dispatch(
+            s,
+            {"cmd": "run_test", "run_id": "nope", "module_path": "x", "results_dir": self.tmp.name},
+        )
         self.assertFalse(stop)
         self.assertFalse(resp["ok"])
         self.assertEqual(resp["kind"], "UnknownRun")
@@ -1467,29 +1690,41 @@ class RunTestTests(_BenchBase):
         # daemon runs main(ctx) with CWD at the results dir, so the PNG
         # lands beside results.json (like the legacy subprocess path) — and
         # the prior CWD is restored afterwards.
-        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _ShotFake(
-            etype, bench.get("_dev", "?"), self.calls))
+        rebind(
+            self,
+            er,
+            "_build_device",
+            lambda bench, etype, lifecycle, log: _ShotFake(
+                etype, bench.get("_dev", "?"), self.calls
+            ),
+        )
         s = self._session()
-        resp = self._acquire(s, [
-            _claim("BENCH-S", "PSU1", dev="PHYS"),
-            _claim("BENCH-S", "SCOPE1", _ADDR_B, etype="scope", dev="SCOPE"),
-            {"test_id": "BENCH-S", "local_name": "DMM1", "etype": "dmm",
-             "bench": {"remote": False}},
-        ])
+        resp = self._acquire(
+            s,
+            [
+                _claim("BENCH-S", "PSU1", dev="PHYS"),
+                _claim("BENCH-S", "SCOPE1", _ADDR_B, etype="scope", dev="SCOPE"),
+                {
+                    "test_id": "BENCH-S",
+                    "local_name": "DMM1",
+                    "etype": "dmm",
+                    "bench": {"remote": False},
+                },
+            ],
+        )
         self.assertTrue(resp["ok"], resp)
         cwd_before = os.getcwd()
-        r, stop = self._run(s, resp["run_id"], self._module(_code("shot")),
-                            [_answer("3.3"), self._hold()])
+        r, stop = self._run(
+            s, resp["run_id"], self._module(_code("shot")), [_answer("3.3"), self._hold()]
+        )
         self.assertFalse(stop)
         self.assertEqual(r["result"]["overall"], "PASS", r)
-        self.assertEqual(os.getcwd(), cwd_before)   # CWD restored after run
+        self.assertEqual(os.getcwd(), cwd_before)  # CWD restored after run
         shot = self._results_dir() / "shot.png"
-        self.assertTrue(shot.exists(),
-                        sorted(p.name for p in self._results_dir().iterdir()))
+        self.assertTrue(shot.exists(), sorted(p.name for p in self._results_dir().iterdir()))
         self.assertFalse((Path(cwd_before) / "shot.png").exists())
         # the evidence path in results.json refers to the file BESIDE it
-        data = json.loads((self._results_dir() / "results.json")
-                          .read_text(encoding="utf-8"))
+        data = json.loads((self._results_dir() / "results.json").read_text(encoding="utf-8"))
         self.assertEqual([e["file"] for e in data["evidence"]], ["shot.png"])
 
     def test_exec_ops_relative_write_lands_in_the_frames_work_dir(self):
@@ -1497,22 +1732,40 @@ class RunTestTests(_BenchBase):
         # folder; the daemon runs the batch there (the same switch run_test
         # makes into its results dir) and goes back after — a relative write
         # never lands in the daemon's own CWD.
-        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _ShotFake(
-            etype, bench.get("_dev", "?"), self.calls))
+        rebind(
+            self,
+            er,
+            "_build_device",
+            lambda bench, etype, lifecycle, log: _ShotFake(
+                etype, bench.get("_dev", "?"), self.calls
+            ),
+        )
         home, run_dir = Path(self.tmp.name) / "home", Path(self.tmp.name) / "run"
         home.mkdir()
         run_dir.mkdir()
         cwd0 = os.getcwd()
-        os.chdir(home)                    # stand-in for the daemon's own CWD
+        os.chdir(home)  # stand-in for the daemon's own CWD
         self.addCleanup(os.chdir, cwd0)
         s = self._session()
-        r, stop = self._dispatch(s, {
-            "cmd": "exec_ops", "work_dir": str(run_dir),
-            "procedure_json": {"equipment": [{"id": "SCOPE1", "type": "scope"}]},
-            "ops": [{"node_path": "s", "op": {
-                "op": "scope.screenshot", "device": "SCOPE1",
-                "filename": "guided_shot.png"}}],
-            "bench_map": {"SCOPE1": {"visa": _ADDR_B, "_dev": "GUIDED"}}})
+        r, stop = self._dispatch(
+            s,
+            {
+                "cmd": "exec_ops",
+                "work_dir": str(run_dir),
+                "procedure_json": {"equipment": [{"id": "SCOPE1", "type": "scope"}]},
+                "ops": [
+                    {
+                        "node_path": "s",
+                        "op": {
+                            "op": "scope.screenshot",
+                            "device": "SCOPE1",
+                            "filename": "guided_shot.png",
+                        },
+                    }
+                ],
+                "bench_map": {"SCOPE1": {"visa": _ADDR_B, "_dev": "GUIDED"}},
+            },
+        )
         self.assertFalse(stop)
         self.assertFalse(r["aborted"], r)
         self.assertEqual(os.listdir(run_dir), ["guided_shot.png"])
@@ -1523,8 +1776,14 @@ class RunTestTests(_BenchBase):
         # No fallback: a batch whose frame names no work_dir, or a folder that
         # is gone, is answered with an error and no op runs (no device opened,
         # nothing written, the daemon's CWD untouched).
-        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _ShotFake(
-            etype, bench.get("_dev", "?"), self.calls))
+        rebind(
+            self,
+            er,
+            "_build_device",
+            lambda bench, etype, lifecycle, log: _ShotFake(
+                etype, bench.get("_dev", "?"), self.calls
+            ),
+        )
         home = Path(self.tmp.name) / "home"
         home.mkdir()
         cwd0 = os.getcwd()
@@ -1532,16 +1791,30 @@ class RunTestTests(_BenchBase):
         self.addCleanup(os.chdir, cwd0)
         s = self._session()
         gone = str(home / "gone")
-        for missing, why in (({}, "exec_ops frame has no work_dir"),
-                             ({"work_dir": None}, "exec_ops frame has no work_dir"),
-                             ({"work_dir": gone}, f"work_dir does not exist: {gone}")):
-            r, stop = self._dispatch(s, {
-                "cmd": "exec_ops", **missing,
-                "procedure_json": {"equipment": [{"id": "SCOPE1", "type": "scope"}]},
-                "ops": [{"node_path": "s", "op": {
-                    "op": "scope.screenshot", "device": "SCOPE1",
-                    "filename": "guided_shot.png"}}],
-                "bench_map": {"SCOPE1": {"visa": _ADDR_B, "_dev": "GUIDED"}}})
+        for missing, why in (
+            ({}, "exec_ops frame has no work_dir"),
+            ({"work_dir": None}, "exec_ops frame has no work_dir"),
+            ({"work_dir": gone}, f"work_dir does not exist: {gone}"),
+        ):
+            r, stop = self._dispatch(
+                s,
+                {
+                    "cmd": "exec_ops",
+                    **missing,
+                    "procedure_json": {"equipment": [{"id": "SCOPE1", "type": "scope"}]},
+                    "ops": [
+                        {
+                            "node_path": "s",
+                            "op": {
+                                "op": "scope.screenshot",
+                                "device": "SCOPE1",
+                                "filename": "guided_shot.png",
+                            },
+                        }
+                    ],
+                    "bench_map": {"SCOPE1": {"visa": _ADDR_B, "_dev": "GUIDED"}},
+                },
+            )
             self.assertFalse(stop)
             self.assertFalse(r["ok"], (missing, r))
             self.assertIn(why, r["error"])
@@ -1568,42 +1841,58 @@ class RunTestTests(_BenchBase):
         module = Path(self.tmp.name) / "broken.py"
         module.write_text("BENCH_SESSION_API = 1\n", encoding="utf-8")  # no main
         self._reader([])
-        resp, stop = self._dispatch(s, {"cmd": "run_test", "run_id": rid,
-                                        "module_path": str(module),
-                                        "results_dir": self.tmp.name})
+        resp, stop = self._dispatch(
+            s,
+            {
+                "cmd": "run_test",
+                "run_id": rid,
+                "module_path": str(module),
+                "results_dir": self.tmp.name,
+            },
+        )
         self.assertTrue(stop)
         self.assertTrue(resp["session_ended"])
         self.assertTrue(resp["result"]["error"])
         self.assertIn("AttributeError", resp["result"]["exception_type"])
-        self.assertFalse(s.held)                    # closed by the ladder
+        self.assertFalse(s.held)  # closed by the ladder
 
     def test_module_without_marker_is_unsupported_no_ladder(self):
         s = self._session()
         rid = self._acquired(s)
         module = Path(self.tmp.name) / "legacy.py"
-        module.write_text("def main(inventory=None):\n    return None\n",
-                          encoding="utf-8")
-        resp, stop = self._dispatch(s, {"cmd": "run_test", "run_id": rid,
-                                        "module_path": str(module),
-                                        "results_dir": self.tmp.name})
+        module.write_text("def main(inventory=None):\n    return None\n", encoding="utf-8")
+        resp, stop = self._dispatch(
+            s,
+            {
+                "cmd": "run_test",
+                "run_id": rid,
+                "module_path": str(module),
+                "results_dir": self.tmp.name,
+            },
+        )
         self.assertFalse(stop)
         self.assertFalse(resp["ok"])
         self.assertEqual(resp["kind"], "unsupported_test")
-        self.assertEqual(set(s.held), {_EP_A})      # session untouched
+        self.assertEqual(set(s.held), {_EP_A})  # session untouched
 
     def test_prompt_cancel_response_ordering_no_deadlock(self):
         s = self._session()
         rid = self._acquired(s, keep_state=True)
         cancel = _line({"cmd": "cancel_run", "run_id": rid})
         stale = _line({"cmd": "prompt_response", "id": 1, "text": "late"})
-        resp, stop = self._run(s, rid, self._module(_code("quick")), [
-            ("prompt", lambda f: cancel),     # cancel lands DURING the prompt
-            ("delay", 0.05, stale),           # the answer arrives too late
-        ])
+        resp, stop = self._run(
+            s,
+            rid,
+            self._module(_code("quick")),
+            [
+                ("prompt", lambda f: cancel),  # cancel lands DURING the prompt
+                ("delay", 0.05, stale),  # the answer arrives too late
+            ],
+        )
         self.assertFalse(stop)
         self.assertTrue(resp["result"]["aborted"])
         self.assertIn("ack", self.proto.kinds())
-        self.assertTrue(self._offs())               # ladder safe-off ran
+        self.assertTrue(self._offs())  # ladder safe-off ran
         # the stale response reaches the MAIN loop and is dropped: no response
         line = bsr._READER.next_line()
         self.assertIsNotNone(line)
@@ -1614,8 +1903,7 @@ class RunTestTests(_BenchBase):
         self.assertIsNone(bsr._READER.next_line())
         # session alive: next acquire works
         self._dispatch(s, {"cmd": "release_run", "run_id": rid})
-        self.assertTrue(self._acquire(
-            s, [_claim("T-B", "PSU1", dev="PHYS")])["ok"])
+        self.assertTrue(self._acquire(s, [_claim("T-B", "PSU1", dev="PHYS")])["ok"])
 
     def test_other_frames_rejected_during_run(self):
         s = self._session()
@@ -1627,13 +1915,15 @@ class RunTestTests(_BenchBase):
             return _line({"cmd": "exec_ops", "ops": [], "bench_map": {}})
 
         def respond():
-            return _line({"cmd": "prompt_response", "id": box["id"],
-                          "text": "3.3"})
+            return _line({"cmd": "prompt_response", "id": box["id"], "text": "3.3"})
 
-        resp, _ = self._run(s, rid, self._module(_code("quick")),
-                            [("prompt", grab), ("delay", 0.05, respond),
-                             self._hold()])
-        self.assertEqual(resp["result"]["overall"], "PASS")   # run completed
+        resp, _ = self._run(
+            s,
+            rid,
+            self._module(_code("quick")),
+            [("prompt", grab), ("delay", 0.05, respond), self._hold()],
+        )
+        self.assertEqual(resp["result"]["overall"], "PASS")  # run completed
         rejects = [f for f in self.proto.frames if f.get("kind") == "reject"]
         self.assertTrue(any(f.get("cmd") == "exec_ops" for f in rejects))
 
@@ -1646,7 +1936,7 @@ class RunTestTests(_BenchBase):
         rid = self._acquired(s, keep_state=True)
         resp, _ = self._run(s, rid, self._module(_code("quick")), [_answer("3.3"), self._hold()])
         self.assertEqual(resp["result"]["overall"], "PASS")
-        self.assertFalse(self._offs())                # keep-state: PSU1 stays ON
+        self.assertFalse(self._offs())  # keep-state: PSU1 stays ON
         self._dispatch(s, {"cmd": "release_run", "run_id": rid})
         rid = self._acquired(s, keep_state=True)
         resp, stop = self._dispatch(s, {"cmd": "cancel_run", "run_id": rid})
@@ -1656,7 +1946,7 @@ class RunTestTests(_BenchBase):
         resp, stop = self._run(s, rid, self._module(_code("quick")), [self._hold()])
         self.assertFalse(stop)
         self.assertTrue(resp["result"]["aborted"], resp)
-        self.assertIn("ack", self.proto.kinds())      # the stop is acknowledged
+        self.assertIn("ack", self.proto.kinds())  # the stop is acknowledged
         ran = self.calls[before:]
         self.assertTrue(ran and all(c[2] == "output" and c[3].get("on") is False for c in ran), ran)
 
@@ -1664,11 +1954,11 @@ class RunTestTests(_BenchBase):
         s = self._session()
         resp, _ = self._dispatch(s, {"cmd": "cancel_run", "run_id": "nope"})
         self.assertIsNone(resp)
-        resp, _ = self._dispatch(s, {"cmd": "prompt_response", "id": 9,
-                                     "text": "x"})
+        resp, _ = self._dispatch(s, {"cmd": "prompt_response", "id": 9, "text": "x"})
         self.assertIsNone(resp)
-        resp, _ = self._dispatch(s, {"cmd": "run_test", "run_id": "nope",
-                                     "module_path": "x", "results_dir": "y"})
+        resp, _ = self._dispatch(
+            s, {"cmd": "run_test", "run_id": "nope", "module_path": "x", "results_dir": "y"}
+        )
         self.assertFalse(resp["ok"])
         self.assertEqual(resp["kind"], "UnknownRun")
 
@@ -1678,23 +1968,36 @@ class RunTestTests(_BenchBase):
 # is still shown and the run ends as an operator stop (session kept).
 # ---------------------------------------------------------------------------
 
-_SAFE_STATES = ["SAFE STATE: Ensure ELOAD1 output is OFF.",
-                "SAFE STATE: Ensure PSU1 output is OFF."]
+_SAFE_STATES = [
+    "SAFE STATE: Ensure ELOAD1 output is OFF.",
+    "SAFE STATE: Ensure PSU1 output is OFF.",
+]
 
 
 class StopKeepsCleanupTests(_BenchBase):
     def _acquire_manual(self):
         s = self._session()
-        resp = self._acquire(s, [
-            {"test_id": "BENCH-M", "local_name": name, "etype": etype,
-             "bench": {"remote": False}}
-            for name, etype in (("PSU1", "psu"), ("ELOAD1", "eload"))])
+        resp = self._acquire(
+            s,
+            [
+                {
+                    "test_id": "BENCH-M",
+                    "local_name": name,
+                    "etype": etype,
+                    "bench": {"remote": False},
+                }
+                for name, etype in (("PSU1", "psu"), ("ELOAD1", "eload"))
+            ],
+        )
         self.assertTrue(resp["ok"], resp)
         return s, resp["run_id"]
 
     def _run_manual(self, s, rid, kind, script):
-        code = (_code(kind).replace("PSU1_REMOTE = True", "PSU1_REMOTE = False")
-                .replace("ELOAD1_REMOTE = True", "ELOAD1_REMOTE = False"))
+        code = (
+            _code(kind)
+            .replace("PSU1_REMOTE = True", "PSU1_REMOTE = False")
+            .replace("ELOAD1_REMOTE = True", "ELOAD1_REMOTE = False")
+        )
         resp, stop = self._run(s, rid, self._module(code), script)
         self.assertFalse(stop)
         self.assertTrue(resp["ok"], resp)
@@ -1707,8 +2010,9 @@ class StopKeepsCleanupTests(_BenchBase):
     def test_stop_mid_step_shows_every_reminder_and_aborts(self):
         s, rid = self._acquire_manual()
         cancel = _line({"cmd": "cancel_run", "run_id": rid})
-        resp = self._run_manual(s, rid, "manual_wait", [
-            _answer(""), _answer(""), ("delay", 0.6, cancel), self._hold()])
+        resp = self._run_manual(
+            s, rid, "manual_wait", [_answer(""), _answer(""), ("delay", 0.6, cancel), self._hold()]
+        )
         self.assertTrue(resp["result"]["aborted"])
         # the reminders after the stop are shown, never awaited
         self.assertEqual(len(self.proto.texts("prompt")), 2)
@@ -1721,12 +2025,21 @@ class StopKeepsCleanupTests(_BenchBase):
             box["id"] = frame["id"]
             return _line({"cmd": "cancel_run", "run_id": rid})
 
-        def host_answers_it():   # Bench answers the pending prompt on Stop
+        def host_answers_it():  # Bench answers the pending prompt on Stop
             return _line({"cmd": "prompt_response", "id": box["id"], "text": ""})
 
-        self._run_manual(s, rid, "manual", [
-            _answer(""), _answer(""), ("prompt", stop_at_first_reminder),
-            ("delay", 0.05, host_answers_it), self._hold()])
+        self._run_manual(
+            s,
+            rid,
+            "manual",
+            [
+                _answer(""),
+                _answer(""),
+                ("prompt", stop_at_first_reminder),
+                ("delay", 0.05, host_answers_it),
+                self._hold(),
+            ],
+        )
         self.assertEqual(len(self.proto.texts("prompt")), 3)
 
 
@@ -1760,8 +2073,14 @@ class TimeoutRetargetTests(_BenchBase):
     def setUp(self):
         super().setUp()
         calls = self.calls
-        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _TimeoutFake(
-            etype, bench.get("_dev", bench.get("visa", "?")), calls))
+        rebind(
+            self,
+            er,
+            "_build_device",
+            lambda bench, etype, lifecycle, log: _TimeoutFake(
+                etype, bench.get("_dev", bench.get("visa", "?")), calls
+            ),
+        )
 
     def _session(self, cap=True):
         """Session whose psu lifecycle entry deterministically HAS (or has
@@ -1769,21 +2088,26 @@ class TimeoutRetargetTests(_BenchBase):
         Registry inner dicts are never mutated (get_lifecycle is shallow)."""
         s = super()._session()
         s.lifecycle = dict(s.lifecycle)
-        psu = {k: v for k, v in (s.lifecycle.get("psu") or {}).items()
-               if k != "retarget_timeout"}
+        psu = {k: v for k, v in (s.lifecycle.get("psu") or {}).items() if k != "retarget_timeout"}
         if cap:
             psu["retarget_timeout"] = dict(_CAP)
         s.lifecycle["psu"] = psu
         return s
 
     def _retargets(self, dev=None):
-        return [c for c in self.calls
-                if c[2] == "set_timeout" and (dev is None or c[1] == dev)]
+        return [c for c in self.calls if c[2] == "set_timeout" and (dev is None or c[1] == dev)]
 
     def _set_v(self, device, volts=5.0):
-        return {"node_path": "s", "op": {
-            "op": "psu.set_voltage", "device": device, "channel": 1,
-            "volts": volts, "volts_unit": "V"}}
+        return {
+            "node_path": "s",
+            "op": {
+                "op": "psu.set_voltage",
+                "device": device,
+                "channel": 1,
+                "volts": volts,
+                "volts_unit": "V",
+            },
+        }
 
     def _release(self, s, resp):
         self._dispatch(s, {"cmd": "release_run", "run_id": resp["run_id"]})
@@ -1792,18 +2116,23 @@ class TimeoutRetargetTests(_BenchBase):
         # Test 1: the run's MAX-merged timeout_ms reaches the held instance
         # verbatim (native ms, no unit conversion), once, with a log line.
         s = self._session()
-        r = self._acquire(s, [
-            _claim("T-A", "PSU1", _ADDR_A, dev="PHYS", timeout_ms=3000),
-            _claim("T-B", "MAIN", _ADDR_A2, dev="PHYS", timeout_ms=5000),
-        ])
+        r = self._acquire(
+            s,
+            [
+                _claim("T-A", "PSU1", _ADDR_A, dev="PHYS", timeout_ms=3000),
+                _claim("T-B", "MAIN", _ADDR_A2, dev="PHYS", timeout_ms=5000),
+            ],
+        )
         self.assertTrue(r["ok"], r)
         rt = self._retargets("PHYS")
         self.assertEqual(len(rt), 1)
-        self.assertEqual(rt[0][3]["value"], 5000)       # max-merged, VERBATIM
-        self.assertIsInstance(rt[0][3]["value"], int)   # native unit, unscaled
+        self.assertEqual(rt[0][3]["value"], 5000)  # max-merged, VERBATIM
+        self.assertIsInstance(rt[0][3]["value"], int)  # native unit, unscaled
         self.assertEqual(s.bench.applied_timeout, {_EP_A: 5000})
-        self.assertTrue(any(f"{_EP_A} timeout_ms -> 5000" in ln
-                            and "T-A, T-B" in ln for ln in s.res.log), s.res.log)
+        self.assertTrue(
+            any(f"{_EP_A} timeout_ms -> 5000" in ln and "T-A, T-B" in ln for ln in s.res.log),
+            s.res.log,
+        )
 
     def test_capability_absent_is_noop(self):
         # Test 2: no capability in the namespace -> never called, max stands.
@@ -1830,19 +2159,24 @@ class TimeoutRetargetTests(_BenchBase):
 
         class _Boom(_Fake):
             def set_timeout(self, value):
-                calls.append((self._e, self._d, "set_timeout",
-                              {"value": value}))
+                calls.append((self._e, self._d, "set_timeout", {"value": value}))
                 raise RuntimeError("firmware refuses")
 
-        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _Boom(
-            etype, bench.get("_dev", "?"), calls))
+        rebind(
+            self,
+            er,
+            "_build_device",
+            lambda bench, etype, lifecycle, log: _Boom(etype, bench.get("_dev", "?"), calls),
+        )
         s = self._session()
         r = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
-        self.assertTrue(r["ok"], r)                       # acquire SUCCEEDS
+        self.assertTrue(r["ok"], r)  # acquire SUCCEEDS
         self.assertEqual(len(self._retargets("PHYS")), 1)
         self.assertNotIn(_EP_A, s.bench.applied_timeout)  # not recorded
-        self.assertTrue(any("timeout retarget failed, keeping current value"
-                            in ln for ln in s.res.log), s.res.log)
+        self.assertTrue(
+            any("timeout retarget failed, keeping current value" in ln for ln in s.res.log),
+            s.res.log,
+        )
         self._release(s, r)
         r2 = self._acquire(s, [_claim("T-B", "PSU1", dev="PHYS")])
         self.assertTrue(r2["ok"], r2)
@@ -1856,13 +2190,11 @@ class TimeoutRetargetTests(_BenchBase):
         self._release(s, r1)
         r2 = self._acquire(s, [_claim("T-B", "PSU1", dev="PHYS")])
         self.assertTrue(r2["ok"], r2)
-        self.assertEqual(len(self._retargets("PHYS")), 1)   # second skipped
+        self.assertEqual(len(self._retargets("PHYS")), 1)  # second skipped
         self._release(s, r2)
-        r3 = self._acquire(s, [_claim("T-C", "PSU1", dev="PHYS",
-                                      timeout_ms=8000)])
+        r3 = self._acquire(s, [_claim("T-C", "PSU1", dev="PHYS", timeout_ms=8000)])
         self.assertTrue(r3["ok"], r3)
-        self.assertEqual([c[3]["value"] for c in self._retargets("PHYS")],
-                         [5000, 8000])
+        self.assertEqual([c[3]["value"] for c in self._retargets("PHYS")], [5000, 8000])
 
     def test_guided_op_retargets_with_op_bench_value(self):
         # Test 5: the _cmd_exec_ops per_session seam applies the OP's own
@@ -1871,18 +2203,18 @@ class TimeoutRetargetTests(_BenchBase):
         s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
         r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
         self._release(s, r1)
-        req = {"ops": [self._set_v("PSU1")],
-               "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED",
-                                      "timeout_ms": 1500}}}
+        req = {
+            "ops": [self._set_v("PSU1")],
+            "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED", "timeout_ms": 1500}},
+        }
         r = er._cmd_exec_ops(s, req)
         self.assertFalse(r["aborted"], r)
-        self.assertEqual([c[3]["value"] for c in self._retargets("PHYS")],
-                         [5000, 1500])
+        self.assertEqual([c[3]["value"] for c in self._retargets("PHYS")], [5000, 1500])
         self.assertEqual(s.bench.applied_timeout[_EP_A], 1500)
         self.assertEqual(len(self._devcalls("GUIDED", "connect")), 0)
-        r2 = er._cmd_exec_ops(s, dict(req))                 # same value again
+        r2 = er._cmd_exec_ops(s, dict(req))  # same value again
         self.assertFalse(r2["aborted"], r2)
-        self.assertEqual(len(self._retargets("PHYS")), 2)   # skipped
+        self.assertEqual(len(self._retargets("PHYS")), 2)  # skipped
 
     def test_absent_field_inherits_previous_retarget(self):
         # Accepted residual (b), pinned: a claim declaring NO timeout is a
@@ -1895,15 +2227,14 @@ class TimeoutRetargetTests(_BenchBase):
         del claim["bench"]["timeout_ms"]
         r2 = self._acquire(s, [claim])
         self.assertTrue(r2["ok"], r2)
-        self.assertEqual(len(self._retargets("PHYS")), 1)   # no second call
+        self.assertEqual(len(self._retargets("PHYS")), 1)  # no second call
         self.assertEqual(s.bench.applied_timeout[_EP_A], 5000)
 
     def test_zero_timeout_claim_is_noop(self):
         # R5: a verbatim 0 would mean non-blocking serial reads / instant
         # VISA TMO — falsy values are "no declared patience", a no-op.
         s = self._session()
-        r = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS",
-                                     timeout_ms=0)])
+        r = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS", timeout_ms=0)])
         self.assertTrue(r["ok"], r)
         self.assertEqual(self._retargets(), [])
         self.assertEqual(s.bench.applied_timeout, {})
@@ -1917,10 +2248,13 @@ class TimeoutRetargetTests(_BenchBase):
         r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
         self._release(s, r1)
         base = len(self._retargets())
-        r = er._cmd_safe_off(s, {
-            "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED",
-                                   "timeout_ms": 250}},
-            "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}]})
+        r = er._cmd_safe_off(
+            s,
+            {
+                "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED", "timeout_ms": 250}},
+                "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}],
+            },
+        )
         self.assertTrue(r["ok"], r)
         self.assertEqual(len(self._retargets()), base)
         # R3 consistency: a dropped handle leaves NO stale applied record,
@@ -1948,14 +2282,17 @@ class TimeoutRetargetTests(_BenchBase):
         first = s.held[_EP_A]
         self.assertEqual(first.timeouts, [5000])
         _kill_link(first)
-        r = er._cmd_exec_ops(s, {"ops": [self._set_v("PSU1")],
-                                 "bench_map": {"PSU1": {"visa": _ADDR_A,
-                                                        "_dev": "GUIDED",
-                                                        "timeout_ms": 5000}}})
+        r = er._cmd_exec_ops(
+            s,
+            {
+                "ops": [self._set_v("PSU1")],
+                "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED", "timeout_ms": 5000}},
+            },
+        )
         self.assertFalse(r["aborted"], r)
         rebuilt = s.held[_EP_A]
         self.assertIsNot(rebuilt, first)
-        self.assertEqual(rebuilt.timeouts, [5000])      # RE-applied, not skipped
+        self.assertEqual(rebuilt.timeouts, [5000])  # RE-applied, not skipped
         self.assertEqual(s.bench.applied_timeout[_EP_A], 5000)
 
     def test_sticky_identity_mismatch_refuses_before_retarget(self):
@@ -1969,24 +2306,28 @@ class TimeoutRetargetTests(_BenchBase):
                 super().__init__(*a)
                 self.idn = idn_box["idn"]
 
-        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: (
-            _IdnTimeoutFake(etype, bench.get("_dev", "?"), calls)))
+        rebind(
+            self,
+            er,
+            "_build_device",
+            lambda bench, etype, lifecycle, log: _IdnTimeoutFake(
+                etype, bench.get("_dev", "?"), calls
+            ),
+        )
         s = self._session()
         r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
         self._release(s, r1)
         _kill_link(s.held[_EP_A])
-        idn_box["idn"] = "ACME,SN9"          # a DIFFERENT instrument answers
+        idn_box["idn"] = "ACME,SN9"  # a DIFFERENT instrument answers
         base = len(self._retargets())
-        r2 = self._acquire(s, [_claim("T-B", "PSU1", dev="PHYS",
-                                      timeout_ms=8000)])
+        r2 = self._acquire(s, [_claim("T-B", "PSU1", dev="PHYS", timeout_ms=8000)])
         self.assertFalse(r2["ok"])
         self.assertEqual(r2["kind"], "IdentityChanged")
-        self.assertEqual(len(self._retargets()), base)   # fresh mismatch
-        r3 = self._acquire(s, [_claim("T-C", "PSU1", dev="PHYS",
-                                      timeout_ms=8000)])
+        self.assertEqual(len(self._retargets()), base)  # fresh mismatch
+        r3 = self._acquire(s, [_claim("T-C", "PSU1", dev="PHYS", timeout_ms=8000)])
         self.assertFalse(r3["ok"])
         self.assertEqual(r3["kind"], "IdentityChanged")
-        self.assertEqual(len(self._retargets()), base)   # sticky re-raise
+        self.assertEqual(len(self._retargets()), base)  # sticky re-raise
 
     def test_readdressed_name_retargets_own_instance_not_stale_alias(self):
         # MAJOR pin: Seam B keys the retarget by the hold key _ensure_held
@@ -1999,16 +2340,21 @@ class TimeoutRetargetTests(_BenchBase):
         r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
         self._release(s, r1)
         self.assertEqual(s.bench.alias, {"PSU1": _EP_A})  # stale for B below
-        r = er._cmd_exec_ops(s, {"ops": [self._set_v("PSU1")],
-                                 "bench_map": {"PSU1": {"visa": _ADDR_B,
-                                                        "_dev": "GUIDED-B",
-                                                        "timeout_ms": 1500}}})
+        r = er._cmd_exec_ops(
+            s,
+            {
+                "ops": [self._set_v("PSU1")],
+                "bench_map": {"PSU1": {"visa": _ADDR_B, "_dev": "GUIDED-B", "timeout_ms": 1500}},
+            },
+        )
         self.assertFalse(r["aborted"], r)
-        self.assertIn("PSU1", s.held)                     # name-keyed at B
-        self.assertEqual([c[3]["value"] for c in self._retargets("GUIDED-B")],
-                         [1500])                          # B's OWN instance
-        self.assertEqual([c[3]["value"] for c in self._retargets("PHYS")],
-                         [5000])                          # A: acquire only
+        self.assertIn("PSU1", s.held)  # name-keyed at B
+        self.assertEqual(
+            [c[3]["value"] for c in self._retargets("GUIDED-B")], [1500]
+        )  # B's OWN instance
+        self.assertEqual(
+            [c[3]["value"] for c in self._retargets("PHYS")], [5000]
+        )  # A: acquire only
         self.assertEqual(s.bench.applied_timeout.get("PSU1"), 1500)
         self.assertEqual(s.bench.applied_timeout.get(_EP_A), 5000)
 
@@ -2020,19 +2366,18 @@ class TimeoutRetargetTests(_BenchBase):
         s = self._session()
         s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
         r1 = self._acquire(s, [_claim("T-A", "PSU1", dev="PHYS")])
-        req = {"ops": [self._set_v("PSU1")],
-               "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED",
-                                      "timeout_ms": 1500}}}
+        req = {
+            "ops": [self._set_v("PSU1")],
+            "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED", "timeout_ms": 1500}},
+        }
         r = er._cmd_exec_ops(s, req)
         self.assertFalse(r["aborted"], r)
-        self.assertEqual([c[3]["value"] for c in self._retargets("PHYS")],
-                         [5000])                          # Seam A only
+        self.assertEqual([c[3]["value"] for c in self._retargets("PHYS")], [5000])  # Seam A only
         self.assertEqual(s.bench.applied_timeout[_EP_A], 5000)
         self._release(s, r1)
-        r2 = er._cmd_exec_ops(s, dict(req))               # between runs
+        r2 = er._cmd_exec_ops(s, dict(req))  # between runs
         self.assertFalse(r2["aborted"], r2)
-        self.assertEqual([c[3]["value"] for c in self._retargets("PHYS")],
-                         [5000, 1500])
+        self.assertEqual([c[3]["value"] for c in self._retargets("PHYS")], [5000, 1500])
         self.assertEqual(s.bench.applied_timeout[_EP_A], 1500)
 
     def test_guided_manual_session_never_instantiates_benchstate(self):
@@ -2040,10 +2385,13 @@ class TimeoutRetargetTests(_BenchBase):
         # guided-manual session — and without one there is no retarget.
         s = self._session()
         s.procedure_json = {"equipment": [{"id": "PSU1", "type": "psu"}]}
-        r = er._cmd_exec_ops(s, {"ops": [self._set_v("PSU1")],
-                                 "bench_map": {"PSU1": {"visa": _ADDR_A,
-                                                        "_dev": "GUIDED",
-                                                        "timeout_ms": 1500}}})
+        r = er._cmd_exec_ops(
+            s,
+            {
+                "ops": [self._set_v("PSU1")],
+                "bench_map": {"PSU1": {"visa": _ADDR_A, "_dev": "GUIDED", "timeout_ms": 1500}},
+            },
+        )
         self.assertFalse(r["aborted"], r)
         self.assertIsNone(s.bench)
         self.assertEqual(self._retargets(), [])
@@ -2065,15 +2413,20 @@ class StaleNameHoldTests(_BenchBase):
 
     def setUp(self):
         super().setUp()
-        calls = self.calls          # same retarget spy as TimeoutRetargetTests
-        rebind(self, er, "_build_device", lambda bench, etype, lifecycle, log: _TimeoutFake(
-            etype, bench.get("_dev", bench.get("visa", "?")), calls))
+        calls = self.calls  # same retarget spy as TimeoutRetargetTests
+        rebind(
+            self,
+            er,
+            "_build_device",
+            lambda bench, etype, lifecycle, log: _TimeoutFake(
+                etype, bench.get("_dev", bench.get("visa", "?")), calls
+            ),
+        )
 
     def _session(self, cap=True):
-        s = super()._session()      # deterministic capability (see retarget tests)
+        s = super()._session()  # deterministic capability (see retarget tests)
         s.lifecycle = dict(s.lifecycle)
-        psu = {k: v for k, v in (s.lifecycle.get("psu") or {}).items()
-               if k != "retarget_timeout"}
+        psu = {k: v for k, v in (s.lifecycle.get("psu") or {}).items() if k != "retarget_timeout"}
         if cap:
             psu["retarget_timeout"] = dict(_CAP)
         s.lifecycle["psu"] = psu
@@ -2081,12 +2434,24 @@ class StaleNameHoldTests(_BenchBase):
         return s
 
     def _exec(self, s, visa, dev, timeout=1500):
-        return er._cmd_exec_ops(s, {
-            "ops": [{"node_path": "s", "op": {
-                "op": "psu.set_voltage", "device": "PSU1", "channel": 1,
-                "volts": 5.0, "volts_unit": "V"}}],
-            "bench_map": {"PSU1": {"visa": visa, "_dev": dev,
-                                   "timeout_ms": timeout}}})
+        return er._cmd_exec_ops(
+            s,
+            {
+                "ops": [
+                    {
+                        "node_path": "s",
+                        "op": {
+                            "op": "psu.set_voltage",
+                            "device": "PSU1",
+                            "channel": 1,
+                            "volts": 5.0,
+                            "volts_unit": "V",
+                        },
+                    }
+                ],
+                "bench_map": {"PSU1": {"visa": visa, "_dev": dev, "timeout_ms": timeout}},
+            },
+        )
 
     def test_readdressed_name_op_executes_on_own_instance_not_stale_ns(self):
         # MAJOR pin (the verifier's divergence scenario): PSU1 previously
@@ -2098,15 +2463,15 @@ class StaleNameHoldTests(_BenchBase):
         r1 = self._acquire(s, [_claim("T-A", "PSU1", _ADDR_A, dev="PHYS")])
         self.assertTrue(r1["ok"], r1)
         self._dispatch(s, {"cmd": "release_run", "run_id": r1["run_id"]})
-        rb = self._exec(s, _ADDR_B, "GUIDED-B", 1500)   # name-keyed open at B
+        rb = self._exec(s, _ADDR_B, "GUIDED-B", 1500)  # name-keyed open at B
         self.assertFalse(rb["aborted"], rb)
         inst_b = s.held["PSU1"]
-        ra = self._exec(s, _ADDR_A, "GUIDED-A", 5000)   # routed onto held A
+        ra = self._exec(s, _ADDR_A, "GUIDED-A", 5000)  # routed onto held A
         self.assertFalse(ra["aborted"], ra)
         self.assertEqual(len(self._devcalls("PHYS", "set_voltage")), 1)
-        r = self._exec(s, _ADDR_B, "GUIDED-B", 2500)    # re-addressed to B
+        r = self._exec(s, _ADDR_B, "GUIDED-B", 2500)  # re-addressed to B
         self.assertFalse(r["aborted"], r)
-        self.assertIs(s.held["PSU1"], inst_b)           # reused, not reopened
+        self.assertIs(s.held["PSU1"], inst_b)  # reused, not reopened
         self.assertEqual(len(self._devcalls("GUIDED-B", "set_voltage")), 2)
         self.assertEqual(len(self._devcalls("PHYS", "set_voltage")), 1)
         self.assertIs(s.ns[er._safe_name("PSU1")], inst_b)
@@ -2132,13 +2497,14 @@ class StaleNameHoldTests(_BenchBase):
         self.assertIs(s.ns[er._safe_name("PSU1")], s.held["PSU1"])
         self.assertEqual(s.unconfirmed_off[_EP_B]["channels"], {1})
         self.assertEqual(s.unconfirmed_off[_EP_B]["bench"]["visa"], _ADDR_B)
-        self.assertIsNone(s.bench)      # pure guided session: no BenchState
+        self.assertIsNone(s.bench)  # pure guided session: no BenchState
         r = er._cmd_safe_off(s, {"bench_map": {}, "safe_off": []})
         self.assertTrue(r["ok"], r)
-        self.assertNotIn(_EP_B, s.unconfirmed_off)      # retried + confirmed
+        self.assertNotIn(_EP_B, s.unconfirmed_off)  # retried + confirmed
         self.assertEqual(len(self._devcalls("GUIDED-B", "connect")), 2)
-        self.assertEqual(len([c for c in self.calls if c[1] == "GUIDED-B"
-                              and c[3].get("on") is False]), 1)
+        self.assertEqual(
+            len([c for c in self.calls if c[1] == "GUIDED-B" and c[3].get("on") is False]), 1
+        )
 
     def test_same_endpoint_other_spelling_reuses_name_hold(self):
         # Staleness is judged on the CANONICAL fold, not the raw string: a
@@ -2162,26 +2528,30 @@ class StaleNameHoldTests(_BenchBase):
         # recorded under ITS endpoint and swept at shutdown (never
         # false-clean).
         s = self._session()
-        self._exec(s, _ADDR_B, "GUIDED-B")              # held at B, CH1 live
-        rc = self._exec(s, _ADDR_C, "GUIDED-C")         # re-addressed: held at C
+        self._exec(s, _ADDR_B, "GUIDED-B")  # held at B, CH1 live
+        rc = self._exec(s, _ADDR_C, "GUIDED-C")  # re-addressed: held at C
         self.assertFalse(rc["aborted"], rc)
-        self.assertIn(_EP_B, s.unconfirmed_off)         # B's fate (test above)
-        r = er._cmd_safe_off(s, {
-            "bench_map": {"PSU1": {"visa": _ADDR_B, "_dev": "GUIDED-B",
-                                   "timeout_ms": 1500}},
-            "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}]})
+        self.assertIn(_EP_B, s.unconfirmed_off)  # B's fate (test above)
+        r = er._cmd_safe_off(
+            s,
+            {
+                "bench_map": {"PSU1": {"visa": _ADDR_B, "_dev": "GUIDED-B", "timeout_ms": 1500}},
+                "safe_off": [{"device": "PSU1", "etype": "psu", "channels": [1]}],
+            },
+        )
         self.assertTrue(r["ok"], r)
-        offs_b = [c for c in self.calls if c[1] == "GUIDED-B"
-                  and c[3].get("on") is False]
-        self.assertTrue(offs_b)                         # record's device reached
-        self.assertEqual([c for c in self.calls if c[1] == "GUIDED-C"
-                          and c[3].get("on") is False], [])
-        self.assertIn(_EP_C, s.unconfirmed_off)         # C not silently forgotten
+        offs_b = [c for c in self.calls if c[1] == "GUIDED-B" and c[3].get("on") is False]
+        self.assertTrue(offs_b)  # record's device reached
+        self.assertEqual(
+            [c for c in self.calls if c[1] == "GUIDED-C" and c[3].get("on") is False], []
+        )
+        self.assertIn(_EP_C, s.unconfirmed_off)  # C not silently forgotten
         resp, stop = self._dispatch(s, {"cmd": "shutdown"})
         self.assertTrue(stop)
         self.assertNotIn("unsafe", resp)
-        self.assertEqual(len([c for c in self.calls if c[1] == "GUIDED-C"
-                              and c[3].get("on") is False]), 1)
+        self.assertEqual(
+            len([c for c in self.calls if c[1] == "GUIDED-C" and c[3].get("on") is False]), 1
+        )
         self.assertEqual(s.unconfirmed_off, {})
 
 
@@ -2194,9 +2564,13 @@ class DaemonWireTests(unittest.TestCase):
     def test_eof_during_idle_reaches_teardown_backstop(self):
         # ping, then close stdin WITHOUT shutdown: the reader signals EOF
         # through the queue and the loop exits cleanly through _teardown.
-        proc = subprocess.run([sys.executable, str(_RUNNER), "--role", "run"],
-                              input='{"cmd":"ping"}\n',
-                              capture_output=True, text=True, timeout=30)
+        proc = subprocess.run(
+            [sys.executable, str(_RUNNER), "--role", "run"],
+            input='{"cmd":"ping"}\n',
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
         objs = [json.loads(ln) for ln in proc.stdout.splitlines() if ln.strip()]
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(objs, [{"ok": True, "pong": True}])
@@ -2210,17 +2584,24 @@ class BenchClientLiveTests(unittest.TestCase):
 
     def _client(self):
         from tests._qt_stub import ensure_workflow_editor_importable
+
         ensure_workflow_editor_importable()
         from procedo.engine_client import bench_client as bc
+
         c = bc.BenchSessionClient(Path("/nonexistent"))
 
-        def _start():            # THIS interpreter (no project venv in tests)
+        def _start():  # THIS interpreter (no project venv in tests)
             c._bundle_dir = None
             c._proc = subprocess.Popen(
                 [sys.executable, str(_RUNNER), "--role", "run"],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, text=True, bufsize=1)
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
             c._dead = False
+
         c._start = _start
         self.addCleanup(c.kill)
         return c
@@ -2232,13 +2613,15 @@ class BenchClientLiveTests(unittest.TestCase):
         from types import SimpleNamespace
 
         from tests._qt_stub import ensure_workflow_editor_importable
+
         ensure_workflow_editor_importable()
         from procedo.engine_client import bench_client as bc
+
         c = bc.BenchSessionClient(Path("/nonexistent"))
         c._proc, c._bundle_dir = SimpleNamespace(stdin=io.StringIO()), "B"
         held, done, answer = threading.Event(), threading.Event(), {}
 
-        def hold():              # an exchange in flight on another thread
+        def hold():  # an exchange in flight on another thread
             with c._lock:
                 held.set()
                 done.wait(10)
@@ -2251,56 +2634,80 @@ class BenchClientLiveTests(unittest.TestCase):
         done.set()
         self.assertFalse(stop.is_alive(), "the stop waited on the channel's lock")
         self.assertEqual(answer, {"ok": True, "run_id": "run-1", "posted": True})
-        self.assertEqual(json.loads(c._proc.stdin.getvalue()),
-                         {"cmd": "cancel_run", "run_id": "run-1", "_bundle_dir": "B"})
+        self.assertEqual(
+            json.loads(c._proc.stdin.getvalue()),
+            {"cmd": "cancel_run", "run_id": "run-1", "_bundle_dir": "B"},
+        )
 
     def test_end_session_is_shutdown(self):
         from tests._qt_stub import ensure_workflow_editor_importable
+
         ensure_workflow_editor_importable()
         from procedo.engine_client import bench_client as bc
         from procedo.engine_client.engine_session import RemoteSession
+
         self.assertIs(bc.BenchSessionClient.end_session, RemoteSession.shutdown)
 
     def test_run_test_frame_carries_the_options_only_when_non_default(self):
         from types import SimpleNamespace
+
         c = self._client()
         frames: list = []
         c._post = frames.append
         c._proc = SimpleNamespace(
-            stdout=SimpleNamespace(readline=lambda: '{"ok": true}\n'),
-            poll=lambda: None)
+            stdout=SimpleNamespace(readline=lambda: '{"ok": true}\n'), poll=lambda: None
+        )
         c._alive = lambda: True
         for kw, extra in (
-                ({}, {}),
-                ({"stop_at_first_fail": True}, {"stop_at_first_fail": True}),
-                ({"switch_off_on_stop": False}, {"switch_off_on_stop": False}),
-                ({"stop_at_first_fail": True, "switch_off_on_stop": False},
-                 {"stop_at_first_fail": True, "switch_off_on_stop": False})):
+            ({}, {}),
+            ({"stop_at_first_fail": True}, {"stop_at_first_fail": True}),
+            ({"switch_off_on_stop": False}, {"switch_off_on_stop": False}),
+            (
+                {"stop_at_first_fail": True, "switch_off_on_stop": False},
+                {"stop_at_first_fail": True, "switch_off_on_stop": False},
+            ),
+        ):
             frames.clear()
             c.run_test("r", "m.py", "res", **kw)
-            self.assertEqual(frames, [{"cmd": "run_test", "run_id": "r",
-                                       "module_path": "m.py",
-                                       "results_dir": "res", **extra}])
+            self.assertEqual(
+                frames,
+                [
+                    {
+                        "cmd": "run_test",
+                        "run_id": "r",
+                        "module_path": "m.py",
+                        "results_dir": "res",
+                        **extra,
+                    }
+                ],
+            )
 
     def test_manual_flow_acquire_run_release_end(self):
         c = self._client()
         claims = [
-            {"test_id": "BENCH-Q", "local_name": "PSU1", "etype": "psu",
-             "bench": {"remote": False}},
-            {"test_id": "BENCH-Q", "local_name": "DMM1", "etype": "dmm",
-             "bench": {"remote": False}},
+            {
+                "test_id": "BENCH-Q",
+                "local_name": "PSU1",
+                "etype": "psu",
+                "bench": {"remote": False},
+            },
+            {
+                "test_id": "BENCH-Q",
+                "local_name": "DMM1",
+                "etype": "dmm",
+                "bench": {"remote": False},
+            },
         ]
         acq = c.acquire_run(claims)
         self.assertTrue(acq.get("ok"), acq)
         self.assertEqual(acq["plan"]["endpoints"], [])
-        self.assertEqual(sorted(acq["plan"]["manual"]),
-                         ["BENCH-Q/DMM1", "BENCH-Q/PSU1"])
+        self.assertEqual(sorted(acq["plan"]["manual"]), ["BENCH-Q/DMM1", "BENCH-Q/PSU1"])
         td = tempfile.TemporaryDirectory()
         self.addCleanup(td.cleanup)
         module = Path(td.name) / "test.py"
         module.write_text(
-            _code("quick").replace("PSU1_REMOTE = True", "PSU1_REMOTE = False"),
-            encoding="utf-8")
+            _code("quick").replace("PSU1_REMOTE = True", "PSU1_REMOTE = False"), encoding="utf-8"
+        )
         results_dir = Path(td.name) / "results"
         outputs: list = []
         prompts: list = []
@@ -2309,16 +2716,16 @@ class BenchClientLiveTests(unittest.TestCase):
             prompts.append(text)
             return "3.3" if "Read DC voltage" in text else ""
 
-        res = c.run_test(acq["run_id"], module, results_dir,
-                         on_output=outputs.append, on_prompt=on_prompt)
+        res = c.run_test(
+            acq["run_id"], module, results_dir, on_output=outputs.append, on_prompt=on_prompt
+        )
         self.assertTrue(res.get("ok"), res)
         self.assertEqual(res["result"]["overall"], "PASS")
         self.assertTrue(any(t.startswith("STEP 1 - ") for t in outputs))
         self.assertTrue(any("Read DC voltage" in t for t in prompts))
         # keep_state False + manual device: the SAFE-STATE prompt pass ran
         self.assertTrue(any("SAFE STATE" in t for t in prompts), prompts)
-        data = json.loads((results_dir / "results.json")
-                          .read_text(encoding="utf-8"))
+        data = json.loads((results_dir / "results.json").read_text(encoding="utf-8"))
         self.assertEqual(set(data["verdicts"].values()), {"PASS"})
         rel = c.release_run(acq["run_id"])
         self.assertTrue(rel.get("ok"), rel)
@@ -2331,31 +2738,38 @@ class BenchClientLiveTests(unittest.TestCase):
         # prompt answered with "" — that late answer must never be answered,
         # or the NEXT control request reads its response (off-by-one desync).
         c = self._client()
-        acq = c.acquire_run([
-            {"test_id": "BENCH-Q", "local_name": name, "etype": etype,
-             "bench": {"remote": False}}
-            for name, etype in (("PSU1", "psu"), ("DMM1", "dmm"))])
+        acq = c.acquire_run(
+            [
+                {
+                    "test_id": "BENCH-Q",
+                    "local_name": name,
+                    "etype": etype,
+                    "bench": {"remote": False},
+                }
+                for name, etype in (("PSU1", "psu"), ("DMM1", "dmm"))
+            ]
+        )
         self.assertTrue(acq.get("ok"), acq)
         rid = acq["run_id"]
         td = tempfile.TemporaryDirectory()
         self.addCleanup(td.cleanup)
         module = Path(td.name) / "test.py"
         module.write_text(
-            _code("quick").replace("PSU1_REMOTE = True", "PSU1_REMOTE = False"),
-            encoding="utf-8")
+            _code("quick").replace("PSU1_REMOTE = True", "PSU1_REMOTE = False"), encoding="utf-8"
+        )
 
         def on_prompt(text):
             if "Read DC voltage" in text:
-                c.cancel_run(rid)          # Stop: cancel posted, then "" below
+                c.cancel_run(rid)  # Stop: cancel posted, then "" below
             return ""
 
-        res = c.run_test(rid, module, Path(td.name) / "results",
-                         on_prompt=on_prompt)
+        res = c.run_test(rid, module, Path(td.name) / "results", on_prompt=on_prompt)
         self.assertTrue(res["result"]["aborted"], res)
         self.assertNotIn("session_ended", res)
         self.assertEqual(c.release_run(rid), {"ok": True, "run_id": rid})
-        dry = c.plan_only([{"test_id": "T", "local_name": "PSU1", "etype": "psu",
-                            "bench": {"remote": False}}])
+        dry = c.plan_only(
+            [{"test_id": "T", "local_name": "PSU1", "etype": "psu", "bench": {"remote": False}}]
+        )
         self.assertTrue(dry.get("dry_run"), dry)
         self.assertTrue(c.end_session().get("ok"))
 
@@ -2365,8 +2779,8 @@ class BenchClientLiveTests(unittest.TestCase):
         # holds the bench.
         c = self._client()
         claims = [
-            {"test_id": "T", "local_name": "PSU1", "etype": "psu",
-             "bench": {"remote": False}}]
+            {"test_id": "T", "local_name": "PSU1", "etype": "psu", "bench": {"remote": False}}
+        ]
         dry = c.plan_only(claims)
         self.assertTrue(dry.get("ok"), dry)
         self.assertTrue(dry.get("dry_run"))
@@ -2374,7 +2788,7 @@ class BenchClientLiveTests(unittest.TestCase):
         acq = c.acquire_run(claims)
         self.assertTrue(acq.get("ok"), acq)
         self.assertEqual(dry["plan"], acq["plan"])
-        dry2 = c.plan_only(claims)          # run active: dry-run still allowed
+        dry2 = c.plan_only(claims)  # run active: dry-run still allowed
         self.assertTrue(dry2.get("ok"), dry2)
         self.assertEqual(dry2["plan"], acq["plan"])
 
@@ -2390,17 +2804,18 @@ class BenchClientLiveTests(unittest.TestCase):
         def counting_start():
             starts.append(1)
             orig_start()
+
         c._start = counting_start
-        acq = c.acquire_run([
-            {"test_id": "T", "local_name": "PSU1", "etype": "psu",
-             "bench": {"remote": False}}])
+        acq = c.acquire_run(
+            [{"test_id": "T", "local_name": "PSU1", "etype": "psu", "bench": {"remote": False}}]
+        )
         self.assertTrue(acq.get("ok"), acq)
         c._proc.kill()
         c._proc.wait(timeout=30)
         res = c.run_test(acq["run_id"], "whatever.py", "results")
         self.assertFalse(res.get("ok"))
         self.assertEqual(res.get("kind"), "SessionDead")
-        self.assertEqual(len(starts), 1)      # no silent respawn
+        self.assertEqual(len(starts), 1)  # no silent respawn
         self.assertTrue(c.dead)
 
     def test_acquire_after_daemon_death_is_session_dead_no_respawn(self):
@@ -2416,9 +2831,11 @@ class BenchClientLiveTests(unittest.TestCase):
         def counting_start():
             starts.append(1)
             orig_start()
+
         c._start = counting_start
-        claims = [{"test_id": "T", "local_name": "PSU1", "etype": "psu",
-                   "bench": {"remote": False}}]
+        claims = [
+            {"test_id": "T", "local_name": "PSU1", "etype": "psu", "bench": {"remote": False}}
+        ]
         acq = c.acquire_run(claims)
         self.assertTrue(acq.get("ok"), acq)
         c._proc.kill()
@@ -2427,7 +2844,7 @@ class BenchClientLiveTests(unittest.TestCase):
         self.assertFalse(res.get("ok"))
         self.assertEqual(res.get("kind"), "SessionDead")
         self.assertIn("died between exchanges", res.get("error", ""))
-        self.assertEqual(len(starts), 1)      # no silent respawn
+        self.assertEqual(len(starts), 1)  # no silent respawn
         self.assertTrue(c.dead)
 
 

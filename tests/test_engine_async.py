@@ -22,7 +22,9 @@ from procedo.engine_client import engine
 
 from .test_proposal_cards import _cards, _llm, opened as opened  # noqa: F401
 from .test_main_window_characterization import (  # noqa: F401
-    make_window as make_window, mbox as mbox, qapp as qapp,
+    make_window as make_window,
+    mbox as mbox,
+    qapp as qapp,
 )
 
 STALE = "The text changed while it ran; run it again."
@@ -56,7 +58,11 @@ class _Tools:
     def __init__(self, delay=0.0, gated=(), reply=_answer):
         self.delay, self.gated, self.reply = delay, gated, reply
         self.ops, self.threads, self.seen = [], [], []
-        self.entered, self.returned, self._go = threading.Event(), threading.Event(), threading.Event()
+        self.entered, self.returned, self._go = (
+            threading.Event(),
+            threading.Event(),
+            threading.Event(),
+        )
 
     def __call__(self, project_root, spec, timeout):
         if spec["op"] == "is_available":  # the views' gating probe (cached, not this slice's)
@@ -92,6 +98,7 @@ def _view(w, name):
 
 # --- each caller: off the GUI thread, the window keeps painting ---------------------------------
 
+
 def _text_after(view, op):
     return lambda: view.text_card.editor.toPlainText().endswith(f"{op}\n")
 
@@ -112,8 +119,11 @@ def _case(w, name):
     if name == "code":
         return _view(w, "json_code_tab")._on_quick_code, one_card
     if name in ("renumber_steps", "sync_equipment", "sync_meta"):
-        handler = {"renumber_steps": "_on_renumber_steps", "sync_equipment": "_on_sync_equipment",
-                   "sync_meta": "_on_sync_meta"}[name]
+        handler = {
+            "renumber_steps": "_on_renumber_steps",
+            "sync_equipment": "_on_sync_equipment",
+            "sync_meta": "_on_sync_meta",
+        }[name]
         return getattr(_view(w, "text_json_tab"), handler), _text_after(tj, name)
     if name == "parse_generate":
         return _view(w, "text_only_tab")._on_parse_and_generate, one_card
@@ -130,7 +140,9 @@ def _case(w, name):
 @pytest.fixture
 def real_reconstruct(monkeypatch):
     # ``opened`` hands proposals back as they are; here the real reconstruction asks the engine.
-    monkeypatch.setattr(text_actions, "reconstructed_or_error", reconstruction.reconstructed_or_error)
+    monkeypatch.setattr(
+        text_actions, "reconstructed_or_error", reconstruction.reconstructed_or_error
+    )
 
 
 def _longest_pause(start, landed):
@@ -150,8 +162,20 @@ def _longest_pause(start, landed):
     return max(b - a for a, b in zip(ticks, ticks[1:]))
 
 
-@pytest.mark.parametrize("name", ["parse", "render", "code", "parse_generate", "renumber_steps",
-                                  "sync_equipment", "sync_meta", "reconstruct", "save"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "parse",
+        "render",
+        "code",
+        "parse_generate",
+        "renumber_steps",
+        "sync_equipment",
+        "sync_meta",
+        "reconstruct",
+        "save",
+    ],
+)
 def test_each_engine_call_runs_off_the_gui_thread(opened, monkeypatch, real_reconstruct, name):
     w = opened
     tools = _Tools(delay=0.5)
@@ -172,9 +196,12 @@ def test_the_wizards_parse_and_meta_sync_run_off_the_gui_thread(qapp, tmp_path, 
     monkeypatch.setattr(engine, "tools_op", tools)
     out = {}
 
-    pause = _longest_pause(lambda: out.update(meta=api.sync_meta_text("# A\n"),
-                                              parsed=api.parse_procedure_text("# A\n")),
-                           lambda: "parsed" in out)
+    pause = _longest_pause(
+        lambda: out.update(
+            meta=api.sync_meta_text("# A\n"), parsed=api.parse_procedure_text("# A\n")
+        ),
+        lambda: "parsed" in out,
+    )
 
     assert out == {"meta": "# A\nsync_meta\n", "parsed": {"id": "t1", "steps": [{"n": 1}]}}
     assert tools.ops == ["sync_meta", "parse_text"]
@@ -184,10 +211,16 @@ def test_the_wizards_parse_and_meta_sync_run_off_the_gui_thread(qapp, tmp_path, 
 
 def test_the_wizards_api_raises_the_engines_error(qapp, tmp_path, monkeypatch):
     from procedo.engine_client import engine_session
+
     pm = SimpleNamespace(project_root=tmp_path)
     api = StudioAuthoringApi(SimpleNamespace(project_manager=pm, backend_factory=None))
-    monkeypatch.setattr(engine, "tools_op", _Tools(
-        reply=lambda spec: {"ok": False, "kind": "ParserUnavailable", "error": "no venv here"}))
+    monkeypatch.setattr(
+        engine,
+        "tools_op",
+        _Tools(
+            reply=lambda spec: {"ok": False, "kind": "ParserUnavailable", "error": "no venv here"}
+        ),
+    )
     with pytest.raises(engine_session.ParserUnavailable, match="no venv here"):
         api.parse_procedure_text("# A\n")
 
@@ -197,10 +230,14 @@ def test_the_wizards_api_raises_the_engines_error(qapp, tmp_path, monkeypatch):
 #: The op each case waits in (only that one: an edit's gating may ask the engine meanwhile).
 _OP = {"parse": "parse_text", "parse_generate": "parse_text"}
 
-@pytest.mark.parametrize("name", ["renumber_steps", "sync_equipment", "sync_meta", "reconstruct",
-                                  "parse", "parse_generate"])
+
+@pytest.mark.parametrize(
+    "name",
+    ["renumber_steps", "sync_equipment", "sync_meta", "reconstruct", "parse", "parse_generate"],
+)
 def test_an_edit_during_the_call_drops_its_result_and_says_so(
-        opened, monkeypatch, real_reconstruct, name):
+    opened, monkeypatch, real_reconstruct, name
+):
     w = opened
     tools = _Tools(gated=(_OP.get(name, name),))
     monkeypatch.setattr(engine, "tools_op", tools)
@@ -221,8 +258,10 @@ def test_an_edit_during_the_call_drops_its_result_and_says_so(
 
 # --- no double submit -------------------------------------------------------------------------
 
+
 def test_a_button_is_disabled_while_its_call_runs_and_a_second_press_starts_nothing(
-        opened, monkeypatch):
+    opened, monkeypatch
+):
     w = opened
     tools = _Tools(gated=("sync_equipment",))
     monkeypatch.setattr(engine, "tools_op", tools)
@@ -259,18 +298,22 @@ def test_a_gated_button_stays_disabled_while_its_call_runs(opened, monkeypatch):
 
 # --- errors show as they always did ---------------------------------------------------------
 
+
 def _unavailable(spec):
     return {"ok": False, "kind": "ParserUnavailable", "error": "no venv here"}
 
 
-@pytest.mark.parametrize("name, title, kind", [
-    ("sync_equipment", "Sync Equipment failed", "critical"),
-    ("renumber_steps", "Renumber failed", "critical"),
-    ("sync_meta", "Sync Meta failed", "critical"),
-    ("parse", "Parser Unavailable", "warning"),
-    ("render", "Parser Unavailable", "warning"),
-    ("code", "Code Generator Unavailable", "warning"),
-])
+@pytest.mark.parametrize(
+    "name, title, kind",
+    [
+        ("sync_equipment", "Sync Equipment failed", "critical"),
+        ("renumber_steps", "Renumber failed", "critical"),
+        ("sync_meta", "Sync Meta failed", "critical"),
+        ("parse", "Parser Unavailable", "warning"),
+        ("render", "Parser Unavailable", "warning"),
+        ("code", "Code Generator Unavailable", "warning"),
+    ],
+)
 def test_an_engine_error_shows_as_it_always_did(opened, monkeypatch, mbox, name, title, kind):
     w = opened
     monkeypatch.setattr(engine, "tools_op", _Tools(reply=_unavailable))
@@ -287,12 +330,27 @@ def test_an_engine_error_shows_as_it_always_did(opened, monkeypatch, mbox, name,
 
 def test_a_parse_failure_opens_the_findings_dialog(opened, monkeypatch):
     from procedo.studio.dialogs.validator_error_dialog import ValidatorErrorDialog
+
     w = opened
     shown = []
-    monkeypatch.setattr(ValidatorErrorDialog, "show_from_exception",
-                        lambda exc, **kw: shown.append((type(exc).__name__, kw["title"])))
-    monkeypatch.setattr(engine, "tools_op", _Tools(reply=lambda spec: {
-        "ok": False, "kind": "ParseFailure", "error": "bad", "errors": [], "findings": []}))
+    monkeypatch.setattr(
+        ValidatorErrorDialog,
+        "show_from_exception",
+        lambda exc, **kw: shown.append((type(exc).__name__, kw["title"])),
+    )
+    monkeypatch.setattr(
+        engine,
+        "tools_op",
+        _Tools(
+            reply=lambda spec: {
+                "ok": False,
+                "kind": "ParseFailure",
+                "error": "bad",
+                "errors": [],
+                "findings": [],
+            }
+        ),
+    )
     start, _landed = _case(w, "parse")
 
     start()
@@ -302,6 +360,7 @@ def test_a_parse_failure_opens_the_findings_dialog(opened, monkeypatch):
 
 
 # --- the save writes the file first ---------------------------------------------------------
+
 
 def test_the_save_writes_the_file_before_its_media_are_refreshed(opened, monkeypatch):
     w = opened
@@ -348,11 +407,14 @@ def test_an_edit_typed_while_the_media_refresh_runs_stays_unsaved(opened, monkey
     assert path.read_text(encoding="utf-8") == written
     assert card.editor.toPlainText() == '{"id": "t1", "typed": true}'
     assert card.dirty
-    assert w.artifact_manager.get_content(ArtifactType.PROCEDURE_JSON) == '{"id": "t1", "typed": true}'
+    assert (
+        w.artifact_manager.get_content(ArtifactType.PROCEDURE_JSON) == '{"id": "t1", "typed": true}'
+    )
 
 
 def test_a_refresh_landing_after_a_test_switch_leaves_the_new_tests_editor_alone(
-        opened, monkeypatch):
+    opened, monkeypatch
+):
     w = opened
     tools = _Tools(gated=("refresh_media",))
     monkeypatch.setattr(engine, "tools_op", tools)
@@ -403,9 +465,15 @@ def test_answers_reach_the_gui_thread_when_a_worker_imported_the_module_first():
     import os
     import subprocess
     import sys
+
     env = dict(os.environ, PYTHONPATH=os.pathsep.join(p for p in sys.path if p))
-    out = subprocess.run([sys.executable, "-c", _IMPORTED_ON_A_WORKER], capture_output=True,
-                         text=True, timeout=60, env=env).stdout
+    out = subprocess.run(
+        [sys.executable, "-c", _IMPORTED_ON_A_WORKER],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
+    ).stdout
     assert out.strip().splitlines()[-1] == "[(7, True)]"
 
 
@@ -414,6 +482,7 @@ def test_an_answer_for_a_button_destroyed_meanwhile_still_lands(qapp, tmp_path):
     from PySide6.QtWidgets import QPushButton
     from procedo.studio.pack_ops import engine_async
     from procedo.ui.ui_kit import LoadingCue
+
     button, cue, go, answered = QPushButton("Sync"), LoadingCue(), threading.Event(), []
 
     engine_async.call(tmp_path, lambda: go.wait(5), answered.append, button=button, cue=cue)
@@ -437,12 +506,20 @@ _CUES = {  # caller -> (the view's attribute holding the cue's owner, its card o
     "reconstruct": ("text_only_tab", "text_card", "Preparing the proposal…"),
     "save": (None, None, "Refreshing media…"),
 }
-_OPS = {"parse": "parse_text", "render": "render_text", "code": "generate_code", "parse_generate": "parse_text",
-        "reconstruct": "reconstruct", "save": "refresh_media"}
+_OPS = {
+    "parse": "parse_text",
+    "render": "render_text",
+    "code": "generate_code",
+    "parse_generate": "parse_text",
+    "reconstruct": "reconstruct",
+    "save": "refresh_media",
+}
 
 
 @pytest.mark.parametrize("name", sorted(_CUES))
-def test_each_engine_call_says_it_runs_where_its_answer_will_show(opened, monkeypatch, real_reconstruct, name):
+def test_each_engine_call_says_it_runs_where_its_answer_will_show(
+    opened, monkeypatch, real_reconstruct, name
+):
     w = opened
     tools = _Tools(gated=(_OPS.get(name, name),))
     monkeypatch.setattr(engine, "tools_op", tools)
@@ -461,6 +538,7 @@ def test_each_engine_call_says_it_runs_where_its_answer_will_show(opened, monkey
 def test_a_failed_engine_call_takes_its_cue_away(qapp, tmp_path):
     from procedo.ui.ui_kit import LoadingCue
     from procedo.studio.pack_ops import engine_async
+
     cue, answered = LoadingCue(), []
 
     def broken():
@@ -477,7 +555,9 @@ def test_a_failed_engine_call_takes_its_cue_away(qapp, tmp_path):
 def test_a_session_compaction_shows_in_the_footer_until_it_answers(opened, monkeypatch):
     w = opened
     go = threading.Event()
-    tab = SimpleNamespace(tab_context=SimpleNamespace(backend=SimpleNamespace(compact=lambda: go.wait(5))))
+    tab = SimpleNamespace(
+        tab_context=SimpleNamespace(backend=SimpleNamespace(compact=lambda: go.wait(5)))
+    )
     monkeypatch.setattr(w.view_stack, "currentWidget", lambda: tab)
     w._assistant_controller.on_compact_session()
     assert w.loading.active and w.loading.label.text() == "Compacting session…"

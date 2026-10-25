@@ -87,8 +87,11 @@ class _Worker:
     def __init__(self, backend, request, parent=None):
         self.backend, self.request, self.slots = backend, request, {}
         for name in ("finished", "error", "thinking_chunk", "text_chunk"):
-            setattr(self, name, SimpleNamespace(
-                connect=lambda slot, name=name: self.slots.__setitem__(name, slot)))
+            setattr(
+                self,
+                name,
+                SimpleNamespace(connect=lambda slot, name=name: self.slots.__setitem__(name, slot)),
+            )
 
     def start(self):
         _Worker.made.append(self)
@@ -146,7 +149,8 @@ def _longest_gap(stamps) -> float:
 
 
 def test_two_sends_wait_for_one_server_start_without_holding_the_gui(
-        opened, skill_chat, monkeypatch):
+    opened, skill_chat, monkeypatch
+):
     w = opened
     view = w.text_only_tab
     server = _SlowServer()
@@ -159,8 +163,13 @@ def test_two_sends_wait_for_one_server_start_without_holding_the_gui(
 
     view._run_task_async(LLMTask.REVIEW_TEXT_PROCEDURE)  # a tab send
     chat.send_user_turn("hello")  # a skill chat send, while the start runs
-    queued = (_Worker.made == [], cue.active, cue.label.text(),
-              chat._loading.active, chat._loading.label.text())
+    queued = (
+        _Worker.made == [],
+        cue.active,
+        cue.label.text(),
+        chat._loading.active,
+        chat._loading.label.text(),
+    )
     _spin(lambda: len(_Worker.made) == 2)
     timer.stop()
 
@@ -171,12 +180,14 @@ def test_two_sends_wait_for_one_server_start_without_holding_the_gui(
     assert chat._loading.label.text() == "Working…"  # the turn runs now
     sent = {id(worker.backend) for worker in _Worker.made}
     assert sent == {id(view.tab_context.backend), id(chat._llm.backend)}
-    assert all(isinstance(worker.backend, _Backend) and worker.backend.started
-               for worker in _Worker.made)
+    assert all(
+        isinstance(worker.backend, _Backend) and worker.backend.started for worker in _Worker.made
+    )
 
 
 def test_a_failed_start_answers_the_queued_send_with_the_server_s_failure(
-        opened, monkeypatch, mbox):
+    opened, monkeypatch, mbox
+):
     """One start for the send (the tab tried 2-3 times, each holding the GUI), its failure
     the reply, as before; the next send tries again."""
     w = opened
@@ -221,18 +232,25 @@ def test_studio_closed_during_a_start_leaves_no_server_and_no_pid_file(qapp, tmp
 
     mgr = _mgr(tmp_path)
     factory = BackendFactory(
-        BackendConfig(backend_type=BACKEND_TYPE_OPENCODE, opencode=mgr.config), mgr)
+        BackendConfig(backend_type=BACKEND_TYPE_OPENCODE, opencode=mgr.config), mgr
+    )
     proc = _fake_spawn(["__OC_PID__31337\n"])
     healthy = MagicMock()
     healthy.ok = True
     answers = _Answers()
-    with patch.object(mgr, "_diagnose_installation", return_value=healthy), \
-         patch("procedo.studio.llm.server_manager.find_free_port", return_value=5005), \
-         patch("procedo.studio.llm.server_manager.subprocess.Popen",
-               side_effect=lambda *a, **k: _write_record(mgr, 31337) or proc), \
-         patch("procedo.studio.llm.server_manager.subprocess.run", return_value=MagicMock()), \
-         patch("procedo.studio.llm.server_manager.requests.get",
-               side_effect=requests.exceptions.ConnectionError()):
+    with (
+        patch.object(mgr, "_diagnose_installation", return_value=healthy),
+        patch("procedo.studio.llm.server_manager.find_free_port", return_value=5005),
+        patch(
+            "procedo.studio.llm.server_manager.subprocess.Popen",
+            side_effect=lambda *a, **k: _write_record(mgr, 31337) or proc,
+        ),
+        patch("procedo.studio.llm.server_manager.subprocess.run", return_value=MagicMock()),
+        patch(
+            "procedo.studio.llm.server_manager.requests.get",
+            side_effect=requests.exceptions.ConnectionError(),
+        ),
+    ):
         request_backend(factory, "text_json", answers.take)
         deadline = time.monotonic() + 10
         while mgr._spawned is None and time.monotonic() < deadline:
@@ -243,7 +261,7 @@ def test_studio_closed_during_a_start_leaves_no_server_and_no_pid_file(qapp, tmp
         LLMServerController._stop_current_server(SimpleNamespace(server_manager=mgr))
         _spin(lambda: answers.got)
 
-    (_factory_, backend, keep), = answers.got
+    ((_factory_, backend, keep),) = answers.got
     assert isinstance(backend, NoneBackend) and not keep
     proc.terminate.assert_called()
     assert mgr._server_process is None and not mgr.is_running
@@ -251,6 +269,7 @@ def test_studio_closed_during_a_start_leaves_no_server_and_no_pid_file(qapp, tmp
 
 
 # --- what the user sent always stays in the chat -------------------------------------------
+
 
 def _lines(view):
     return [m.content for m in view.tab_context.messages]
@@ -269,7 +288,9 @@ def test_a_send_a_test_switch_dropped_stays_in_the_chat_and_says_why(opened, mon
 
     assert shown[-1] == "check U5"
     assert _lines(view)[-2:] == [
-        "check U5", "Not sent: the test changed while the AI server was starting."]
+        "check U5",
+        "Not sent: the test changed while the AI server was starting.",
+    ]
     assert _Worker.made == []
 
 
@@ -295,12 +316,12 @@ def test_a_task_that_replaces_a_waiting_send_says_so_and_goes_once(opened, monke
 
 # --- a waiting turn: Stop, Restart, close; a Settings save; a failed request ---------------
 
+
 def _system_lines(chat):
     return [text for speaker, text in chat._blocks if speaker == "System"]
 
 
-def test_stop_while_the_server_starts_drops_the_turn_and_unlocks_the_chat(
-        skill_chat, monkeypatch):
+def test_stop_while_the_server_starts_drops_the_turn_and_unlocks_the_chat(skill_chat, monkeypatch):
     chat = skill_chat(_factory(monkeypatch, _SlowServer()))
     failed = []
     chat.reply_failed.connect(failed.append)
@@ -369,6 +390,7 @@ def test_a_request_that_fails_unlocks_the_chat_and_says_why(opened, monkeypatch)
 
     def refuse(factory, tab_id, on_answer):
         raise RuntimeError("no QApplication")
+
     monkeypatch.setattr(llm_tab_mixin, "request_backend", refuse)
 
     view._run_task_async(LLMTask.AD_HOC_CHAT, user_message="check U5")
@@ -382,9 +404,13 @@ def test_a_request_that_fails_unlocks_the_chat_and_says_why(opened, monkeypatch)
 def test_an_opencode_factory_without_a_server_manager_spawns_no_server():
     """The server manager is the one spawner: only it stops the server it started by its
     Linux pid, so a factory without one hands out the disabled backend instead."""
-    factory = BackendFactory(BackendConfig(backend_type=BACKEND_TYPE_OPENCODE, opencode=OpenCodeConfig()))
-    with patch("opencode_client.lifecycle._health_ok", return_value=False), \
-         patch("opencode_client.lifecycle.subprocess.Popen") as popen:
+    factory = BackendFactory(
+        BackendConfig(backend_type=BACKEND_TYPE_OPENCODE, opencode=OpenCodeConfig())
+    )
+    with (
+        patch("opencode_client.lifecycle._health_ok", return_value=False),
+        patch("opencode_client.lifecycle.subprocess.Popen") as popen,
+    ):
         backend = factory.create_backend(tab_id="text_json")
         backend.start()
     popen.assert_not_called()
@@ -402,6 +428,7 @@ def test_a_re_request_that_fails_unlocks_the_chat_and_says_why(opened, monkeypat
         calls.append(on_answer)
         if len(calls) > 1:
             raise RuntimeError("no QApplication")
+
     monkeypatch.setattr(llm_tab_mixin, "request_backend", refuse_second)
     view._run_task_async(LLMTask.AD_HOC_CHAT, user_message="check U5")
     monkeypatch.setattr(view.tab_context, "adopt_backend", lambda answer: None)  # factory replaced
@@ -416,8 +443,10 @@ def test_a_re_request_that_fails_unlocks_the_chat_and_says_why(opened, monkeypat
 
 # --- a waiting send: Cancel, a second programmatic turn, a project switch -----------------
 
+
 def test_cancel_while_the_server_starts_drops_the_send_and_the_next_waits_for_that_start(
-        opened, monkeypatch):
+    opened, monkeypatch
+):
     w = opened
     view = w.text_only_tab
     w.view_stack.setCurrentWidget(view)
@@ -456,7 +485,8 @@ def test_cancel_on_another_view_drops_the_send_waiting_there(opened, monkeypatch
 
 
 def test_restart_backend_says_the_waiting_send_is_not_sent_because_of_the_restart(
-        opened, monkeypatch):
+    opened, monkeypatch
+):
     w = opened
     view = w.text_only_tab
     w.view_stack.setCurrentWidget(view)

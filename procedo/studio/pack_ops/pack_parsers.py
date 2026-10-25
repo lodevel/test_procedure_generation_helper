@@ -15,6 +15,7 @@ the machine-local venv (``project_venv``), serving the op table
 ``engine_client/_engine_ops.py``. By path, not ``-m``: the project venv does not
 have the ``procedo`` package.
 """
+
 from __future__ import annotations
 
 import re
@@ -44,14 +45,16 @@ NO_PROJECT = "No project is open."
 # ---------------------------------------------------------------------------
 
 
-def _engine_call(project_root: Optional[Path], spec: dict[str, Any],
-                 timeout: Optional[float] = None) -> dict[str, Any]:
+def _engine_call(
+    project_root: Optional[Path], spec: dict[str, Any], timeout: Optional[float] = None
+) -> dict[str, Any]:
     """``spec`` answered by the project's TOOLS engine: the op's result dict, or
     ``{"ok": False, "kind", "error"}``. Raises ParserUnavailable with no project
     open or without a venv."""
     if project_root is None:
         raise ParserUnavailable(NO_PROJECT)
     from procedo.engine_client import engine  # the project's engine processes
+
     return engine.tools_op(project_root, spec, timeout or _timeout())
 
 
@@ -84,7 +87,8 @@ def parse_text(
     or :class:`ParseFailure` on failure.
     """
     result = _engine_call(
-        project_root, {"op": "parse_text", "text": text, "project_root": str(project_root)})
+        project_root, {"op": "parse_text", "text": text, "project_root": str(project_root)}
+    )
 
     if not result.get("ok"):
         kind = result.get("kind", "Other")
@@ -100,8 +104,7 @@ def render_text(
     project_root: Optional[Path] = None,
 ) -> str:
     """Emit canonical-text procedure from the v2.0.1 JSON shape."""
-    result = _engine_call(
-        project_root, {"op": "render_text", "procedure_json": procedure_json})
+    result = _engine_call(project_root, {"op": "render_text", "procedure_json": procedure_json})
     if not result.get("ok"):
         raise ParserUnavailable(result.get("error", "engine error"))
     return result["text"]
@@ -116,8 +119,7 @@ def refresh_media(
     no-op on a parser-produced JSON and the refresh a hand- or LLM-edited
     JSON needs. Returns the refreshed dict (a fresh one). Raises
     :class:`ParserUnavailable` when the wheel cannot run."""
-    result = _engine_call(
-        project_root, {"op": "refresh_media", "procedure_json": procedure_json})
+    result = _engine_call(project_root, {"op": "refresh_media", "procedure_json": procedure_json})
     if not result.get("ok"):
         raise ParserUnavailable(result.get("error", "engine error"))
     return result["json"]
@@ -218,7 +220,6 @@ def sync_meta_json(
     return meta if isinstance(meta, dict) else {}
 
 
-
 def generate_code(
     procedure: dict[str, Any],
     project_root: Optional[Path] = None,
@@ -247,8 +248,12 @@ def validate(
     the Call steps checked against its ``functions/`` too). Returns a ``_ValidateReport``
     duck-typed against the legacy ProcedureTextRenderer.validate() shape; raises
     :class:`ParserUnavailable` if the wheel isn't importable."""
-    spec: dict[str, Any] = {"op": "validate", "mode": mode, "check_names": check_names,
-                            "project": str(project_root)}
+    spec: dict[str, Any] = {
+        "op": "validate",
+        "mode": mode,
+        "check_names": check_names,
+        "project": str(project_root),
+    }
     if text is not None:
         spec["text"] = text
     if json_obj is not None:
@@ -314,9 +319,7 @@ def reconstruct_text(
             "op": "reconstruct",
             "fragment": fragment,
             "prior": prior,
-            "owned_sections": (
-                sorted(owned_sections) if owned_sections is not None else None
-            ),
+            "owned_sections": (sorted(owned_sections) if owned_sections is not None else None),
         },
     )
     if not result.get("ok"):

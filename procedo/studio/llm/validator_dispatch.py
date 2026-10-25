@@ -40,6 +40,7 @@ No GUI imports here — consumers map ``ValidationOutcome.issues`` onto
 their own widget shapes (e.g. the dock-widget findings panel's dict
 shape is constructed by the mixin, not by this module).
 """
+
 from __future__ import annotations
 
 import json
@@ -104,7 +105,8 @@ def _proposal_content(response: LLMResponse, attr: str) -> Optional[Any]:
 
 
 def _resolve_json_for_crosscheck(
-    response: LLMResponse, current: CurrentArtifacts,
+    response: LLMResponse,
+    current: CurrentArtifacts,
 ) -> Optional[Any]:
     """Pick the JSON object the validator should cross-check a text or
     code proposal against — **proposed-side only, never current**.
@@ -141,7 +143,8 @@ def _resolve_json_for_crosscheck(
 
 
 def _resolve_text_for_crosscheck(
-    response: LLMResponse, current: CurrentArtifacts,
+    response: LLMResponse,
+    current: CurrentArtifacts,
 ) -> Optional[str]:
     """Pick the text the validator should cross-check a json proposal
     against — **proposed-side only**. See
@@ -154,7 +157,8 @@ def _resolve_text_for_crosscheck(
 
 
 def _resolve_code_for_crosscheck(
-    response: LLMResponse, current: CurrentArtifacts,
+    response: LLMResponse,
+    current: CurrentArtifacts,
 ) -> Optional[str]:
     """Pick the code the validator should cross-check a json proposal
     against — **proposed-side only**. Symmetric to the text/json
@@ -219,8 +223,10 @@ def _validate_proposed_text(
     # validating, so the validator sees the full document the operator
     # will actually apply (identity + Meta from prior, body from the LLM).
     recon = reconstruction.reconstruct_for_pipeline(
-        str(proposed_text), original_text,
-        task_override=task_override, project_root=project_root,
+        str(proposed_text),
+        original_text,
+        task_override=task_override,
+        project_root=project_root,
     )
     # recon.text is set even on failure (half-built doc); compute the shift so we
     # can translate full-doc line numbers back to fragment coords per-issue below.
@@ -305,9 +311,7 @@ def _validate_proposed_json(
         try:
             proposed_json = json.loads(proposed_json)
         except json.JSONDecodeError as exc:
-            return outcome_from_parse_error(
-                FauxParseError("JS_BODY_INVALID", str(exc))
-            )
+            return outcome_from_parse_error(FauxParseError("JS_BODY_INVALID", str(exc)))
     # Mirror the text path's reconstruct step, JSON-side: re-derive the
     # parser-owned Meta pins (format_version / rules_pack and the conditional
     # labscpi_pack / fncore_pack) from the ACTIVE BUNDLE so the LLM may OMIT
@@ -327,7 +331,8 @@ def _validate_proposed_json(
 
 
 def _fill_parser_owned_meta(
-    json_obj: Any, project_root: Optional[Path],
+    json_obj: Any,
+    project_root: Optional[Path],
 ) -> None:
     """Graft bundle-derived parser-owned meta onto ``json_obj['meta']`` in place.
 
@@ -388,9 +393,7 @@ def _validate_proposed_code(
         return None
     json_obj = _resolve_json_for_crosscheck(response, current)
     if json_obj is None:
-        return skipped_outcome(
-            "no procedure_json available — cannot validate proposed code"
-        )
+        return skipped_outcome("no procedure_json available — cannot validate proposed code")
     report = validate_fn(json_obj=json_obj, mode="all")
     return outcome_from_report(report)
 
@@ -426,9 +429,7 @@ import re as _re
 # with no value (`requirement:`), (b) `requirement: <value>`, and trailing
 # whitespace differences. Anchored to start-of-line so it doesn't
 # accidentally match `requirement:` inside step prose.
-_META_REQUIREMENT_LINE_RE = _re.compile(
-    r"^requirement:(?:[ \t]+([^\n]*?))?[ \t]*$", _re.MULTILINE
-)
+_META_REQUIREMENT_LINE_RE = _re.compile(r"^requirement:(?:[ \t]+([^\n]*?))?[ \t]*$", _re.MULTILINE)
 
 
 def _extract_meta_requirement_from_text(text: str) -> str:
@@ -495,25 +496,27 @@ def _auto_restore_operator_only_fields(
         json_change = _restore_requirement_in_json_proposal(response, baseline_value)
         if json_change:
             from_value = json_change[0]
-            issues.append(ValidationIssueView(
-                code="META_REQUIREMENT_AUTO_RESTORED",
-                severity="warning",
-                message=(
-                    f"The LLM populated or modified the operator-only field "
-                    f"`meta.{field_name}` (baseline: {baseline_value!r}, "
-                    f"response: {from_value!r}). Auto-restored to baseline "
-                    f"value before applying. Per Doc 02 §2.1 and Doc 12 "
-                    f"§2.1.4, this slot is operator-supplied only — the LLM "
-                    f"cannot infer a value and must NOT use it as a freeform "
-                    f"dumping ground for inferred prose."
-                ),
-                location="/meta/" + field_name,
-                fix_hint=(
-                    "No action needed — the system corrected this "
-                    "automatically. If the LLM keeps inventing values here, "
-                    "review the rule docs (Doc 12 §2.1.4) shown to the model."
-                ),
-            ))
+            issues.append(
+                ValidationIssueView(
+                    code="META_REQUIREMENT_AUTO_RESTORED",
+                    severity="warning",
+                    message=(
+                        f"The LLM populated or modified the operator-only field "
+                        f"`meta.{field_name}` (baseline: {baseline_value!r}, "
+                        f"response: {from_value!r}). Auto-restored to baseline "
+                        f"value before applying. Per Doc 02 §2.1 and Doc 12 "
+                        f"§2.1.4, this slot is operator-supplied only — the LLM "
+                        f"cannot infer a value and must NOT use it as a freeform "
+                        f"dumping ground for inferred prose."
+                    ),
+                    location="/meta/" + field_name,
+                    fix_hint=(
+                        "No action needed — the system corrected this "
+                        "automatically. If the LLM keeps inventing values here, "
+                        "review the rule docs (Doc 12 §2.1.4) shown to the model."
+                    ),
+                )
+            )
     return issues
 
 
@@ -538,7 +541,9 @@ def _restore_requirement_in_json_proposal(
     else:
         return None
     proposed_meta = parsed.get("meta", {}) if isinstance(parsed, dict) else {}
-    proposed_value = (proposed_meta.get("requirement") or "") if isinstance(proposed_meta, dict) else ""
+    proposed_value = (
+        (proposed_meta.get("requirement") or "") if isinstance(proposed_meta, dict) else ""
+    )
     if proposed_value == baseline_value:
         return None
     new_meta = dict(proposed_meta) if isinstance(proposed_meta, dict) else {}
@@ -584,9 +589,11 @@ def validate_response(
     and the at-apply reconstruction.
     """
     from ..pack_ops import pack_parsers
+
     if project_root is None:
         return skipped_outcome(pack_parsers.NO_PROJECT)
     import functools
+
     available, reason = pack_parsers.is_available(project_root)
     if not available:
         return skipped_outcome(f"deterministic validator unavailable: {reason}")
@@ -605,7 +612,10 @@ def validate_response(
     for handler in _ARTIFACT_HANDLERS:
         try:
             outcome = handler(
-                response, current_artifacts, project_root, validate_fn,
+                response,
+                current_artifacts,
+                project_root,
+                validate_fn,
                 task_override,
             )
         except Exception as exc:  # noqa: BLE001 — never let validator bugs block LLM flow
@@ -647,10 +657,12 @@ def is_loop_available(project_root: Optional[Path]) -> tuple[bool, str]:
          handler. Either missing → "validator unavailable" reason.
     """
     from ..pack_ops import pack_parsers
+
     if project_root is None:
         return False, pack_parsers.NO_PROJECT
     # 1. Per-project explicit opt-out.
     from .validator_loop_settings import is_enabled as _is_enabled
+
     if not _is_enabled(project_root):
         return False, "disabled in project settings (validator_loop.enabled=false)"
     # 2. Wheel-import probe via the project's own venv Python.
@@ -689,8 +701,7 @@ def format_validator_feedback(
     parser's prescriptive guidance, or for keeping the feedback turn short).
     """
     llm_issues = [
-        i for i in outcome.issues
-        if i.fixable_by != "operator" and i.severity != "warning"
+        i for i in outcome.issues if i.fixable_by != "operator" and i.severity != "warning"
     ]
     if not llm_issues:
         # All findings are operator-only — caller should have short-circuited.
@@ -748,14 +759,14 @@ def validate_current_state(
     decide whether to act.
     """
     from ..pack_ops import pack_parsers
+
     available, reason = pack_parsers.is_available(project_root)
     if not available:
         return skipped_outcome(f"Validator unavailable: {reason}")
 
     if not (text or json_str or code):
         return skipped_outcome(
-            "No artifacts to validate (procedure_text, procedure.json, and "
-            "test.py are all empty)."
+            "No artifacts to validate (procedure_text, procedure.json, and test.py are all empty)."
         )
 
     json_obj: Optional[dict[str, Any]] = None
@@ -763,10 +774,12 @@ def validate_current_state(
         try:
             json_obj = json.loads(json_str)
         except json.JSONDecodeError as exc:
-            return outcome_from_parse_error(FauxParseError(
-                "JSON_DECODE_FAILED",
-                f"procedure.json is not valid JSON: {exc}",
-            ))
+            return outcome_from_parse_error(
+                FauxParseError(
+                    "JSON_DECODE_FAILED",
+                    f"procedure.json is not valid JSON: {exc}",
+                )
+            )
 
     # Note: Phase 5.1 no longer wires inventory / code through the
     # renderer-side validate. The legacy renderer ignored them anyway
@@ -784,11 +797,13 @@ def validate_current_state(
         return ValidationOutcome(
             ok=False,
             skipped=False,
-            issues=[ValidationIssueView(
-                code="VALIDATOR_INTERNAL_ERROR",
-                message=f"Validator raised an unexpected exception: {exc}",
-                severity="error",
-            )],
+            issues=[
+                ValidationIssueView(
+                    code="VALIDATOR_INTERNAL_ERROR",
+                    message=f"Validator raised an unexpected exception: {exc}",
+                    severity="error",
+                )
+            ],
         )
 
     issues: list[ValidationIssueView] = []

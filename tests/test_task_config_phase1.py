@@ -35,29 +35,34 @@ def _shared_fallback(tmp_path: Path) -> Path:
     """A minimal tab_contexts-shaped fallback file used as the read-only
     fallback in project-mode tests."""
     p = tmp_path / "shared_fallback.json"
-    p.write_text(json.dumps({
-        "text_json": {
-            "tasks": [
-                {
-                    "id": "derive_json_from_text",
-                    "name": "Derive JSON from Text",
-                    "button_label": "Text → JSON",
-                    "prompt_template": None,
-                    "enabled": True,
-                    "max_validator_attempts": None,
+    p.write_text(
+        json.dumps(
+            {
+                "text_json": {
+                    "tasks": [
+                        {
+                            "id": "derive_json_from_text",
+                            "name": "Derive JSON from Text",
+                            "button_label": "Text → JSON",
+                            "prompt_template": None,
+                            "enabled": True,
+                            "max_validator_attempts": None,
+                        },
+                        {
+                            "id": "review_json",
+                            "name": "Review JSON",
+                            "button_label": "Review JSON",
+                            "prompt_template": None,
+                            "enabled": True,
+                            "max_validator_attempts": None,
+                        },
+                    ],
+                    "chat_config": {"enabled": True, "system_prompt": None},
                 },
-                {
-                    "id": "review_json",
-                    "name": "Review JSON",
-                    "button_label": "Review JSON",
-                    "prompt_template": None,
-                    "enabled": True,
-                    "max_validator_attempts": None,
-                },
-            ],
-            "chat_config": {"enabled": True, "system_prompt": None},
-        },
-    }), encoding="utf-8")
+            }
+        ),
+        encoding="utf-8",
+    )
     return p
 
 
@@ -83,35 +88,40 @@ def test_unknown_workflows_keys_survive_round_trip(tmp_path):
 
     # Project carries the future validators block AND a fully-formed tasks list.
     project_cfg = root / "config" / "config.json"
-    project_cfg.write_text(json.dumps({
-        "manifest": {"name": "Round-trip test"},
-        "workflows": {
-            "text_json": {
-                "tasks": [
-                    {
-                        "id": "derive_json_from_text",
-                        "name": "Derive JSON from Text",
-                        "button_label": "Override",
-                        "prompt_template": "P",
-                        "enabled": True,
-                        "max_validator_attempts": None,
+    project_cfg.write_text(
+        json.dumps(
+            {
+                "manifest": {"name": "Round-trip test"},
+                "workflows": {
+                    "text_json": {
+                        "tasks": [
+                            {
+                                "id": "derive_json_from_text",
+                                "name": "Derive JSON from Text",
+                                "button_label": "Override",
+                                "prompt_template": "P",
+                                "enabled": True,
+                                "max_validator_attempts": None,
+                            },
+                        ],
+                        "chat_config": {"enabled": True, "system_prompt": "custom"},
+                        "validators": [
+                            {"id": "rules_packager_base.validate_procedure", "enabled": True},
+                            {"id": "core.check_python_syntax", "enabled": False},
+                        ],
+                        "future_extension": {"opaque": ["data", 42]},
                     },
-                ],
-                "chat_config": {"enabled": True, "system_prompt": "custom"},
-                "validators": [
-                    {"id": "rules_packager_base.validate_procedure", "enabled": True},
-                    {"id": "core.check_python_syntax", "enabled": False},
-                ],
-                "future_extension": {"opaque": ["data", 42]},
+                },
             },
-        },
-    }, indent=2), encoding="utf-8")
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     mgr = TaskConfigManager(fallback, project_root=root)
 
     # Touch a known field so save_config has something to actually persist.
-    mgr.update_task_config("text_json", "derive_json_from_text",
-                           button_label="Override Edited")
+    mgr.update_task_config("text_json", "derive_json_from_text", button_label="Override Edited")
     assert mgr.save_config()
 
     # Read back the on-disk config and assert preservation.
@@ -151,21 +161,26 @@ def test_project_with_no_runnable_task_lists_none(tmp_path):
 def test_project_override_per_task_button_label(tmp_path):
     fallback = _shared_fallback(tmp_path)
     root = _project_root(tmp_path)
-    (root / "config" / "config.json").write_text(json.dumps({
-        "workflows": {
-            "text_json": {
-                "tasks": [
-                    {
-                        "id": "derive_json_from_text",
-                        "name": "Derive JSON from Text",
-                        "button_label": "CUSTOM Text→JSON",
-                        "prompt_template": "P",
-                        "enabled": True,
+    (root / "config" / "config.json").write_text(
+        json.dumps(
+            {
+                "workflows": {
+                    "text_json": {
+                        "tasks": [
+                            {
+                                "id": "derive_json_from_text",
+                                "name": "Derive JSON from Text",
+                                "button_label": "CUSTOM Text→JSON",
+                                "prompt_template": "P",
+                                "enabled": True,
+                            },
+                        ],
                     },
-                ],
-            },
-        },
-    }), encoding="utf-8")
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
     mgr = TaskConfigManager(fallback, project_root=root)
     task = mgr.get_task_config("text_json", "derive_json_from_text")
@@ -197,37 +212,47 @@ def test_reload_clears_cache_and_switches_project(tmp_path):
 
     proj_a = tmp_path / "proj_a"
     (proj_a / "config").mkdir(parents=True)
-    (proj_a / "config" / "config.json").write_text(json.dumps({
-        "workflows": {
-            "text_json": {
-                "tasks": [
-                    {
-                        "id": "derive_json_from_text",
-                        "name": "Derive JSON from Text",
-                        "button_label": "Label A",
-                        "prompt_template": "P",
+    (proj_a / "config" / "config.json").write_text(
+        json.dumps(
+            {
+                "workflows": {
+                    "text_json": {
+                        "tasks": [
+                            {
+                                "id": "derive_json_from_text",
+                                "name": "Derive JSON from Text",
+                                "button_label": "Label A",
+                                "prompt_template": "P",
+                            },
+                        ],
                     },
-                ],
-            },
-        },
-    }), encoding="utf-8")
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
     proj_b = tmp_path / "proj_b"
     (proj_b / "config").mkdir(parents=True)
-    (proj_b / "config" / "config.json").write_text(json.dumps({
-        "workflows": {
-            "text_json": {
-                "tasks": [
-                    {
-                        "id": "derive_json_from_text",
-                        "name": "Derive JSON from Text",
-                        "button_label": "Label B",
-                        "prompt_template": "P",
+    (proj_b / "config" / "config.json").write_text(
+        json.dumps(
+            {
+                "workflows": {
+                    "text_json": {
+                        "tasks": [
+                            {
+                                "id": "derive_json_from_text",
+                                "name": "Derive JSON from Text",
+                                "button_label": "Label B",
+                                "prompt_template": "P",
+                            },
+                        ],
                     },
-                ],
-            },
-        },
-    }), encoding="utf-8")
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
     mgr = TaskConfigManager(fallback, project_root=proj_a)
     assert mgr.get_task_config("text_json", "derive_json_from_text").button_label == "Label A"
@@ -267,20 +292,25 @@ def test_migrates_project_tab_contexts(tmp_path):
     root = _project_root(tmp_path)
     legacy = root / "config" / "tab_contexts.json"
 
-    legacy.write_text(json.dumps({
-        "text_json": {
-            "selected_rules": ["rule_a.md", "rule_b.md"],
-            "tasks": [
-                {
-                    "id": "derive_json_from_text",
-                    "name": "Derive JSON from Text",
-                    "button_label": "Legacy Label",
-                    "prompt_template": "P",
+    legacy.write_text(
+        json.dumps(
+            {
+                "text_json": {
+                    "selected_rules": ["rule_a.md", "rule_b.md"],
+                    "tasks": [
+                        {
+                            "id": "derive_json_from_text",
+                            "name": "Derive JSON from Text",
+                            "button_label": "Legacy Label",
+                            "prompt_template": "P",
+                        },
+                    ],
+                    "future_block": {"keep": "me"},
                 },
-            ],
-            "future_block": {"keep": "me"},
-        },
-    }), encoding="utf-8")
+            }
+        ),
+        encoding="utf-8",
+    )
 
     # Pre-existing manifest must survive.
     (root / "config" / "config.json").write_text(
@@ -334,19 +364,35 @@ def test_migration_idempotent_when_workflows_already_present(tmp_path):
     root = _project_root(tmp_path)
 
     legacy = root / "config" / "tab_contexts.json"
-    legacy.write_text(json.dumps({
-        "text_json": {"tasks": [{"id": "stale", "name": "stale", "button_label": "stale"}]},
-    }), encoding="utf-8")
+    legacy.write_text(
+        json.dumps(
+            {
+                "text_json": {"tasks": [{"id": "stale", "name": "stale", "button_label": "stale"}]},
+            }
+        ),
+        encoding="utf-8",
+    )
 
     project_cfg = root / "config" / "config.json"
-    project_cfg.write_text(json.dumps({
-        "workflows": {
-            "text_json": {"tasks": [
-                {"id": "derive_json_from_text", "name": "n", "button_label": "Existing",
-                 "prompt_template": "P"},
-            ]},
-        },
-    }), encoding="utf-8")
+    project_cfg.write_text(
+        json.dumps(
+            {
+                "workflows": {
+                    "text_json": {
+                        "tasks": [
+                            {
+                                "id": "derive_json_from_text",
+                                "name": "n",
+                                "button_label": "Existing",
+                                "prompt_template": "P",
+                            },
+                        ]
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
     mgr = TaskConfigManager(fallback, project_root=root)
 
@@ -356,9 +402,7 @@ def test_migration_idempotent_when_workflows_already_present(tmp_path):
     # Stale legacy file removed.
     assert not legacy.exists()
     # In-memory matches existing, not stale.
-    assert mgr.get_task_config(
-        "text_json", "derive_json_from_text"
-    ).button_label == "Existing"
+    assert mgr.get_task_config("text_json", "derive_json_from_text").button_label == "Existing"
 
 
 # ---------------------------------------------------------------------------
@@ -369,19 +413,32 @@ def test_migration_idempotent_when_workflows_already_present(tmp_path):
 def test_selected_rules_lifted_onto_each_task(tmp_path):
     fallback = _shared_fallback(tmp_path)
     root = _project_root(tmp_path)
-    (root / "config" / "config.json").write_text(json.dumps({
-        "workflows": {
-            "text_json": {
-                "selected_rules": ["x.md", "y.md"],
-                "tasks": [
-                    {"id": "derive_json_from_text", "name": "n", "button_label": "L1",
-                     "prompt_template": "P"},
-                    {"id": "review_json", "name": "n", "button_label": "L2",
-                     "selected_rules": ["override.md"]},
-                ],
-            },
-        },
-    }), encoding="utf-8")
+    (root / "config" / "config.json").write_text(
+        json.dumps(
+            {
+                "workflows": {
+                    "text_json": {
+                        "selected_rules": ["x.md", "y.md"],
+                        "tasks": [
+                            {
+                                "id": "derive_json_from_text",
+                                "name": "n",
+                                "button_label": "L1",
+                                "prompt_template": "P",
+                            },
+                            {
+                                "id": "review_json",
+                                "name": "n",
+                                "button_label": "L2",
+                                "selected_rules": ["override.md"],
+                            },
+                        ],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
     mgr = TaskConfigManager(fallback, project_root=root)
     assert mgr.get_selected_rules_for_task("text_json", "derive_json_from_text") == ["x.md", "y.md"]
@@ -392,8 +449,18 @@ def test_selected_rules_lifted_onto_each_task(tmp_path):
 def test_set_selected_rules_for_tab_propagates(tmp_path):
     fallback = _shared_fallback(tmp_path)
     root = _project_root(tmp_path)
-    (root / "config" / "config.json").write_text(json.dumps({"workflows": {"text_json": {
-        "tasks": [{"id": "derive_json_from_text", "prompt_template": "P"}]}}}), encoding="utf-8")
+    (root / "config" / "config.json").write_text(
+        json.dumps(
+            {
+                "workflows": {
+                    "text_json": {
+                        "tasks": [{"id": "derive_json_from_text", "prompt_template": "P"}]
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     mgr = TaskConfigManager(fallback, project_root=root)
 
     mgr.set_selected_rules_for_tab("text_json", ["a.md", "b.md"])
@@ -407,4 +474,5 @@ def test_set_selected_rules_for_tab_propagates(tmp_path):
     mgr2 = TaskConfigManager(fallback, project_root=root)
     assert {t.id: t.selected_rules for t in mgr2.get_all_tasks_for_tab("text_json")} == {
         t.id: ["a.md", "b.md"] if t.id == "derive_json_from_text" else None
-        for t in mgr2.get_all_tasks_for_tab("text_json")}
+        for t in mgr2.get_all_tasks_for_tab("text_json")
+    }

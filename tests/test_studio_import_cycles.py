@@ -13,11 +13,16 @@ import pytest
 
 _STUDIO = Path(__file__).resolve().parents[1] / "procedo" / "studio"
 _PACKAGES = ["procedo.studio"] + sorted(
-    f"procedo.studio.{p.parent.name}" for p in _STUDIO.glob("*/__init__.py"))
+    f"procedo.studio.{p.parent.name}" for p in _STUDIO.glob("*/__init__.py")
+)
 
 
 @pytest.mark.parametrize("package", _PACKAGES)
 def test_package_imports_alone(package):
-    run = subprocess.run([sys.executable, "-c", f"import {package}"], cwd=_STUDIO.parents[1],
-                          capture_output=True, text=True)
+    run = subprocess.run(
+        [sys.executable, "-c", f"import {package}"],
+        cwd=_STUDIO.parents[1],
+        capture_output=True,
+        text=True,
+    )
     assert run.returncode == 0, run.stderr[-1500:]

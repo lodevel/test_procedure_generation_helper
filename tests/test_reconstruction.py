@@ -8,6 +8,7 @@ out of scope here.
 Runs without PySide6:
     PYTHONPATH=. python3 -m pytest tests/test_reconstruction.py --noconftest -q
 """
+
 from __future__ import annotations
 
 import unittest
@@ -27,8 +28,10 @@ from procedo.studio.llm.reconstruction import (  # noqa: E402
 
 from tests import _env
 
-pytestmark = [pytest.mark.skipif(not _env.rules_packager_available(), reason=_env.WHEEL_SKIP_REASON),
-              pytest.mark.usefixtures("engine_in_process")]
+pytestmark = [
+    pytest.mark.skipif(not _env.rules_packager_available(), reason=_env.WHEEL_SKIP_REASON),
+    pytest.mark.usefixtures("engine_in_process"),
+]
 
 _skip_no_labscpi = pytest.mark.skipif(
     not _env.labscpi_psu_reconstruct_available(), reason=_env.LABSCPI_SKIP_REASON
@@ -142,9 +145,7 @@ class ReconstructOverrideEquivalenceTests(unittest.TestCase):
 
     @_skip_no_labscpi
     def test_none_matches_explicit_default(self) -> None:
-        default = reconstruct_for_pipeline(
-            FRAGMENT, PRIOR, task_override=None, project_root=None
-        )
+        default = reconstruct_for_pipeline(FRAGMENT, PRIOR, task_override=None, project_root=None)
         explicit = reconstruct_for_pipeline(
             FRAGMENT,
             PRIOR,
@@ -166,12 +167,15 @@ class ReconstructNoOverridePassesResolvedSetTests(unittest.TestCase):
         self.calls: list[dict] = []
 
         def _spy(fragment, prior=None, owned_sections=None, project_root=None):
-            self.calls.append({
-                "owned_sections": owned_sections,
-                "project_root": project_root,
-            })
+            self.calls.append(
+                {
+                    "owned_sections": owned_sections,
+                    "project_root": project_root,
+                }
+            )
             return self._orig(
-                fragment, prior,
+                fragment,
+                prior,
                 owned_sections=owned_sections,
                 project_root=project_root,
             )

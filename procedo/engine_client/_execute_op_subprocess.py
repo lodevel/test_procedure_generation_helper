@@ -108,6 +108,7 @@ The held/energized state, every safe-off pass and the unconfirmed-off memory beh
 live in the sibling ``_safe_off.py`` (its module docstring is the contract); op execution
 lives in ``_instrument_ops.py``.  Both load by bare name next to this file.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -135,12 +136,28 @@ def _sib(name: str):
 # _bench_session_runner / _guided_call (tests/test_daemon_d_seam.py pins every key they read).
 _sib("_safe_off")
 from _instrument_ops import (  # noqa: E402
-    _build_device, _exec_op, _instrument_error, _namespace_for, _NoCodegen, _NotRemote,
-    _open_no_reset, _policy_for, _raw_send, _safe_name,
+    _build_device,
+    _exec_op,
+    _instrument_error,
+    _namespace_for,
+    _NoCodegen,
+    _NotRemote,
+    _open_no_reset,
+    _policy_for,
+    _raw_send,
+    _safe_name,
 )
 from _safe_off import (  # noqa: E402
-    _attach_unsafe, _bench, _close_held_device, _ensure_held, _is_state_changing,
-    _record_unconfirmed, _retry_unconfirmed, _safe_off, _Session, _teardown,
+    _attach_unsafe,
+    _bench,
+    _close_held_device,
+    _ensure_held,
+    _is_state_changing,
+    _record_unconfirmed,
+    _retry_unconfirmed,
+    _safe_off,
+    _Session,
+    _teardown,
 )
 from _safe_off import _safe_off_all_held  # noqa: E402, F401 -- read through d by _bench_session_runner
 
@@ -155,9 +172,12 @@ def _require_lifecycle(session: _Session):
     ``_is_state_changing`` would silently report False for everything and NO
     safe-off would run (bench left energized with no error)."""
     if not session.lifecycle:
-        return {"ok": False, "kind": "NoLifecycle",
-                "error": "pack bundle not loaded (_bundle_dir missing on first "
-                         "frame); refusing to drive hardware without lifecycle."}
+        return {
+            "ok": False,
+            "kind": "NoLifecycle",
+            "error": "pack bundle not loaded (_bundle_dir missing on first "
+            "frame); refusing to drive hardware without lifecycle.",
+        }
     return None
 
 
@@ -165,9 +185,12 @@ def _require_procedure(session: _Session):
     """A hard, visible failure without a procedure document — exec must not run
     without it (channel resolution / safe-off would silently degrade to guesses)."""
     if session.procedure_json is None:
-        return {"ok": False, "kind": "NoProcedure",
-                "error": "no procedure document (procedure_json) came with the "
-                         "frame; refusing to execute ops."}
+        return {
+            "ok": False,
+            "kind": "NoProcedure",
+            "error": "no procedure document (procedure_json) came with the "
+            "frame; refusing to execute ops.",
+        }
     return None
 
 
@@ -179,6 +202,7 @@ def _live_verdict(procedure_json, inputs: dict, node_path: str) -> str:
     must never break the batch)."""
     try:
         from rules_packager_base.rules.v2_0_2.parser import build_manual_run
+
         run = build_manual_run(procedure_json, **inputs)
         for s in list(getattr(run, "steps", []) or []):
             if getattr(s, "node_path", "") == node_path:
@@ -188,8 +212,9 @@ def _live_verdict(procedure_json, inputs: dict, node_path: str) -> str:
     return ""
 
 
-def _exec_transient(session: _Session, bench_map: dict, device: str, etype: str,
-                    procedure_json: dict, op: dict):
+def _exec_transient(
+    session: _Session, bench_map: dict, device: str, etype: str, procedure_json: dict, op: dict
+):
     """per_step path: open the device, run the single op, CLOSE it immediately.
     The device never enters ``held`` (chokepoint: a device is per_step XOR
     per_session — enforced with an explicit raise, not an assert, so it survives
@@ -202,7 +227,8 @@ def _exec_transient(session: _Session, bench_map: dict, device: str, etype: str,
     if safe in held_safe:
         raise RuntimeError(
             f"per_step device {device!r} collides (safe-name {safe!r}) with a "
-            f"held device — refusing to evict the held binding")
+            f"held device — refusing to evict the held binding"
+        )
     if device not in bench_map:
         raise _NotRemote(f"no connection parameters for {device!r}.")
     dev = _build_device(bench_map[device], etype, session.lifecycle, session.res.log)
@@ -231,7 +257,9 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
     # folded in as it executes, then materialized into the progress frame so a
     # PASS/FAIL lands the instant the op completes — not at batch end.
     inputs = _sib("_engine_ops_manual").run_inputs(req)
-    acc_meas = inputs["measurements"] = dict(inputs["measurements"])   # node_path keys, as the controls'
+    acc_meas = inputs["measurements"] = dict(
+        inputs["measurements"]
+    )  # node_path keys, as the controls'
     log_mark = len(session.res.log)
     results: list = []
     failed = False
@@ -254,7 +282,8 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
                 # until release — guided retargets apply between runs only.
                 if session.bench is not None and session.bench.active is None:
                     _bench()._retarget_timeout(
-                        session, hold_key, etype, bench_map.get(device), device)
+                        session, hold_key, etype, bench_map.get(device), device
+                    )
                 # Mark energized BEFORE exec: a multi-line driver call that
                 # asserts the output then raises a later line still gets safe-off'd.
                 if _is_state_changing(op, session.lifecycle):
@@ -262,10 +291,18 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
                 has, value, unit, ref = _exec_op(procedure_json, op, session.ns)
             else:  # per_step — transient open/close around this op only
                 has, value, unit, ref = _exec_transient(
-                    session, bench_map, device, etype, procedure_json, op)
-            results.append({"node_path": node_path, "ok": True,
-                            "has_value": bool(has), "value": value,
-                            "unit": unit, "ref": ref})
+                    session, bench_map, device, etype, procedure_json, op
+                )
+            results.append(
+                {
+                    "node_path": node_path,
+                    "ok": True,
+                    "has_value": bool(has),
+                    "value": value,
+                    "unit": unit,
+                    "ref": ref,
+                }
+            )
         except Exception as exc:  # noqa: BLE001 — record + stop the batch
             if session.bench is not None and isinstance(exc, _bench().HealthRefusal):
                 # Typed health refusal (F-H6) stops the batch AT this op: the
@@ -274,11 +311,15 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
                 # but earlier ops in this batch DID execute — their results
                 # ride along so the host records them and a re-run resumes
                 # after them instead of re-executing state-changing ops.
-                return dict(exc.resp, results=results,
-                            log=session.res.log[log_mark:])
+                return dict(exc.resp, results=results, log=session.res.log[log_mark:])
             failed = True
-            results.append({"node_path": node_path, "ok": False,
-                            "error": _instrument_error(device, bench_map.get(device), exc)})
+            results.append(
+                {
+                    "node_path": node_path,
+                    "ok": False,
+                    "error": _instrument_error(device, bench_map.get(device), exc),
+                }
+            )
         # A reading that just landed changes this step's verdict (and only this
         # step's — an auto segment never spans an @IF barrier, so no later
         # node_path shifts). Fold it in and materialize the live PASS/FAIL.
@@ -292,10 +333,17 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
         # whole segment at once) when the batch returns.
         if _PROTO_OUT is not None:
             try:
-                _write_frame(_PROTO_OUT, {
-                    "kind": "progress", "node_path": node_path,
-                    "ok": last.get("ok", False), "verdict": verdict,
-                    "i": _i, "total": total})
+                _write_frame(
+                    _PROTO_OUT,
+                    {
+                        "kind": "progress",
+                        "node_path": node_path,
+                        "ok": last.get("ok", False),
+                        "verdict": verdict,
+                        "i": _i,
+                        "total": total,
+                    },
+                )
             except Exception:  # noqa: BLE001 — never let progress break the batch
                 pass
         if failed:
@@ -308,9 +356,16 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
         # (session=) so the per-target/teardown passes keep retrying them;
         # this mid-batch pass itself does NOT retry old records — no
         # reconnect stalls inside an exec batch.
-        unsafe = _safe_off(procedure_json, session.ns, session.energized,
-                           session.etype_of, session.lifecycle, session.res,
-                           session=session, bench_map=bench_map)
+        unsafe = _safe_off(
+            procedure_json,
+            session.ns,
+            session.energized,
+            session.etype_of,
+            session.lifecycle,
+            session.res,
+            session=session,
+            bench_map=bench_map,
+        )
         session.energized.clear()
     if failed and policy == "per_session" and device in session.held:
         # Drop ONLY the broken device (AFTER safe-off, so a failed energized PSU
@@ -318,9 +373,11 @@ def _cmd_exec_ops(session: _Session, req: dict) -> dict:
         # other held device stays up — this is what makes "retry on the next op"
         # work instead of the session wedging until the window is reopened.
         _close_held_device(session, device)
-    return _attach_unsafe(session,
-                          {"ok": True, "results": results, "aborted": failed,
-                           "log": session.res.log[log_mark:]}, unsafe)
+    return _attach_unsafe(
+        session,
+        {"ok": True, "results": results, "aborted": failed, "log": session.res.log[log_mark:]},
+        unsafe,
+    )
 
 
 def _cmd_raw(session: _Session, req: dict) -> dict:
@@ -346,14 +403,18 @@ def _cmd_raw(session: _Session, req: dict) -> dict:
     if guard:
         return guard
     device = req.get("device")
-    etype = req.get("etype") or ""              # DECLARED type (e.g. "controller")
+    etype = req.get("etype") or ""  # DECLARED type (e.g. "controller")
     subtype = req.get("subtype") or ""
     text = (req.get("text") or "").strip()
     bench_map = req.get("bench_map") or {}
     log_mark = len(session.res.log)
     if not text:
-        return {"ok": False, "kind": "Protocol", "error": "empty command",
-                "log": session.res.log[log_mark:]}
+        return {
+            "ok": False,
+            "kind": "Protocol",
+            "error": "empty command",
+            "log": session.res.log[log_mark:],
+        }
     # Driver construction + lifecycle are keyed by the pack NAMESPACE, not the
     # declared type (they coincide only for psu/eload/scope; controller->fncore).
     namespace = _namespace_for(etype, subtype)
@@ -365,14 +426,13 @@ def _cmd_raw(session: _Session, req: dict) -> dict:
             # semantics don't apply to a terminal line — it proceeds on the
             # rebuilt instance.  IdentityChanged still surfaces, typed, below
             # (identity_gate stays ON: fresh mismatch AND sticky flag alike).
-            _ensure_held(session, bench_map, device, namespace,
-                         probe_refuse=False)
+            _ensure_held(session, bench_map, device, namespace, probe_refuse=False)
             # A guided name routed onto a bench endpoint holds the instance
             # under its ENDPOINT key; the name-keyed namespace binding covers
             # both the routed and the plain name-keyed case.
             dev = session.held.get(device) or session.ns.get(_safe_name(device))
             reply = _raw_send(dev, text)
-        else:                                                 # per_step: transient
+        else:  # per_step: transient
             bench = bench_map.get(device)
             if bench is None:
                 raise _NotRemote(f"no connection parameters for {device!r}.")
@@ -397,8 +457,7 @@ def _cmd_raw(session: _Session, req: dict) -> dict:
         reply = reply.strip() if isinstance(reply, str) else reply
         if reply:
             session.res.log.append(f"{device} -> {reply}")
-        return {"ok": True, "response": reply,
-                "log": session.res.log[log_mark:]}
+        return {"ok": True, "response": reply, "log": session.res.log[log_mark:]}
     except Exception as exc:  # noqa: BLE001
         if session.bench is not None and isinstance(exc, _bench().HealthRefusal):
             # Typed health refusal (IdentityChanged — StateLost is suppressed
@@ -422,8 +481,7 @@ def _cmd_raw(session: _Session, req: dict) -> dict:
             _close_held_device(session, device)
         error = _instrument_error(device, bench_map.get(device), exc)
         session.res.log.append(f"raw FAILED: {error}")
-        return {"ok": False, "kind": "ExecError", "error": error,
-                "log": session.res.log[log_mark:]}
+        return {"ok": False, "kind": "ExecError", "error": error, "log": session.res.log[log_mark:]}
 
 
 def _cmd_safe_off(session: _Session, req: dict) -> dict:
@@ -450,7 +508,7 @@ def _cmd_safe_off(session: _Session, req: dict) -> dict:
     # declared-channels fallback for channel-less state-changers.
     procedure_json = session.procedure_json or {}
     bench_map = req.get("bench_map") or {}
-    targets = req.get("safe_off") or []   # [{"device","etype","channels":[...]}]
+    targets = req.get("safe_off") or []  # [{"device","etype","channels":[...]}]
     log_mark = len(session.res.log)
     todo: dict = {}
     unsafe = _retry_unconfirmed(session, set(session.unconfirmed_off))
@@ -461,8 +519,7 @@ def _cmd_safe_off(session: _Session, req: dict) -> dict:
             # probe_refuse=False drops StateLost, identity_gate=False drops
             # IdentityChanged (sticky flag included) — whatever instrument
             # answers at the endpoint gets its outputs driven off.
-            _ensure_held(session, bench_map, device, etype,
-                         probe_refuse=False, identity_gate=False)
+            _ensure_held(session, bench_map, device, etype, probe_refuse=False, identity_gate=False)
             todo[device] = set(t.get("channels") or [1])
         except Exception as exc:  # noqa: BLE001
             # Open/rebuild failed: these outputs could NOT be powered down —
@@ -472,24 +529,32 @@ def _cmd_safe_off(session: _Session, req: dict) -> dict:
             why = _instrument_error(device, bench_map.get(device), exc)
             session.res.log.append(f"UNSAFE: safe-off open FAILED: {why}")
             unsafe.extend(f"{device} CH{ch}" for ch in (t.get("channels") or [1]))
-            _record_unconfirmed(session, device, etype or "",
-                                t.get("channels") or [1], bench_map.get(device))
+            _record_unconfirmed(
+                session, device, etype or "", t.get("channels") or [1], bench_map.get(device)
+            )
     if todo:
-        unsafe.extend(_safe_off(procedure_json, session.ns, todo, session.etype_of,
-                                session.lifecycle, session.res,
-                                session=session, bench_map=bench_map))
+        unsafe.extend(
+            _safe_off(
+                procedure_json,
+                session.ns,
+                todo,
+                session.etype_of,
+                session.lifecycle,
+                session.res,
+                session=session,
+                bench_map=bench_map,
+            )
+        )
         for d in todo:
             session.energized.pop(d, None)
-    return _attach_unsafe(session, {"ok": True, "log": session.res.log[log_mark:]},
-                          unsafe)
+    return _attach_unsafe(session, {"ok": True, "log": session.res.log[log_mark:]}, unsafe)
 
 
 def _cmd_shutdown(session: _Session, req: dict) -> dict:
     del req  # teardown uses the last document received (or none — fine)
     log_mark = len(session.res.log)
     unsafe = _teardown(session)
-    return _attach_unsafe(session, {"ok": True, "log": session.res.log[log_mark:]},
-                          unsafe)
+    return _attach_unsafe(session, {"ok": True, "log": session.res.log[log_mark:]}, unsafe)
 
 
 # ---------------------------------------------------------------------------
@@ -539,6 +604,7 @@ def _load_bundle(session: _Session, req: dict) -> None:
         load_packs_into_registry,
     )
     from rules_packager_base.rules.v2_0_2.parser._default_registry import get_lifecycle
+
     load_packs_into_registry(Path(bundle_dir))
     session.lifecycle = get_lifecycle()
     session.bundle_loaded = True
@@ -555,8 +621,11 @@ def _take_document(session: _Session, req: dict):
         return None
     if doc is None and req.get("cmd") != "exec_ops":
         return None
-    return {"ok": False, "kind": "NoProcedure",
-            "error": "the frame carries no procedure document (procedure_json)"}
+    return {
+        "ok": False,
+        "kind": "NoProcedure",
+        "error": "the frame carries no procedure document (procedure_json)",
+    }
 
 
 def _dispatch(session: _Session, req: dict):
@@ -565,7 +634,7 @@ def _dispatch(session: _Session, req: dict):
     try:
         if cmd == "op":
             return _sib("_engine_ops").run(req, lambda r: _load_bundle(session, r)), False
-        if cmd == "shutdown":       # never waits on the packs: a failed load must not keep us alive
+        if cmd == "shutdown":  # never waits on the packs: a failed load must not keep us alive
             return _cmd_shutdown(session, req), True
         _load_bundle(session, req)
         err = _take_document(session, req)
@@ -575,33 +644,38 @@ def _dispatch(session: _Session, req: dict):
             return err, False
         if cmd == "ping":
             return {"ok": True, "pong": True}, False
-        if cmd == "exec_ops":       # in the frame's work_dir: relative writes land there
+        if cmd == "exec_ops":  # in the frame's work_dir: relative writes land there
             with _bench().in_work_dir(req.get("work_dir")):
                 return _cmd_exec_ops(session, req), False
         if cmd == "raw":
             return _cmd_raw(session, req), False
-        if cmd == "call":           # a guided Call row's function (the sibling _guided_call)
+        if cmd == "call":  # a guided Call row's function (the sibling _guided_call)
             return _sib("_guided_call").cmd_call(globals(), req), False
-        if cmd == "cancel_call":    # posted: a call already over has nothing to stop
+        if cmd == "cancel_call":  # posted: a call already over has nothing to stop
             return None, False
         if cmd == "safe_off":
             return _cmd_safe_off(session, req), False
         if cmd in _BENCH_CMDS:
             return _bench().handle(globals(), session, req)
-        return {"ok": False, "kind": "Protocol",
-                "error": f"unknown cmd {cmd!r}"}, False
+        return {"ok": False, "kind": "Protocol", "error": f"unknown cmd {cmd!r}"}, False
     except _NotRemote as exc:
         return {"ok": False, "kind": "NotRemote", "error": str(exc)}, False
     except _NoCodegen as exc:
         return {"ok": False, "kind": "NoCodegen", "error": str(exc)}, False
     except ImportError as exc:
-        return {"ok": False, "kind": "Other",
-                "error": f"import failed in project venv: {exc}",
-                "traceback": traceback.format_exc()}, False
+        return {
+            "ok": False,
+            "kind": "Other",
+            "error": f"import failed in project venv: {exc}",
+            "traceback": traceback.format_exc(),
+        }, False
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "kind": "ExecError",
-                "error": f"{type(exc).__name__}: {exc}",
-                "traceback": traceback.format_exc()}, False
+        return {
+            "ok": False,
+            "kind": "ExecError",
+            "error": f"{type(exc).__name__}: {exc}",
+            "traceback": traceback.format_exc(),
+        }, False
 
 
 def main() -> None:
@@ -631,7 +705,7 @@ def main() -> None:
     # (prompt/cancel); EOF comes through it, so the loop reaches the _teardown.
     reader = _bench().start_reader(sys.stdin)
     while True:
-        line = reader.next_line()      # blocking; None = EOF (parent closed pipe)
+        line = reader.next_line()  # blocking; None = EOF (parent closed pipe)
         if line is None:
             break
         line = line.strip()
@@ -640,12 +714,11 @@ def main() -> None:
         try:
             req = json.loads(line)
         except Exception as exc:  # noqa: BLE001
-            _write_frame(proto_out, {"ok": False, "kind": "Protocol",
-                                     "error": f"bad frame: {exc}"})
+            _write_frame(proto_out, {"ok": False, "kind": "Protocol", "error": f"bad frame: {exc}"})
             continue
         refused = _sib("_engine_ops").refusal(role, req)
         response, stop = (refused, False) if refused else _dispatch(_SESSION, req)
-        if response is not None:       # a late prompt_response gets none
+        if response is not None:  # a late prompt_response gets none
             _write_frame(proto_out, response)
         if stop:
             break

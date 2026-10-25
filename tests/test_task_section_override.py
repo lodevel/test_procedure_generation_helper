@@ -23,6 +23,7 @@ bind the unbound method to a fake carrying only the attributes it reads.
 Runs without conftest fixtures (PySide6 must be importable):
     <venv>/python -m pytest tests/test_task_section_override.py --noconftest -q
 """
+
 from __future__ import annotations
 
 import types
@@ -106,6 +107,7 @@ class TaskSectionOverrideResolverTests(unittest.TestCase):
         # Import here so a Qt-import failure surfaces as an error on THIS
         # test only, not at module collection time.
         from procedo.studio.tabs.llm_tab_mixin import LLMTabMixin
+
         self._resolve = LLMTabMixin._task_section_override
 
     def _obj(self, manager) -> types.SimpleNamespace:
@@ -113,28 +115,35 @@ class TaskSectionOverrideResolverTests(unittest.TestCase):
 
     def test_returns_config_value(self) -> None:
         task = _FakeTask("derive_json_from_text")
-        mgr = _FakeTaskConfigManager({
-            "derive_json_from_text": TaskConfig(
-                id="derive_json_from_text", name="n", button_label="b",
-                llm_owned_sections=["steps"],
-            ),
-        })
+        mgr = _FakeTaskConfigManager(
+            {
+                "derive_json_from_text": TaskConfig(
+                    id="derive_json_from_text",
+                    name="n",
+                    button_label="b",
+                    llm_owned_sections=["steps"],
+                ),
+            }
+        )
         self.assertEqual(self._resolve(self._obj(mgr), task), ["steps"])
         self.assertEqual(mgr.calls, [("text_json", "derive_json_from_text")])
 
     def test_empty_list_is_returned_verbatim(self) -> None:
         task = _FakeTask("t")
-        mgr = _FakeTaskConfigManager({
-            "t": TaskConfig(id="t", name="n", button_label="b",
-                            llm_owned_sections=[]),
-        })
+        mgr = _FakeTaskConfigManager(
+            {
+                "t": TaskConfig(id="t", name="n", button_label="b", llm_owned_sections=[]),
+            }
+        )
         self.assertEqual(self._resolve(self._obj(mgr), task), [])
 
     def test_none_when_config_has_none(self) -> None:
         task = _FakeTask("t")
-        mgr = _FakeTaskConfigManager({
-            "t": TaskConfig(id="t", name="n", button_label="b"),
-        })
+        mgr = _FakeTaskConfigManager(
+            {
+                "t": TaskConfig(id="t", name="n", button_label="b"),
+            }
+        )
         self.assertIsNone(self._resolve(self._obj(mgr), task))
 
     def test_none_when_no_config_found(self) -> None:
@@ -166,14 +175,18 @@ class ValidateResponseThreadsOverrideTests(unittest.TestCase):
     def setUp(self) -> None:
         from procedo.studio.llm import validator_dispatch
         from procedo.studio.llm.backend_base import LLMResponse, LLMProposal
+
         self.vd = validator_dispatch
         self.response = LLMResponse(success=True)
         self.response.procedure_text = LLMProposal(
             mode="replace",
             content="## Equipment\n\n## Steps\n1. Do a thing.\n\n## Expected\n",
         )
-        self.current = {"text": "# T\nd\n\n## Meta\nformat_version: 2.0.1\n",
-                        "json": "", "code": ""}
+        self.current = {
+            "text": "# T\nd\n\n## Meta\nformat_version: 2.0.1\n",
+            "json": "",
+            "code": "",
+        }
 
     def test_override_reaches_reconstruction(self) -> None:
         captured: dict = {}
@@ -198,7 +211,9 @@ class ValidateResponseThreadsOverrideTests(unittest.TestCase):
         self.vd.reconstruction.reconstruct_for_pipeline = _spy
         try:
             outcome = self.vd._validate_proposed_text(
-                self.response, self.current, None,
+                self.response,
+                self.current,
+                None,
                 lambda **kw: _CleanReport(),
                 task_override=["steps"],
             )
@@ -230,7 +245,9 @@ class ValidateResponseThreadsOverrideTests(unittest.TestCase):
         try:
             # No task_override → None propagated (bundle-default path).
             self.vd._validate_proposed_text(
-                self.response, self.current, None,
+                self.response,
+                self.current,
+                None,
                 lambda **kw: _CleanReport(),
             )
         finally:

@@ -75,13 +75,13 @@ class LLMServerController(QObject):
             try:
                 manager.stop()
             except Exception:
-                log.debug('async server manager stop() failed', exc_info=True)
+                log.debug("async server manager stop() failed", exc_info=True)
 
         threading.Thread(target=_stop, daemon=True).start()
 
     def init_backend(self):
         """Initialize LLM backend infrastructure.
-        
+
         Creates server manager (for OpenCode) and backend factory.
         Each tab will create its own backend via the factory.
         """
@@ -93,22 +93,22 @@ class LLMServerController(QObject):
         # synchronously here (before the thread even runs), so a stale prewarm
         # daemon on the old manager refuses to launch -> no orphan. The fresh
         # manager built below is a NEW object (a retired one never restarts).
-        _old_server_manager = getattr(self, 'server_manager', None)
+        _old_server_manager = getattr(self, "server_manager", None)
         if _old_server_manager is not None:
-            log.info('Retiring previous OpenCode server manager (swap)...')
+            log.info("Retiring previous OpenCode server manager (swap)...")
             self._stop_manager_async(_old_server_manager)
         # Initialize server manager (will be None if not using OpenCode)
         self.server_manager: Optional[OpenCodeServerManager] = None
-        
+
         # Build backend configuration
         config = self._build_backend_config()
-        
+
         # Create server manager for OpenCode (shared across tabs)
         if config.backend_type == BACKEND_TYPE_OPENCODE:
             log.info("Creating OpenCode server manager...")
             self.server_manager = OpenCodeServerManager(config.opencode)
             # Don't start yet - will start on first backend creation
-        
+
         # Create factory for tabs to use
         self._backend_factory = BackendFactory(config, self.server_manager)
 
@@ -119,20 +119,19 @@ class LLMServerController(QObject):
         # thread. The reset in restart_for_project is now redundant
         # but harmless.
         self.reset_recovery()
-        
+
         # C2: pre-warm the NEW manager on a daemon thread (set its launch
         # config first so it never launches from safe_wsl_cwd with the
         # wrong config). Only on a swap; the initial __init__ call defers
         # to showEvent (no project root yet), gated on _cli_args_processed.
-        if getattr(self._mw, '_cli_args_processed', False) \
-                and self.server_manager is not None:
+        if getattr(self._mw, "_cli_args_processed", False) and self.server_manager is not None:
             self.prewarm()
-        
+
         log.info(f"Backend infrastructure initialized: type={config.backend_type}")
-        
+
         # Update the OpenCode pill
         self.refresh_indicator()
-        
+
         # Update all tab contexts with new factory (if tabs are already initialized)
         self._update_all_tab_contexts()
 
@@ -145,15 +144,15 @@ class LLMServerController(QObject):
         ``self.server_manager`` (C2 -- never a stale bound reference), and
         starts the server on a daemon thread so the UI never blocks.
         """
-        sm = getattr(self, 'server_manager', None)
+        sm = getattr(self, "server_manager", None)
         if sm is None:
             return
         try:
-            from ..llm.launch_config import (
-                build_launch_config, ensure_master_config)
+            from ..llm.launch_config import build_launch_config, ensure_master_config
             from ..authoring.tool_folders import build_skill_tools_universe
-            _pr = getattr(self._mw.project_manager, 'project_root', None)
-            _seed = (_pr / 'opencode.json') if _pr else None
+
+            _pr = getattr(self._mw.project_manager, "project_root", None)
+            _seed = (_pr / "opencode.json") if _pr else None
             ensure_master_config(seed_from=_seed)
             # Compute the gate universe FIRST: if discovery throws, the except
             # fires before opencode.json is written -> never registered-but-ungated.
@@ -161,30 +160,34 @@ class LLMServerController(QObject):
             # Mint the run_skill HMAC secret ONCE per process (skip if already set
             # so a re-prewarm on the same config reuses it); pass it into the launch
             # config so the run_skill MCP block + the token-mint share one secret.
-            if not getattr(sm.config, 'run_skill_secret', None):
+            if not getattr(sm.config, "run_skill_secret", None):
                 import secrets as _secrets
+
                 sm.config.run_skill_secret = _secrets.token_hex()
-            sm.config.working_directory = str(build_launch_config(
-                _pr, run_skill_secret=sm.config.run_skill_secret))
+            sm.config.working_directory = str(
+                build_launch_config(_pr, run_skill_secret=sm.config.run_skill_secret)
+            )
             sm.config.skill_tools = _uni
         except Exception:
-            log.warning('failed to build launch config for pre-warm',
-                        exc_info=True)
+            log.warning("failed to build launch config for pre-warm", exc_info=True)
         # Register the exit cleanup hook ONCE; it reads self.server_manager
         # live so it always stops whatever manager is current (C2).
-        if not getattr(self, '_server_cleanup_registered', False):
+        if not getattr(self, "_server_cleanup_registered", False):
             import atexit
+
             atexit.register(self._stop_current_server)
             self._server_cleanup_registered = True
-        sweep_tests = not getattr(self, '_launch_test_swept', False)
-        self._launch_test_swept = True  # once per process: a later prewarm must not kill a running test's server
+        sweep_tests = not getattr(self, "_launch_test_swept", False)
+        self._launch_test_swept = (
+            True  # once per process: a later prewarm must not kill a running test's server
+        )
 
         def _start():
             if sweep_tests:
                 try:
                     sweep_launch_test_dir(sm.config)
                 except Exception:
-                    log.warning('sweep of the Test-connection launch dir failed', exc_info=True)
+                    log.warning("sweep of the Test-connection launch dir failed", exc_info=True)
             sm.start()
 
         threading.Thread(target=_start, daemon=True).start()
@@ -197,13 +200,12 @@ class LLMServerController(QObject):
         at call time so a manager swap (Settings Save) can't leave a stale
         reference uncleaned (C2).
         """
-        sm = getattr(self, 'server_manager', None)
+        sm = getattr(self, "server_manager", None)
         if sm is not None:
             try:
                 sm.stop()
             except Exception:
-                log.debug('current server manager stop() failed',
-                          exc_info=True)
+                log.debug("current server manager stop() failed", exc_info=True)
             if sm.config.working_directory:
                 remove_launch_files(sm.config.working_directory)
 
@@ -220,8 +222,8 @@ class LLMServerController(QObject):
         blocks take effect). No-op when no manager / the UI hasn't been shown
         yet (showEvent does the initial pre-warm).
         """
-        sm = getattr(self, 'server_manager', None)
-        if sm is None or not getattr(self._mw, '_cli_args_processed', False):
+        sm = getattr(self, "server_manager", None)
+        if sm is None or not getattr(self._mw, "_cli_args_processed", False):
             return
         # A send waiting for the old server's start never goes to the new one: not sent, now.
         self.drop_waiting_sends(RESTARTING)
@@ -313,13 +315,13 @@ class LLMServerController(QObject):
         """
         backend_type = self._mw._settings.get("llm_backend", "opencode")
         log.info(f"Building backend config: {backend_type}")
-        
+
         # Load custom output format
         custom_output_format = self._mw._settings.get("custom_output_format", "")
-        
+
         # Load common LLM parameters
         common_llm = self._mw._settings.get("common_llm", {})
-        
+
         if backend_type == "opencode":
             config_dict = self._mw._settings.get("opencode", {})
             log.debug(f"OpenCode config: {config_dict}")
@@ -344,7 +346,7 @@ class LLMServerController(QObject):
     @property
     def backend_factory(self) -> BackendFactory:
         """Get the backend factory for creating per-tab backends.
-        
+
         Returns:
             BackendFactory instance
         """
@@ -353,9 +355,9 @@ class LLMServerController(QObject):
     def _update_all_tab_contexts(self):
         """Update all tab contexts with the current backend factory."""
         for tab in self._mw._get_llm_tabs():
-            if hasattr(tab, 'tab_context'):
+            if hasattr(tab, "tab_context"):
                 tab.tab_context.update_backend_factory(self._backend_factory)
-        
+
         log.info("Backend factory propagated to all tab contexts")
 
     def start_health_poll(self):
@@ -371,7 +373,8 @@ class LLMServerController(QObject):
         tick so the 'running / down' signal stays honest.
         """
         from PySide6.QtCore import QTimer
-        if getattr(self, '_server_health_timer', None) is not None:
+
+        if getattr(self, "_server_health_timer", None) is not None:
             return
         self._server_health_timer = QTimer(self)
         self._server_health_timer.setInterval(5000)
@@ -405,12 +408,12 @@ class LLMServerController(QObject):
         probe at a time (gated by _health_probe_inflight) so ticks never
         stack daemons while a slow /health is still outstanding.
         """
-        sm = getattr(self, 'server_manager', None)
+        sm = getattr(self, "server_manager", None)
         if sm is None:
             self.refresh_indicator()
             return
         # One probe in flight at a time; the next tick re-checks.
-        if getattr(self, '_health_probe_inflight', False):
+        if getattr(self, "_health_probe_inflight", False):
             return
         self._health_probe_inflight = True
         verdict = self._health_verdict
@@ -419,7 +422,7 @@ class LLMServerController(QObject):
             try:
                 alive = sm.is_alive  # process poll + ~2s /health, OFF the UI thread
             except Exception:
-                log.debug('server health probe failed', exc_info=True)
+                log.debug("server health probe failed", exc_info=True)
                 alive = False
             verdict((sm, alive))
 
@@ -429,7 +432,7 @@ class LLMServerController(QObject):
             # Spawn failed after the in-flight flag was set — clear it so the
             # next tick can probe again (never wedge the poll permanently).
             self._health_probe_inflight = False
-            log.debug('server health probe thread spawn failed', exc_info=True)
+            log.debug("server health probe thread spawn failed", exc_info=True)
 
     def _on_health_probe_result(self, sm, alive):
         """UI-thread continuation of one health probe.
@@ -443,14 +446,14 @@ class LLMServerController(QObject):
         # A swap (Restart backend / project switch / Settings Save) may have
         # installed a NEW manager while this probe was in flight. Drop the stale
         # verdict — it must not drive the new manager's indicator or recovery.
-        if sm is not getattr(self, 'server_manager', None):
+        if sm is not getattr(self, "server_manager", None):
             return
         # Clear AFTER the stale-manager guard: only the CURRENT manager's probe
         # owns the in-flight flag (a stale probe must not unblock the next tick).
         self._health_probe_inflight = False
         self._last_server_alive = alive
         self.refresh_indicator(alive)
-        if alive or getattr(sm, '_retired', False):
+        if alive or getattr(sm, "_retired", False):
             self._server_recovering = False
             # Server is back (or retired): a recovery succeeded — clear the
             # consecutive-failure count so auto-recovery is armed for the next
@@ -461,22 +464,21 @@ class LLMServerController(QObject):
         # UP — a crash-looping server would otherwise relaunch every tick
         # forever (log-spam + CPU at the bench). The indicator then tells the
         # user to act; a manual Restart backend / Start server re-arms us.
-        if getattr(self, '_server_recovery_attempts', 0) >= self._MAX_SERVER_RECOVERY_ATTEMPTS:
+        if getattr(self, "_server_recovery_attempts", 0) >= self._MAX_SERVER_RECOVERY_ATTEMPTS:
             return
         # One recovery in flight at a time (gated by _server_recovering).
-        if getattr(self, '_server_recovering', False):
+        if getattr(self, "_server_recovering", False):
             return
         self._server_recovering = True
-        log.warning('OpenCode server detected down; auto-recovering...')
-        self._mw.footer.show_message('OpenCode server down — recovering…', 4000)
+        log.warning("OpenCode server detected down; auto-recovering...")
+        self._mw.footer.show_message("OpenCode server down — recovering…", 4000)
         try:
-            threading.Thread(target=_recover, args=(sm, self._recovered),
-                             daemon=True).start()
+            threading.Thread(target=_recover, args=(sm, self._recovered), daemon=True).start()
         except Exception:
             # Thread.start() raised after the in-flight flag was set —
             # clear it so auto-recovery is not permanently disabled.
             self._server_recovering = False
-            log.debug('server auto-recovery thread spawn failed', exc_info=True)
+            log.debug("server auto-recovery thread spawn failed", exc_info=True)
 
     def _on_health_verdict(self, verdict):
         self._on_health_probe_result(*verdict)
@@ -495,14 +497,13 @@ class LLMServerController(QObject):
         recovering=False that breaks the single-in-flight gate). The guard is
         re-validated HERE, on the UI thread, AFTER the blocking relaunch+probe.
         """
-        if sm is not getattr(self, 'server_manager', None):
+        if sm is not getattr(self, "server_manager", None):
             return
         self._server_recovering = False
         # is_alive (process + /health) so a relaunch that leaves the server
         # still wedged counts as a failed attempt toward the give-up cap.
         if not ok:
-            self._server_recovery_attempts = (
-                getattr(self, '_server_recovery_attempts', 0) + 1)
+            self._server_recovery_attempts = getattr(self, "_server_recovery_attempts", 0) + 1
         else:
             self._server_recovery_attempts = 0
         self._last_server_alive = ok
@@ -515,33 +516,49 @@ class LLMServerController(QObject):
         ``alive`` may be passed by the poll (avoids a redundant process poll);
         otherwise the last off-thread probe's verdict is used.
         """
-        if not hasattr(self._mw, 'server_pill'):
+        if not hasattr(self._mw, "server_pill"):
             return
-        sm = getattr(self, 'server_manager', None)
+        sm = getattr(self, "server_manager", None)
         if sm is None:
-            shell.show_server_state(self._mw, 'neutral', 'LLM off',
-                                    'No LLM backend: choose one in LLM settings.')
+            shell.show_server_state(
+                self._mw, "neutral", "LLM off", "No LLM backend: choose one in LLM settings."
+            )
             return
         if alive is None:
             # Use the cached verdict from the last off-thread probe — NEVER
             # call is_alive/health_check here (that is blocking HTTP and this
             # runs on the UI thread). None (no probe yet) is treated as down.
-            alive = getattr(self, '_last_server_alive', None)
-        if getattr(self, '_server_recovering', False) and not alive:
-            shell.show_server_state(self._mw, 'warning', '● OpenCode · recovering…',
-                                    'Relaunching the OpenCode server…')
-        elif alive:
-            shell.show_server_state(self._mw, 'success', f'● OpenCode · {sm.config.model or "default model"}',
-                                    'OpenCode server is running.')
-        elif getattr(self, '_server_recovery_attempts', 0) >= self._MAX_SERVER_RECOVERY_ATTEMPTS:
+            alive = getattr(self, "_last_server_alive", None)
+        if getattr(self, "_server_recovering", False) and not alive:
             shell.show_server_state(
-                self._mw, 'danger', '● OpenCode · down',
-                'Auto-recovery gave up after repeated failures. Use Restart server to try again.'
-                + (f'\n\n{sm.last_status.message}'
-                   if sm.last_status is not None and not sm.last_status.ok else ''))
+                self._mw, "warning", "● OpenCode · recovering…", "Relaunching the OpenCode server…"
+            )
+        elif alive:
+            shell.show_server_state(
+                self._mw,
+                "success",
+                f"● OpenCode · {sm.config.model or 'default model'}",
+                "OpenCode server is running.",
+            )
+        elif getattr(self, "_server_recovery_attempts", 0) >= self._MAX_SERVER_RECOVERY_ATTEMPTS:
+            shell.show_server_state(
+                self._mw,
+                "danger",
+                "● OpenCode · down",
+                "Auto-recovery gave up after repeated failures. Use Restart server to try again."
+                + (
+                    f"\n\n{sm.last_status.message}"
+                    if sm.last_status is not None and not sm.last_status.ok
+                    else ""
+                ),
+            )
         else:
-            shell.show_server_state(self._mw, 'danger', '● OpenCode · down',
-                                    'OpenCode server is down — auto-recovery will relaunch it.')
+            shell.show_server_state(
+                self._mw,
+                "danger",
+                "● OpenCode · down",
+                "OpenCode server is down — auto-recovery will relaunch it.",
+            )
 
 
 def _recover(sm, done):
@@ -553,10 +570,10 @@ def _recover(sm, done):
     try:
         sm.ensure_running()
     except Exception:
-        log.debug('server auto-recovery failed', exc_info=True)
+        log.debug("server auto-recovery failed", exc_info=True)
     try:
         ok = sm.is_alive  # post-relaunch verdict, OFF the UI thread
     except Exception:
-        log.debug('post-recovery health probe failed', exc_info=True)
+        log.debug("post-recovery health probe failed", exc_info=True)
         ok = False
     done((sm, ok))

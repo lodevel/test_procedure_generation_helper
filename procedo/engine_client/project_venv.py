@@ -21,6 +21,7 @@ interpreter (``python.parents[2]``); that expression now names a folder under th
 app-data root, so every op would have run with an empty pack registry. Resolving
 both from the project root together is what makes that impossible to write again.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

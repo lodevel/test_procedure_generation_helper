@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import Optional
 import logging
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QMenuBar, QMessageBox, QFileDialog,
+    QMainWindow,
+    QWidget,
+    QMenuBar,
+    QMessageBox,
+    QFileDialog,
 )
 from PySide6.QtCore import QFileSystemWatcher, QTimer
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut
@@ -23,16 +27,18 @@ from procedo.ui.scenario_dialog import ScenarioManagerDialog
 from .core import ArtifactManager, SessionState, ProjectManager
 from .core.task_config import TaskConfigManager
 from .llm.backend_factory import BackendFactory
-from .tabs import (
-    WorkspaceTab, TextOnlyTab, TextJsonTab, JsonCodeTab, TraceabilityTab
-)
+from .tabs import WorkspaceTab, TextOnlyTab, TextJsonTab, JsonCodeTab, TraceabilityTab
 from .dock import DockWidget
 from .dialogs import SettingsDialog
 from .core.studio_settings import load_settings
 from . import menus, shell
 from .controllers import (
-    AssistantController, DocumentController, ExportController, LLMServerController,
-    ProjectController, project_controller,
+    AssistantController,
+    DocumentController,
+    ExportController,
+    LLMServerController,
+    ProjectController,
+    project_controller,
 )
 
 log = logging.getLogger(__name__)
@@ -53,7 +59,7 @@ class StudioWorkspace(QWidget):
     - the status line: project, rules, bundle, validator
     - ``menu_bar``, for the window that hosts it to show
     """
-    
+
     def __init__(
         self,
         parent=None,
@@ -100,9 +106,11 @@ class StudioWorkspace(QWidget):
         # we re-arm the file watch then (Codex Phase-4 review MEDIUM Q2).
         self._config_watcher = QFileSystemWatcher(self)
         self._config_watcher.fileChanged.connect(
-            lambda path: project_controller.on_config_file_changed(self, path))
+            lambda path: project_controller.on_config_file_changed(self, path)
+        )
         self._config_watcher.directoryChanged.connect(
-            lambda path: project_controller.on_config_dir_changed(self, path))
+            lambda path: project_controller.on_config_dir_changed(self, path)
+        )
         self._watched_config_path: Optional[Path] = None
         self._watched_config_dir: Optional[Path] = None
         # Task #39: also watch <project>/bundle (+ the project root, to
@@ -118,8 +126,9 @@ class StudioWorkspace(QWidget):
         self._bundle_change_timer.setSingleShot(True)
         self._bundle_change_timer.setInterval(300)
         self._bundle_change_timer.timeout.connect(
-            lambda: project_controller.on_bundle_change_debounced(self))
-        
+            lambda: project_controller.on_bundle_change_debounced(self)
+        )
+
         # Initialize task config manager pointing at the repo-shared
         # fallback. ``reload(project_root)`` is called below whenever a
         # project is loaded (CLI or interactive), switching the manager
@@ -127,12 +136,12 @@ class StudioWorkspace(QWidget):
         # ``tab_contexts.json`` → ``config.json:workflows`` migration.
         fallback_path = Path(__file__).parents[2] / "config" / "tab_contexts.json"
         self.task_config_manager = TaskConfigManager(fallback_path=fallback_path)
-        
+
         # Initialize LLM
         self._settings = load_settings()
         log.debug(f"Settings loaded: {list(self._settings.keys())}")
         self.llm_server.init_backend()
-        
+
         # Prompt builder and response parser
         # Setup UI
         self.menu_bar = QMenuBar()
@@ -141,7 +150,7 @@ class StudioWorkspace(QWidget):
         self._setup_workspace_dock()
         self._setup_dock()
         shell.build_frame(self)
-        
+
         # Apply settings
         self._apply_settings()
 
@@ -161,9 +170,9 @@ class StudioWorkspace(QWidget):
     def showEvent(self, event):
         """Handle window show event - process CLI arguments after UI is ready."""
         super().showEvent(event)
-        
+
         # Process CLI arguments on first show only
-        if hasattr(self, '_cli_args_processed'):
+        if hasattr(self, "_cli_args_processed"):
             return
         # Mark in-progress (re-entrancy guard, the hasattr check above) but
         # keep the prewarm gate FALSE while CLI args load: setting a project
@@ -172,7 +181,7 @@ class StudioWorkspace(QWidget):
         # processing so the single explicit prewarm below is the only one (no
         # latent double-prewarm: two managers racing the same launch dir).
         self._cli_args_processed = False
-        
+
         # Process CLI arguments to load project/test
         self._process_cli_arguments()
         self._cli_args_processed = True
@@ -193,7 +202,7 @@ class StudioWorkspace(QWidget):
         # model picker). Started once the UI is up so the timer has an event
         # loop to run on.
         self.llm_server.start_health_poll()
-    
+
     def _process_cli_arguments(self):
         """Process command-line arguments to load project and/or test."""
         try:
@@ -217,10 +226,10 @@ class StudioWorkspace(QWidget):
                 # Task #39: arm the config + bundle watchers for the
                 # CLI-supplied project (the main-app launch path).
                 project_controller.watch_project_config(self)
-            
+
             # Step 2: Determine which test to open
             test_dir_to_open = None
-            
+
             if self._cli_test_dir:
                 # Direct test path (highest priority)
                 test_dir_to_open = self._cli_test_dir
@@ -229,60 +238,60 @@ class StudioWorkspace(QWidget):
                 # Test name under project root
                 test_dir_to_open = self._cli_project_root / "tests" / self._cli_test_name
                 log.info(f"Opening test from --test-name: {test_dir_to_open}")
-            
+
             # Step 3: Open the test if determined
             if test_dir_to_open and exists_quiet(test_dir_to_open):
                 # Ensure project is set if not already
                 if not self.project_manager.project_root and self._cli_project_root:
                     self.project_manager.set_project_root(self._cli_project_root)
-                
+
                 # Open the test
                 self.workspace_widget.test_opened.emit(test_dir_to_open)
                 log.info(f"Test opened from CLI args: {test_dir_to_open}")
             elif test_dir_to_open:
                 log.warning(f"Test directory does not exist: {test_dir_to_open}")
-        
+
         except Exception as e:
             log.error(f"Error processing CLI arguments: {e}", exc_info=True)
 
     @property
     def backend_factory(self) -> BackendFactory:
         """Get the backend factory for creating per-tab backends.
-        
+
         Returns:
             BackendFactory instance
         """
         return self.llm_server.backend_factory
-    
+
     def _get_llm_tabs(self) -> list:
         """Get list of tabs that have TabContext.
-        
+
         Returns:
             List of tab widgets that support LLM operations
         """
         tabs = []
-        if hasattr(self, 'text_only_tab'):
+        if hasattr(self, "text_only_tab"):
             tabs.append(self.text_only_tab)
-        if hasattr(self, 'text_json_tab'):
+        if hasattr(self, "text_json_tab"):
             tabs.append(self.text_json_tab)
-        if hasattr(self, 'json_code_tab'):
+        if hasattr(self, "json_code_tab"):
             tabs.append(self.json_code_tab)
         return tabs
-    
+
     def refresh_all_button_labels(self):
         """
         Refresh button labels in all tabs.
-        
+
         This method should be called after:
         - Changing button labels via settings dialog
         - Resetting labels to defaults
         - Loading a new task configuration
-        
+
         Tabs inherit from BaseTab which automatically queries task_config_manager
         via main_window.task_config_manager property.
         """
         log.info("Refreshing button labels across all tabs")
-        
+
         # Iterate through all tabs and rebuild their buttons; a view without an
         # action bar (Traceability) has none.
         for i in range(self.view_stack.count()):
@@ -302,7 +311,9 @@ class StudioWorkspace(QWidget):
                     tab.validator_buttons.rebuild()
                     log.debug(f"Rebuilt validator buttons for {tab.__class__.__name__}")
                 except Exception as e:
-                    log.error(f"Error rebuilding validator buttons in {tab.__class__.__name__}: {e}")
+                    log.error(
+                        f"Error rebuilding validator buttons in {tab.__class__.__name__}: {e}"
+                    )
 
     def _on_install_package(self):
         """Packages -> Install Package: the shared procedo.core dialog."""
@@ -343,20 +354,22 @@ class StudioWorkspace(QWidget):
         self.workspace_widget.request_mark_loaded_in_sync.connect(
             self._document_controller.on_sync_indicator_clicked,
         )
-    
+
     def _setup_dock(self):
         """The Assistant column (``shell.build_frame`` lays it out)."""
         self.dock = DockWidget(self)
-        
+
         # Update context limit based on backend config
         self._assistant_controller.update_context_limit()
-        
+
         # Connect chat signals
         self.dock.chat_panel.message_sent.connect(self._assistant_controller.on_chat_message)
         self.dock.chat_panel.reset_requested.connect(self._assistant_controller.on_reset_session)
         self.dock.chat_panel.cancel_requested.connect(self._assistant_controller.on_cancel_llm)
-        self.dock.chat_panel.compact_requested.connect(self._assistant_controller.on_compact_session)
-    
+        self.dock.chat_panel.compact_requested.connect(
+            self._assistant_controller.on_compact_session
+        )
+
     def _update_project_rules_indicators(self):
         """Repaint the header (the test and its project) and the footer (project,
         rules, bundle, validator); refresh what follows the project (syntax
@@ -366,8 +379,10 @@ class StudioWorkspace(QWidget):
 
         # Live-refresh the syntax reference if it's open (project/bundle changed).
         from .dialogs.syntax_reference import SyntaxReferenceDialog
+
         SyntaxReferenceDialog.refresh_if_open(
-            self.project_manager.rules_root, shell.bundle_name(self.project_manager.project_root))
+            self.project_manager.rules_root, shell.bundle_name(self.project_manager.project_root)
+        )
 
         # Reload the Text tab's board-netlist for the current project — the panel
         # loads on tab-show, which can precede project setup (e.g. Text is now the
@@ -375,21 +390,23 @@ class StudioWorkspace(QWidget):
         text_tab = getattr(self, "text_only_tab", None)
         if text_tab is not None and hasattr(text_tab, "_maybe_load_netlist"):
             text_tab._maybe_load_netlist()
-    
+
     def _on_rules_indicator_clicked(self):
         """Handle click on rules indicator."""
         # Browse for rules folder
         path = QFileDialog.getExistingDirectory(
             self,
             "Select Rules Folder",
-            str(Path.home()) if not self.project_manager.project_root else str(self.project_manager.project_root),
+            str(Path.home())
+            if not self.project_manager.project_root
+            else str(self.project_manager.project_root),
         )
-        
+
         if not path:
             return
-        
+
         rules_path = Path(path)
-        
+
         # Set rules root
         if self.project_manager.set_rules_root(rules_path):
             self._update_project_rules_indicators()
@@ -398,32 +415,32 @@ class StudioWorkspace(QWidget):
             QMessageBox.warning(
                 self,
                 "Invalid Rules Folder",
-                f"The selected folder does not contain any .md files.\\n\\nSelected: {rules_path}"
+                f"The selected folder does not contain any .md files.\\n\\nSelected: {rules_path}",
             )
-    
+
     def _apply_settings(self):
         """Apply settings to the UI."""
         # Apply editor settings would go here
         pass
-    
+
     def _setup_shortcuts(self):
         """Setup keyboard shortcuts."""
         # Tab switching (Ctrl+1-4 for new 4-tab structure)
         for i in range(4):
-            shortcut = QShortcut(QKeySequence(f"Ctrl+{i+1}"), self)
+            shortcut = QShortcut(QKeySequence(f"Ctrl+{i + 1}"), self)
             shortcut.activated.connect(lambda idx=i: self.view_stack.setCurrentIndex(idx))
-    
+
     def _update_status_indicators(self):
         """Repaint the header (test, Text/JSON/Code and Sync pills, Save all)
         and the footer."""
         self._update_project_rules_indicators()
-    
+
     def _update_menu_state(self):
         """Update menu items based on artifact availability."""
         pass
-    
+
     # ==================== Event Handlers ====================
-    
+
     def _on_settings(self):
         """Open settings dialog."""
         # Pass project_root so the Validator tab can read/write the
@@ -476,8 +493,8 @@ class StudioWorkspace(QWidget):
         root = getattr(self.project_manager, "project_root", None)
         if not root:
             QMessageBox.information(
-                self, "Project Configuration",
-                "Open or create a project first.")
+                self, "Project Configuration", "Open or create a project first."
+            )
             return
         origin = project_seeding.active_config_name(root)
         dlg = ProjectConfigDialog.for_project(self, project_path=root, project_config_origin=origin)
@@ -518,8 +535,7 @@ class StudioWorkspace(QWidget):
         """
         root = getattr(self.project_manager, "project_root", None)
         if not root:
-            QMessageBox.information(
-                self, "Scenarios", "Open or create a project first.")
+            QMessageBox.information(self, "Scenarios", "Open or create a project first.")
             return
         candidates = [
             (i.name, i.has_json and i.has_code)
@@ -549,25 +565,30 @@ class StudioWorkspace(QWidget):
             bar.show_replace()
         else:
             bar.show_find()
-    
+
     def _on_syntax_reference(self):
         """Open the DSL Syntax Reference (cheat-sheet + full bundle rule docs)."""
         from .dialogs.syntax_reference import SyntaxReferenceDialog
+
         pm = self.project_manager
-        SyntaxReferenceDialog.show_reference(pm.rules_root, self, shell.bundle_name(pm.project_root))
+        SyntaxReferenceDialog.show_reference(
+            pm.rules_root, self, shell.bundle_name(pm.project_root)
+        )
 
     def _on_export_keywords(self):
         """Show the Word-export template variable reference (dialogs/word_keywords_dialog)."""
         from .dialogs.word_keywords_dialog import show_word_keywords
+
         show_word_keywords(self)
 
     def _on_about(self):
         """Show the About box."""
         from .dialogs.about_dialog import AboutDialog
+
         AboutDialog(self).exec()
-    
+
     # ==================== Public Interface ====================
-    
+
     def switch_to_tab(self, tab_name: str):
         """Switch to a tab by name.
 
@@ -584,19 +605,19 @@ class StudioWorkspace(QWidget):
             "text": self.text_only_tab,
             "code": self.json_code_tab,
         }
-        
+
         tab = name_map.get(tab_name.lower())
         if tab:
             self.view_stack.setCurrentWidget(tab)
-    
+
     def open_test(self, path: Path):
         """Open a test folder programmatically."""
         self._document_controller.on_test_opened(path)
-    
+
     def set_project_root(self, path: Path):
         """Set project root programmatically."""
         self.workspace_widget.set_project_root(path)
-    
+
     def confirm_close(self, event):
         """The hosting window is closing: save the session, ask about unsaved
         work, stop the servers; ``event`` ignored when the user cancels (body

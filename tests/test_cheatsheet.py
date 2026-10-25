@@ -15,8 +15,13 @@ import os
 import tempfile
 from pathlib import Path
 
-_MOD = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                    "procedo", "studio", "core", "cheatsheet.py")
+_MOD = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "procedo",
+    "studio",
+    "core",
+    "cheatsheet.py",
+)
 _spec = importlib.util.spec_from_file_location("cheatsheet", _MOD)
 cheatsheet = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cheatsheet)
@@ -31,16 +36,23 @@ def _bundle(tmp: Path) -> Path:
         "### Directive set\n\n| Directive | Form |\n|---|---|\n| @FOR | @FOR i IN |\n\n"
         "## `## Expected` section — closed criterion grammar\n\n"
         "| Form | Notes |\n|---|---|\n| = | equality |\n",
-        encoding="utf-8")
+        encoding="utf-8",
+    )
     (tmp / "006_scope.md").write_text(
         "# Scope\n\n## Equipment line\n\n```\nSCOPE1 : scope channels=[1,2]\n```\n\n"
         "## Acquisition ops\n\n| Action | Canonical form |\n|---|---|\n"
         "| Arm | Arm SCOPE1. |\n",
-        encoding="utf-8")
-    (tmp / "manifest.json").write_text(json.dumps([
-        {"index": 1, "filename": "001_base.md", "source": "pack:base"},
-        {"index": 2, "filename": "006_scope.md", "source": "pack:labscpi"},
-    ]), encoding="utf-8")
+        encoding="utf-8",
+    )
+    (tmp / "manifest.json").write_text(
+        json.dumps(
+            [
+                {"index": 1, "filename": "001_base.md", "source": "pack:base"},
+                {"index": 2, "filename": "006_scope.md", "source": "pack:labscpi"},
+            ]
+        ),
+        encoding="utf-8",
+    )
     return tmp
 
 
@@ -51,16 +63,16 @@ def test_extracts_base_and_pack_surfaces():
         assert "Canonical verbs" in sheet and "| Set | psu |" in sheet
         assert "Directive set" in sheet and "@FOR i IN" in sheet
         assert "Expected-criterion comparators" in sheet and "| = | equality |" in sheet
-        assert "SCOPE1 : scope" in sheet                  # equipment-line fence
-        assert "Arm SCOPE1." in sheet                     # Canonical-form fallback
+        assert "SCOPE1 : scope" in sheet  # equipment-line fence
+        assert "Arm SCOPE1." in sheet  # Canonical-form fallback
 
 
 def test_list_docs_full_text_and_titles():
     with tempfile.TemporaryDirectory() as td:
         root = _bundle(Path(td))
         docs = cheatsheet.list_docs(root)
-        assert [d["title"] for d in docs] == ["Base", "Scope"]          # first H1
-        assert "channels=[1,2]" in docs[1]["text"]                       # verbatim
+        assert [d["title"] for d in docs] == ["Base", "Scope"]  # first H1
+        assert "channels=[1,2]" in docs[1]["text"]  # verbatim
         assert docs[0]["source"] == "pack:base"
 
 

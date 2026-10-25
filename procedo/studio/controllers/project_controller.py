@@ -92,7 +92,7 @@ class ProjectController(QObject):
             mw,
             "Project Created",
             f"Project created successfully at:\n{project_path}\n\n"
-            "You can now create test folders using the Workspace tab."
+            "You can now create test folders using the Workspace tab.",
         )
 
     def refresh_after_open(self):
@@ -120,9 +120,7 @@ class ProjectController(QObject):
             return
         for path_str in recent:
             action = mw._open_recent_menu.addAction(path_str)
-            action.triggered.connect(
-                lambda checked=False, p=path_str: self.on_open_recent(p)
-            )
+            action.triggered.connect(lambda checked=False, p=path_str: self.on_open_recent(p))
 
     def _forget_recent(self) -> None:
         """A recent still being looked for no longer opens; its footer line goes."""
@@ -135,8 +133,11 @@ class ProjectController(QObject):
         (on a share that is down that takes ~20 s); only the last one asked for opens."""
         self._recent_asked = path_str
         self._mw.footer.show_message(f"Looking for {path_str}…")
-        run_off_gui(lambda: (path_str, _folder_there(path_str)), self._on_recent_checked,
-                    name="recent-project-check")
+        run_off_gui(
+            lambda: (path_str, _folder_there(path_str)),
+            self._on_recent_checked,
+            name="recent-project-check",
+        )
 
     def _on_recent_checked(self, answer) -> None:
         path_str, there = answer
@@ -147,8 +148,10 @@ class ProjectController(QObject):
         mw.footer.show_message("")
         if not there:
             QMessageBox.warning(
-                mw, "Project Not Found",
-                f"The project folder does not exist or cannot be reached:\n{path_str}")
+                mw,
+                "Project Not Found",
+                f"The project folder does not exist or cannot be reached:\n{path_str}",
+            )
             return
         path = Path(path_str)
         if mw.project_manager.set_project_root(path):
@@ -199,7 +202,7 @@ class ProjectController(QObject):
                     mw,
                     "Invalid Project",
                     "Selected folder does not appear to be a valid project root.\n\n"
-                    "A valid project should contain a 'tests/' or 'config/' folder."
+                    "A valid project should contain a 'tests/' or 'config/' folder.",
                 )
 
 
@@ -378,8 +381,7 @@ def on_config_dir_changed(mw, path: str) -> None:
     # If the file watch dropped during a rmtree window, re-add it
     # now that the directory event tells us the file is back.
     file_str = str(mw._watched_config_path)
-    if (exists_quiet(mw._watched_config_path)
-            and file_str not in mw._config_watcher.files()):
+    if exists_quiet(mw._watched_config_path) and file_str not in mw._config_watcher.files():
         mw._config_watcher.addPath(file_str)
         handle_config_change(mw)
 

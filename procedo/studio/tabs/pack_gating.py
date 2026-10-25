@@ -44,6 +44,7 @@ class PackGatingMixin:
     def refresh_parser_button(self) -> bool:
         """Show the ⚡ buttons iff the wheel imports, then gate them; returns whether it does."""
         from ..pack_ops import pack_parsers
+
         project_root = getattr(self.project_manager, "project_root", None)
         available, _ = pack_parsers.is_available(project_root)
         for button, _tip, _caps in self._pack_gates():
@@ -56,6 +57,7 @@ class PackGatingMixin:
         """Enable each ⚡ button iff every equipment type has its capabilities (one still running
         is left as it is)."""
         from ..pack_ops import bundle_capabilities
+
         for button, tip, caps in self._pack_gates():
             if engine_async.busy(button):
                 continue

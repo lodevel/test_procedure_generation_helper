@@ -4,6 +4,7 @@ Pure logic: :func:`discover_skills` takes explicit ``(root, source)`` pairs, so
 it's testable with temp dirs and no app/project wiring. :func:`load_skills` is
 the thin convenience that pulls the default roots from :mod:`.locations`.
 """
+
 from __future__ import annotations
 
 import logging
@@ -51,7 +52,10 @@ def discover_skills(
             if existing is not None and skill.source == existing.source:
                 log.warning(
                     "duplicate skill_id %r in %s; keeping %s, ignoring %s",
-                    skill.skill_id, source.name, existing.path, skill.path,
+                    skill.skill_id,
+                    source.name,
+                    existing.path,
+                    skill.path,
                 )
                 continue
             if existing is None or skill.source > existing.source:

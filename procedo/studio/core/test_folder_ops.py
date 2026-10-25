@@ -65,7 +65,8 @@ def delete_test(tests_dir: Path, test_dir: Path) -> None:
         raise TestFolderError(
             f"Could not delete '{test_dir.name}' — nothing was removed. A file or folder inside "
             f"it is open in another program (Explorer, a terminal, an editor); close it and try "
-            f"again.\n\n{e}") from e
+            f"again.\n\n{e}"
+        ) from e
     try:
         rmtree(aside)  # clears a read-only file first: the user confirmed deleting everything
     except OSError as e:
@@ -74,8 +75,13 @@ def delete_test(tests_dir: Path, test_dir: Path) -> None:
         ) from e
 
 
-def rename_test(project_root: Path, tests_dir: Path, test_dir: Path, new_name: str,
-                patterns: list[re.Pattern[str]]) -> tuple[Path, list[str]]:
+def rename_test(
+    project_root: Path,
+    tests_dir: Path,
+    test_dir: Path,
+    new_name: str,
+    patterns: list[re.Pattern[str]],
+) -> tuple[Path, list[str]]:
     """Rename a test folder to ``new_name`` (already a valid id) and keep the id
     and the project's references in step. Returns the new folder and warnings
     for what could not follow (the ids re-sync on the next save)."""
@@ -88,15 +94,21 @@ def rename_test(project_root: Path, tests_dir: Path, test_dir: Path, new_name: s
     # Acknowledged AND unchanged since (the list's own ⚠ test), decided on the
     # old folder: a rename must never acknowledge an edit the ⚠ was showing.
     baseline = read_sync_baseline(test_dir)
-    was_in_sync = (baseline is not None and bool(baseline[1])
-                   and not test_sync.is_out_of_sync(test_dir, patterns))
+    was_in_sync = (
+        baseline is not None
+        and bool(baseline[1])
+        and not test_sync.is_out_of_sync(test_dir, patterns)
+    )
     try:
         test_dir.rename(new_dir)
     except OSError as e:
         raise TestFolderError(f"Could not rename '{test_dir.name}' to '{new_name}':\n{e}") from e
 
     warnings: list[str] = []
-    for fname, fixer in (("procedure_text.md", force_text_id_line), ("procedure.json", force_json_id)):
+    for fname, fixer in (
+        ("procedure_text.md", force_text_id_line),
+        ("procedure.json", force_json_id),
+    ):
         fpath = new_dir / fname
         if reason := unreachable(fpath):
             warnings.append(f"{fname}: {reason}")
@@ -135,7 +147,9 @@ def _swap_references(project_root: Path, old: str, new: str) -> list[str]:
             order = data.get("test_order", {}).get("order")
             if isinstance(order, list) and old in order:
                 data["test_order"]["order"] = [new if entry == old else entry for entry in order]
-                atomic_write_text(config_file, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+                atomic_write_text(
+                    config_file, json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+                )
         except (OSError, ValueError, AttributeError, TypeError) as e:
             warnings.append(f"config.json test_order: {e}")
     scenarios_dir = project_root / "scenarios"

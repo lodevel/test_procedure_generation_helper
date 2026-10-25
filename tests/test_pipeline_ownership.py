@@ -12,6 +12,7 @@ fixture); a real engine process needs a project venv, out of scope here.
 Runs without PySide6:
     PYTHONPATH=. python3 -m pytest tests/test_pipeline_ownership.py --noconftest -q
 """
+
 from __future__ import annotations
 
 import json
@@ -62,14 +63,10 @@ class PipelineOwnershipNoOverrideTests(unittest.TestCase):
         self.assertEqual(self.own.llm_sections, expected.llm_sections)
 
     def test_default_llm_sections_are_equipment_steps_expected(self) -> None:
-        self.assertEqual(
-            self.own.llm_sections, frozenset({"equipment", "steps", "expected"})
-        )
+        self.assertEqual(self.own.llm_sections, frozenset({"equipment", "steps", "expected"}))
 
     def test_partition_covers_all_canonical_sections(self) -> None:
-        self.assertEqual(
-            self.own.llm_sections | self.own.parser_sections, CANONICAL_SECTIONS
-        )
+        self.assertEqual(self.own.llm_sections | self.own.parser_sections, CANONICAL_SECTIONS)
 
 
 class PipelineOwnershipTaskOverrideTests(unittest.TestCase):
@@ -96,8 +93,12 @@ class PipelineOwnershipTracksAccessorTests(unittest.TestCase):
         self._orig = pack_parsers.get_section_ownership
         # A map deliberately different from DEFAULT (only steps LLM-owned).
         pack_parsers.get_section_ownership = lambda project_root=None: {
-            "test_id": "parser", "description": "parser", "meta": "parser",
-            "equipment": "parser", "steps": "llm", "expected": "parser",
+            "test_id": "parser",
+            "description": "parser",
+            "meta": "parser",
+            "equipment": "parser",
+            "steps": "llm",
+            "expected": "parser",
         }
 
     def tearDown(self) -> None:
@@ -115,16 +116,18 @@ class PipelineOwnershipSideCarTests(unittest.TestCase):
 
     def test_resolves_custom_sidecar_map(self) -> None:
         custom = {
-            "test_id": "parser", "description": "parser", "meta": "parser",
-            "equipment": "parser", "steps": "llm", "expected": "parser",
+            "test_id": "parser",
+            "description": "parser",
+            "meta": "parser",
+            "equipment": "parser",
+            "steps": "llm",
+            "expected": "parser",
         }
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             rules_dir = root / "bundle" / "rules"
             rules_dir.mkdir(parents=True)
-            (rules_dir / "section_ownership.json").write_text(
-                json.dumps(custom), encoding="utf-8"
-            )
+            (rules_dir / "section_ownership.json").write_text(json.dumps(custom), encoding="utf-8")
             own = pipeline_ownership(project_root=root)
         self.assertEqual(own.llm_sections, frozenset({"steps"}))
 
@@ -146,9 +149,7 @@ class PipelineOwnershipFallbackTests(unittest.TestCase):
 
     def test_falls_back_to_default_without_raising(self) -> None:
         own = pipeline_ownership(project_root=None)
-        self.assertEqual(
-            own.llm_sections, resolve(DEFAULT_OWNERSHIP).llm_sections
-        )
+        self.assertEqual(own.llm_sections, resolve(DEFAULT_OWNERSHIP).llm_sections)
 
     def test_override_still_applies_on_fallback(self) -> None:
         own = pipeline_ownership(project_root=None, task_override={"steps"})

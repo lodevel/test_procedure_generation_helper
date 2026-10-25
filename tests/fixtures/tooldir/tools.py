@@ -2,6 +2,7 @@
 
 SERVER_NAME + TOOLS must stay in sync with tools.json beside this file.
 """
+
 SERVER_NAME = "fixture_tools"
 
 

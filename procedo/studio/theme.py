@@ -25,6 +25,7 @@ def tone(token: str) -> QColor:
 
 # ── Code syntax highlighting colours ────────────────────────────────
 
+
 def syntax_keyword() -> QColor:
     """Colour for Python keywords."""
     return QColor("#569cd6") if is_dark() else QColor("#0000cc")
@@ -46,6 +47,7 @@ def syntax_function() -> QColor:
 
 
 # ── JSON syntax colours ─────────────────────────────────────────────
+
 
 def json_key() -> QColor:
     """Colour for JSON keys."""
@@ -69,12 +71,14 @@ def json_keyword() -> QColor:
 
 # ── Project bar status ──────────────────────────────────────────────
 
+
 def status_warning() -> str:
     """CSS colour for 'warning' status."""
     return "#ffa726" if is_dark() else "orange"
 
 
 # ── procedure_text.md syntax (the boards' text editor) ─────────────
+
 
 def text_heading() -> QColor:
     """Colour for ``#`` heading lines."""

@@ -2,6 +2,7 @@
 importing any pack: equipment profiles and per-type capabilities, and the
 gating of an action on the equipment a procedure uses. (Bench fields are
 read by the host's ``procedo.core.bundle_registry``.)"""
+
 from __future__ import annotations
 
 import os

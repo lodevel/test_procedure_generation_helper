@@ -23,6 +23,7 @@ These tests cover:
 Runs without PySide6:
     <venv>/python -m pytest tests/test_validator_feedback_fragment_lines.py --noconftest -q
 """
+
 from __future__ import annotations
 
 import unittest
@@ -50,37 +51,41 @@ _skip_no_labscpi = pytest.mark.skipif(
 
 # A reconstructed full document whose body (anchor `## Equipment`) starts at
 # line 12 (1-based), i.e. index 11 (0-based) — an 11-line identity prefix.
-RECON_TEXT = "\n".join([
-    "# REAL_TITLE",          # 1
-    "Real description.",     # 2
-    "",                      # 3
-    "## Meta",               # 4
-    "format_version: 2.0.1",  # 5
-    "board: BOARD_A",        # 6
-    "requirement: REQ-42",   # 7
-    "rules_pack: old@1.0.0",  # 8
-    "labscpi_pack: old@1.0.0",  # 9
-    "",                      # 10
-    "",                      # 11
-    "## Equipment",          # 12  <- anchor
-    "PSU1 : psu",            # 13
-    "",                      # 14
-    "## Steps",              # 15
-    "1. Set PSU1 CH1 voltage = 5.0 V.",  # 16
-    "",                      # 17
-    "## Expected",           # 18
-])
+RECON_TEXT = "\n".join(
+    [
+        "# REAL_TITLE",  # 1
+        "Real description.",  # 2
+        "",  # 3
+        "## Meta",  # 4
+        "format_version: 2.0.1",  # 5
+        "board: BOARD_A",  # 6
+        "requirement: REQ-42",  # 7
+        "rules_pack: old@1.0.0",  # 8
+        "labscpi_pack: old@1.0.0",  # 9
+        "",  # 10
+        "",  # 11
+        "## Equipment",  # 12  <- anchor
+        "PSU1 : psu",  # 13
+        "",  # 14
+        "## Steps",  # 15
+        "1. Set PSU1 CH1 voltage = 5.0 V.",  # 16
+        "",  # 17
+        "## Expected",  # 18
+    ]
+)
 
 # The body fragment the LLM authored — `## Equipment` is line 1.
-FRAGMENT_TEXT = "\n".join([
-    "## Equipment",          # 1  <- anchor
-    "PSU1 : psu",            # 2
-    "",                      # 3
-    "## Steps",              # 4
-    "1. Set PSU1 CH1 voltage = 5.0 V.",  # 5
-    "",                      # 6
-    "## Expected",           # 7
-])
+FRAGMENT_TEXT = "\n".join(
+    [
+        "## Equipment",  # 1  <- anchor
+        "PSU1 : psu",  # 2
+        "",  # 3
+        "## Steps",  # 4
+        "1. Set PSU1 CH1 voltage = 5.0 V.",  # 5
+        "",  # 6
+        "## Expected",  # 7
+    ]
+)
 
 
 class FragmentLineShiftTests(unittest.TestCase):
@@ -96,9 +101,7 @@ class FragmentLineShiftTests(unittest.TestCase):
 
     def test_anchor_absent_returns_zero(self) -> None:
         # No shared anchor line → no shift assumed.
-        self.assertEqual(
-            _fragment_line_shift(RECON_TEXT, "## SomethingElse\nbody\n"), 0
-        )
+        self.assertEqual(_fragment_line_shift(RECON_TEXT, "## SomethingElse\nbody\n"), 0)
 
     def test_all_blank_fragment_returns_zero(self) -> None:
         # No non-blank fragment line → anchor is None → 0.
@@ -116,18 +119,20 @@ class FragmentLineShiftTests(unittest.TestCase):
     def test_duplicate_anchor_in_identity_uses_body_occurrence(self) -> None:
         # Defect #3: the anchor line also appears in the prepended identity. The
         # body occurrence is the *later* one, so the shift must anchor on it.
-        recon_with_dup = "\n".join([
-            "# REAL_TITLE",       # 1
-            "## Equipment",       # 2  <- decoy occurrence inside identity
-            "(notes)",            # 3
-            "",                   # 4
-            "## Meta",            # 5
-            "format_version: 2.0.1",  # 6
-            "",                   # 7
-            "## Equipment",       # 8  <- real body occurrence (index 7)
-            "PSU1 : psu",         # 9
-            "## Steps",           # 10
-        ])
+        recon_with_dup = "\n".join(
+            [
+                "# REAL_TITLE",  # 1
+                "## Equipment",  # 2  <- decoy occurrence inside identity
+                "(notes)",  # 3
+                "",  # 4
+                "## Meta",  # 5
+                "format_version: 2.0.1",  # 6
+                "",  # 7
+                "## Equipment",  # 8  <- real body occurrence (index 7)
+                "PSU1 : psu",  # 9
+                "## Steps",  # 10
+            ]
+        )
         # Body anchor at index 7, fragment anchor at index 0 → shift 7. The
         # earliest-occurrence bug would have returned 1 (the decoy).
         self.assertEqual(_fragment_line_shift(recon_with_dup, FRAGMENT_TEXT), 7)
@@ -139,14 +144,16 @@ class FormatValidatorFeedbackTranslationTests(unittest.TestCase):
         # the renderer must emit it verbatim, no further offset.
         outcome = ValidationOutcome(
             ok=False,
-            issues=[ValidationIssueView(
-                code="GRAM_LINE_UNRECOGNIZED",
-                message="Unrecognized line in Steps: '3. @IF ...'",
-                severity="error",
-                location="line=20",  # full-doc, operator-facing — untouched
-                line=9,              # already fragment coords
-                fixable_by="either",
-            )],
+            issues=[
+                ValidationIssueView(
+                    code="GRAM_LINE_UNRECOGNIZED",
+                    message="Unrecognized line in Steps: '3. @IF ...'",
+                    severity="error",
+                    location="line=20",  # full-doc, operator-facing — untouched
+                    line=9,  # already fragment coords
+                    fixable_by="either",
+                )
+            ],
         )
         feedback = format_validator_feedback(outcome, attempt=1, max_attempts=3)
         self.assertIn("at line 9", feedback)
@@ -158,14 +165,16 @@ class FormatValidatorFeedbackTranslationTests(unittest.TestCase):
         # pointer is coordinate-free so it passes through unchanged.
         outcome = ValidationOutcome(
             ok=False,
-            issues=[ValidationIssueView(
-                code="JS_SCHEMA_VIOLATION",
-                message="steps[3] missing required key 'op'",
-                severity="error",
-                location="pointer=/steps/3",
-                line=None,
-                fixable_by="either",
-            )],
+            issues=[
+                ValidationIssueView(
+                    code="JS_SCHEMA_VIOLATION",
+                    message="steps[3] missing required key 'op'",
+                    severity="error",
+                    location="pointer=/steps/3",
+                    line=None,
+                    fixable_by="either",
+                )
+            ],
         )
         feedback = format_validator_feedback(outcome, attempt=1, max_attempts=3)
         self.assertIn("pointer=/steps/3", feedback)
@@ -178,14 +187,16 @@ class FormatValidatorFeedbackTranslationTests(unittest.TestCase):
         # findings are never shifted — the renderer must emit their line as-is.
         outcome = ValidationOutcome(
             ok=False,
-            issues=[ValidationIssueView(
-                code="JS_TOPOLOGY",
-                message="dangling reference",
-                severity="error",
-                location="line=4",
-                line=4,  # untranslated json-side line
-                fixable_by="either",
-            )],
+            issues=[
+                ValidationIssueView(
+                    code="JS_TOPOLOGY",
+                    message="dangling reference",
+                    severity="error",
+                    location="line=4",
+                    line=4,  # untranslated json-side line
+                    fixable_by="either",
+                )
+            ],
         )
         feedback = format_validator_feedback(outcome, attempt=1, max_attempts=3)
         self.assertIn("at line 4", feedback)
@@ -262,7 +273,10 @@ class ValidateProposedTextTranslationIntegrationTests(unittest.TestCase):
         validate_fn = _CapturingValidateFn()
 
         outcome = validator_dispatch._validate_proposed_text(
-            response, current, None, validate_fn,
+            response,
+            current,
+            None,
+            validate_fn,
         )
         self.assertIsNotNone(outcome)
         self.assertEqual(len(validate_fn.calls), 1)

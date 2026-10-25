@@ -4,6 +4,7 @@ Speaks newline-delimited JSON-RPC over the server's stdin/stdout, exactly as
 OpenCode would, and verifies: tools/list advertises read_pdf, a local crafted
 PDF round-trips, and a path-traversal source is denied (not leaked).
 """
+
 import os
 
 import pytest
@@ -48,9 +49,7 @@ def test_read_pdf_local_roundtrip(server):
     srv, docs = server
     _handshake(srv)
     make_pdf(docs / "ds.pdf", "BENCH SECRET ZX99")
-    resp = srv.request(
-        3, "tools/call", {"name": "read_pdf", "arguments": {"source": "ds.pdf"}}
-    )
+    resp = srv.request(3, "tools/call", {"name": "read_pdf", "arguments": {"source": "ds.pdf"}})
     text = resp["result"]["content"][0]["text"]
     assert "BENCH SECRET ZX99" in text
 
@@ -116,10 +115,11 @@ def test_save_pdf_advertised(server):
 
 def test_safe_pdf_name_sandbox():
     from procedo.studio.authoring import _pdf_tool_mcp as m
+
     assert m._safe_pdf_name("../../etc/passwd") == "passwd.pdf"
-    assert m._safe_pdf_name("a/b\\c") == "c.pdf"            # basename only -> no traversal
+    assert m._safe_pdf_name("a/b\\c") == "c.pdf"  # basename only -> no traversal
     assert m._safe_pdf_name("LT8609AJDDM#TRPBF") == "LT8609AJDDM_TRPBF.pdf"
-    assert m._safe_pdf_name("U86.pdf") == "U86.pdf"         # .pdf not doubled
+    assert m._safe_pdf_name("U86.pdf") == "U86.pdf"  # .pdf not doubled
     assert m._safe_pdf_name("   ") is None
     assert m._safe_pdf_name("///") is None
 
@@ -135,15 +135,20 @@ def test_save_pdf_caches_and_guards(monkeypatch, tmp_path):
         return "DATASHEET TEXT"
 
     monkeypatch.setattr(m, "fetch_and_extract", fake_fetch)
-    res = m._handle_save_pdf(
-        {"source": "http://x/d.pdf", "save_as": "U86"}, str(tmp_path))
+    res = m._handle_save_pdf({"source": "http://x/d.pdf", "save_as": "U86"}, str(tmp_path))
     text = res["content"][0]["text"]
     assert "DATASHEET TEXT" in text
     assert "Saved to the project documents as U86.pdf" in text
     assert (tmp_path / "U86.pdf").exists()
 
     # guards: a save_as is required, and only http(s) sources are fetched.
-    assert "save_as" in m._handle_save_pdf(
-        {"source": "http://x/d.pdf"}, str(tmp_path))["content"][0]["text"]
-    assert "http" in m._handle_save_pdf(
-        {"source": "local.pdf", "save_as": "U"}, str(tmp_path))["content"][0]["text"]
+    assert (
+        "save_as"
+        in m._handle_save_pdf({"source": "http://x/d.pdf"}, str(tmp_path))["content"][0]["text"]
+    )
+    assert (
+        "http"
+        in m._handle_save_pdf({"source": "local.pdf", "save_as": "U"}, str(tmp_path))["content"][0][
+            "text"
+        ]
+    )

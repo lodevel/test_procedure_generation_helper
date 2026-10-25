@@ -17,8 +17,16 @@ from typing import Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut, QTextCursor, QTextDocument
 from PySide6.QtWidgets import (
-    QApplication, QButtonGroup, QFrame, QHBoxLayout, QLineEdit, QPlainTextEdit, QPushButton,
-    QToolButton, QVBoxLayout, QWidget,
+    QApplication,
+    QButtonGroup,
+    QFrame,
+    QHBoxLayout,
+    QLineEdit,
+    QPlainTextEdit,
+    QPushButton,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
 )
 
 from procedo.ui import ui_kit
@@ -282,7 +290,9 @@ class FindReplaceBar(QFrame):
             if self.regex_toggle.isChecked():
                 # Already attempted regex above; retry from doc edge.
                 found = self._find_regex(
-                    self._compile_regex(pattern), wrap_cursor, forward=forward,
+                    self._compile_regex(pattern),
+                    wrap_cursor,
+                    forward=forward,
                 )
             else:
                 found = doc.find(pattern, wrap_cursor, flags)
@@ -296,7 +306,7 @@ class FindReplaceBar(QFrame):
         return True
 
     def _match_position(self, found: QTextCursor) -> str:
-        """"3 of 9": which of the target's matches *found* is ("" when unsure)."""
+        """ "3 of 9": which of the target's matches *found* is ("" when unsure)."""
         regex = self._search_regex(self.find_field.text())
         starts = [m.start() for m in regex.finditer(self._target.toPlainText())]
         if found.selectionStart() not in starts:
@@ -308,7 +318,11 @@ class FindReplaceBar(QFrame):
         return re.compile(pattern, flags)
 
     def _find_regex(
-        self, regex: re.Pattern[str], cursor: QTextCursor, *, forward: bool,
+        self,
+        regex: re.Pattern[str],
+        cursor: QTextCursor,
+        *,
+        forward: bool,
     ) -> Optional[QTextCursor]:
         if self._target is None:
             return None
@@ -348,7 +362,10 @@ class FindReplaceBar(QFrame):
         return selected.lower() == pattern.lower()
 
     def _replace_all_in_string(
-        self, text: str, pattern: str, replacement: str,
+        self,
+        text: str,
+        pattern: str,
+        replacement: str,
     ) -> tuple[str, int]:
         """Pure helper for ``replace_all`` — exposed for testability."""
         new_text, count = self._search_regex(pattern).subn(replacement, text)
@@ -371,7 +388,9 @@ class FindReplaceBar(QFrame):
 
 
 def install_find_shortcuts(
-    tab: QWidget, editors: list[QPlainTextEdit], bar: FindReplaceBar,
+    tab: QWidget,
+    editors: list[QPlainTextEdit],
+    bar: FindReplaceBar,
 ) -> None:
     """Register *editors* on *bar* so menu-driven invocations
     (Edit → Find / Edit → Replace) pick the focused editor — or

@@ -21,19 +21,29 @@ from procedo.core.off_gui import answer_to, run_off_gui
 from ..core.full_report import export_outcome
 
 
-def _export_as_evidence(project_root: Path, test_folders: list[Path], output_path: Path,
-                        sidecar: dict, progress) -> dict:
+def _export_as_evidence(
+    project_root: Path, test_folders: list[Path], output_path: Path, sidecar: dict, progress
+) -> dict:
     """:func:`export_outcome` into a temporary folder (removed on every path), then the
     document and its sidecar handed to the project's evidence store (a refusal there
     is the worker's error answer). ``queued``: not pushed yet — it waits in this PC's
     outbox."""
     with tempfile.TemporaryDirectory(prefix="procedo-word-export-") as tmp:
-        answer = export_outcome(project_root, test_folders, Path(tmp) / output_path.name,
-                                sidecar=sidecar, progress=progress)
+        answer = export_outcome(
+            project_root,
+            test_folders,
+            Path(tmp) / output_path.name,
+            sidecar=sidecar,
+            progress=progress,
+        )
         if "path" not in answer:
             return answer
-        pushed = project_exports.save_export(project_root, output_path.name, answer["path"].read_bytes(),
-                                             report_export.sidecar_bytes(sidecar))
+        pushed = project_exports.save_export(
+            project_root,
+            output_path.name,
+            answer["path"].read_bytes(),
+            report_export.sidecar_bytes(sidecar),
+        )
     return {"path": output_path, "queued": not pushed}
 
 
@@ -42,9 +52,16 @@ class WordExportJob(QObject):
     written (``queued``: waiting in this PC's outbox). *evidence_folder*: the project's
     evidence exports folder — an *output_path* inside it goes through the store."""
 
-    def __init__(self, window: QWidget, project_root: Path, test_folders: list[Path], output_path: Path,
-                 sidecar: dict, on_exported: Callable[[Path, bool], None],
-                 evidence_folder: Path | None = None) -> None:
+    def __init__(
+        self,
+        window: QWidget,
+        project_root: Path,
+        test_folders: list[Path],
+        output_path: Path,
+        sidecar: dict,
+        on_exported: Callable[[Path, bool], None],
+        evidence_folder: Path | None = None,
+    ) -> None:
         super().__init__(window)
         self._window, self._on_exported = window, on_exported
         self._progress = QProgressDialog("Exporting the Word report...", "Cancel", 0, 0, window)
@@ -60,8 +77,12 @@ class WordExportJob(QObject):
 
         def export() -> dict:  # on the worker: the folder rule touches the filesystem
             if evidence_folder is not None and same_folder(output_path.parent, evidence_folder):
-                return _export_as_evidence(project_root, test_folders, output_path, sidecar, progress)
-            return export_outcome(project_root, test_folders, output_path, sidecar=sidecar, progress=progress)
+                return _export_as_evidence(
+                    project_root, test_folders, output_path, sidecar, progress
+                )
+            return export_outcome(
+                project_root, test_folders, output_path, sidecar=sidecar, progress=progress
+            )
 
         run_off_gui(export, self._on_answer, name="word-export")
 
@@ -78,5 +99,9 @@ class WordExportJob(QObject):
             self._on_exported(answer["path"], answer.get("queued", False))
         else:
             show = QMessageBox.critical if answer.get("critical", True) else QMessageBox.warning
-            show(self._window, answer.get("title", "Export Failed"), answer.get("text") or str(answer.get("error")))
+            show(
+                self._window,
+                answer.get("title", "Export Failed"),
+                answer.get("text") or str(answer.get("error")),
+            )
         self.deleteLater()

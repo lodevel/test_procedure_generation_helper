@@ -11,6 +11,7 @@ Drives the server over newline-delimited JSON-RPC and verifies:
 - drift guard: tools.json listing a tool NOT in tools.py makes the server exit
   non-zero (fail-closed) before it serves any request.
 """
+
 import os
 import subprocess
 import sys
@@ -101,6 +102,7 @@ def test_drift_guard_exits_nonzero():
 def test_loading_a_tool_folder_leaves_no_bytecode_in_it(tmp_path, monkeypatch):
     """The project's bundle tool folder gets no __pycache__ from the server's load."""
     import shutil
+
     monkeypatch.setattr(sys, "dont_write_bytecode", False)
     tools_dir = tmp_path / "tooldir"
     shutil.copytree(FIXTURE_DIR, tools_dir, ignore=shutil.ignore_patterns("__pycache__"))

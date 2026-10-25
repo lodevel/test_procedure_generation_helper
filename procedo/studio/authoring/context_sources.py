@@ -6,6 +6,7 @@ manager / netlist) at arm's length via injected callables, so the sources are
 unit-testable with fakes and temp dirs. The Qt wiring builds them with the live
 objects.
 """
+
 from __future__ import annotations
 
 import logging
@@ -37,15 +38,10 @@ class DocumentsSource(ContextSource):
     def _files(self) -> list[Path]:
         if not self._dir.is_dir():
             return []
-        return sorted(
-            p for p in self._dir.iterdir() if p.is_file() and not p.name.startswith(".")
-        )
+        return sorted(p for p in self._dir.iterdir() if p.is_file() and not p.name.startswith("."))
 
     def list_items(self) -> list[ContextItem]:
-        return [
-            ContextItem("documents", p.name, p.name, _human_size(p))
-            for p in self._files()
-        ]
+        return [ContextItem("documents", p.name, p.name, _human_size(p)) for p in self._files()]
 
     def materialize(self, keys: Sequence[str]) -> str:
         wanted = set(keys)
@@ -61,10 +57,13 @@ class DocumentsSource(ContextSource):
                 if text:
                     blocks.append(_wrap(f"{path.name} (extracted text)", text))
                 else:
-                    blocks.append(_wrap(
-                        path.name,
-                        "(PDF attached but no extractable text — likely a "
-                        "scanned/image-only datasheet.)"))
+                    blocks.append(
+                        _wrap(
+                            path.name,
+                            "(PDF attached but no extractable text — likely a "
+                            "scanned/image-only datasheet.)",
+                        )
+                    )
                 continue
             try:
                 body = path.read_text(encoding="utf-8")

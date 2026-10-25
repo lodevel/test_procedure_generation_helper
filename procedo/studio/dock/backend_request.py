@@ -22,6 +22,7 @@ def request_backend(factory, tab_id: str, on_answer) -> None:
     (no factory, or the backend is off), else from a worker (``run_off_gui``; the factory
     shares one server start among the threads asking meanwhile). A start that raised answers
     a fallback ``NoneBackend`` carrying what it raised."""
+
     def _start() -> tuple:
         try:
             return (factory, *start_backend(factory, tab_id))

@@ -73,9 +73,7 @@ def test_check_external_changes_ignores_id_only_drift(tmp_path):
     assert am.check_external_changes(stored) == []
 
     # A genuine content edit must still be reported.
-    am.procedure_text.file_path.write_text(
-        WRONG_TEXT + "2. do y\n", encoding="utf-8"
-    )
+    am.procedure_text.file_path.write_text(WRONG_TEXT + "2. do y\n", encoding="utf-8")
     assert am.check_external_changes(stored) == ["procedure_text.md"]
 
 
@@ -108,9 +106,7 @@ def test_real_divergence_with_wrong_id_stays_out_of_sync(tmp_path):
     am.set_content(ArtifactType.PROCEDURE_TEXT, "# Foo\n\n## Steps\n1. do x\n")
     stored = am.compute_hashes()  # acknowledged baseline
 
-    am.set_content(
-        ArtifactType.PROCEDURE_TEXT, "# WRONG_ID\n\n## Steps\n1. do x\n2. do y\n"
-    )
+    am.set_content(ArtifactType.PROCEDURE_TEXT, "# WRONG_ID\n\n## Steps\n1. do x\n2. do y\n")
     am.save_artifact(ArtifactType.PROCEDURE_TEXT)
 
     assert am.compute_hashes() != stored, (
@@ -238,9 +234,7 @@ def test_mark_unloaded_wrong_id_test_matches_enforced_baseline(tmp_path):
 
     test_sync.mark_in_sync(test_dir, [])
 
-    session = json.loads(
-        (test_dir / ".llm_session.json").read_text(encoding="utf-8")
-    )
+    session = json.loads((test_dir / ".llm_session.json").read_text(encoding="utf-8"))
     assert session["artifacts_in_sync"] is True
     # Enforcement really happened: the stored text hash is NOT the raw hash.
     assert session["artifact_hashes"]["procedure_text.md"] != (
@@ -271,9 +265,7 @@ def test_workspace_out_of_sync_check_ignores_id_only_drift(tmp_path):
     am.set_test_dir(test_dir)
     am.load_all()
     (test_dir / ".llm_session.json").write_text(
-        json.dumps(
-            {"artifacts_in_sync": True, "artifact_hashes": am.compute_hashes()}
-        ),
+        json.dumps({"artifacts_in_sync": True, "artifact_hashes": am.compute_hashes()}),
         encoding="utf-8",
     )
 
@@ -282,7 +274,5 @@ def test_workspace_out_of_sync_check_ignores_id_only_drift(tmp_path):
     )
 
     # A genuine content edit must still flip the flag.
-    (test_dir / "procedure_text.md").write_text(
-        WRONG_TEXT + "2. do y\n", encoding="utf-8"
-    )
+    (test_dir / "procedure_text.md").write_text(WRONG_TEXT + "2. do y\n", encoding="utf-8")
     assert test_sync.is_out_of_sync(test_dir, []) is True

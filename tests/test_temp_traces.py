@@ -1,6 +1,7 @@
 """The editor's temp users leave nothing in %TEMP%: an engine process makes no folder of its
 own (it works in the app's temp root; the guided run owns the folder its screenshots land in),
 and a code check makes no file at all."""
+
 from __future__ import annotations
 
 import tempfile

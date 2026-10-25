@@ -1,4 +1,5 @@
 """Tests for procedo.studio.llm.mcp_config (pure path/dict helpers)."""
+
 import json
 from pathlib import Path
 
@@ -43,11 +44,11 @@ def test_build_pdf_tools_mcp_block_shape():
     assert entry["enabled"] is True
     assert entry["command"] == [
         "/mnt/c/Workspace/.venv/Scripts/python.exe",  # command[0] translated
-        r"C:\Workspace\editor\_pdf_tool_mcp.py",       # script stays Windows
+        r"C:\Workspace\editor\_pdf_tool_mcp.py",  # script stays Windows
         "--documents-dir",
-        r"C:\Projects\demo\documents",                 # docs dir stays Windows
+        r"C:\Projects\demo\documents",  # docs dir stays Windows
         "--rules-dir",
-        r"C:\Projects\demo\bundle\rules",              # rules dir stays Windows
+        r"C:\Projects\demo\bundle\rules",  # rules dir stays Windows
     ]
 
 
@@ -60,7 +61,9 @@ def test_build_pdf_tools_mcp_block_passes_the_project_rules_folder():
         project_rules_dir_win=r"C:\Projects\demo\config\project_rules",
     )
     assert block["pdf_tools"]["command"][-2:] == [
-        "--project-rules-dir", r"C:\Projects\demo\config\project_rules"]  # stays Windows
+        "--project-rules-dir",
+        r"C:\Projects\demo\config\project_rules",
+    ]  # stays Windows
 
 
 def test_build_project_tools_mcp_block_shape():
@@ -74,16 +77,17 @@ def test_build_project_tools_mcp_block_shape():
     assert entry["type"] == "local"
     assert entry["enabled"] is True
     assert entry["command"] == [
-        "/mnt/c/Workspace/.venv/Scripts/python.exe",   # command[0] translated
-        r"C:\Workspace\editor\_project_tools_mcp.py",   # script stays Windows
+        "/mnt/c/Workspace/.venv/Scripts/python.exe",  # command[0] translated
+        r"C:\Workspace\editor\_project_tools_mcp.py",  # script stays Windows
         "--odb-tgz",
-        r"C:\Projects\demo\board.tgz",                  # tgz stays Windows
+        r"C:\Projects\demo\board.tgz",  # tgz stays Windows
     ]
 
 
 # ---------------------------------------------------------------------------
 # build_skill_tools_mcp_block
 # ---------------------------------------------------------------------------
+
 
 def test_build_skill_tools_mcp_block_shape():
     block = mcp_config.build_skill_tools_mcp_block(
@@ -111,6 +115,7 @@ def test_build_skill_tools_mcp_block_shape():
 # skill_tool_overrides
 # ---------------------------------------------------------------------------
 
+
 def test_skill_tool_overrides_active_server_true_others_false():
     universe = {"srv_a": ["t1", "t2"], "srv_b": ["t3"]}
     overrides = mcp_config.skill_tool_overrides(["srv_a"], universe)
@@ -135,14 +140,15 @@ def test_skill_tool_overrides_empty_universe_empty_result():
 # discover_tool_folders
 # ---------------------------------------------------------------------------
 
+
 def _make_folder(parent: Path, name: str, server: str, tools: list) -> Path:
     """Create a valid tool folder under ``parent/name``."""
     folder = parent / name
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "tools.json").write_text(
-        json.dumps({"server": server, "tools": tools}), encoding="utf-8")
-    (folder / "tools.py").write_text(
-        f'SERVER_NAME = "{server}"\nTOOLS = []\n', encoding="utf-8")
+        json.dumps({"server": server, "tools": tools}), encoding="utf-8"
+    )
+    (folder / "tools.py").write_text(f'SERVER_NAME = "{server}"\nTOOLS = []\n', encoding="utf-8")
     return folder
 
 
@@ -184,10 +190,12 @@ def test_discover_tool_folders_bundled_wins_over_builtin_same_folder(tmp_path):
     bundled_root = tmp_path / "bundled"
     _make_folder(builtin_root, "shared", "builtin_server", ["t"])
     _make_folder(bundled_root, "shared", "bundled_server", ["t"])
-    results = discover_tool_folders([
-        (builtin_root, SkillSource.BUILTIN),
-        (bundled_root, SkillSource.BUNDLED),
-    ])
+    results = discover_tool_folders(
+        [
+            (builtin_root, SkillSource.BUILTIN),
+            (bundled_root, SkillSource.BUNDLED),
+        ]
+    )
     # Same folder name "shared" — BUNDLED (higher value) wins.
     assert len(results) == 1
     assert results[0].server == "bundled_server"

@@ -53,9 +53,15 @@ class TraceabilityTab(BaseTab):
         self.steps_card = StepListCard("Procedure steps")
         self.steps_card.step_clicked.connect(self._on_step_selected)
 
-        self.code_card = self.add_card(EditorCard(
-            self, ArtifactType.TEST_CODE, "test.py", wrap=False,
-            placeholder="No code file loaded"))
+        self.code_card = self.add_card(
+            EditorCard(
+                self,
+                ArtifactType.TEST_CODE,
+                "test.py",
+                wrap=False,
+                placeholder="No code file loaded",
+            )
+        )
         self.code_editor = self.code_card.editor
         self.code_highlighter = PythonSyntaxHighlighter(self.code_editor.document())
         self.line_info = ui_kit.note(wrap=False)
@@ -124,13 +130,18 @@ class TraceabilityTab(BaseTab):
         if self._json_steps:
             # Operator-readable step text comes from procedure_text.md
             # (v2.0.1 op-call JSON steps carry no top-level "text").
-            rows = step_rows(self._json_steps, blocks_by_n,
-                             self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT))
+            rows = step_rows(
+                self._json_steps,
+                blocks_by_n,
+                self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT),
+            )
             mapped = sum(1 for row in rows if row.block)
             total = len(self._json_steps)
             self.steps_card.show_steps(
-                rows, f"{total} steps from procedure.json · click one to jump to its code",
-                ("success" if mapped == total else "warning", f"{mapped} of {total} mapped"))
+                rows,
+                f"{total} steps from procedure.json · click one to jump to its code",
+                ("success" if mapped == total else "warning", f"{mapped} of {total} mapped"),
+            )
         # If no JSON, use code steps
         elif self._step_blocks:
             rows = [StepRow(b.step_number, "(from code)", b) for b in self._step_blocks]
@@ -148,8 +159,7 @@ class TraceabilityTab(BaseTab):
         # Expected = the real step numbers (n), not 1..len — macro-block
         # bodies make n run past the top-level array length.
         expected_steps = sorted(
-            s["n"] for s in self._json_steps
-            if isinstance(s, dict) and isinstance(s.get("n"), int)
+            s["n"] for s in self._json_steps if isinstance(s, dict) and isinstance(s.get("n"), int)
         )
         code_content = self.code_editor.toPlainText()
 
@@ -186,9 +196,18 @@ class TraceabilityTab(BaseTab):
         self.code_editor.highlight_lines(block.start_line, block.end_line)
         self.line_info.setText(f"Step {step_num} · lines {block.start_line}–{block.end_line}")
         # The step's text (procedure_text.md first) in the tooltip.
-        row = next((r for r in step_rows(self._json_steps, {},
-                                         self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT))
-                    if r.n == step_num), None)
+        row = next(
+            (
+                r
+                for r in step_rows(
+                    self._json_steps,
+                    {},
+                    self.artifact_manager.get_content(ArtifactType.PROCEDURE_TEXT),
+                )
+                if r.n == step_num
+            ),
+            None,
+        )
         self.line_info.setToolTip(row.text if row else "")
 
     def _on_code_saved(self):

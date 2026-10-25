@@ -17,6 +17,7 @@ tool folders; LOCAL / PROJECT drop-ins are ignored (their ``tools.py`` is neithe
 read nor executed) so a project drop-in can't auto-run code nor shadow a trusted
 ``SERVER_NAME``.
 """
+
 from __future__ import annotations
 
 import json
@@ -75,12 +76,10 @@ def _read_manifest(folder: Path) -> Optional[ToolFolder]:
         log.warning("skipping tool folder %s: bad tools.json (%s)", folder, exc)
         return None
     if not isinstance(server, str) or not _SERVER_RE.match(server):
-        log.warning("skipping tool folder %s: server %r is not [a-z0-9_]+",
-                    folder, server)
+        log.warning("skipping tool folder %s: server %r is not [a-z0-9_]+", folder, server)
         return None
     if server in _RESERVED_INFRA:
-        log.warning("skipping tool folder %s: server %r is a reserved infra name",
-                    folder, server)
+        log.warning("skipping tool folder %s: server %r is a reserved infra name", folder, server)
         return None
     if not all(isinstance(t, str) for t in tools):
         log.warning("skipping tool folder %s: tools must be strings", folder)
@@ -115,8 +114,13 @@ def discover_tool_folders(
             tf = ToolFolder(server=tf.server, tools=tf.tools, path=tf.path, source=source)
             existing = by_folder.get(folder.name)
             if existing is not None and source == existing.source:
-                log.warning("duplicate tool folder %r in %s; keeping %s, ignoring %s",
-                            folder.name, source.name, existing.path, tf.path)
+                log.warning(
+                    "duplicate tool folder %r in %s; keeping %s, ignoring %s",
+                    folder.name,
+                    source.name,
+                    existing.path,
+                    tf.path,
+                )
                 continue
             if existing is None or source > existing.source:
                 by_folder[folder.name] = tf
@@ -127,8 +131,9 @@ def discover_tool_folders(
     for tf in by_folder.values():
         clash = seen.get(tf.server)
         if clash is not None:
-            log.warning("SERVER_NAME collision %r: keeping %s, dropping %s",
-                        tf.server, clash.path, tf.path)
+            log.warning(
+                "SERVER_NAME collision %r: keeping %s, dropping %s", tf.server, clash.path, tf.path
+            )
             continue
         seen[tf.server] = tf
         out.append(tf)
@@ -147,5 +152,6 @@ def build_skill_tools_universe(project_root: Optional[Path] = None) -> dict[str,
     return {
         tf.server: list(tf.tools)
         for tf in discover_tool_folders(
-            locations.skill_roots(project_root) + locations.tool_roots(project_root))
+            locations.skill_roots(project_root) + locations.tool_roots(project_root)
+        )
     }

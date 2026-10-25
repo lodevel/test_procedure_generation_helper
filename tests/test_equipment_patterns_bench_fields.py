@@ -9,6 +9,7 @@ patterns/override_suffix remain an optional override.
 Runs without PySide6:
     PYTHONPATH=. python3 -m pytest tests/test_equipment_patterns_bench_fields.py --noconftest -q
 """
+
 from __future__ import annotations
 
 import json
@@ -44,10 +45,12 @@ class TestEquipmentPatternsFromBenchFields(unittest.TestCase):
         return pm
 
     def test_patterns_derived_from_bench_fields(self):
-        pm = self._pm_with_bench({
-            "psu": [{"name": "visa"}, {"name": "channels"}],
-            "controller": [{"name": "manual_override"}],
-        })
+        pm = self._pm_with_bench(
+            {
+                "psu": [{"name": "visa"}, {"name": "channels"}],
+                "controller": [{"name": "manual_override"}],
+            }
+        )
         pats = pm.load_equipment_patterns()
         matches = lambda s: any(p.search(s) for p in pats)
         self.assertTrue(matches("PSU1_VISA = 'TCPIP0::x::INSTR'\n"))

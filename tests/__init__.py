@@ -1,1 +1,1 @@
-﻿"""Tests for workflow editor."""
+"""Tests for workflow editor."""

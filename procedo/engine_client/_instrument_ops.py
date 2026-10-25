@@ -9,6 +9,7 @@ namespace.  No session state lives here: the held devices and every safe-off are
 Loaded by BARE name next to the daemon (its folder on sys.path) in the project venv, which has
 no ``procedo`` package; this module imports nothing from procedo.
 """
+
 from __future__ import annotations
 
 import numbers
@@ -140,7 +141,8 @@ def _raw_send(dev, text: str) -> str:
         return ""
     raise RuntimeError(
         f"{type(dev).__name__} exposes no raw-command interface "
-        f"(query_raw/write_raw, raw_command, .s/._session, or a resource).")
+        f"(query_raw/write_raw, raw_command, .s/._session, or a resource)."
+    )
 
 
 def _capture_remote_lines(procedure_json: dict, target_op: dict):
@@ -164,11 +166,21 @@ def _capture_remote_lines(procedure_json: dict, target_op: dict):
 
 
 def _ns_base(res) -> dict:
-    from rules_packager_base import bytes_to_int   # a pack's bus read binds its bytes through it
+    from rules_packager_base import bytes_to_int  # a pack's bus read binds its bytes through it
+
     return {
-        "results": {}, "res": res, "manual_flags": {}, "_stats": None,
-        "float": float, "int": int, "str": str, "bool": bool,
-        "abs": abs, "round": round, "min": min, "max": max,
+        "results": {},
+        "res": res,
+        "manual_flags": {},
+        "_stats": None,
+        "float": float,
+        "int": int,
+        "str": str,
+        "bool": bool,
+        "abs": abs,
+        "round": round,
+        "min": min,
+        "max": max,
         "bytes_to_int": bytes_to_int,
     }
 
@@ -235,6 +247,7 @@ def _namespace_for(etype: str, subtype: str = "") -> str:
         from rules_packager_base.rules.v2_0_2.parser._default_registry import (
             get_namespace,
         )
+
         return get_namespace(etype, subtype) or etype
     except Exception:  # noqa: BLE001 — pre-dispatch bundle / unclaimed type
         return etype
@@ -242,10 +255,12 @@ def _namespace_for(etype: str, subtype: str = "") -> str:
 
 def _safe_name(device: str) -> str:
     from rules_packager_base.rules.v2_0_2.parser.codegen_helpers import _safe_name as _sn
+
     return _sn(device)
 
 
 def _instrument_error(device, bench, exc) -> str:
     """``PSU1 at ASRL3::INSTR: <ExcType>: <message>`` — the engine's one formatter."""
     from rules_packager_base.bench_endpoints import instrument_error
+
     return instrument_error(str(device), bench, exc)

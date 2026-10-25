@@ -28,8 +28,9 @@ class WordKeywordsDialog(QDialog):
         self.resize(760, 600)
         close_btn = ui_kit.primary(QPushButton("Close"))
         close_btn.clicked.connect(self.accept)
-        body = ui_kit.framed(self, ui_kit.HeaderBand("Word export keywords"),
-                             ui_kit.FooterBand([close_btn]))
+        body = ui_kit.framed(
+            self, ui_kit.HeaderBand("Word export keywords"), ui_kit.FooterBand([close_btn])
+        )
         self.page = ui_kit.MarkdownView(markdown)
         body.addWidget(self.page, 1)
 

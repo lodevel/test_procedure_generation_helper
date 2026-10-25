@@ -43,11 +43,9 @@ FILE_BUDGET: dict[str, int] = {
     "studio/llm/opencode_backend.py": 1251,  # +9: bare-except cleanup log lines
 }
 
-CLASS_METHOD_BUDGET: dict[tuple[str, str], int] = {
-}
+CLASS_METHOD_BUDGET: dict[tuple[str, str], int] = {}
 
-FUNC_LEN_BUDGET: dict[tuple[str, str], int] = {
-}
+FUNC_LEN_BUDGET: dict[tuple[str, str], int] = {}
 
 
 def _py_files(root: Path) -> list[Path]:
@@ -87,9 +85,7 @@ def test_class_method_and_function_budgets(path: Path) -> None:
     over_funcs: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
-            methods = sum(
-                isinstance(x, (ast.FunctionDef, ast.AsyncFunctionDef)) for x in node.body
-            )
+            methods = sum(isinstance(x, (ast.FunctionDef, ast.AsyncFunctionDef)) for x in node.body)
             cap = CLASS_METHOD_BUDGET.get((rel, node.name), METHOD_CAP)
             if methods > cap:
                 over_methods.append(f"class {node.name}: {methods} methods (budget {cap})")

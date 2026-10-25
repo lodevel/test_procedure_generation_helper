@@ -8,6 +8,7 @@ across sources into one push payload and reports its size.
 Pure: no Qt, no managers — concrete sources (:mod:`.context_sources`) inject
 their dependencies, so this layer and the assembler are unit-testable.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

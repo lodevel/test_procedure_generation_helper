@@ -13,6 +13,7 @@ Both call sites go through :func:`reconstruct_for_pipeline` so the ownership
 resolution + reconstruct combination lives in exactly one place. No Qt, no I/O
 beyond what the ``pack_parsers`` bridge does.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -118,8 +119,9 @@ def reconstructed_or_error(
     except engine_session.ParserUnavailable as exc:
         return None, None, str(exc)
     if not recon.success:
-        details = "; ".join(
-            f"[{i.code}] {i.message}" for i in recon.errors
-        ) or "reconstruction failed (no details)"
+        details = (
+            "; ".join(f"[{i.code}] {i.message}" for i in recon.errors)
+            or "reconstruction failed (no details)"
+        )
         return None, recon.text, details
     return recon.text, recon.text, None

@@ -35,7 +35,11 @@ def test_a_damaged_session_reads_in_sync(tmp_path):
 
 def test_the_session_flag_alone_names_every_artifact(tmp_path):
     test_dir = _test(tmp_path, '{"artifacts_in_sync": false}')
-    assert test_sync.stale_artifacts(test_dir, []) == ("procedure.json", "test.py", "procedure_text.md")
+    assert test_sync.stale_artifacts(test_dir, []) == (
+        "procedure.json",
+        "test.py",
+        "procedure_text.md",
+    )
     assert test_sync.is_out_of_sync(test_dir, []) is True
 
 
@@ -70,13 +74,23 @@ def test_mark_then_edit_then_mark(tmp_path):
 def test_a_test_marked_on_a_damaged_session_gets_a_fresh_one(tmp_path):
     test_dir = _test(tmp_path, "{not json")
     test_sync.mark_in_sync(test_dir, [])
-    assert json.loads((test_dir / ".llm_session.json").read_text(encoding="utf-8"))["artifacts_in_sync"] is True
+    assert (
+        json.loads((test_dir / ".llm_session.json").read_text(encoding="utf-8"))[
+            "artifacts_in_sync"
+        ]
+        is True
+    )
 
 
 def test_mark_keeps_a_session_the_dataclass_cannot_load(tmp_path):
     """An odd decision shape must not cost the rest of the session file."""
-    odd = {"intent": "keep me", "decisions": ["a plain string"], "custom": 1,
-           "artifacts_in_sync": False, "artifact_hashes": {"test.py": "old"}}
+    odd = {
+        "intent": "keep me",
+        "decisions": ["a plain string"],
+        "custom": 1,
+        "artifacts_in_sync": False,
+        "artifact_hashes": {"test.py": "old"},
+    }
     test_dir = _test(tmp_path, json.dumps(odd))
     assert test_sync.is_out_of_sync(test_dir, []) is True  # the flag is still read
     test_sync.mark_in_sync(test_dir, [])
@@ -106,8 +120,11 @@ def _age(path, by=_LONG_AGO):
 def _counted_hashes(monkeypatch):
     calls = []
     real = test_sync.enforced_sync_hash
-    monkeypatch.setattr(test_sync, "enforced_sync_hash",
-                        lambda test_dir, name, *a: calls.append(name) or real(test_dir, name, *a))
+    monkeypatch.setattr(
+        test_sync,
+        "enforced_sync_hash",
+        lambda test_dir, name, *a: calls.append(name) or real(test_dir, name, *a),
+    )
     return calls
 
 
@@ -143,6 +160,7 @@ def test_a_file_studio_saved_is_not_read_back(tmp_path, monkeypatch):
     hashed from what it wrote, and gives the hash the file gives."""
     from procedo.studio.core import ArtifactType
     from procedo.studio.core.artifact_manager import ArtifactManager
+
     test_dir = _test(tmp_path)
     manager = ArtifactManager()
     manager.set_test_dir(test_dir)
@@ -150,7 +168,9 @@ def test_a_file_studio_saved_is_not_read_back(tmp_path, monkeypatch):
     manager.save_artifact(ArtifactType.PROCEDURE_TEXT)
     reads = []
     real = Path.read_text
-    monkeypatch.setattr(Path, "read_text", lambda self, *a, **k: reads.append(self.name) or real(self, *a, **k))
+    monkeypatch.setattr(
+        Path, "read_text", lambda self, *a, **k: reads.append(self.name) or real(self, *a, **k)
+    )
     remembered = test_sync._disk_hash(test_dir, "procedure_text.md", [])
     assert "procedure_text.md" not in reads
     test_sync._hashes.clear()
@@ -161,6 +181,7 @@ def test_a_saved_text_holding_a_cr_is_read_back(tmp_path):
     """Written then read back, a CR changes the text: its hash comes from the file."""
     from procedo.studio.core import ArtifactType
     from procedo.studio.core.artifact_manager import ArtifactManager
+
     test_dir = _test(tmp_path)
     manager = ArtifactManager()
     manager.set_test_dir(test_dir)
@@ -185,7 +206,9 @@ def test_a_size_change_under_a_kept_mtime_is_read_again(tmp_path):
     then = _kept(test_dir, "procedure.json")
     (test_dir / "procedure.json").write_text(JSON.replace("[]", "[1]"), encoding="utf-8")
     os.utime(test_dir / "procedure.json", ns=(then, then))
-    assert test_sync._disk_hash(test_dir, "procedure.json", []) == _fresh(test_dir, "procedure.json", [])
+    assert test_sync._disk_hash(test_dir, "procedure.json", []) == _fresh(
+        test_dir, "procedure.json", []
+    )
 
 
 def test_a_replaced_file_of_the_same_size_and_mtime_is_read_again(tmp_path):
@@ -195,7 +218,9 @@ def test_a_replaced_file_of_the_same_size_and_mtime_is_read_again(tmp_path):
     replacement.write_text(JSON.replace("[]", "{}"), encoding="utf-8")  # same size, a new file id
     os.utime(replacement, ns=(then, then))
     os.replace(replacement, test_dir / "procedure.json")
-    assert test_sync._disk_hash(test_dir, "procedure.json", []) == _fresh(test_dir, "procedure.json", [])
+    assert test_sync._disk_hash(test_dir, "procedure.json", []) == _fresh(
+        test_dir, "procedure.json", []
+    )
 
 
 def test_other_patterns_hash_the_file_again(tmp_path):
@@ -203,10 +228,13 @@ def test_other_patterns_hash_the_file_again(tmp_path):
     (test_dir / "test.py").write_text("PSU_PORT = 'COM3'\nrun()\n", encoding="utf-8")
     _kept(test_dir, "test.py")
     patterns = [re.compile(r"^PSU_PORT\s*=")]
-    assert test_sync._disk_hash(test_dir, "test.py", patterns) == _fresh(test_dir, "test.py", patterns)
+    assert test_sync._disk_hash(test_dir, "test.py", patterns) == _fresh(
+        test_dir, "test.py", patterns
+    )
 
 
 def _fresh(test_dir, name, patterns):
     """The hash the file gives, read now."""
     return test_sync.enforced_sync_hash(
-        test_dir, name, (test_dir / name).read_text(encoding="utf-8"), patterns)
+        test_dir, name, (test_dir / name).read_text(encoding="utf-8"), patterns
+    )

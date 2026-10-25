@@ -31,6 +31,7 @@ from .test_id import force_json_id, force_text_id_line
 
 class ArtifactType(Enum):
     """Types of artifacts managed by the editor."""
+
     PROCEDURE_JSON = auto()
     TEST_CODE = auto()
     PROCEDURE_TEXT = auto()
@@ -39,31 +40,32 @@ class ArtifactType(Enum):
 @dataclass
 class Artifact:
     """Represents a single artifact with content and metadata."""
+
     artifact_type: ArtifactType
     content: str = ""
     original_content: str = ""  # Content when loaded/saved
     last_modified: Optional[datetime] = None
     file_path: Optional[Path] = None
     needs_resync: bool = False  # Needs to be re-sent to LLM to correct its context
-    
+
     @property
     def is_dirty(self) -> bool:
         """Check if artifact has unsaved changes."""
         return self.content != self.original_content
-    
+
     @property
     def exists_on_disk(self) -> bool:
         """Check if artifact file exists."""
         return self.file_path is not None and exists_quiet(self.file_path)
-    
+
     def mark_clean(self) -> None:
         """Mark artifact as saved (not dirty)."""
         self.original_content = self.content
-    
+
     def mark_needs_resync(self) -> None:
         """Mark that this artifact needs to be re-sent to LLM."""
         self.needs_resync = True
-    
+
     def mark_synced(self) -> None:
         """Mark that this artifact has been sent to LLM."""
         self.needs_resync = False
@@ -73,16 +75,17 @@ class Artifact:
 class ArtifactManager:
     """
     Manages test artifacts for a single test folder.
-    
+
     Handles loading, saving, dirty tracking, and staleness detection.
     """
+
     test_dir: Optional[Path] = None
-    
+
     # Artifacts
     procedure_json: Artifact = field(default_factory=lambda: Artifact(ArtifactType.PROCEDURE_JSON))
     test_code: Artifact = field(default_factory=lambda: Artifact(ArtifactType.TEST_CODE))
     procedure_text: Artifact = field(default_factory=lambda: Artifact(ArtifactType.PROCEDURE_TEXT))
-    
+
     # File names
     PROCEDURE_JSON_NAME = "procedure.json"
     TEST_CODE_NAME = "test.py"
@@ -95,14 +98,14 @@ class ArtifactManager:
     on_media_refreshed: Optional[Callable[[str], bool]] = field(default=None, repr=False)
     #: The window's loading cue (a ``LoadingCue``) while a save's media refresh runs; None: none.
     media_cue: Any = field(default=None, repr=False)
-    
+
     def set_test_dir(self, test_dir: Path) -> None:
         """Set the test directory and update file paths."""
         self.test_dir = test_dir
         self.procedure_json.file_path = test_dir / self.PROCEDURE_JSON_NAME
         self.test_code.file_path = test_dir / self.TEST_CODE_NAME
         self.procedure_text.file_path = test_dir / self.PROCEDURE_TEXT_NAME
-    
+
     def detect_artifacts(self) -> dict[ArtifactType, bool]:
         """Detect which artifacts exist on disk."""
         return {
@@ -110,21 +113,21 @@ class ArtifactManager:
             ArtifactType.TEST_CODE: self.test_code.exists_on_disk,
             ArtifactType.PROCEDURE_TEXT: self.procedure_text.exists_on_disk,
         }
-    
+
     def load_all(self) -> None:
         """Load all existing artifacts from disk."""
         if self.test_dir is None:
             return
-        
+
         for artifact in [self.procedure_json, self.test_code, self.procedure_text]:
             if artifact.exists_on_disk:
                 self._load_artifact(artifact)
-    
+
     def _load_artifact(self, artifact: Artifact) -> None:
         """Load a single artifact from disk."""
         if artifact.file_path is None:
             return
-        
+
         # Check if file was deleted (a share that cannot be asked keeps what is loaded)
         if unreachable(artifact.file_path):
             return
@@ -134,17 +137,15 @@ class ArtifactManager:
                 artifact.original_content = ""
                 artifact.mark_needs_resync()  # LLM needs to know it was deleted
             return
-        
+
         try:
             content = artifact.file_path.read_text(encoding="utf-8")
             artifact.content = content
             artifact.original_content = content
-            artifact.last_modified = datetime.fromtimestamp(
-                artifact.file_path.stat().st_mtime
-            )
+            artifact.last_modified = datetime.fromtimestamp(artifact.file_path.stat().st_mtime)
         except Exception as e:
             raise IOError(f"Failed to load {artifact.file_path}: {e}")
-    
+
     def save_artifact(self, artifact_type: ArtifactType) -> None:
         """Save a single artifact to disk with atomic write."""
         artifact = self._get_artifact(artifact_type)
@@ -159,15 +160,17 @@ class ArtifactManager:
         artifact.content = self._enforce_folder_id(artifact_type, artifact.content)
 
         atomic_write_text(artifact.file_path, artifact.content)
-        from . import test_sync                  # imports this module: not at module level
-        test_sync.remember_written(self.test_dir, artifact.file_path.name, artifact.content,
-                                   self._exclusion_patterns)
+        from . import test_sync  # imports this module: not at module level
+
+        test_sync.remember_written(
+            self.test_dir, artifact.file_path.name, artifact.content, self._exclusion_patterns
+        )
         artifact.mark_clean()
         artifact.mark_needs_resync()  # Mark for resync so LLM sees manual changes
         artifact.last_modified = datetime.now()
         if artifact_type is ArtifactType.PROCEDURE_JSON:
             self._refresh_media(artifact)
-    
+
     def _enforce_folder_id(self, artifact_type: ArtifactType, content: str) -> str:
         """Force the procedure id to the sanitized folder name.
 
@@ -200,9 +203,10 @@ class ArtifactManager:
         from procedo.engine_client import engine_session
 
         from ..pack_ops import engine_async, pack_parsers
+
         root = self.test_dir.parent.parent if self.test_dir is not None else None
         if root is None or not is_dir_quiet(root / "tests"):
-            root = None                      # no project layout: no engine, the refresh refuses
+            root = None  # no project layout: no engine, the refresh refuses
 
         def done(answer) -> None:
             try:
@@ -210,21 +214,32 @@ class ArtifactManager:
             except engine_session.ParserUnavailable as exc:
                 logging.getLogger(__name__).warning("media not refreshed on save: %s", exc)
                 return
-            if refreshed == saved or artifact.content != saved or artifact.original_content != saved:
+            if (
+                refreshed == saved
+                or artifact.content != saved
+                or artifact.original_content != saved
+            ):
                 return
-            from . import test_sync                  # imports this module: not at module level
+            from . import test_sync  # imports this module: not at module level
+
             patterns = self._exclusion_patterns
-            acknowledged = (read_sync_baseline(self.test_dir) is not None
-                            and not test_sync.is_out_of_sync(self.test_dir, patterns))
+            acknowledged = read_sync_baseline(
+                self.test_dir
+            ) is not None and not test_sync.is_out_of_sync(self.test_dir, patterns)
             atomic_write_text(artifact.file_path, refreshed)
             test_sync.remember_written(self.test_dir, artifact.file_path.name, refreshed, patterns)
             artifact.content = artifact.original_content = refreshed
             held = self.on_media_refreshed is not None and self.on_media_refreshed(saved)
-            if acknowledged and not held:            # derived data must not un-sync a coherent test
+            if acknowledged and not held:  # derived data must not un-sync a coherent test
                 test_sync.mark_in_sync(self.test_dir, patterns)
 
-        engine_async.call(root, lambda: pack_parsers.refresh_media(doc, root), done,
-                          cue=self.media_cue, cue_label="Refreshing media\u2026")
+        engine_async.call(
+            root,
+            lambda: pack_parsers.refresh_media(doc, root),
+            done,
+            cue=self.media_cue,
+            cue_label="Refreshing media\u2026",
+        )
 
     def save_all(self) -> list[ArtifactType]:
         """Save all dirty artifacts. Returns list of saved artifact types."""
@@ -235,7 +250,7 @@ class ArtifactManager:
                 self.save_artifact(artifact_type)
                 saved.append(artifact_type)
         return saved
-    
+
     def _get_artifact(self, artifact_type: ArtifactType) -> Artifact:
         """Get artifact by type."""
         mapping = {
@@ -244,47 +259,47 @@ class ArtifactManager:
             ArtifactType.PROCEDURE_TEXT: self.procedure_text,
         }
         return mapping[artifact_type]
-    
+
     def get_content(self, artifact_type: ArtifactType) -> str:
         """Get content of an artifact."""
         return self._get_artifact(artifact_type).content
-    
+
     def set_content(self, artifact_type: ArtifactType, content: str) -> None:
         """Set content of an artifact."""
         self._get_artifact(artifact_type).content = content
-    
+
     def is_dirty(self, artifact_type: ArtifactType) -> bool:
         """Check if an artifact has unsaved changes."""
         return self._get_artifact(artifact_type).is_dirty
-    
+
     def has_any_dirty(self) -> bool:
         """Check if any artifact has unsaved changes."""
         return any(self._get_artifact(t).is_dirty for t in ArtifactType)
-    
+
     def mark_needs_resync(self, artifact_type: ArtifactType) -> None:
         """Mark an artifact as needing resync with LLM."""
         self._get_artifact(artifact_type).mark_needs_resync()
-    
+
     def mark_synced(self, artifact_type: ArtifactType) -> None:
         """Mark an artifact as synced with LLM."""
         self._get_artifact(artifact_type).mark_synced()
-    
+
     def should_include_in_prompt(self, artifact_type: ArtifactType) -> bool:
         """Check if artifact should be included in LLM prompt (dirty or needs resync)."""
         artifact = self._get_artifact(artifact_type)
         return artifact.is_dirty or artifact.needs_resync
-    
+
     def get_json_parsed(self) -> Optional[dict[str, Any]]:
         """Get procedure.json content as parsed dict, or None if invalid."""
         try:
             return json.loads(self.procedure_json.content)
         except json.JSONDecodeError:
             return None
-    
+
     def set_json_from_dict(self, data: dict[str, Any]) -> None:
         """Set procedure.json content from a dict."""
         self.procedure_json.content = json.dumps(data, indent=2, ensure_ascii=False)
-    
+
     def get_staleness_info(self) -> dict[str, Optional[datetime]]:
         """Get last modified timestamps for staleness detection."""
         return {
@@ -292,25 +307,25 @@ class ArtifactManager:
             "test_code": self.test_code.last_modified,
             "procedure_text": self.procedure_text.last_modified,
         }
-    
+
     def get_cleanable_files(self) -> list[Path]:
         """Get list of tool-generated files that can be cleaned."""
         if self.test_dir is None:
             return []
-        
+
         cleanable = []
-        
+
         # Known tool-generated files
         tool_files = [
             self.PROCEDURE_TEXT_NAME,
             self.SESSION_FILE_NAME,
         ]
-        
+
         for name in tool_files:
             path = self.test_dir / name
             if exists_quiet(path):
                 cleanable.append(path)
-        
+
         # Also check for other patterns
         patterns = ["*.mapping.md", "*.draft.*", ".llm_cache"]
         for pattern in patterns:
@@ -318,24 +333,24 @@ class ArtifactManager:
                 cleanable.extend(self.test_dir.glob(pattern))
             except OSError:  # the share dropped: nothing to clean
                 break
-        
+
         return cleanable
-    
+
     def get_all_non_canonical_files(self) -> list[Path]:
         """Get all files except procedure.json and test.py for Clean All."""
         if self.test_dir is None:
             return []
-        
+
         canonical = {self.PROCEDURE_JSON_NAME, self.TEST_CODE_NAME}
         non_canonical = []
-        
+
         try:
             for item in self.test_dir.iterdir():
                 if item.name not in canonical:
                     non_canonical.append(item)
         except OSError:  # the share dropped: nothing to clean
             return []
-        
+
         return non_canonical
 
     def set_exclusion_patterns(self, patterns: list[re.Pattern[str]]) -> None:
@@ -354,7 +369,9 @@ class ArtifactManager:
     # code derived from it may now be stale — the user expects the
     # workspace ⚠️ flag in that case too.
     _SYNC_TRACKED_NAMES: tuple[str, ...] = (
-        "procedure.json", "test.py", "procedure_text.md",
+        "procedure.json",
+        "test.py",
+        "procedure_text.md",
     )
 
     def _sync_tracked_mapping(self) -> dict[str, "Artifact"]:
@@ -376,8 +393,11 @@ class ArtifactManager:
         must never flip a user-acknowledged in-sync state. Idempotent
         for already-correct ids, no-op for test.py.
         """
-        return {name: self.sync_hash(name, artifact.content)
-                for name, artifact in self._sync_tracked_mapping().items() if artifact.content}
+        return {
+            name: self.sync_hash(name, artifact.content)
+            for name, artifact in self._sync_tracked_mapping().items()
+            if artifact.content
+        }
 
     def sync_hash(self, name: str, content: str) -> str:
         """The sync hash of ``content`` as this test's tracked file ``name``."""

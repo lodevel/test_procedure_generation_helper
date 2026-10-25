@@ -57,6 +57,7 @@ class WordExportUnavailable(RuntimeError):
 #  Block model (single source feeding both renderers)
 # ---------------------------------------------------------------------------
 
+
 def _heading(line: str) -> Optional[tuple[int, str]]:
     """Return ``(level, title)`` for an ATX heading line, else ``None``."""
     m = _HEADING_RE.match(line)
@@ -119,6 +120,7 @@ def first_title(text: str) -> Optional[str]:
 #  Markdown
 # ---------------------------------------------------------------------------
 
+
 def _body_fence(lines: list) -> str:
     """Return a backtick fence longer than any backtick run in *lines*.
 
@@ -174,6 +176,7 @@ def write_markdown(text: str, out_path: Union[str, Path]) -> Path:
 # ---------------------------------------------------------------------------
 #  Word (.docx)
 # ---------------------------------------------------------------------------
+
 
 def write_word(
     text: str,

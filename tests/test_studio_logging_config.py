@@ -30,14 +30,19 @@ def stderr_log(monkeypatch, tmp_path):
 
 
 def test_the_log_is_in_studios_own_settings_folder():
-    assert studio_settings.get_log_path() == studio_settings.get_settings_path().with_name("studio.log")
+    assert studio_settings.get_log_path() == studio_settings.get_settings_path().with_name(
+        "studio.log"
+    )
 
 
 def test_a_log_handler_that_fails_does_not_recurse(stderr_log, monkeypatch):
     stream, _ = stderr_log
     monkeypatch.setattr(sys, "stderr", stream)
-    handler = next(h for h in logging.getLogger("procedo.studio").handlers
-                   if isinstance(h, logging.FileHandler))
+    handler = next(
+        h
+        for h in logging.getLogger("procedo.studio").handlers
+        if isinstance(h, logging.FileHandler)
+    )
 
     def emit(record):
         try:

@@ -12,6 +12,7 @@ board JSON file (handed to it as ``--odb-tgz``) and emits the same JSON shapes
 the real CLI produces for ``--list-property-fields`` / ``--list`` (with
 ``--fields`` / ``--filter``) / ``--list-nets``.
 """
+
 import json
 import re
 import os
@@ -79,7 +80,7 @@ SYNTH_BOARD = {
 # reproduces the real cli.py JSON shapes for the inspection flags the server
 # uses. Kept deliberately small but faithful to --fields / --filter semantics.
 _FAKE_CLI_SRC = textwrap.dedent(
-    '''\
+    """\
     #!/usr/bin/env python3
     import argparse, json, sys
 
@@ -160,7 +161,7 @@ _FAKE_CLI_SRC = textwrap.dedent(
         sys.exit(0)
 
     print(json.dumps([]))
-    '''
+    """
 )
 
 
@@ -174,7 +175,7 @@ def _result_json(resp):
     TRUNCATED`` guard line ahead of the components envelope)."""
     text = _result_text(resp)
     starts = [i for i in (text.find("{"), text.find("[")) if i != -1]
-    return json.loads(text[min(starts):] if starts else text)
+    return json.loads(text[min(starts) :] if starts else text)
 
 
 def _components(resp):
@@ -298,8 +299,7 @@ def test_list_components_empty_filter_is_no_filter(server):
 def test_list_components_refdes_prefix_keeps_only_ics(server):
     # The targeted one-call IC pull: refdes_prefix='U,IC' + the part-number field.
     _handshake(server)
-    resp = server.call(
-        2, "list_components", {"refdes_prefix": "U,IC", "fields": ["MfgRef"]})
+    resp = server.call(2, "list_components", {"refdes_prefix": "U,IC", "fields": ["MfgRef"]})
     comps = _components(resp)
     assert {c["refdes"] for c in comps} == {"U1"}
     # Only the requested column came back.
@@ -397,9 +397,7 @@ def test_get_bom_absent(server):
 
 def test_unknown_tool_errors(server):
     _handshake(server)
-    resp = server.request(
-        2, "tools/call", {"name": "does_not_exist", "arguments": {}}
-    )
+    resp = server.request(2, "tools/call", {"name": "does_not_exist", "arguments": {}})
     assert resp["error"]["code"] == -32602
     assert "unknown tool" in resp["error"]["message"].lower()
 

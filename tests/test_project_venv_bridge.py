@@ -18,6 +18,7 @@ Nothing here mocks the resolution: ``project_local_state`` really answers, with 
 its ROOTS redirected into ``tmp_path`` so no test touches the real per-user app-data
 folder. The child PROCESS is faked, because a stub interpreter cannot run a daemon.
 """
+
 from __future__ import annotations
 
 import json
@@ -127,9 +128,7 @@ def test_the_bundle_dir_is_the_projects_even_though_the_venv_is_elsewhere(venvs_
     assert python.parents[2] != project
 
 
-def test_every_op_frame_carries_the_projects_bundle_dir(
-    venvs_root, tmp_path, monkeypatch
-):
+def test_every_op_frame_carries_the_projects_bundle_dir(venvs_root, tmp_path, monkeypatch):
     """An op goes to the project's TOOLS engine: the machine-local interpreter runs
     the daemon by path with ``--role tools``, and the frame names the bundle."""
     from procedo.engine_client import engine
@@ -138,8 +137,11 @@ def test_every_op_frame_carries_the_projects_bundle_dir(
     python = _install_interpreter(project)
     daemons: list[_FakeDaemon] = []
     monkeypatch.setattr(engine, "_slots", {})
-    monkeypatch.setattr(engine_session.subprocess, "Popen",
-                        lambda argv, **_k: daemons.append(_FakeDaemon(argv)) or daemons[-1])
+    monkeypatch.setattr(
+        engine_session.subprocess,
+        "Popen",
+        lambda argv, **_k: daemons.append(_FakeDaemon(argv)) or daemons[-1],
+    )
 
     pack_parsers.is_available(project)
 
@@ -192,9 +194,7 @@ def test_the_odb_panel_reads_the_same_cache_the_main_gui_writes(local_root, tmp_
     zoomed, _wide = odb_inspect.cached_image_paths(project, "R1", None)
 
     assert zoomed == shared / "R1.png"
-    assert _project_local_state.media_cache(project) == project_local_state.media_cache_dir(
-        project
-    )
+    assert _project_local_state.media_cache(project) == project_local_state.media_cache_dir(project)
 
 
 # --- the bench safe-off backstop --------------------------------------------
@@ -247,9 +247,7 @@ class _FakeDaemon:
         self.returncode = 0
 
 
-def test_safe_off_does_not_refuse_merely_because_the_venv_moved(
-    venvs_root, tmp_path, monkeypatch
-):
+def test_safe_off_does_not_refuse_merely_because_the_venv_moved(venvs_root, tmp_path, monkeypatch):
     """``bench_recovery.recovery_safe_off`` reaches exactly this. Before the fix it
     answered ``{"ok": False, "kind": "ParserUnavailable"}`` for every project on the
     bench, because it looked for a venv inside the project folder."""
@@ -280,9 +278,7 @@ def test_safe_off_does_not_refuse_merely_because_the_venv_moved(
     assert cwds == [str(temp_root.root())]  # the daemon's relative writes stay in app temp
 
 
-def test_safe_off_still_refuses_when_there_really_is_no_venv(
-    venvs_root, tmp_path, monkeypatch
-):
+def test_safe_off_still_refuses_when_there_really_is_no_venv(venvs_root, tmp_path, monkeypatch):
     """The other half — the pin above is sensitive to exactly the thing that broke."""
     project = _project(tmp_path)  # no interpreter anywhere
 

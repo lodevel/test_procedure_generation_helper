@@ -12,6 +12,7 @@ project root and inside an applied bundle). The two naming schemes are kept
 DECOUPLED on purpose — collapsing them onto one shared constant would silently
 empty one set of tiers.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

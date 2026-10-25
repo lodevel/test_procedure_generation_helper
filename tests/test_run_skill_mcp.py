@@ -1,6 +1,7 @@
 """Tests for run_skill (skill-invokes-skill): pure rs_core logic, the concurrent
 MCP transport (deadlock regression), and the dedicated server incl. a hermetic
 child-spawn that proves the child is scoped to its OWN tools + read-only data."""
+
 import json
 import os
 import subprocess
@@ -50,7 +51,8 @@ def test_resolve_skill_precedence_body_and_declared(tmp_path):
         d = root / "greeter"
         d.mkdir(parents=True)
         (d / "SKILL.md").write_text(
-            f"---\nname: greeter\nmcp_tools: {tools}\n---\n{marker} body\n", encoding="utf-8")
+            f"---\nname: greeter\nmcp_tools: {tools}\n---\n{marker} body\n", encoding="utf-8"
+        )
     # ascending precedence -> project (last / higher) wins; declared parsed.
     body, declared = rs_core.resolve_skill("greeter", [str(builtin), str(project)])
     assert body == "PROJECT body" and declared == ["b"]
@@ -60,8 +62,9 @@ def test_resolve_skill_precedence_body_and_declared(tmp_path):
 
 def test_child_tools_scopes_to_declared_plus_readonly():
     universe = {"greeter_tools": ["do"], "other_tools": ["x"]}
-    tools = rs_core.child_tools(declared=["greeter_tools"], universe=universe,
-                                run_skill_enabled=True)
+    tools = rs_core.child_tools(
+        declared=["greeter_tools"], universe=universe, run_skill_enabled=True
+    )
     # built-ins hard off
     for t in ("bash", "edit", "write", "read", "task"):
         assert tools[t] is False
@@ -80,7 +83,7 @@ def test_child_tools_scopes_to_declared_plus_readonly():
 # --------------------------------------------------------------------------- #
 # concurrent transport (deadlock regression for _mcp_serve)                    #
 # --------------------------------------------------------------------------- #
-_CONCURRENT_SERVER = f'''
+_CONCURRENT_SERVER = f"""
 import sys, os, time
 sys.path.insert(0, {AUTH_DIR!r})
 import _mcp_serve
@@ -91,25 +94,45 @@ def slow(a):
 def fast(a):
     return "FAST"
 _mcp_serve.serve({{"name": "t", "version": "1"}}, TOOLS, {{"slow": slow, "fast": fast}})
-'''
+"""
 
 
 def test_mcp_serve_dispatches_calls_concurrently(tmp_path):
     """A slow tools/call must NOT block a later fast one (the depth>=2 deadlock fix)."""
     script = tmp_path / "concurrent_server.py"
     script.write_text(_CONCURRENT_SERVER, encoding="utf-8")
-    p = subprocess.Popen([sys.executable, str(script)],
-                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    p = subprocess.Popen(
+        [sys.executable, str(script)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+    )
     try:
-        p.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
-                                  "params": {}}) + "\n")
+        p.stdin.write(
+            json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}) + "\n"
+        )
         p.stdin.flush()
         p.stdout.readline()  # initialize reply
         # fire slow (id 10) then fast (id 11) back to back
-        p.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 10, "method": "tools/call",
-                                  "params": {"name": "slow", "arguments": {}}}) + "\n")
-        p.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 11, "method": "tools/call",
-                                  "params": {"name": "fast", "arguments": {}}}) + "\n")
+        p.stdin.write(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 10,
+                    "method": "tools/call",
+                    "params": {"name": "slow", "arguments": {}},
+                }
+            )
+            + "\n"
+        )
+        p.stdin.write(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 11,
+                    "method": "tools/call",
+                    "params": {"name": "fast", "arguments": {}},
+                }
+            )
+            + "\n"
+        )
         p.stdin.flush()
         first = json.loads(p.stdout.readline())
         second = json.loads(p.stdout.readline())
@@ -131,43 +154,79 @@ _SERVER_ENV = {**os.environ, "RUN_SKILL_SECRET": SECRET.decode()}
 
 
 def _handshake(srv):
-    r = srv.rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize",
-                 "params": {"protocolVersion": "2025-06-18"}})
+    r = srv.rpc(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18"},
+        }
+    )
     assert r["result"]["serverInfo"]["name"] == "run_skill"
     assert r["result"]["protocolVersion"] == "2025-06-18"
     srv.notify("notifications/initialized")
 
 
 def _call(srv, args, rid=9):
-    r = srv.rpc({"jsonrpc": "2.0", "id": rid, "method": "tools/call",
-                 "params": {"name": "run_skill", "arguments": args}})
+    r = srv.rpc(
+        {
+            "jsonrpc": "2.0",
+            "id": rid,
+            "method": "tools/call",
+            "params": {"name": "run_skill", "arguments": args},
+        }
+    )
     return r["result"]["content"][0]["text"]
 
 
 def test_protocol_handshake_list_ping_unknown(tmp_path):
-    srv = McpServer([SERVER_PATH, "--server-port-file", str(tmp_path / "opencode.pid"),
-                   "--skill-root", str(tmp_path)], env=_SERVER_ENV)
+    srv = McpServer(
+        [
+            SERVER_PATH,
+            "--server-port-file",
+            str(tmp_path / "opencode.pid"),
+            "--skill-root",
+            str(tmp_path),
+        ],
+        env=_SERVER_ENV,
+    )
     try:
         _handshake(srv)
         r = srv.rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         assert [t["name"] for t in r["result"]["tools"]] == ["run_skill"]
         assert r["result"]["tools"][0]["inputSchema"]["required"] == [
-            "skill_id", "prompt", "chain_token"]
+            "skill_id",
+            "prompt",
+            "chain_token",
+        ]
         assert srv.rpc({"jsonrpc": "2.0", "id": 3, "method": "ping"})["result"] == {}
-        r = srv.rpc({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
-                     "params": {"name": "nope", "arguments": {}}})
+        r = srv.rpc(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {"name": "nope", "arguments": {}},
+            }
+        )
         assert r["error"]["code"] == -32602
     finally:
         srv.close()
 
 
 def test_run_skill_refuses_forged_token(tmp_path):
-    srv = McpServer([SERVER_PATH, "--server-port-file", str(tmp_path / "opencode.pid"),
-                   "--skill-root", str(tmp_path)], env=_SERVER_ENV)
+    srv = McpServer(
+        [
+            SERVER_PATH,
+            "--server-port-file",
+            str(tmp_path / "opencode.pid"),
+            "--skill-root",
+            str(tmp_path),
+        ],
+        env=_SERVER_ENV,
+    )
     try:
         _handshake(srv)
-        out = _call(srv, {"skill_id": "greeter", "prompt": "hi",
-                          "chain_token": "forged.deadbeef"})
+        out = _call(srv, {"skill_id": "greeter", "prompt": "hi", "chain_token": "forged.deadbeef"})
         assert "REFUSED" in out and "chain_token" in out
     finally:
         srv.close()
@@ -195,14 +254,24 @@ class _FakeOpencode(BaseHTTPRequestHandler):
             self._send({"id": "child-1"})
         elif self.path.endswith("/message"):
             _FakeOpencode.captured.append(body)
-            self._send({"info": {"role": "assistant"},
-                        "parts": [{"type": "text", "text": "FAKE CHILD REPLY"}]})
+            self._send(
+                {
+                    "info": {"role": "assistant"},
+                    "parts": [{"type": "text", "text": "FAKE CHILD REPLY"}],
+                }
+            )
         else:
             self._send({})
 
     def do_GET(self):
-        self._send([{"info": {"role": "assistant"},
-                     "parts": [{"type": "text", "text": "FAKE CHILD REPLY"}]}])
+        self._send(
+            [
+                {
+                    "info": {"role": "assistant"},
+                    "parts": [{"type": "text", "text": "FAKE CHILD REPLY"}],
+                }
+            ]
+        )
 
     def do_DELETE(self):
         _FakeOpencode.deleted.append(self.path)
@@ -213,10 +282,12 @@ def test_run_skill_spawns_scoped_child(tmp_path):
     d = tmp_path / "roots" / "greeter"
     d.mkdir(parents=True)
     (d / "SKILL.md").write_text(
-        "---\nname: greeter\nmcp_tools: [greeter_tools]\n---\nSay hi.\n", encoding="utf-8")
+        "---\nname: greeter\nmcp_tools: [greeter_tools]\n---\nSay hi.\n", encoding="utf-8"
+    )
     universe = tmp_path / "universe.json"
-    universe.write_text(json.dumps({"greeter_tools": ["do"], "other_tools": ["x"]}),
-                        encoding="utf-8")
+    universe.write_text(
+        json.dumps({"greeter_tools": ["do"], "other_tools": ["x"]}), encoding="utf-8"
+    )
 
     _FakeOpencode.captured.clear()
     _FakeOpencode.deleted.clear()
@@ -226,23 +297,33 @@ def test_run_skill_spawns_scoped_child(tmp_path):
     pidfile = tmp_path / "opencode.pid"
     pidfile.write_text(json.dumps({"pid": 1, "port": port}), encoding="utf-8")
 
-    srv = McpServer([SERVER_PATH, "--server-port-file", str(pidfile),
-                   "--skill-root", str(tmp_path / "roots"),
-                   "--universe-file", str(universe), "--max-depth", "3"],
-                  env=_SERVER_ENV)
+    srv = McpServer(
+        [
+            SERVER_PATH,
+            "--server-port-file",
+            str(pidfile),
+            "--skill-root",
+            str(tmp_path / "roots"),
+            "--universe-file",
+            str(universe),
+            "--max-depth",
+            "3",
+        ],
+        env=_SERVER_ENV,
+    )
     try:
         _handshake(srv)
         token = rs_core.sign({"depth": 0, "visited": ["orchestrator"]}, SECRET)
         out = _call(srv, {"skill_id": "greeter", "prompt": "greet", "chain_token": token})
         assert "FAKE CHILD REPLY" in out and "depth 1" in out
         tools = _FakeOpencode.captured[-1]["tools"]
-        for t in ("bash", "edit", "write", "read", "task"):   # built-ins hard off
+        for t in ("bash", "edit", "write", "read", "task"):  # built-ins hard off
             assert tools[t] is False
-        assert tools["greeter_tools_do"] is True              # child's own tool
-        assert tools["other_tools_x"] is False                # not another skill's
-        assert tools["project_tools_netlist"] is True         # read-only data on
-        assert tools["webfetch"] is False                     # network off
-        assert tools["run_skill_run_skill"] is True           # depth 1 < 3
+        assert tools["greeter_tools_do"] is True  # child's own tool
+        assert tools["other_tools_x"] is False  # not another skill's
+        assert tools["project_tools_netlist"] is True  # read-only data on
+        assert tools["webfetch"] is False  # network off
+        assert tools["run_skill_run_skill"] is True  # depth 1 < 3
         assert _FakeOpencode.deleted, "child session not cleaned up"
     finally:
         srv.close()

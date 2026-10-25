@@ -74,6 +74,7 @@ class BackendConfig:
         # Disabled
         config = BackendConfig(backend_type="none")
     """
+
     backend_type: str = BACKEND_TYPE_NONE
     opencode: Optional[OpenCodeConfig] = None
     custom_prompts: dict = field(default_factory=dict)
@@ -99,7 +100,7 @@ class BackendConfig:
         server_port: int = 4096,
         server_hostname: str = "127.0.0.1",
         model: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ) -> "BackendConfig":
         """
         Convenience method to create OpenCode configuration.
@@ -120,7 +121,7 @@ class BackendConfig:
                 server_hostname=server_hostname,
                 model=model,
             ),
-            **kwargs
+            **kwargs,
         )
 
     @classmethod
@@ -161,9 +162,7 @@ class BackendFactory:
     """
 
     def __init__(
-        self,
-        config: BackendConfig,
-        server_manager: Optional[OpenCodeServerManager] = None
+        self, config: BackendConfig, server_manager: Optional[OpenCodeServerManager] = None
     ):
         """
         Initialize factory with configuration and optional server manager.

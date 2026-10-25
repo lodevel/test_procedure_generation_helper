@@ -16,6 +16,7 @@ heavy ``procedo.studio.authoring`` Qt ``__init__`` chain (same discipline as
     and return its prose. The server URL is read from the launch pid-file at call
     time (the port is OS-assigned after the config is written).
 """
+
 from __future__ import annotations
 
 import base64
@@ -35,23 +36,39 @@ _SKILL_FILE_NAMES = ("SKILL.md", "skill.md")
 # Built-in tools the editor NEVER exposes to the LLM (parent OR child): filesystem,
 # shell, sub-agent, todo. Mirrors opencode_backend._build_message_body's OFF block.
 _BUILTINS_OFF = {
-    "bash": False, "edit": False, "write": False, "patch": False,
-    "apply_patch": False, "read": False, "glob": False, "grep": False,
-    "list": False, "task": False, "todowrite": False, "todoread": False,
+    "bash": False,
+    "edit": False,
+    "write": False,
+    "patch": False,
+    "apply_patch": False,
+    "read": False,
+    "glob": False,
+    "grep": False,
+    "list": False,
+    "task": False,
+    "todowrite": False,
+    "todoread": False,
 }
 # Read-only, sandboxed, no-network infra a child MAY use (datasheet + project data).
 _CHILD_READONLY_ON = {
-    "pdf_tools_list_documents": True, "pdf_tools_read_document": True,
-    "pdf_tools_list_rules": True, "pdf_tools_read_rule": True,
-    "project_tools_list_property_fields": True, "project_tools_list_components": True,
-    "project_tools_get_component": True, "project_tools_query_net": True,
-    "project_tools_netlist": True, "project_tools_get_bom": True,
+    "pdf_tools_list_documents": True,
+    "pdf_tools_read_document": True,
+    "pdf_tools_list_rules": True,
+    "pdf_tools_read_rule": True,
+    "project_tools_list_property_fields": True,
+    "project_tools_list_components": True,
+    "project_tools_get_component": True,
+    "project_tools_query_net": True,
+    "project_tools_netlist": True,
+    "project_tools_get_bom": True,
     "project_tools_list_test_points": True,
 }
 # Network / write infra a child never gets (no human in the loop to consent).
 _CHILD_NETWORK_OFF = {
-    "webfetch": False, "websearch": False,
-    "pdf_tools_read_pdf": False, "pdf_tools_save_pdf": False,
+    "webfetch": False,
+    "websearch": False,
+    "pdf_tools_read_pdf": False,
+    "pdf_tools_save_pdf": False,
 }
 
 
@@ -120,7 +137,7 @@ def _split_frontmatter(text: str):
                     meta = {}
                 if not isinstance(meta, dict):
                     meta = {}
-                return meta, "\n".join(lines[i + 1:]).lstrip("\n").strip()
+                return meta, "\n".join(lines[i + 1 :]).lstrip("\n").strip()
     return {}, text.strip()
 
 
@@ -205,9 +222,18 @@ def _delete_session(server_url: str, sid: str) -> None:
         pass
 
 
-def run_child_skill(server_url: str, roots, skill_id: str, prompt: str,
-                    child_payload: dict, child_token: str, max_depth: int,
-                    universe=None, model: str = "", timeout: float = 600.0):
+def run_child_skill(
+    server_url: str,
+    roots,
+    skill_id: str,
+    prompt: str,
+    child_payload: dict,
+    child_token: str,
+    max_depth: int,
+    universe=None,
+    model: str = "",
+    timeout: float = 600.0,
+):
     """Spawn a child session running ``skill_id`` and return (text, child_sid).
 
     The child's SKILL.md governs it (message ``system``); a ``[HOST]`` preamble
@@ -224,8 +250,7 @@ def run_child_skill(server_url: str, roots, skill_id: str, prompt: str,
         f"chain_token as the chain_token argument.\n\n{skill_body}"
     )
 
-    r = requests.post(f"{server_url}/session",
-                      json={"title": f"run_skill:{skill_id}"}, timeout=15)
+    r = requests.post(f"{server_url}/session", json={"title": f"run_skill:{skill_id}"}, timeout=15)
     r.raise_for_status()
     child_sid = r.json()["id"]
     try:
@@ -237,8 +262,7 @@ def run_child_skill(server_url: str, roots, skill_id: str, prompt: str,
         if model and "/" in model:
             provider, model_id = model.split("/", 1)
             msg["model"] = {"providerID": provider, "modelID": model_id}
-        resp = requests.post(f"{server_url}/session/{child_sid}/message",
-                             json=msg, timeout=timeout)
+        resp = requests.post(f"{server_url}/session/{child_sid}/message", json=msg, timeout=timeout)
         resp.raise_for_status()
         text = ""
         try:
@@ -248,8 +272,9 @@ def run_child_skill(server_url: str, roots, skill_id: str, prompt: str,
         except Exception:  # noqa: BLE001
             pass
         if not text:
-            g = requests.get(f"{server_url}/session/{child_sid}/message",
-                             params={"limit": 20}, timeout=20)
+            g = requests.get(
+                f"{server_url}/session/{child_sid}/message", params={"limit": 20}, timeout=20
+            )
             g.raise_for_status()
             text = _last_assistant_text(g.json())
         return text, child_sid

@@ -10,6 +10,7 @@ Runs without PySide6 and without the wheel installed (the section-universe
 lookup degrades to the canonical fallback):
     PYTHONPATH=. python3 -m pytest tests/test_equipment_types_in.py --noconftest -q
 """
+
 from __future__ import annotations
 
 import unittest
@@ -36,22 +37,18 @@ class EquipmentTypesInHeadingForms(unittest.TestCase):
     """Lenient heading matching (defect a: no-space form was missed)."""
 
     def test_spaced_heading_matches(self):
-        self.assertEqual(equipment_scan.equipment_types_in(_text("## Equipment")),
-                         ["psu", "eload"])
+        self.assertEqual(equipment_scan.equipment_types_in(_text("## Equipment")), ["psu", "eload"])
 
     def test_no_space_heading_matches(self):
-        self.assertEqual(equipment_scan.equipment_types_in(_text("##Equipment")),
-                         ["psu", "eload"])
+        self.assertEqual(equipment_scan.equipment_types_in(_text("##Equipment")), ["psu", "eload"])
 
     def test_h3_heading_is_content_not_matched(self):
         self.assertEqual(equipment_scan.equipment_types_in(_text("###Equipment")), [])
         self.assertEqual(equipment_scan.equipment_types_in(_text("### Equipment")), [])
 
     def test_mixed_case_heading_matches(self):
-        self.assertEqual(equipment_scan.equipment_types_in(_text("## EQUIPMENT")),
-                         ["psu", "eload"])
-        self.assertEqual(equipment_scan.equipment_types_in(_text("##equipment")),
-                         ["psu", "eload"])
+        self.assertEqual(equipment_scan.equipment_types_in(_text("## EQUIPMENT")), ["psu", "eload"])
+        self.assertEqual(equipment_scan.equipment_types_in(_text("##equipment")), ["psu", "eload"])
 
     def test_no_equipment_section_yields_empty(self):
         text = "# TEST_X\n\n## Steps\n1. Do nothing.\n\n## Expected\n"
@@ -60,10 +57,12 @@ class EquipmentTypesInHeadingForms(unittest.TestCase):
         self.assertEqual(equipment_scan.equipment_types_in(None), [])
 
     def test_extra_spacing_tolerated(self):
-        self.assertEqual(equipment_scan.equipment_types_in(_text("##  Equipment")),
-                         ["psu", "eload"])
-        self.assertEqual(equipment_scan.equipment_types_in(_text("## Equipment  ")),
-                         ["psu", "eload"])
+        self.assertEqual(
+            equipment_scan.equipment_types_in(_text("##  Equipment")), ["psu", "eload"]
+        )
+        self.assertEqual(
+            equipment_scan.equipment_types_in(_text("## Equipment  ")), ["psu", "eload"]
+        )
 
 
 class EquipmentTypesInBlockBoundaries(unittest.TestCase):
@@ -75,21 +74,16 @@ class EquipmentTypesInBlockBoundaries(unittest.TestCase):
 
     def test_unknown_no_space_name_is_content_block_continues(self):
         # ``##note`` mirrors the wheel: NOT a heading, the block continues.
-        text = _text("## Equipment",
-                     tail="##note\nSIG1 : siggen\n\n## Steps\n1. X.\n")
-        self.assertEqual(equipment_scan.equipment_types_in(text),
-                         ["psu", "eload", "siggen"])
+        text = _text("## Equipment", tail="##note\nSIG1 : siggen\n\n## Steps\n1. X.\n")
+        self.assertEqual(equipment_scan.equipment_types_in(text), ["psu", "eload", "siggen"])
 
     def test_spaced_unknown_section_ends_block(self):
-        text = _text("## Equipment",
-                     tail="## Anything\nSIG1 : siggen\n")
+        text = _text("## Equipment", tail="## Anything\nSIG1 : siggen\n")
         self.assertEqual(equipment_scan.equipment_types_in(text), ["psu", "eload"])
 
     def test_types_deduplicated_order_preserved(self):
-        text = _text("##Equipment",
-                     tail="PSU2 : psu\nSIG1 : siggen\n\n## Steps\n")
-        self.assertEqual(equipment_scan.equipment_types_in(text),
-                         ["psu", "eload", "siggen"])
+        text = _text("##Equipment", tail="PSU2 : psu\nSIG1 : siggen\n\n## Steps\n")
+        self.assertEqual(equipment_scan.equipment_types_in(text), ["psu", "eload", "siggen"])
 
 
 class EquipmentTypesInUniverseResolution(unittest.TestCase):
@@ -97,36 +91,42 @@ class EquipmentTypesInUniverseResolution(unittest.TestCase):
 
     def test_universe_from_ownership_map_keys(self):
         with mock.patch.object(
-            pp, "get_section_ownership",
+            pp,
+            "get_section_ownership",
             return_value={"meta": "parser", "equipment": "llm", "steps": "llm"},
         ) as gso:
-            self.assertEqual(equipment_scan.equipment_types_in(_text("##Equipment")),
-                             ["psu", "eload"])
+            self.assertEqual(
+                equipment_scan.equipment_types_in(_text("##Equipment")), ["psu", "eload"]
+            )
         gso.assert_called_with(None)
 
     def test_ownership_lookup_failure_falls_back_to_canonical(self):
         with mock.patch.object(
-            pp, "get_section_ownership",
+            pp,
+            "get_section_ownership",
             side_effect=engine_session.ParserUnavailable("no wheel"),
         ):
-            self.assertEqual(equipment_scan.equipment_types_in(_text("##Equipment")),
-                             ["psu", "eload"])
+            self.assertEqual(
+                equipment_scan.equipment_types_in(_text("##Equipment")), ["psu", "eload"]
+            )
 
     def test_section_outside_declared_universe_stays_content_in_no_space_form(self):
         # ``##Steps`` is NOT in this bundle's universe -> content, block continues.
         with mock.patch.object(
-            pp, "get_section_ownership",
+            pp,
+            "get_section_ownership",
             return_value={"equipment": "llm", "expected": "llm"},
         ):
             text = _text("## Equipment", tail="##Steps\nSIG1 : siggen\n")
-            self.assertEqual(equipment_scan.equipment_types_in(text),
-                             ["psu", "eload", "siggen"])
+            self.assertEqual(equipment_scan.equipment_types_in(text), ["psu", "eload", "siggen"])
 
     def test_project_root_threaded_to_ownership_lookup(self):
         from pathlib import Path
+
         root = Path("/some/project")
         with mock.patch.object(
-            pp, "get_section_ownership",
+            pp,
+            "get_section_ownership",
             return_value={"equipment": "llm"},
         ) as gso:
             equipment_scan.equipment_types_in(_text("## Equipment"), root)
@@ -140,11 +140,7 @@ if __name__ == "__main__":
 def test_no_space_test_id_is_content_not_a_heading():
     """gpt-5.5 review regression: 'test_id' has no '## ' heading form, so a
     literal '##test_id' body line must NOT terminate the Equipment block."""
-    text = (
-        "## Equipment\n"
-        "PSU1 : psu\n"
-        "##test_id\n"
-        "LOAD1 : eload\n"
-    )
+    text = "## Equipment\nPSU1 : psu\n##test_id\nLOAD1 : eload\n"
     from procedo.studio.pack_ops.equipment_scan import equipment_types_in
+
     assert equipment_types_in(text) == ["psu", "eload"]

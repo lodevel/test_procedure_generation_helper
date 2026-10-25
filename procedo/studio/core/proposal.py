@@ -22,6 +22,7 @@ The safety rules:
 
 Qt-free; the diff here is the one the diff window shows (:func:`diff_lines`).
 """
+
 from __future__ import annotations
 
 import difflib
@@ -52,8 +53,15 @@ class PartlyApplied(Exception):
 
 def diff_lines(original: str, proposed: str) -> list[str]:
     """The unified diff, line by line: a final newline present on one side only is no change."""
-    return list(difflib.unified_diff(original.splitlines(), proposed.splitlines(),
-                                     fromfile="Original", tofile="Proposed", lineterm=""))
+    return list(
+        difflib.unified_diff(
+            original.splitlines(),
+            proposed.splitlines(),
+            fromfile="Original",
+            tofile="Proposed",
+            lineterm="",
+        )
+    )
 
 
 #: A hunk's header: where it starts in each text and how many lines it spans there (1 if omitted).
@@ -91,8 +99,10 @@ def changed_lines(lines: Iterable[str]) -> tuple[list[int], list[int]]:
     """The numbers (1-based) of the lines a :func:`diff_lines` diff removes from the original,
     and of those it adds to the proposed text."""
     rows = diff_rows(lines)
-    return ([number for kind, number, _ in rows if kind == REMOVED],
-            [number for kind, number, _ in rows if kind == ADDED])
+    return (
+        [number for kind, number, _ in rows if kind == REMOVED],
+        [number for kind, number, _ in rows if kind == ADDED],
+    )
 
 
 def count_changes(lines: Iterable[str]) -> tuple[int, int]:
@@ -140,9 +150,16 @@ class Proposal:
     :func:`current_test`). What its card shows — ``file_names``, :meth:`counts`,
     :meth:`preview` — is kept once it is decided; the rest is let go then."""
 
-    def __init__(self, changes: Iterable[FileChange], apply: Callable[[], None],
-                 rejected: Callable[[], None], banner: str = "", *,
-                 inputs: Iterable[FileText] = (), test: Optional[tuple] = None) -> None:
+    def __init__(
+        self,
+        changes: Iterable[FileChange],
+        apply: Callable[[], None],
+        rejected: Callable[[], None],
+        banner: str = "",
+        *,
+        inputs: Iterable[FileText] = (),
+        test: Optional[tuple] = None,
+    ) -> None:
         self.changes = [change for change in changes if change.lines]
         self._apply = apply
         self._rejected = rejected
@@ -156,8 +173,10 @@ class Proposal:
         self.file_names = [change.file_name for change in self.changes]
         self._counts = count_changes(lines)
         rows = diff_rows(lines)
-        self._preview = ([text for kind, _, text in rows if kind == ADDED] or
-                         [f"− {text}" for kind, _, text in rows if kind == REMOVED])[:PREVIEW_LINES]
+        self._preview = (
+            [text for kind, _, text in rows if kind == ADDED]
+            or [f"− {text}" for kind, _, text in rows if kind == REMOVED]
+        )[:PREVIEW_LINES]
 
     def counts(self) -> tuple[int, int]:
         """(added, removed) lines over all its files."""
@@ -169,7 +188,7 @@ class Proposal:
         return self._preview
 
     def summary(self) -> str:
-        """"Proposal · procedure_text.md +3 −2" (the chat history's line for it)."""
+        """ "Proposal · procedure_text.md +3 −2" (the chat history's line for it)."""
         added, removed = self._counts
         return f"Proposal · {' + '.join(self.file_names)} +{added} −{removed}"
 
@@ -190,7 +209,8 @@ class Proposal:
     def stale(self) -> bool:
         """Still waiting, but a file it rewrites — or one it was made from — changed since."""
         return self.state == PENDING and (
-            any(change.changed_since() for change in self.changes) or bool(self.outdated()))
+            any(change.changed_since() for change in self.changes) or bool(self.outdated())
+        )
 
     def accept(self, reviewed: bool = False) -> bool:
         """Apply it, unless it was decided already, is outdated, or — not *reviewed* in the diff
@@ -227,8 +247,11 @@ class Proposal:
 
 def discard_pending(messages: Iterable) -> int:
     """Discard the pending proposals among a chat's *messages*; how many there were."""
-    pending = [m.proposal for m in messages
-               if getattr(m, "proposal", None) is not None and m.proposal.state == PENDING]
+    pending = [
+        m.proposal
+        for m in messages
+        if getattr(m, "proposal", None) is not None and m.proposal.state == PENDING
+    ]
     for proposal in pending:
         proposal.discard()
     return len(pending)

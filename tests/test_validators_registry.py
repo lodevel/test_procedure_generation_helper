@@ -75,8 +75,12 @@ def test_list_ids_returns_sorted_namespaced_ids():
 
 
 def test_register_idempotent_overwrites_previous():
-    def v1(_ctx): return ValidationOutcome(ok=False, issues=[])
-    def v2(_ctx): return ValidationOutcome(ok=True, issues=[])
+    def v1(_ctx):
+        return ValidationOutcome(ok=False, issues=[])
+
+    def v2(_ctx):
+        return ValidationOutcome(ok=True, issues=[])
+
     register("pack.v", v1)
     register("pack.v", v2)
     assert get("pack.v") is v2
@@ -93,8 +97,12 @@ def test_shorthand_resolves_when_one_match():
 
 
 def test_shorthand_picks_alphabetical_first_when_multiple():
-    def for_a(_ctx): return ValidationOutcome(ok=True, reason="a")
-    def for_b(_ctx): return ValidationOutcome(ok=True, reason="b")
+    def for_a(_ctx):
+        return ValidationOutcome(ok=True, reason="a")
+
+    def for_b(_ctx):
+        return ValidationOutcome(ok=True, reason="b")
+
     register("pack_b.validate", for_b)
     register("pack_a.validate", for_a)
     # Alphabetical order — pack_a wins despite later registration.

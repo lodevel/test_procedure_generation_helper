@@ -1,4 +1,5 @@
 """Exercise the real MCP dispatcher; fake only the expensive ODB CLI boundary."""
+
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -14,29 +15,43 @@ from procedo.studio.authoring.netlist_text import board_revision
 
 def _board_data():
     components = [
-        {"refdes": "MCU_A", "side": "TOP", "pins": [
-            {"name": "24", "net": "RESET"}, {"name": "25", "net": "GPIO"}],
-         "properties": {"Vendor reference": "STM32_TEST", "EDA.category": "MCU"}},
-        {"refdes": "R7", "side": "TOP", "pins": [
-            {"name": "1", "net": "GPIO"}, {"name": "2", "net": "PROBE"}],
-         "properties": {"VALUE": "100 ohm", "EDA.category": "Resistor"}},
-        {"refdes": "TP7", "side": "BOTTOM", "pins": [
-            {"name": "1", "net": "RESET"}],
-         "properties": {"arbitrary.TestAccess": "yes", "Package": "TEST_PAD"}},
-        {"refdes": "PAD9", "side": "TOP", "pins": [
-            {"name": "1", "net": "PROBE"}],
-         "properties": {"arbitrary.TestAccess": "yes", "Package": "TEST_PAD"}},
-        {"refdes": "J1", "side": "TOP", "pins": [
-            {"name": "1", "net": None}], "properties": {}},
+        {
+            "refdes": "MCU_A",
+            "side": "TOP",
+            "pins": [{"name": "24", "net": "RESET"}, {"name": "25", "net": "GPIO"}],
+            "properties": {"Vendor reference": "STM32_TEST", "EDA.category": "MCU"},
+        },
+        {
+            "refdes": "R7",
+            "side": "TOP",
+            "pins": [{"name": "1", "net": "GPIO"}, {"name": "2", "net": "PROBE"}],
+            "properties": {"VALUE": "100 ohm", "EDA.category": "Resistor"},
+        },
+        {
+            "refdes": "TP7",
+            "side": "BOTTOM",
+            "pins": [{"name": "1", "net": "RESET"}],
+            "properties": {"arbitrary.TestAccess": "yes", "Package": "TEST_PAD"},
+        },
+        {
+            "refdes": "PAD9",
+            "side": "TOP",
+            "pins": [{"name": "1", "net": "PROBE"}],
+            "properties": {"arbitrary.TestAccess": "yes", "Package": "TEST_PAD"},
+        },
+        {"refdes": "J1", "side": "TOP", "pins": [{"name": "1", "net": None}], "properties": {}},
     ]
     nets = {}
     for comp in components:
         for pin in comp["pins"]:
             if pin["net"] is not None:
                 nets.setdefault(pin["net"], []).append(
-                    {"refdes": comp["refdes"], "pin": pin["name"]})
-    return {"components": components,
-            "nets": [{"net": name, "nodes": nodes} for name, nodes in nets.items()]}
+                    {"refdes": comp["refdes"], "pin": pin["name"]}
+                )
+    return {
+        "components": components,
+        "nets": [{"net": name, "nodes": nodes} for name, nodes in nets.items()],
+    }
 
 
 @pytest.fixture
@@ -59,8 +74,10 @@ def board(tmp_path, monkeypatch):
 def _call(board, monkeypatch):
     replies = []
     monkeypatch.setattr(_mcp_serve, "send", replies.append)
-    dispatch = {name: lambda args, handler=handler: handler(board, args)
-                for name, handler in server._DISPATCH.items()}
+    dispatch = {
+        name: lambda args, handler=handler: handler(board, args)
+        for name, handler in server._DISPATCH.items()
+    }
     _mcp_serve._dispatch_call(17, {"name": "board_context", "arguments": {}}, dispatch)
     assert len(replies) == 1
     assert replies[0]["id"] == 17
@@ -74,8 +91,11 @@ def _text(result):
 
 def test_constructing_and_advertising_board_tool_does_not_read_archive(board, monkeypatch):
     _, _, _, calls = board
-    monkeypatch.setattr(server._netlist_text, "board_revision",
-                        lambda _: pytest.fail("enabling must not read board"))
+    monkeypatch.setattr(
+        server._netlist_text,
+        "board_revision",
+        lambda _: pytest.fail("enabling must not read board"),
+    )
     server._Board("missing.tgz")
     tool = next(item for item in server.TOOLS if item["name"] == "board_context")
     assert tool["inputSchema"]["properties"] == {}
@@ -88,17 +108,26 @@ def test_one_request_contains_all_wiring_identities_and_completion_marker(board,
     assert not result.get("isError")
     text = _text(result)
     assert text.startswith(f"Board revision: {board_revision(str(archive))}\n")
-    counts = ("components=5, pins=7, nets=3, nodes=6, "
-              "components_with_properties=4, pins_with_unknown_net=1, "
-              "components_without_selected_properties=1, "
-              "components_without_selected_identity=4")
+    counts = (
+        "components=5, pins=7, nets=3, nodes=6, "
+        "components_with_properties=4, pins_with_unknown_net=1, "
+        "components_without_selected_properties=1, "
+        "components_without_selected_identity=4"
+    )
     assert f"Board context: {counts}" in text
     assert text.endswith(f"BOARD_CONTEXT_END: {counts}")
-    for line in ("- MCU_A [TOP]: 24=RESET, 25=GPIO", "- R7 [TOP]: 1=GPIO, 2=PROBE",
-                 "- RESET: MCU_A.24, TP7.1", "- GPIO: MCU_A.25, R7.1",
-                 "- PROBE: R7.2, PAD9.1", "- J1 [TOP]: 1=-",
-                 "Vendor reference='STM32_TEST'", "EDA.category='Resistor'",
-                 "arbitrary.TestAccess='yes'", "Package='TEST_PAD'"):
+    for line in (
+        "- MCU_A [TOP]: 24=RESET, 25=GPIO",
+        "- R7 [TOP]: 1=GPIO, 2=PROBE",
+        "- RESET: MCU_A.24, TP7.1",
+        "- GPIO: MCU_A.25, R7.1",
+        "- PROBE: R7.2, PAD9.1",
+        "- J1 [TOP]: 1=-",
+        "Vendor reference='STM32_TEST'",
+        "EDA.category='Resistor'",
+        "arbitrary.TestAccess='yes'",
+        "Package='TEST_PAD'",
+    ):
         assert line in text
     assert calls == [["--list-nets"]]
 
@@ -114,9 +143,14 @@ def test_large_board_keeps_final_component_properties_and_net(board, monkeypatch
     cached, _, data, _ = board
     for index in range(2100):
         refdes, net = f"P{index}", f"SIGNAL_{index}"
-        data["components"].append({"refdes": refdes, "side": "TOP",
-                                   "pins": [{"name": "1", "net": net}],
-                                   "properties": {"BoardKind": f"TEST_ACCESS_{index}"}})
+        data["components"].append(
+            {
+                "refdes": refdes,
+                "side": "TOP",
+                "pins": [{"name": "1", "net": net}],
+                "properties": {"BoardKind": f"TEST_ACCESS_{index}"},
+            }
+        )
         data["nets"].append({"net": net, "nodes": [{"refdes": refdes, "pin": "1"}]})
     text = _text(_call(cached, monkeypatch))
     assert "components=2105, pins=2107, nets=2103, nodes=2106" in text
@@ -128,7 +162,8 @@ def test_large_board_keeps_final_component_properties_and_net(board, monkeypatch
 
 @pytest.mark.parametrize("spare_bytes", [-1, 0, 1])
 def test_board_context_byte_limit_includes_revision_and_exact_boundary(
-        board, monkeypatch, spare_bytes):
+    board, monkeypatch, spare_bytes
+):
     cached, _, _, calls = board
     complete = _text(_call(cached, monkeypatch))
     size = len(complete.encode("utf-8"))
@@ -150,8 +185,10 @@ def test_board_context_byte_limit_includes_revision_and_exact_boundary(
 def test_oversized_unicode_board_is_rejected_whole_by_bytes_not_characters(board, monkeypatch):
     cached, archive, data, calls = board
     data["components"][0]["properties"]["Vendor reference"] = "界" * 400_000
-    complete = (f"Board revision: {board_revision(str(archive))}\n"
-                + server._netlist_text.format_board_context(data))
+    complete = (
+        f"Board revision: {board_revision(str(archive))}\n"
+        + server._netlist_text.format_board_context(data)
+    )
     limit = server._netlist_text.BOARD_CONTEXT_MAX_BYTES
     size = len(complete.encode("utf-8"))
     assert len(complete) < limit < size
@@ -206,8 +243,10 @@ def test_missing_archive_returns_clear_error_without_cli(path, monkeypatch):
 def test_failed_or_incomplete_board_has_no_success_marker(board, monkeypatch, problem):
     cached, _, data, _ = board
     if problem == "cli":
+
         def fail(*_):
             raise server._board_images.CliError("synthetic CLI failed")
+
         monkeypatch.setattr(server._board_images, "run_cli", fail)
     elif problem == "identities":
         data["components"][0].pop("properties")
@@ -249,8 +288,7 @@ def test_concurrent_requests_share_one_parse(board, monkeypatch):
 
     monkeypatch.setattr(server._board_images, "run_cli", cli)
     results = []
-    threads = [threading.Thread(target=lambda: results.append(cached.snapshot()))
-               for _ in range(2)]
+    threads = [threading.Thread(target=lambda: results.append(cached.snapshot())) for _ in range(2)]
     try:
         for thread in threads:
             thread.start()
@@ -289,16 +327,33 @@ def stdio_board_server(tmp_path):
         f"    with open({str(reads)!r}, 'a') as log: log.write('read\\n')\n"
         "    return json.loads(Path(path).read_text(encoding='utf-8'))\n"
         "server._board_images.run_cli = cli\n"
-        "server.main()\n", encoding="utf-8")
+        "server.main()\n",
+        encoding="utf-8",
+    )
     proc = subprocess.Popen(
-        [sys.executable, str(launcher), "--odb-tgz", str(old_archive),
-         "--project-root", str(project)],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        [
+            sys.executable,
+            str(launcher),
+            "--odb-tgz",
+            str(old_archive),
+            "--project-root",
+            str(project),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
     watchdog = threading.Timer(10, proc.kill)
     watchdog.start()
+
     def request(rid):
-        message = {"jsonrpc": "2.0", "id": rid, "method": "tools/call",
-                   "params": {"name": "board_context", "arguments": {}}}
+        message = {
+            "jsonrpc": "2.0",
+            "id": rid,
+            "method": "tools/call",
+            "params": {"name": "board_context", "arguments": {}},
+        }
         proc.stdin.write(json.dumps(message) + "\n")
         proc.stdin.flush()
         line = proc.stdout.readline()

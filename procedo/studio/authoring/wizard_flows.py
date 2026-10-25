@@ -13,6 +13,7 @@ Imports ONLY :func:`registry.load_wizards` + :class:`Skill`/:class:`SkillSource`
 the host's ``API_VERSION``) — never ``skill_menu`` — so there is no import cycle
 (``skill_menu`` imports this), and stays Qt-free.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -41,9 +42,9 @@ class WizardFlow:
     flow_id: str
     label: str
     tooltip: str
-    launch_spec: str          # "<dotted module>:<Attr>"
-    head: Skill               # the skill folder that owns the code + launch:
-    skills: List[Skill]       # all skills in this flow (head + members)
+    launch_spec: str  # "<dotted module>:<Attr>"
+    head: Skill  # the skill folder that owns the code + launch:
+    skills: List[Skill]  # all skills in this flow (head + members)
 
 
 def discover_flows(project_root: Optional[Path] = None) -> List[WizardFlow]:
@@ -73,22 +74,28 @@ def discover_flows(project_root: Optional[Path] = None) -> List[WizardFlow]:
             continue  # prompts shipped, launchable UI not built — skip silently
         if len(heads) > 1:  # deterministic tiebreak: highest source, then skill_id
             heads.sort(key=lambda s: (int(s.source), s.skill_id), reverse=True)
-            log.warning("wizard flow %r has %d launch heads; using %s",
-                        flow_id, len(heads), heads[0].skill_id)
+            log.warning(
+                "wizard flow %r has %d launch heads; using %s",
+                flow_id,
+                len(heads),
+                heads[0].skill_id,
+            )
         head = heads[0]
         ids = {s.skill_id for s in skills}
         requires = (head.metadata or {}).get("requires") or list(ids)
         if not set(requires) <= ids:
             continue  # a required stage is missing → not launchable
         meta = head.metadata or {}
-        out.append(WizardFlow(
-            flow_id=flow_id,
-            label=str(meta.get("wizard-label") or head.title),
-            tooltip=str(meta.get("wizard-tooltip") or head.when_to_use or ""),
-            launch_spec=str(meta["launch"]),
-            head=head,
-            skills=skills,
-        ))
+        out.append(
+            WizardFlow(
+                flow_id=flow_id,
+                label=str(meta.get("wizard-label") or head.title),
+                tooltip=str(meta.get("wizard-tooltip") or head.when_to_use or ""),
+                launch_spec=str(meta["launch"]),
+                head=head,
+                skills=skills,
+            )
+        )
     return sorted(out, key=lambda f: f.label.lower())
 
 
@@ -104,16 +111,17 @@ def resolve_launch(flow: WizardFlow) -> Any:
     authoring API than this Studio's, or import failure (the caller surfaces it)."""
     mod_part, sep, attr = flow.launch_spec.partition(":")
     if not sep or not attr.strip():
-        raise WizardLaunchError(
-            f"launch must be '<module>:<Attr>', got {flow.launch_spec!r}")
+        raise WizardLaunchError(f"launch must be '<module>:<Attr>', got {flow.launch_spec!r}")
     if flow.head.source not in (SkillSource.BUILTIN, SkillSource.BUNDLED):
         raise WizardLaunchError(
-            "launchable wizard code is allowed only from builtin/bundled sources")
+            "launchable wizard code is allowed only from builtin/bundled sources"
+        )
     needed = required_api(flow)
     if needed > API_VERSION:
         raise WizardLaunchError(
             f"this wizard needs authoring API {needed}; this Procedo Studio provides "
-            f"{API_VERSION}. Update Procedo Studio.")
+            f"{API_VERSION}. Update Procedo Studio."
+        )
     head_dir = Path(flow.head.path)
     if str(head_dir) in sys.path:
         sys.path.remove(str(head_dir))
@@ -126,10 +134,12 @@ def resolve_launch(flow: WizardFlow) -> Any:
     except Exception as exc:  # noqa: BLE001
         raise WizardLaunchError(
             f"could not load {flow.launch_spec!r}: {exc}. If it was just installed, "
-            "rebuild and re-apply the bundle.") from exc
+            "rebuild and re-apply the bundle."
+        ) from exc
     if not _is_under(module, head_dir):
         raise WizardLaunchError(
-            f"{module_name} resolved outside the wizard's folder: {module.__file__}")
+            f"{module_name} resolved outside the wizard's folder: {module.__file__}"
+        )
     return entry
 
 
@@ -157,11 +167,11 @@ def required_api(flow: WizardFlow) -> int:
     if value is None:
         raise WizardLaunchError(
             "this wizard comes from a bundle built before Procedo Studio's authoring API and "
-            "cannot run. Reinstall the project's bundle in Procedo Bench, then launch it again.")
+            "cannot run. Reinstall the project's bundle in Procedo Bench, then launch it again."
+        )
     if isinstance(value, bool) or not isinstance(value, int):
         raise WizardLaunchError(f"authoring-api must be a whole number, got {value!r}")
     return value
 
 
-__all__ = ["WizardFlow", "WizardLaunchError", "discover_flows", "required_api",
-           "resolve_launch"]
+__all__ = ["WizardFlow", "WizardLaunchError", "discover_flows", "required_api", "resolve_launch"]

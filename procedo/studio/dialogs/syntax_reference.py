@@ -58,7 +58,7 @@ class SyntaxReferenceDialog(QDialog):
         try:
             if inst.isVisible():
                 inst.set_rules_root(rules_root, bundle)
-        except RuntimeError:        # underlying C++ dialog already gone
+        except RuntimeError:  # underlying C++ dialog already gone
             cls._instance = None
 
     def __init__(self, parent=None) -> None:
@@ -81,12 +81,14 @@ class SyntaxReferenceDialog(QDialog):
         self._search.returnPressed.connect(self._on_find)
         next_btn = QPushButton("Next")
         next_btn.clicked.connect(self._on_find)
-        self._header = ui_kit.HeaderBand("DSL Syntax Reference", "", [self._search, next_btn],
-                                         stacked=True)
+        self._header = ui_kit.HeaderBand(
+            "DSL Syntax Reference", "", [self._search, next_btn], stacked=True
+        )
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.close)
-        body = ui_kit.framed(self, self._header, ui_kit.FooterBand([close_btn]),
-                             margins=(0, 0, 0, 0), spacing=0)
+        body = ui_kit.framed(
+            self, self._header, ui_kit.FooterBand([close_btn]), margins=(0, 0, 0, 0), spacing=0
+        )
 
         self._pages = MarkdownPages(_LIST_WIDTH, _PAGE_POINTS)
         pages = self._pages.page_list
@@ -107,7 +109,8 @@ class SyntaxReferenceDialog(QDialog):
             self._pages.view.setMarkdown(
                 "# No bundle rules found\n\nOpen a project with an installed "
                 "bundle to see its procedure-DSL syntax reference.\n\n"
-                "_The reference is rendered from the active bundle's rule docs._")
+                "_The reference is rendered from the active bundle's rule docs._"
+            )
             return
 
         if sheet:
@@ -120,14 +123,14 @@ class SyntaxReferenceDialog(QDialog):
                     tip += f"  ({doc['source']})"
                 self._pages.add_page(doc["title"], doc["text"], tip)
 
-        self._pages.select_first()   # the cheat sheet is the landing page
+        self._pages.select_first()  # the cheat sheet is the landing page
 
     def _on_find(self) -> None:
         text = self._search.text().strip()
         if not text:
             return
         view = self._pages.view
-        if not view.find(text):                 # wrap to top and retry
+        if not view.find(text):  # wrap to top and retry
             cur = view.textCursor()
             cur.movePosition(QTextCursor.MoveOperation.Start)
             view.setTextCursor(cur)

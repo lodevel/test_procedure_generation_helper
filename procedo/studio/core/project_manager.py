@@ -37,8 +37,10 @@ RULE_DOC_MAX_BYTES = 64 * 1024
 PDF_DOC_WARN_BYTES = 2 * 1024 * 1024
 #: Heads the project documents wherever they are sent after the bundle rules (owner
 #: decision 2026-10-19: they win).
-PROJECT_RULES_WIN = ("The documents below are this project's own rules: where they conflict "
-                     "with the bundle rules, the project rules win.")
+PROJECT_RULES_WIN = (
+    "The documents below are this project's own rules: where they conflict "
+    "with the bundle rules, the project rules win."
+)
 #: Stands in the rules text for a document sent as a file (see ``attached_as_file``).
 ATTACHED_NOTE = "(attached to this message as a file)"
 
@@ -55,6 +57,7 @@ def warn_above(path: Path) -> int:
 
 class RuleDoc(NamedTuple):
     """One rule document a view can send: *key* is what ``selected_rules`` stores."""
+
     key: str
     path: Path
     origin: str  # "bundle" (the bundle's rules, or the folder picked instead) | "project"
@@ -76,6 +79,7 @@ def _bundle_rule_files(folder: Optional[Path]) -> list[Path]:
 
 class RulesState(Enum):
     """State of rules loading."""
+
     NOT_CHECKED = auto()
     LOADED = auto()
     NONE = auto()  # The open project has no rules
@@ -94,6 +98,7 @@ def rule_doc_detail(doc: RuleDoc, size: int) -> str:
 @dataclass
 class TestFolderInfo:
     """Information about a test folder."""
+
     path: Path
     name: str
     has_json: bool = False
@@ -128,12 +133,13 @@ class TestFolderInfo:
 class ProjectManager:
     """
     Manages project root and rules discovery.
-    
+
     A valid project root contains either:
     - tests/ folder
     - config/ folder
     - or both
     """
+
     project_root: Optional[Path] = None
     rules_root: Optional[Path] = None
     rules_state: RulesState = RulesState.NOT_CHECKED
@@ -161,47 +167,47 @@ class ProjectManager:
             self._equipment_patterns_cache = None
             return True
         return False
-    
+
     def is_valid_project_root(self, path: Path) -> bool:
         """Check if path is a valid project root."""
         if not is_dir_quiet(path):
             return False
-        
+
         # Valid if contains tests/ or config/
         tests_dir = path / "tests"
         config_dir = path / "config"
-        
+
         return exists_quiet(tests_dir) or exists_quiet(config_dir)
-    
+
     def detect_project_from_test_folder(self, test_folder: Path) -> Optional[Path]:
         """
         Try to detect project root from a test folder.
-        
+
         If user selected a test folder directly, attempt to find project root.
         """
         # Check if this looks like a test folder
         has_json = exists_quiet(test_folder / "procedure.json")
         has_code = exists_quiet(test_folder / "test.py")
-        
+
         if not (has_json or has_code):
             return None
-        
+
         # Try parent as project root
         parent = test_folder.parent
         if parent.name == "tests":
             grandparent = parent.parent
             if self.is_valid_project_root(grandparent):
                 return grandparent
-        
+
         return None
-    
+
     def get_tests_dir(self) -> Optional[Path]:
         """Get the tests directory."""
         if self.project_root is None:
             return None
         tests_dir = self.project_root / "tests"
         return tests_dir if exists_quiet(tests_dir) else None
-    
+
     def get_config_dir(self) -> Optional[Path]:
         """Get the config directory."""
         if self.project_root is None:
@@ -238,15 +244,18 @@ class ProjectManager:
         try:
             from procedo.core import bundle_registry
             from procedo.studio.pack_ops.bundle_capabilities import defaults_path
+
             declared = bundle_registry.bench_fields(defaults_path(self.project_root))
         except Exception:
             declared = {}
-        field_names = sorted({
-            f["name"].upper()
-            for fields in declared.values()
-            for f in fields
-            if isinstance(f, dict) and isinstance(f.get("name"), str)
-        })
+        field_names = sorted(
+            {
+                f["name"].upper()
+                for fields in declared.values()
+                for f in fields
+                if isinstance(f, dict) and isinstance(f.get("name"), str)
+            }
+        )
         for fname in field_names:
             compiled.append(
                 re.compile(rf"^[_A-Za-z][_A-Za-z0-9]*_{re.escape(fname)}\s*=.*", re.MULTILINE)
@@ -301,18 +310,20 @@ class ProjectManager:
     def enumerate_test_folders(self) -> list[TestFolderInfo]:
         """
         Enumerate all test folders in the project.
-        
+
         Returns list of TestFolderInfo with artifact status.
         """
         tests_dir = self.get_tests_dir()
         if tests_dir is None:
             return []
-        
+
         try:
-            return [TestFolderInfo.of(item) for item in sorted(tests_dir.iterdir()) if item.is_dir()]
+            return [
+                TestFolderInfo.of(item) for item in sorted(tests_dir.iterdir()) if item.is_dir()
+            ]
         except OSError:  # the share dropped after the folder answered
             return []
-    
+
     def detect_rules_root(self) -> bool:
         """Load the open project's rules: the folder the user picked for it, else its
         active bundle's rules (``project_bundle.active_rules_dir``, as Bench resolves
@@ -341,11 +352,11 @@ class ProjectManager:
         """Use the rule docs of *path*; None: no rules."""
         self.rules_root = path
         self.rules_state = RulesState.LOADED if path is not None else RulesState.NONE
-    
+
     def _is_valid_rules_root(self, path: Path) -> bool:
         """Check if path contains any markdown files."""
         return bool(_bundle_rule_files(path))
-    
+
     def project_rules_dir(self) -> Optional[Path]:
         """``<project>/config/project_rules`` (it may not exist); None without a project."""
         return self.project_root / PROJECT_RULES_DIR if self.project_root is not None else None
@@ -354,9 +365,10 @@ class ProjectManager:
         """Every rule document a view can send, scanned now: the bundle's rules (or the folder
         picked instead), keyed by file name, then the project's own documents, keyed
         ``project/<name>`` so a bundle rule of the same name never clashes."""
-        return ([RuleDoc(p.name, p, "bundle") for p in _bundle_rule_files(self.rules_root)]
-                + [RuleDoc(PROJECT_RULE_PREFIX + p.name, p, "project")
-                   for p in project_rule_doc_paths(self.project_rules_dir())])
+        return [RuleDoc(p.name, p, "bundle") for p in _bundle_rule_files(self.rules_root)] + [
+            RuleDoc(PROJECT_RULE_PREFIX + p.name, p, "project")
+            for p in project_rule_doc_paths(self.project_rules_dir())
+        ]
 
     def add_project_rule_doc(self, source: Path) -> RuleDoc:
         """Copy *source* (verbatim) into the project's rules folder, creating it; never over a
@@ -365,8 +377,9 @@ class ProjectManager:
         if folder is None:
             raise RuleDocError("Open a project first.")
         if source not in project_rule_doc_paths(source.parent):  # not a kind the project lists
-            raise RuleDocError(f"{source.name}: a project rule document is .md or .txt text, "
-                               "or a PDF.")
+            raise RuleDocError(
+                f"{source.name}: a project rule document is .md or .txt text, or a PDF."
+            )
         if not attached_as_file(source):
             self._check_text_doc(source)
         data = source.read_bytes()
@@ -376,7 +389,8 @@ class ProjectManager:
         except FileExistsError:
             raise RuleDocError(
                 f"The project already has a document named {source.name}: remove it first "
-                "(Open folder).") from None
+                "(Open folder)."
+            ) from None
         return RuleDoc(PROJECT_RULE_PREFIX + target.name, target, "project")
 
     @staticmethod
@@ -386,7 +400,8 @@ class ProjectManager:
         if size > RULE_DOC_MAX_BYTES:
             raise RuleDocError(
                 f"{source.name} is {kilobytes(size)}: a project rule document can be at "
-                f"most {kilobytes(RULE_DOC_MAX_BYTES)}, it is sent with every request.")
+                f"most {kilobytes(RULE_DOC_MAX_BYTES)}, it is sent with every request."
+            )
         try:
             source.read_bytes().decode("utf-8")
         except UnicodeDecodeError:
@@ -400,25 +415,24 @@ class ProjectManager:
             return "Rules: none"
         else:
             return "Rules: not loaded"
-    
+
     def create_test_folder(self, name: str) -> Optional[Path]:
         """
         Create a new test folder.
-        
+
         Returns the path to the created folder, or None on failure.
         """
         tests_dir = self.get_tests_dir()
         if tests_dir is None:
             return None
-        
+
         new_folder = tests_dir / name
         if unreachable(new_folder) or new_folder.exists():
             return None  # Already exists, or the share cannot be asked
-        
+
         try:
             new_folder.mkdir(parents=True)
             starter_test.write_starter_procedure(new_folder)
             return new_folder
         except OSError:
             return None
-    

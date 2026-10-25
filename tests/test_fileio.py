@@ -58,7 +58,9 @@ def test_a_target_briefly_held_open_is_retried(tmp_path, monkeypatch):
     monkeypatch.setattr(atomic_write.os, "replace", busy_then_free)
     monkeypatch.setattr(atomic_write, "_REPLACE_BACKOFF_S", 0)
     atomic_write_text(target, "new")
-    assert target.read_text(encoding="utf-8") == "new" and os.listdir(tmp_path) == ["procedure.json"]
+    assert target.read_text(encoding="utf-8") == "new" and os.listdir(tmp_path) == [
+        "procedure.json"
+    ]
 
 
 def test_a_target_held_open_for_good_fails_and_keeps_the_old_file(tmp_path, monkeypatch):
@@ -115,8 +117,12 @@ def test_task_config_writes_readable_indented_json(tmp_path):
 
     config_path = tmp_path / "tab_contexts.json"
     manager = TaskConfigManager(config_path)
-    manager.add_task("text_json", TaskConfig(
-        id="unit_task", name="Mesure µΩ", button_label="µΩ", prompt_template="p", enabled=True))
+    manager.add_task(
+        "text_json",
+        TaskConfig(
+            id="unit_task", name="Mesure µΩ", button_label="µΩ", prompt_template="p", enabled=True
+        ),
+    )
     manager.save_config()
     text = config_path.read_text(encoding="utf-8")
     assert "Mesure µΩ" in text  # not \u00b5

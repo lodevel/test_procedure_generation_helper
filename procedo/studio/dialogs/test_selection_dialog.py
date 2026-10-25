@@ -5,6 +5,7 @@ selection (mirroring the main app's checked-procedure list). Rows lacking the
 required artifact (``procedure.json`` for Word, ``procedure_text.md`` for Markdown)
 are shown greyed/disabled; each row names the test's artifacts on its right.
 """
+
 from __future__ import annotations
 
 from PySide6.QtWidgets import QDialog, QPushButton
@@ -32,15 +33,22 @@ class TestSelectionDialog(QDialog):
         footer = ui_kit.FooterBand([cancel_btn, export_btn])
         self._count = footer.note
         body = ui_kit.framed(
-            self, ui_kit.HeaderBand("Export procedures", _EXPORTS.get(require, ""), stacked=True),
-            footer, margins=(16, 12, 16, 12), spacing=8)
+            self,
+            ui_kit.HeaderBand("Export procedures", _EXPORTS.get(require, ""), stacked=True),
+            footer,
+            margins=(16, 12, 16, 12),
+            spacing=8,
+        )
 
         all_btn = QPushButton("All")
         all_btn.clicked.connect(lambda: self.tests.set_all(True))
         none_btn = QPushButton("None")
         none_btn.clicked.connect(lambda: self.tests.set_all(False))
-        body.addLayout(ui_kit.hbox(ui_kit.note("Tick the tests to include.", wrap=False), None,
-                                   all_btn, none_btn))
+        body.addLayout(
+            ui_kit.hbox(
+                ui_kit.note("Tick the tests to include.", wrap=False), None, all_btn, none_btn
+            )
+        )
         self.tests = ui_kit.CheckList()
         for f in folders:
             available = bool(getattr(f, f"has_{require}", False))

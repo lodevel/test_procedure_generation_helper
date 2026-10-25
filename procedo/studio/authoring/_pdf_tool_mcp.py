@@ -15,6 +15,7 @@ client's ``protocolVersion``; notifications (no ``id``) get no response;
 Runs as a standalone script (launched by absolute path from an arbitrary cwd),
 so it bootstraps its own import path before importing the package.
 """
+
 import os
 import sys
 from pathlib import Path
@@ -25,7 +26,9 @@ from pathlib import Path
 # <root> (four dirs up from this file) onto sys.path lets us import the package as
 # `procedo.studio.authoring.pdf_text` no matter the launch cwd or how the
 # absolute path was spelled (WSL or Windows interop).
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
@@ -62,8 +65,7 @@ TOOLS = [
             "properties": {
                 "source": {
                     "type": "string",
-                    "description": "An http(s) URL to a PDF, or a name list_documents "
-                    "shows.",
+                    "description": "An http(s) URL to a PDF, or a name list_documents shows.",
                 }
             },
             "required": ["source"],
@@ -260,9 +262,7 @@ def _handle_save_pdf(arguments, documents_dir):
         )
     save_name = _safe_pdf_name(arguments.get("save_as"))
     if not save_name:
-        return _text_result(
-            "save_pdf requires a 'save_as' name (use the part's exact MPN)."
-        )
+        return _text_result("save_pdf requires a 'save_as' name (use the part's exact MPN).")
     save_to = os.path.join(documents_dir, save_name)
     text = fetch_and_extract(source, save_to=save_to)
     if text is None:
@@ -301,8 +301,7 @@ def _list_names(names, missing_msg, empty_msg, header):
     if not names:
         return _text_result(empty_msg)
     more = f"\n(+{len(names) - _LIST_CAP} more)" if len(names) > _LIST_CAP else ""
-    return _text_result(
-        header + "\n" + "\n".join("- " + n for n in names[:_LIST_CAP]) + more)
+    return _text_result(header + "\n" + "\n".join("- " + n for n in names[:_LIST_CAP]) + more)
 
 
 def _handle_list_documents(documents_dir):
@@ -311,7 +310,8 @@ def _handle_list_documents(documents_dir):
         sorted(files) if files is not None else None,
         "(no documents folder for this project)",
         "(documents folder is empty)",
-        "Documents available (read one with read_document):")
+        "Documents available (read one with read_document):",
+    )
 
 
 def _rule_files(rules_dir, project_rules_dir):
@@ -320,8 +320,10 @@ def _rule_files(rules_dir, project_rules_dir):
     documents (``project/<name>``: exactly the files Studio sends). None when there
     is neither."""
     bundle = _folder_files(rules_dir)
-    own = {PROJECT_RULE_PREFIX + p.name: str(p)
-           for p in project_rule_doc_paths(Path(project_rules_dir) if project_rules_dir else None)}
+    own = {
+        PROJECT_RULE_PREFIX + p.name: str(p)
+        for p in project_rule_doc_paths(Path(project_rules_dir) if project_rules_dir else None)
+    }
     if bundle is None and not own:
         return None
     return {**dict(sorted((bundle or {}).items())), **own}
@@ -333,7 +335,8 @@ def _handle_list_rules(rules_dir, project_rules_dir=None):
         list(files) if files is not None else None,
         "(no rules folder for this project)",
         "(rules folder is empty)",
-        "Grammar/rule files available (read one with read_rule):")
+        "Grammar/rule files available (read one with read_rule):",
+    )
 
 
 def _handle_read_rule(arguments, rules_dir, project_rules_dir=None):
@@ -371,6 +374,7 @@ def _handle_read_document(arguments, documents_dir):
 def _handle_search_document(arguments, documents_dir):
     """Ctrl-F a documents-folder PDF: return only the page(s) the query is on."""
     import re
+
     arguments = arguments or {}
     name = arguments.get("name")
     query = arguments.get("query")
@@ -385,7 +389,7 @@ def _handle_search_document(arguments, documents_dir):
     if pages is None:
         return _text_result(_UNREADABLE_MSG)
     q = query.strip()
-    if re.fullmatch(r"[\w.+\-]+", q):       # word-like (refdes / MPN)
+    if re.fullmatch(r"[\w.+\-]+", q):  # word-like (refdes / MPN)
         # token start (not preceded by a word char) and NOT followed by a DIGIT, so 'U18'
         # matches 'U18', 'U18A', 'U18.1' (a part split into sub-parts across sheets) but
         # NOT 'U180' (a different refdes).
@@ -396,9 +400,11 @@ def _handle_search_document(arguments, documents_dir):
     if not hits:
         return _text_result(f"'{q}' not found in {name} ({len(pages)} page(s) searched).")
     hits.sort(key=lambda h: (-h[1], h[0]))
-    MAX_PAGES, MAX_CHARS = 5, 12000          # headroom for a part split across sub-part sheets
-    out = [f"'{q}' found on {len(hits)} page(s) {[i + 1 for i, _ in hits]}; "
-           f"showing the top {min(MAX_PAGES, len(hits))} by mention count."]
+    MAX_PAGES, MAX_CHARS = 5, 12000  # headroom for a part split across sub-part sheets
+    out = [
+        f"'{q}' found on {len(hits)} page(s) {[i + 1 for i, _ in hits]}; "
+        f"showing the top {min(MAX_PAGES, len(hits))} by mention count."
+    ]
     for i, cnt in hits[:MAX_PAGES]:
         body = pages[i][:MAX_CHARS]
         if len(pages[i]) > MAX_CHARS:
@@ -429,6 +435,7 @@ def main(argv=None):
     project_rules_dir = _parse_dir_arg(argv, "--project-rules-dir", None)
 
     import _mcp_serve  # sibling module (authoring/ is sys.path[0] for the
+
     # launched script); avoids triggering the heavy authoring/__init__ chain.
     dispatch = {
         "read_pdf": lambda a: _handle_read_pdf(a, documents_dir),

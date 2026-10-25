@@ -32,8 +32,12 @@ BANNER = "Proposal failed validation — review and fix before applying:\nStep 1
 def _tinted(editor):
     """The 1-based lines the editor draws tinted."""
     document = editor.document()
-    return sorted({document.findBlock(s.cursor.selectionStart()).blockNumber() + 1
-                   for s in editor.extraSelections()})
+    return sorted(
+        {
+            document.findBlock(s.cursor.selectionStart()).blockNumber() + 1
+            for s in editor.extraSelections()
+        }
+    )
 
 
 def _banner(dialog):
@@ -42,7 +46,10 @@ def _banner(dialog):
 
 def test_changed_lines_numbers_each_side_and_reads_a_removed_rule_as_a_line():
     assert changed_lines(diff_lines(ORIGINAL, PROPOSED)) == ([2], [2, 4, 5, 6])
-    assert changed_lines(diff_lines("x\n---\ny\n", "x\ny\n")) == ([2], [])  # "----" is a removed "---"
+    assert changed_lines(diff_lines("x\n---\ny\n", "x\ny\n")) == (
+        [2],
+        [],
+    )  # "----" is a removed "---"
 
 
 def test_a_failed_validation_keeps_its_banner_in_view(qapp):
@@ -64,8 +71,12 @@ def test_a_failed_validation_keeps_its_banner_in_view(qapp):
 
 def test_every_finding_is_reachable_at_the_minimum_size(qapp):
     findings = [f"Step {n}: finding number {n}" for n in range(1, 31)]
-    dialog = DiffViewer(ORIGINAL, PROPOSED, "procedure_text.md",
-                        banner="Proposal failed validation:\n" + "\n".join(findings))
+    dialog = DiffViewer(
+        ORIGINAL,
+        PROPOSED,
+        "procedure_text.md",
+        banner="Proposal failed validation:\n" + "\n".join(findings),
+    )
     dialog.resize(dialog.minimumSize())
     dialog.show()
     QApplication.processEvents()
@@ -98,8 +109,9 @@ def test_a_changed_line_that_looks_like_a_header_is_a_change(qapp):
     assert marks[5].background().color() == theme.tone("pill_danger_bg")
     assert marks[6].background().color() == theme.tone("pill_success_bg")
     assert all(marks[n].foreground().color() == theme.tone("accent_deep") for n in (1, 2, 3))
-    proposal = Proposal([FileChange("procedure_text.md", lambda: "a\n---\n", "a\n")],
-                        lambda: None, lambda: None)
+    proposal = Proposal(
+        [FileChange("procedure_text.md", lambda: "a\n---\n", "a\n")], lambda: None, lambda: None
+    )
     assert proposal.counts() == (0, 1) and proposal.preview() == ["− ---"]
 
 
@@ -113,12 +125,18 @@ def test_the_diff_wears_benchs_pill_colours_light_and_dark(qapp, theme_id, dark)
         pill = fluent_qss.tokens(dark)
         marks = _diff_marks(diff_lines("a\nb\n", "a\nB\n"))
         assert (marks[5].background().color().name(), marks[5].foreground().color().name()) == (
-            pill["pill_danger_bg"], pill["pill_danger_fg"])
+            pill["pill_danger_bg"],
+            pill["pill_danger_fg"],
+        )
         assert (marks[6].background().color().name(), marks[6].foreground().color().name()) == (
-            pill["pill_success_bg"], pill["pill_success_fg"])
+            pill["pill_success_bg"],
+            pill["pill_success_fg"],
+        )
         dialog = DiffViewer("a\nb\n", "a\nB\n", "procedure_text.md")
+
         def tints(view):
             return {s.format.background().color().name() for s in view.extraSelections()}
+
         assert tints(dialog.original_view) == {pill["pill_danger_bg"]}
         assert tints(dialog.proposed_view) == {pill["pill_success_bg"]}
         note = dialog._changes_note()
@@ -150,8 +168,15 @@ def test_the_last_line_is_tinted_across_every_row_without_a_final_newline(qapp):
         line = layout.lineAt(row)
         pixel = image.pixelColor(x, round(top + line.y() + line.height() / 2))
         assert (pixel.red(), pixel.green()) == (255, 0), row
-    first = image.pixelColor(x, round(editor.blockBoundingGeometry(editor.document().firstBlock())
-                                      .translated(editor.contentOffset()).center().y()))
+    first = image.pixelColor(
+        x,
+        round(
+            editor.blockBoundingGeometry(editor.document().firstBlock())
+            .translated(editor.contentOffset())
+            .center()
+            .y()
+        ),
+    )
     assert first.green() > 200  # the line not marked is left as it is
     editor.close()
 
@@ -174,32 +199,42 @@ def test_the_panes_tint_the_changed_lines_and_the_footer_counts_them(qapp):
 
 def test_review_returns_accept_reject_or_nothing(qapp, monkeypatch):
     for button, expected in (("accept_btn", "accept"), ("reject_btn", "reject"), ("", "")):
-        monkeypatch.setattr(DiffViewer, "exec",
-                            lambda dialog, b=button: b and getattr(dialog, b).click())
+        monkeypatch.setattr(
+            DiffViewer, "exec", lambda dialog, b=button: b and getattr(dialog, b).click()
+        )
         assert DiffViewer.review(ORIGINAL, PROPOSED, "procedure_text.md") == expected
 
 
 def test_each_file_of_a_proposal_comes_in_turn_and_the_last_accept_applies_it(qapp, monkeypatch):
     log, shown = [], []
-    proposal = Proposal([FileChange("procedure.json", lambda: "{}\n", '{"a": 1}\n'),
-                         FileChange("test.py", lambda: "x\n", "y\n")],
-                        lambda: log.append("applied"), lambda: log.append("rejected"))
+    proposal = Proposal(
+        [
+            FileChange("procedure.json", lambda: "{}\n", '{"a": 1}\n'),
+            FileChange("test.py", lambda: "x\n", "y\n"),
+        ],
+        lambda: log.append("applied"),
+        lambda: log.append("rejected"),
+    )
 
     def fake_exec(dialog):
         shown.append(dialog.findChild(QLabel, "dialogSubtitle").text())
         assert log == []  # nothing applied before the last file's Accept
         dialog.accept_btn.click()
+
     monkeypatch.setattr(DiffViewer, "exec", fake_exec)
     review_proposal(proposal)
-    assert shown == ["procedure.json · file 1 of 2 · nothing is written until you accept",
-                     "test.py · file 2 of 2 · nothing is written until you accept"]
+    assert shown == [
+        "procedure.json · file 1 of 2 · nothing is written until you accept",
+        "test.py · file 2 of 2 · nothing is written until you accept",
+    ]
     assert log == ["applied"]
 
 
 def test_message_details_show_the_sender_and_both_sections_json_pretty(qapp):
     prompt = json.dumps({"messages": json.dumps([{"role": "user", "content": "hi"}])})
-    message = ChatMessage("assistant", "Done.", full_prompt=prompt, full_response="All good.",
-                          total_tokens=18646)
+    message = ChatMessage(
+        "assistant", "Done.", full_prompt=prompt, full_response="All good.", total_tokens=18646
+    )
     dialog = MessageDetailDialog(message)
     assert dialog.findChild(QLabel, "dialogTitle").text() == "Message details"
     assert dialog.findChild(QLabel, "dialogSubtitle").text() == "Assistant reply · 18,646 tokens"

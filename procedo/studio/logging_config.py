@@ -89,6 +89,7 @@ class _StderrToLog:
 def _log_uncaught(logger: logging.Logger) -> None:
     """Uncaught exceptions (main thread and threads) go to *logger*, and still to the stderr
     the process was started with (Bench reads it to report a failed start; a closed one is skipped)."""
+
     def hook(exc_type, exc, tb):
         logger.critical("uncaught exception", exc_info=(exc_type, exc, tb))
         if sys.__stderr__ is not None:
@@ -102,13 +103,11 @@ def _log_uncaught(logger: logging.Logger) -> None:
 
 
 def setup_logging(
-    level: int = logging.INFO,
-    log_file: Optional[Path] = None,
-    debug: bool = False
+    level: int = logging.INFO, log_file: Optional[Path] = None, debug: bool = False
 ) -> None:
     """
     Configure the root logger for the application.
-    
+
     Args:
         level: Logging level (default INFO)
         log_file: Path of the log file (default: studio.log in Studio's settings folder)
@@ -119,14 +118,14 @@ def setup_logging(
         fmt = DEBUG_FORMAT
     else:
         fmt = DEFAULT_FORMAT
-    
+
     formatter = logging.Formatter(fmt, datefmt="%H:%M:%S")
-    
+
     # Configure root logger for our package
     root_logger = logging.getLogger("procedo.studio")
     root_logger.setLevel(level)
     root_logger.handlers.clear()
-    
+
     # Console handler (a detached or windowed start has no stdout)
     if sys.stdout is not None:
         console_handler = logging.StreamHandler(sys.stdout)
@@ -137,10 +136,12 @@ def setup_logging(
     # File handler: always, so a Studio started by Bench or alone logs to the same file
     if log_file is None:
         from .core import studio_settings
+
         log_file = studio_settings.get_log_path()
     log_file.parent.mkdir(parents=True, exist_ok=True)
     file_handler = logging.handlers.RotatingFileHandler(
-        log_file, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS, encoding='utf-8', delay=True)
+        log_file, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8", delay=True
+    )
     file_handler.setLevel(level)
     file_handler.setFormatter(formatter)
     root_logger.addHandler(file_handler)
@@ -149,17 +150,17 @@ def setup_logging(
     sys.stderr = _StderrToLog(root_logger)
     atexit.register(sys.stderr.flush_pending)
     _log_uncaught(root_logger)
-    
+
     root_logger.debug(f"Logging initialized at level {logging.getLevelName(level)}")
 
 
 def get_logger(name: str) -> logging.Logger:
     """
     Get a logger for a module.
-    
+
     Args:
         name: Module name (typically __name__)
-    
+
     Returns:
         Logger instance
     """

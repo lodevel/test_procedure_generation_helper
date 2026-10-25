@@ -21,7 +21,6 @@ from procedo.studio.llm.code_constants_merge import (
 
 
 class ExtractPinnedConstantsTests(unittest.TestCase):
-
     def test_plain_assignment(self) -> None:
         code = "PSU1_VISA = 'TCPIP0::psu.lab.local::INSTR'\n"
         out = extract_pinned_constants(code, ["PSU1"])
@@ -41,10 +40,16 @@ class ExtractPinnedConstantsTests(unittest.TestCase):
             "FNCORE_BAUD = 115200\n"
         )
         out = extract_pinned_constants(code, ["PSU1", "FNCORE"])
-        self.assertEqual(out, {
-            "PSU1_VISA": "X", "PSU1_CHANNELS": [1, 2], "PSU1_REMOTE": True,
-            "FNCORE_PORT": "COM22", "FNCORE_BAUD": 115200,
-        })
+        self.assertEqual(
+            out,
+            {
+                "PSU1_VISA": "X",
+                "PSU1_CHANNELS": [1, 2],
+                "PSU1_REMOTE": True,
+                "FNCORE_PORT": "COM22",
+                "FNCORE_BAUD": 115200,
+            },
+        )
 
     def test_skips_unknown_equipment(self) -> None:
         code = "PSU2_VISA = 'X'\n"
@@ -52,11 +57,7 @@ class ExtractPinnedConstantsTests(unittest.TestCase):
         self.assertEqual(out, {})
 
     def test_skips_non_literal_values(self) -> None:
-        code = (
-            "import os\n"
-            "PSU1_VISA = os.environ['PSU1_VISA']\n"
-            "PSU1_CHANNELS = [2]\n"
-        )
+        code = "import os\nPSU1_VISA = os.environ['PSU1_VISA']\nPSU1_CHANNELS = [2]\n"
         out = extract_pinned_constants(code, ["PSU1"])
         # Only the literal-valued one survives.
         self.assertEqual(out, {"PSU1_CHANNELS": [2]})
@@ -80,18 +81,19 @@ class ExtractPinnedConstantsTests(unittest.TestCase):
     def test_syntax_error_returns_empty(self) -> None:
         # Unparseable code shouldn't raise; the merge falls through.
         self.assertEqual(
-            extract_pinned_constants("PSU1_VISA = 'X' # unclosed string\nbroken syntax (",
-                                     ["PSU1"]),
+            extract_pinned_constants(
+                "PSU1_VISA = 'X' # unclosed string\nbroken syntax (", ["PSU1"]
+            ),
             {},
         )
 
 
 class MergePinnedConstantsTests(unittest.TestCase):
-
     def test_replaces_plain_assignment(self) -> None:
         new = "PSU1_VISA = 'ASRL1::INSTR'\n"
         merged, replaced = merge_pinned_constants(
-            new, {"PSU1_VISA": "TCPIP0::live::INSTR"},
+            new,
+            {"PSU1_VISA": "TCPIP0::live::INSTR"},
         )
         self.assertEqual(merged, "PSU1_VISA = 'TCPIP0::live::INSTR'\n")
         self.assertEqual(replaced, ["PSU1_VISA"])
@@ -101,19 +103,17 @@ class MergePinnedConstantsTests(unittest.TestCase):
         # because codegen emits canonical plain assignments.
         new = "PSU1_VISA: str = 'ASRL1::INSTR'\n"
         merged, replaced = merge_pinned_constants(
-            new, {"PSU1_VISA": "TCPIP0::live::INSTR"},
+            new,
+            {"PSU1_VISA": "TCPIP0::live::INSTR"},
         )
         self.assertEqual(merged, "PSU1_VISA = 'TCPIP0::live::INSTR'\n")
         self.assertEqual(replaced, ["PSU1_VISA"])
 
     def test_replaces_multi_line_value(self) -> None:
-        new = (
-            "PSU1_VISA = (\n"
-            "    'ASRL1::INSTR'\n"
-            ")\n"
-        )
+        new = "PSU1_VISA = (\n    'ASRL1::INSTR'\n)\n"
         merged, replaced = merge_pinned_constants(
-            new, {"PSU1_VISA": "TCPIP0::live::INSTR"},
+            new,
+            {"PSU1_VISA": "TCPIP0::live::INSTR"},
         )
         # Multi-line value collapses to a single canonical line.
         self.assertEqual(merged, "PSU1_VISA = 'TCPIP0::live::INSTR'\n")
@@ -126,7 +126,8 @@ class MergePinnedConstantsTests(unittest.TestCase):
         new = "    PSU1_VISA = 'ASRL1::INSTR'\n"
         # The AST sees this as an indented stmt; merge preserves it.
         merged, replaced = merge_pinned_constants(
-            new, {"PSU1_VISA": "TCPIP0::live::INSTR"},
+            new,
+            {"PSU1_VISA": "TCPIP0::live::INSTR"},
         )
         # Note: top-level indentation in real .py files is invalid; the
         # AST parse would fail. So the function returns input unchanged.
@@ -147,15 +148,18 @@ class MergePinnedConstantsTests(unittest.TestCase):
             new,
             {"PSU1_VISA": "TCPIP0::live::INSTR", "PSU1_CHANNELS": [1, 2]},
         )
-        self.assertEqual(merged, (
-            "TEST_NAME = 'EPO'\n"
-            "\n"
-            "PSU1_VISA = 'TCPIP0::live::INSTR'\n"
-            "PSU1_CHANNELS = [1, 2]\n"
-            "\n"
-            "def main():\n"
-            "    pass\n"
-        ))
+        self.assertEqual(
+            merged,
+            (
+                "TEST_NAME = 'EPO'\n"
+                "\n"
+                "PSU1_VISA = 'TCPIP0::live::INSTR'\n"
+                "PSU1_CHANNELS = [1, 2]\n"
+                "\n"
+                "def main():\n"
+                "    pass\n"
+            ),
+        )
         self.assertEqual(set(replaced), {"PSU1_VISA", "PSU1_CHANNELS"})
 
     def test_no_pins_means_no_change(self) -> None:
@@ -171,7 +175,8 @@ class MergePinnedConstantsTests(unittest.TestCase):
         # list), while the operator-added CH3 still survives the regen.
         new = "PSU1_CHANNELS = [1, 2]\n"
         merged, replaced = merge_pinned_constants(
-            new, {"PSU1_CHANNELS": [1, 3]},
+            new,
+            {"PSU1_CHANNELS": [1, 3]},
         )
         self.assertEqual(merged, "PSU1_CHANNELS = [1, 2, 3]\n")
         self.assertEqual(replaced, ["PSU1_CHANNELS"])
@@ -185,19 +190,17 @@ class MergePinnedConstantsTests(unittest.TestCase):
 
 
 class PreserveBenchConstantsTests(unittest.TestCase):
-
     def test_full_round_trip(self) -> None:
-        existing = (
-            "PSU1_VISA = 'TCPIP0::psu.lab.local::INSTR'\n"
-            "PSU1_CHANNELS = [2]\n"
-        )
+        existing = "PSU1_VISA = 'TCPIP0::psu.lab.local::INSTR'\nPSU1_CHANNELS = [2]\n"
         new = (
             "PSU1_VISA = 'ASRL1::INSTR'\n"
             "PSU1_CHANNELS = [1]\n"
             "PSU1_REMOTE = True\n"  # newly added in regen — keeps default
         )
         merged, replaced = preserve_bench_constants(
-            new, existing, ["PSU1"],
+            new,
+            existing,
+            ["PSU1"],
         )
         # Operator pins win; new fields keep their defaults; the channel
         # list merges as pinned ∪ generated (safety union).
@@ -220,31 +223,32 @@ class PreserveBenchConstantsTests(unittest.TestCase):
 
 
 class EquipmentIdsFromProcedureTests(unittest.TestCase):
-
     def test_extracts_in_order(self) -> None:
-        proc = {"equipment": [
-            {"id": "PSU1", "type": "psu"},
-            {"id": "SCOPE", "type": "scope", "channels": [1]},
-        ]}
+        proc = {
+            "equipment": [
+                {"id": "PSU1", "type": "psu"},
+                {"id": "SCOPE", "type": "scope", "channels": [1]},
+            ]
+        }
         self.assertEqual(equipment_ids_from_procedure(proc), ["PSU1", "SCOPE"])
 
     def test_skips_malformed_entries(self) -> None:
-        proc = {"equipment": [
-            {"id": "PSU1", "type": "psu"},
-            "not a dict",
-            {"type": "psu"},  # missing id
-            {"id": "", "type": "psu"},  # empty id
-            {"id": 123, "type": "psu"},  # non-string id
-        ]}
+        proc = {
+            "equipment": [
+                {"id": "PSU1", "type": "psu"},
+                "not a dict",
+                {"type": "psu"},  # missing id
+                {"id": "", "type": "psu"},  # empty id
+                {"id": 123, "type": "psu"},  # non-string id
+            ]
+        }
         self.assertEqual(equipment_ids_from_procedure(proc), ["PSU1"])
 
     def test_no_equipment_key(self) -> None:
         self.assertEqual(equipment_ids_from_procedure({}), [])
 
     def test_non_list_equipment(self) -> None:
-        self.assertEqual(
-            equipment_ids_from_procedure({"equipment": "wrong type"}), []
-        )
+        self.assertEqual(equipment_ids_from_procedure({"equipment": "wrong type"}), [])
 
 
 if __name__ == "__main__":

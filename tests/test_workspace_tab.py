@@ -38,10 +38,14 @@ def _folders(root: Path) -> list[FolderInfo]:
 @pytest.fixture
 def tab(qapp, tmp_path, monkeypatch):
     stale = {tmp_path / "Alpha": ("procedure.json",)}
-    monkeypatch.setattr(workspace_tab.test_sync, "stale_artifacts",
-                        lambda path, _patterns: stale.get(path, ()))
-    pm = SimpleNamespace(project_root=None, enumerate_test_folders=lambda: _folders(tmp_path),
-                         get_equipment_patterns=lambda: [])
+    monkeypatch.setattr(
+        workspace_tab.test_sync, "stale_artifacts", lambda path, _patterns: stale.get(path, ())
+    )
+    pm = SimpleNamespace(
+        project_root=None,
+        enumerate_test_folders=lambda: _folders(tmp_path),
+        get_equipment_patterns=lambda: [],
+    )
     widget = WorkspaceTab(SimpleNamespace(project_manager=pm))
     widget.resize(300, 400)
     widget.tmp = tmp_path
@@ -55,8 +59,10 @@ def _load(tab, monkeypatch, indicators: str) -> dict:
     monkeypatch.setenv(studio_launch_env.APP_INDICATORS, indicators)
     tab.pm.project_root = tab.tmp
     tab.refresh()
-    return {tab.test_list.item(i).data(Qt.UserRole).name: tab.test_list.item(i)
-            for i in range(tab.test_list.count())}
+    return {
+        tab.test_list.item(i).data(Qt.UserRole).name: tab.test_list.item(i)
+        for i in range(tab.test_list.count())
+    }
 
 
 def test_artifact_states_map_presence_and_sync():
@@ -64,13 +70,25 @@ def test_artifact_states_map_presence_and_sync():
     text_only = FolderInfo(Path("y"), "y", has_text=True)
     every = ("procedure.json", "test.py", "procedure_text.md")  # the session flag alone
     assert artifact_states(full, ()) == [
-        ("T", "Text", "present"), ("J", "JSON", "present"), ("C", "Code", "present")]
+        ("T", "Text", "present"),
+        ("J", "JSON", "present"),
+        ("C", "Code", "present"),
+    ]
     assert artifact_states(full, ("test.py",)) == [  # only the stale artifact
-        ("T", "Text", "present"), ("J", "JSON", "present"), ("C", "Code", "out of sync")]
+        ("T", "Text", "present"),
+        ("J", "JSON", "present"),
+        ("C", "Code", "out of sync"),
+    ]
     assert artifact_states(full, every) == [
-        ("T", "Text", "out of sync"), ("J", "JSON", "out of sync"), ("C", "Code", "out of sync")]
+        ("T", "Text", "out of sync"),
+        ("J", "JSON", "out of sync"),
+        ("C", "Code", "out of sync"),
+    ]
     assert artifact_states(text_only, every) == [
-        ("T", "Text", "out of sync"), ("J", "JSON", "missing"), ("C", "Code", "missing")]
+        ("T", "Text", "out of sync"),
+        ("J", "JSON", "missing"),
+        ("C", "Code", "missing"),
+    ]
 
 
 def test_badge_rows_show_t_j_c_squares(tab, monkeypatch):
@@ -144,19 +162,24 @@ def test_double_click_opens(tab, monkeypatch):
 
 def _choose(monkeypatch, text: str, seen: dict | None = None) -> None:
     """The context menu picks *text* instead of opening (*seen*: each entry's enabled state)."""
+
     class Menu(QMenu):
         def exec(self, *_args):
             actions = {a.text(): a for a in self.actions() if a.text()}
             if seen is not None:
                 seen.update({name: a.isEnabled() for name, a in actions.items()})
             return actions[text]
+
     monkeypatch.setattr(workspace_tab, "QMenu", Menu)
 
 
 def _menu_on(tab, name: str) -> None:
     tab.show()
-    item = next(tab.test_list.item(i) for i in range(tab.test_list.count())
-                if tab.test_list.item(i).data(Qt.UserRole).name == name)
+    item = next(
+        tab.test_list.item(i)
+        for i in range(tab.test_list.count())
+        if tab.test_list.item(i).data(Qt.UserRole).name == name
+    )
     tab._on_context_menu(tab.test_list.visualItemRect(item).center())
 
 
@@ -167,15 +190,20 @@ def test_context_menu_open(tab, monkeypatch):
     _choose(monkeypatch, "Open", seen)
     _menu_on(tab, "Beta")
     assert opened == [tab.tmp / "Beta"]
-    assert seen == {"Open": True, "Mark Procedure In Sync": False, "Rename Test…": True,
-                    "Delete Test…": True}
+    assert seen == {
+        "Open": True,
+        "Mark Procedure In Sync": False,
+        "Rename Test…": True,
+        "Delete Test…": True,
+    }
 
 
 def test_context_menu_mark_in_sync_unloaded_then_loaded(tab, monkeypatch):
     _load(tab, monkeypatch, "badges")
     marked, loaded = [], []
-    monkeypatch.setattr(workspace_tab.test_sync, "mark_in_sync",
-                        lambda path, _patterns: marked.append(path))
+    monkeypatch.setattr(
+        workspace_tab.test_sync, "mark_in_sync", lambda path, _patterns: marked.append(path)
+    )
     tab.request_mark_loaded_in_sync.connect(lambda: loaded.append(True))
     _choose(monkeypatch, "Mark Procedure In Sync")
     _menu_on(tab, "Alpha")
@@ -185,8 +213,9 @@ def test_context_menu_mark_in_sync_unloaded_then_loaded(tab, monkeypatch):
     assert loaded == [True] and marked == [tab.tmp / "Alpha"]
 
 
-@pytest.mark.parametrize("text, handler", [("Rename Test…", "_rename_test"),
-                                           ("Delete Test…", "_delete_test")])
+@pytest.mark.parametrize(
+    "text, handler", [("Rename Test…", "_rename_test"), ("Delete Test…", "_delete_test")]
+)
 def test_context_menu_rename_and_delete(tab, monkeypatch, text, handler):
     _load(tab, monkeypatch, "badges")
     calls = []
@@ -207,8 +236,11 @@ def test_refresh_opened_test_rereads_only_the_open_row(tab, monkeypatch):
     tab.set_opened_test(beta)
     listed = []
     tab.pm.enumerate_test_folders = lambda: listed.append(1) or _folders(tab.tmp)
-    monkeypatch.setattr(workspace_tab.test_sync, "stale_artifacts",
-                        lambda path, _patterns: ("procedure_text.md",) if path == beta else ())
+    monkeypatch.setattr(
+        workspace_tab.test_sync,
+        "stale_artifacts",
+        lambda path, _patterns: ("procedure_text.md",) if path == beta else (),
+    )
     tab.refresh_opened_test()
     assert listed == []
     assert rows["Beta"].data(BADGES_ROLE) == [("T", "warning"), ("J", "success"), ("C", "missing")]

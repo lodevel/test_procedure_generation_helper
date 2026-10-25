@@ -17,8 +17,11 @@ def allow_complete_board_output(config):
 
 def configure_board_request(request, context):
     """Stat the source, never parse it; the model decides whether to fetch it."""
-    if (context.tab_id != "text_only" or not context.board_data_enabled
-            or context.board_data_project != context.project_manager.project_root):
+    if (
+        context.tab_id != "text_only"
+        or not context.board_data_enabled
+        or context.board_data_project != context.project_manager.project_root
+    ):
         return
     from ..authoring.netlist_text import board_revision
 

@@ -11,7 +11,12 @@ from procedo.studio.pack_ops import bundle_capabilities, pack_parsers
 from procedo.studio.widgets.action_bar import ActionBar
 
 from .test_main_window_characterization import (
-    _declare_runnable_tasks, _make_project, _open_project, make_window as make_window, mbox as mbox, qapp as qapp,
+    _declare_runnable_tasks,
+    _make_project,
+    _open_project,
+    make_window as make_window,
+    mbox as mbox,
+    qapp as qapp,
 )
 
 
@@ -32,14 +37,25 @@ def _views(w):
 def test_every_editor_is_a_card_and_the_old_groups_are_gone(opened):
     w, _root = opened
     cards = [(view.tab_id, card.file_name) for view in _views(w) for card in view.cards]
-    assert cards == [("text_only", "procedure_text.md"),
-                     ("text_json", "procedure_text.md"), ("text_json", "procedure.json"),
-                     ("json_code", "procedure.json"), ("json_code", "test.py"),
-                     ("traceability", "test.py")]
+    assert cards == [
+        ("text_only", "procedure_text.md"),
+        ("text_json", "procedure_text.md"),
+        ("text_json", "procedure.json"),
+        ("json_code", "procedure.json"),
+        ("json_code", "test.py"),
+        ("traceability", "test.py"),
+    ]
     assert not w.view_stack.findChildren(QGroupBox)
     for view in _views(w):
-        for old in ("save_text_btn", "save_json_btn", "save_code_btn", "text_status",
-                    "json_status", "code_status", "_llm_group"):
+        for old in (
+            "save_text_btn",
+            "save_json_btn",
+            "save_code_btn",
+            "text_status",
+            "json_status",
+            "code_status",
+            "_llm_group",
+        ):
             assert not hasattr(view, old), (view.tab_id, old)
 
 
@@ -47,7 +63,10 @@ def test_a_cards_save_writes_its_file_and_the_header_follows(opened):
     w, root = opened
     tab = w.json_code_tab
     w.view_stack.setCurrentWidget(tab)
-    test_py, procedure_json = root / "tests" / "t1" / "test.py", root / "tests" / "t1" / "procedure.json"
+    test_py, procedure_json = (
+        root / "tests" / "t1" / "test.py",
+        root / "tests" / "t1" / "procedure.json",
+    )
     json_before = procedure_json.read_text(encoding="utf-8")
 
     tab.code_editor.appendPlainText("# edited")
@@ -86,21 +105,30 @@ def test_the_force_variant_is_in_the_split_buttons_menu(opened):
     layout = tab.action_bar.assistant_layout
     buttons = [layout.itemAt(i).widget() for i in range(layout.count())]
     split = [b for b in buttons if isinstance(b, QToolButton) and b.menu() is not None]
-    derive = tab.task_config_manager.get_task_config("text_json", LLMTask.DERIVE_JSON_FROM_TEXT.value)
+    derive = tab.task_config_manager.get_task_config(
+        "text_json", LLMTask.DERIVE_JSON_FROM_TEXT.value
+    )
     assert [b.text() for b in split] == [f"✦ {derive.button_label}"]
 
     strict, force = split[0].menu().actions()
     force.trigger()
     strict.trigger()
-    assert runs == [(LLMTask.DERIVE_JSON_FROM_TEXT, {"strict_mode": False}),
-                    (LLMTask.DERIVE_JSON_FROM_TEXT, {"strict_mode": True})]
+    assert runs == [
+        (LLMTask.DERIVE_JSON_FROM_TEXT, {"strict_mode": False}),
+        (LLMTask.DERIVE_JSON_FROM_TEXT, {"strict_mode": True}),
+    ]
 
 
 def test_pack_buttons_stay_hidden_until_the_wheel_provides_them(opened, monkeypatch):
     w, _root = opened
     tj, to, jc = w.text_json_tab, w.text_only_tab, w.json_code_tab
-    packs = [tj.quick_parse_btn, tj.quick_render_btn, tj.parse_and_generate_btn,
-             to.parse_and_generate_btn, jc.quick_code_btn]
+    packs = [
+        tj.quick_parse_btn,
+        tj.quick_render_btn,
+        tj.parse_and_generate_btn,
+        to.parse_and_generate_btn,
+        jc.quick_code_btn,
+    ]
 
     monkeypatch.setattr(pack_parsers, "is_available", lambda root=None: (False, "no wheel"))
     for tab in (tj, to):
@@ -111,8 +139,13 @@ def test_pack_buttons_stay_hidden_until_the_wheel_provides_them(opened, monkeypa
     assert not _divider_visible(tj)
 
     monkeypatch.setattr(pack_parsers, "is_available", lambda root=None: (True, ""))
-    monkeypatch.setattr(bundle_capabilities, "can_for_types", lambda cap, types, root=None: (
-        (False, [("PSU1", "labscpi")]) if cap == "emit" else (True, [])))
+    monkeypatch.setattr(
+        bundle_capabilities,
+        "can_for_types",
+        lambda cap, types, root=None: (
+            (False, [("PSU1", "labscpi")]) if cap == "emit" else (True, [])
+        ),
+    )
     for tab in (tj, to):
         tab.refresh_parser_button()
     jc.refresh_parser_button()
@@ -126,6 +159,7 @@ def test_pack_buttons_stay_hidden_until_the_wheel_provides_them(opened, monkeypa
 
 def _divider_visible(tab) -> bool:
     from PySide6.QtCore import QCoreApplication, QEvent
+
     row = tab.action_bar.file_layout.parentWidget()
     QCoreApplication.sendEvent(row, QEvent(QEvent.Type.LayoutRequest))
     return not row.divider.isHidden()
@@ -133,6 +167,7 @@ def _divider_visible(tab) -> bool:
 
 def test_validator_buttons_follow_the_projects_switch(opened, monkeypatch):
     from procedo.studio.llm import validator_loop_settings
+
     w, _root = opened
     tab = w.text_only_tab
 

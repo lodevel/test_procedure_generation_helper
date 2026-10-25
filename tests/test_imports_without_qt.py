@@ -36,7 +36,8 @@ print("\\n".join(failed))
 
 def test_logic_packages_import_without_qt():
     root = Path(__file__).resolve().parents[1]
-    out = subprocess.run([sys.executable, "-c", _PROBE], cwd=root, capture_output=True,
-                         text=True, check=True).stdout
+    out = subprocess.run(
+        [sys.executable, "-c", _PROBE], cwd=root, capture_output=True, text=True, check=True
+    ).stdout
     failed = {line.split(":", 1)[0]: line for line in out.splitlines() if line}
     assert set(failed) == _QT_ADAPTERS, "\n".join(failed[n] for n in set(failed) - _QT_ADAPTERS)

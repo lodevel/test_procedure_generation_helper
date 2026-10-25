@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 class BaseTab(QWidget):
     """
     Base class for all editor tabs.
-    
+
     Provides common functionality:
     - Access to main window and managers
     - Button creation helpers
@@ -33,12 +33,12 @@ class BaseTab(QWidget):
     ``TaskButtonRow``) and its validator buttons (``validator_buttons``, a
     ``ValidatorButtonRow``); a view without one has None for both.
     """
-    
+
     # Signals
     status_message = Signal(str)  # Emit status bar messages
-    content_changed = Signal()     # Emit when content is modified
-    artifact_saved = Signal()      # Emit after any artifact is written to disk
-    
+    content_changed = Signal()  # Emit when content is modified
+    artifact_saved = Signal()  # Emit after any artifact is written to disk
+
     def __init__(self, main_window: "MainWindow", parent=None):
         super().__init__(parent)
         self.main_window = main_window
@@ -47,85 +47,80 @@ class BaseTab(QWidget):
         self.task_buttons: Optional[TaskButtonRow] = None
         self.validator_buttons: Optional[ValidatorButtonRow] = None
         self._setup_ui()
-    
+
     def _setup_ui(self):
         """Override in subclasses to setup UI."""
         pass
-    
+
     @property
     def artifact_manager(self):
         """Get the artifact manager."""
         return self.main_window.artifact_manager
-    
+
     @property
     def session_state(self):
         """Get the session state."""
         return self.main_window.session_state
-    
+
     @property
     def project_manager(self):
         """Get the project manager."""
         return self.main_window.project_manager
-    
+
     @property
     def task_config_manager(self):
         """Get the task configuration manager."""
         from ..core.task_config import TaskConfigManager
-        manager = getattr(self.main_window, 'task_config_manager', None)
+
+        manager = getattr(self.main_window, "task_config_manager", None)
         return manager if isinstance(manager, TaskConfigManager) else None
-    
+
     def create_button(
-        self, 
-        text: str, 
-        callback=None, 
-        enabled: bool = True,
-        tooltip: str = ""
+        self, text: str, callback=None, enabled: bool = True, tooltip: str = ""
     ) -> QPushButton:
         """Create a button with optional callback."""
         button = QPushButton(text)
         button.setEnabled(enabled)
-        
+
         if tooltip:
             button.setToolTip(tooltip)
-        
+
         if callback:
             button.clicked.connect(callback)
-        
+
         return button
-    
+
     def show_error(self, title: str, message: str):
         """Show an error dialog."""
         QMessageBox.critical(self, title, message)
-    
+
     def show_warning(self, title: str, message: str):
         """Show a warning dialog."""
         QMessageBox.warning(self, title, message)
-    
+
     def show_info(self, title: str, message: str):
         """Show an info dialog."""
         QMessageBox.information(self, title, message)
-    
+
     def ask_yes_no(self, title: str, message: str) -> bool:
         """Show a yes/no question dialog."""
         result = QMessageBox.question(
-            self, title, message,
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+            self, title, message, QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
         return result == QMessageBox.Yes
-    
+
     def on_activated(self):
         """Called when this tab becomes active. Override as needed."""
         pass
-    
+
     def on_deactivated(self):
         """Called when this tab is deactivated. Override as needed."""
         pass
-    
+
     def refresh(self):
         """Refresh the tab content. Override as needed."""
         pass
-    
+
     def add_card(self, card: EditorCard) -> EditorCard:
         """Register an editor card: its edits mark the artifact modified for the LLM context
         and repaint the header (``content_changed``)."""
@@ -224,9 +219,17 @@ class BaseTab(QWidget):
                 return tc.name
         return self._TASK_DESCRIPTIONS.get(task, f"Run {task.name}")
 
-    def propose_edit(self, card: EditorCard, proposed: str, *, done: Optional[Callable] = None,
-                     rejected: str = "", banner: str = "", ask_when_empty: bool = True,
-                     test: Optional[tuple] = None) -> None:
+    def propose_edit(
+        self,
+        card: EditorCard,
+        proposed: str,
+        *,
+        done: Optional[Callable] = None,
+        rejected: str = "",
+        banner: str = "",
+        ask_when_empty: bool = True,
+        test: Optional[tuple] = None,
+    ) -> None:
         """Offer *proposed* for *card*'s file as a proposal card in this view's chat. Accept
         puts it in the editor (an edit, as if typed) then runs *done* (by default the chat's
         "✓ Applied changes to <file>"); Reject posts *rejected* (by default "✗ Rejected changes
@@ -243,10 +246,14 @@ class BaseTab(QWidget):
                 chat.add_system_message(f"✓ Applied changes to {card.file_name}", tone="success")
 
         proposal = Proposal(
-            [FileChange(card.file_name, card.editor.toPlainText, proposed)], apply,
+            [FileChange(card.file_name, card.editor.toPlainText, proposed)],
+            apply,
             lambda: chat.add_system_message(
-                rejected or f"✗ Rejected changes to {card.file_name}", tone="danger"),
-            banner, test=test or current_test(self.artifact_manager))
+                rejected or f"✗ Rejected changes to {card.file_name}", tone="danger"
+            ),
+            banner,
+            test=test or current_test(self.artifact_manager),
+        )
         if not ask_when_empty and not card.editor.toPlainText().strip():
             proposal.accept()
         else:
@@ -270,8 +277,11 @@ class BaseTab(QWidget):
                 proposed = json.loads(str(proposal.content))
             except json.JSONDecodeError:
                 proposed = None
-        content_str = (json.dumps(proposed, indent=2, ensure_ascii=False)
-                       if proposed is not None else str(proposal.content))
+        content_str = (
+            json.dumps(proposed, indent=2, ensure_ascii=False)
+            if proposed is not None
+            else str(proposal.content)
+        )
         self.propose_edit(self.json_card, content_str, test=self._ensure_run_state().test)
 
     def _get_task_callback_map(self) -> dict:
@@ -309,23 +319,33 @@ class BaseTab(QWidget):
             artifact = getattr(am, "test_code", None)
         return artifact.content if artifact else None
 
-    def _create_action_bar(self, file_buttons: Iterable[QWidget] = (),
-                           pack_buttons: Iterable[QWidget] = ()) -> ActionBar:
+    def _create_action_bar(
+        self, file_buttons: Iterable[QWidget] = (), pack_buttons: Iterable[QWidget] = ()
+    ) -> ActionBar:
         """The view's action bar (``self.action_bar``): the assistant row built
         from TaskConfigManager, the FILE row with *file_buttons*, a divider,
         *pack_buttons* (⚡) and the validator buttons."""
         self.action_bar = ActionBar(file_buttons, pack_buttons)
         tab_id = getattr(self, "tab_id", None)
         self.validator_buttons = ValidatorButtonRow(
-            self.action_bar.file_layout, main_window=self.main_window, tab_id=tab_id,
-            config=self.task_config_manager, make_button=self.create_button,
+            self.action_bar.file_layout,
+            main_window=self.main_window,
+            tab_id=tab_id,
+            config=self.task_config_manager,
+            make_button=self.create_button,
             artifact_for=self._get_artifact_for_validation,
-            sync_editors=self.sync_editors_to_artifacts, status=self.status_message.emit)
+            sync_editors=self.sync_editors_to_artifacts,
+            status=self.status_message.emit,
+        )
         self.validator_buttons.rebuild()
         self.task_buttons = TaskButtonRow(
-            self.action_bar, tab_id=tab_id, owner_name=type(self).__name__,
-            config=self.task_config_manager, callbacks=self._get_task_callback_map(),
+            self.action_bar,
+            tab_id=tab_id,
+            owner_name=type(self).__name__,
+            config=self.task_config_manager,
+            callbacks=self._get_task_callback_map(),
             force_callbacks=self._get_force_callback_map(),
-            run_task=getattr(self, "_run_task_async", None))
+            run_task=getattr(self, "_run_task_async", None),
+        )
         self.task_buttons.rebuild()
         return self.action_bar

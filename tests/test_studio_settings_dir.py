@@ -60,8 +60,13 @@ def test_the_settings_live_in_studio_s_folder():
 
 def _args() -> argparse.Namespace:
     return argparse.Namespace(
-        debug=False, log_file=None, project_root=None, test_name=None,
-        test_dir=None, llm_backend=None, llm_profile=None,
+        debug=False,
+        log_file=None,
+        project_root=None,
+        test_name=None,
+        test_dir=None,
+        llm_backend=None,
+        llm_profile=None,
     )
 
 
@@ -107,7 +112,9 @@ def test_studio_start_reads_its_settings_under_procedos_organization(monkeypatch
     monkeypatch.setattr(temp_root, "_sweep_leftovers", lambda: None)
     monkeypatch.setattr(studio_main, "MainWindow", _Window)
     monkeypatch.setattr(studio_main, "apply_app_theme", lambda name, app: name)
-    monkeypatch.setattr(error_copy, "install_error_copy", lambda app: True)  # the fake app filters nothing
+    monkeypatch.setattr(
+        error_copy, "install_error_copy", lambda app: True
+    )  # the fake app filters nothing
     monkeypatch.setattr(
         studio_settings, "get_settings_path", lambda: (seen.append("settings"), read())[1]
     )

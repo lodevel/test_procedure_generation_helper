@@ -17,7 +17,11 @@ from procedo.studio.controllers import AssistantController, ProjectController
 from procedo.studio import shell
 
 from .test_main_window_characterization import (
-    _make_project, _open_project, make_window as make_window, mbox as mbox, qapp as qapp,
+    _make_project,
+    _open_project,
+    make_window as make_window,
+    mbox as mbox,
+    qapp as qapp,
 )
 
 
@@ -39,7 +43,10 @@ def test_pills_follow_the_open_test_and_save_all_counts_unsaved(opened):
     assert w.header.title.text() == "t1"
     assert w.header.subtitle.text() == "Procedo Studio · proj · 0 steps"
     assert [_pill(p) for p in w.artifact_pills.values()] == [
-        ("Text ✓", "success"), ("JSON ✓", "success"), ("Code ✓", "success")]
+        ("Text ✓", "success"),
+        ("JSON ✓", "success"),
+        ("Code ✓", "success"),
+    ]
     assert not w.save_all_btn.isEnabled() and w.save_all_btn.objectName() == ""
 
     w.json_code_tab.code_editor.setPlainText("def main():\n    return 2\n")
@@ -77,10 +84,16 @@ def test_clicking_the_sync_pill_acknowledges(opened, mbox):
     assert _pill(w.sync_pill) == ("⇄ JSON ↔ Code in sync", "success")
 
 
-def test_the_opencode_pill_menu_restarts_the_server_and_opens_llm_settings(make_window, monkeypatch):
+def test_the_opencode_pill_menu_restarts_the_server_and_opens_llm_settings(
+    make_window, monkeypatch
+):
     calls = []
-    monkeypatch.setattr(AssistantController, "on_restart_backend", lambda self: calls.append("restart"))
-    monkeypatch.setattr(mw_mod.StudioWorkspace, "_on_settings", lambda self: calls.append("settings"))
+    monkeypatch.setattr(
+        AssistantController, "on_restart_backend", lambda self: calls.append("restart")
+    )
+    monkeypatch.setattr(
+        mw_mod.StudioWorkspace, "_on_settings", lambda self: calls.append("settings")
+    )
     w = make_window()
     menu = w.server_pill.menu()
     assert [a.text() for a in menu.actions()] == ["Restart server", "LLM settings…"]
@@ -95,8 +108,15 @@ def test_the_opencode_pill_menu_restarts_the_server_and_opens_llm_settings(make_
 
 def test_the_server_pill_shows_the_model_or_the_trouble(make_window):
     w = make_window()
-    w.llm_server.server_manager = type("SM", (), {"config": type("C", (), {"model": "openai/gpt-5.4"})(),
-                                        "last_status": None, "stop": lambda self: None})()
+    w.llm_server.server_manager = type(
+        "SM",
+        (),
+        {
+            "config": type("C", (), {"model": "openai/gpt-5.4"})(),
+            "last_status": None,
+            "stop": lambda self: None,
+        },
+    )()
     w.llm_server.refresh_indicator(True)
     assert _pill(w.server_pill) == ("● OpenCode · openai/gpt-5.4 ▾", "success")
     w.llm_server.refresh_indicator(False)
@@ -156,7 +176,10 @@ def test_footer_and_picker_count_the_project_rule_documents(opened):
     _bundled(root, "proj")
     w.project_manager.detect_rules_root()
     w._update_project_rules_indicators()
-    assert w.rules_link.text() == f"Rules: {(root / 'bundle' / 'rules').relative_to(root)} · 1 doc + 2 project"
+    assert (
+        w.rules_link.text()
+        == f"Rules: {(root / 'bundle' / 'rules').relative_to(root)} · 1 doc + 2 project"
+    )
     assert w.dock.rules_picker.text() == "Rules · 3 of 3 ▾"
 
 
@@ -182,7 +205,8 @@ def test_launched_on_a_project_then_opening_others_follows_each_ones_bundle(make
     assert w.rules_link.text() == in_bundle
     assert str(b / "bundle" / "rules") in w.rules_link.toolTip()
     assert [d.path.read_text(encoding="utf-8") for d in w.project_manager.get_rule_docs()] == [
-        "# rule of b\n"]
+        "# rule of b\n"
+    ]
 
     _open_project(w, bare)
     assert w.rules_link.text() == "Rules: none"
@@ -194,8 +218,11 @@ def test_footer_links_open_a_project_and_pick_the_rules(make_window, monkeypatch
     monkeypatch.setattr(ProjectController, "on_open_project", lambda self: opened.append(True))
     w = make_window()
     asked = []
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory",
-                        staticmethod(lambda parent, title, *a: asked.append(title) or ""))
+    monkeypatch.setattr(
+        QFileDialog,
+        "getExistingDirectory",
+        staticmethod(lambda parent, title, *a: asked.append(title) or ""),
+    )
 
     w.project_link.click()
     w.rules_link.click()

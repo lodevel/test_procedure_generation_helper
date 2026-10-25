@@ -104,14 +104,15 @@ class ValidatorButtonRow:
         try:
             if project_root is not None:
                 from ..llm.validator_loop_settings import is_enabled
+
                 if not is_enabled(project_root):
                     return 0
                 from ..llm.validator_dispatch import is_loop_available
+
                 loop_avail, _ = is_loop_available(project_root)
                 hide_procedure_button = not loop_avail
         except Exception:
-            log.debug("validator availability probe failed; rendering buttons",
-                      exc_info=True)
+            log.debug("validator availability probe failed; rendering buttons", exc_info=True)
 
         ensure_builtins_registered()
         specs = manager.get_validator_specs_for_tab(tab_id)
@@ -124,7 +125,8 @@ class ValidatorButtonRow:
             if not is_registered(vid):
                 log.warning(
                     "Tab %s: validator id %r is not in the registry; skipping button.",
-                    tab_id, vid,
+                    tab_id,
+                    vid,
                 )
                 continue
             # Hide the Validate Procedure button when its deps aren't
@@ -164,9 +166,7 @@ class ValidatorButtonRow:
             validator = get_validator(validator_id)
         except KeyError:
             log.error("Validator %r not registered at click time", validator_id)
-            self._status(
-                f"Validator {validator_id!r} is not registered (see logs)."
-            )
+            self._status(f"Validator {validator_id!r} is not registered (see logs).")
             return
 
         ctx = ValidatorContext(
@@ -195,12 +195,16 @@ class ValidatorButtonRow:
             # validator id + skip reason replaces the stale findings.
             reason_text = outcome.reason or f"{label}: skipped."
             if dock is not None:
-                dock.show_validation_result_from_list([{
-                    "severity": "info",
-                    "code": "VALIDATOR_SKIPPED",
-                    "message": reason_text,
-                    "location": validator_id,
-                }])
+                dock.show_validation_result_from_list(
+                    [
+                        {
+                            "severity": "info",
+                            "code": "VALIDATOR_SKIPPED",
+                            "message": reason_text,
+                            "location": validator_id,
+                        }
+                    ]
+                )
             self._status(reason_text)
             # Post a system message in the chat so the operator sees
             # that the click did something — the findings panel can be

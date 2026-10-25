@@ -51,7 +51,12 @@ def test_a_new_test_folder_is_not_created_on_a_dropped_share(dropped_share):
 
 def test_an_unreadable_artifact_keeps_its_content_instead_of_reading_as_deleted(dropped_share):
     manager = ArtifactManager()
-    artifact = Artifact(ArtifactType.PROCEDURE_JSON, content="kept", original_content="kept", file_path=SHARE / "p.json")
+    artifact = Artifact(
+        ArtifactType.PROCEDURE_JSON,
+        content="kept",
+        original_content="kept",
+        file_path=SHARE / "p.json",
+    )
     manager._load_artifact(artifact)
     assert artifact.content == "kept"
 
@@ -80,9 +85,13 @@ def test_opening_a_test_on_a_dropped_share_blanks_and_writes_nothing(dropped_sha
     from procedo.studio.controllers import document_controller
 
     shown: list[str] = []
-    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda _p, _t, text: shown.append(text)))
+    monkeypatch.setattr(
+        QMessageBox, "warning", staticmethod(lambda _p, _t, text: shown.append(text))
+    )
     saved: list[int] = []
-    previous = SimpleNamespace(_file_path=SHARE / "old" / ".llm_session.json", save=lambda: saved.append(1))
+    previous = SimpleNamespace(
+        _file_path=SHARE / "old" / ".llm_session.json", save=lambda: saved.append(1)
+    )
     mw = SimpleNamespace(artifact_manager="kept", session_state=previous)
     fake = SimpleNamespace(_mw=mw)
     document_controller.DocumentController.on_test_opened(fake, SHARE / "tests" / "t")
@@ -107,7 +116,9 @@ def test_a_sync_baseline_is_not_written_from_a_dropped_share(dropped_share, monk
     assert written == []
 
 
-def test_a_failed_delete_on_a_dropped_share_does_not_report_the_test_gone(dropped_share, monkeypatch):
+def test_a_failed_delete_on_a_dropped_share_does_not_report_the_test_gone(
+    dropped_share, monkeypatch
+):
     from types import SimpleNamespace
 
     from PySide6.QtWidgets import QMessageBox
@@ -129,7 +140,8 @@ def test_a_failed_delete_on_a_dropped_share_does_not_report_the_test_gone(droppe
     path = SHARE / "tests" / "t"
     fake = SimpleNamespace(
         project_manager=SimpleNamespace(get_tests_dir=lambda: SHARE / "tests"),
-        test_deleted=SimpleNamespace(emit=emitted.append), refresh=lambda: refreshed.append(1),
+        test_deleted=SimpleNamespace(emit=emitted.append),
+        refresh=lambda: refreshed.append(1),
     )
     workspace_tab.WorkspaceTab._delete_test(fake, path)
     assert emitted == [] and refreshed == []

@@ -23,6 +23,7 @@ dialog or the bench session — alone ends it (``shutdown``, or ``kill`` then th
 recovery safe-off); the registry never restarts, replaces or stops a live one,
 and its claim is a bench holder's, which every Reinstall refuses.
 """
+
 from __future__ import annotations
 
 import os
@@ -45,7 +46,7 @@ class _Slot:
         self.lock = threading.Lock()
         self.key: Optional[tuple] = None
         self.session: Optional[engine_session.RemoteSession] = None
-        self.generation = 0   # bumped by every stop(), which works without the lock
+        self.generation = 0  # bumped by every stop(), which works without the lock
 
 
 _slots: dict[tuple[str, str], _Slot] = {}
@@ -127,7 +128,7 @@ def safe_off_remote(
         return sess.safe_off(targets, bench_map, timeout, procedure_json=procedure_json)
     try:
         res = sess.safe_off(targets, bench_map, timeout, procedure_json=procedure_json)
-        sess.shutdown()              # close + unlock the just-opened devices
+        sess.shutdown()  # close + unlock the just-opened devices
         return res
     finally:
         sess.kill()
@@ -167,8 +168,9 @@ def _retire(session: engine_session.RemoteSession) -> None:
         session.kill()
 
 
-def stop(*, venv_folder: Optional[Path] = None, project_root: Optional[Path] = None,
-         wait: bool = False) -> None:
+def stop(
+    *, venv_folder: Optional[Path] = None, project_root: Optional[Path] = None, wait: bool = False
+) -> None:
     """End this app's instances so something can go: the ones whose interpreter lives
     in ``venv_folder`` (it is about to be deleted), or the ones of ``project_root``
     (it closed, or its bundle changed). The next op starts afresh wherever its
@@ -179,7 +181,9 @@ def stop(*, venv_folder: Optional[Path] = None, project_root: Optional[Path] = N
     holds the caller up; a venv's close before this returns, as a delete follows,
     and so does a project's with ``wait`` (a bundle install may evict its venv next)."""
     ended: list = []
-    folder = None if venv_folder is None else os.path.normcase(os.path.abspath(venv_folder)) + os.sep
+    folder = (
+        None if venv_folder is None else os.path.normcase(os.path.abspath(venv_folder)) + os.sep
+    )
     project = None if project_root is None else os.path.normcase(os.path.abspath(project_root))
     for (role, name), slot in list(_slots.items()):
         key = slot.key

@@ -65,17 +65,34 @@ def test_the_dialog_is_benchs_frame_with_three_pages_and_their_fields(qapp, no_n
     header = dlg.findChild(ui_kit.HeaderBand)
     assert header.title.text() == "Settings"
     assert dlg.findChild(ui_kit.FooterBand) is not None
-    assert [b.text() for b in dlg.findChildren(QPushButton) if b.objectName() == "primaryButton"] == ["Save"]
+    assert [
+        b.text() for b in dlg.findChildren(QPushButton) if b.objectName() == "primaryButton"
+    ] == ["Save"]
     titles = [dlg._paged.page_list.item(i).text() for i in range(dlg._paged.page_list.count())]
     assert titles == list(PAGES)
     fields = {
-        "LLM backend": (dlg.backend_combo, dlg.context_window, dlg.request_timeout, dlg.opencode_host,
-                        dlg.opencode_port, dlg.opencode_model, dlg.opencode_model_refresh,
-                        dlg.opencode_start_server, dlg.opencode_wsl_path, dlg.opencode_startup_timeout,
-                        dlg.wizard_max_sessions, dlg.opencode_config_path, dlg.open_opencode_config_btn,
-                        dlg.test_connection_btn),
-        "Skills": (dlg.web_default, dlg.save_docs_default, dlg.project_tools_default,
-                   dlg.fold_system_into_prompt),
+        "LLM backend": (
+            dlg.backend_combo,
+            dlg.context_window,
+            dlg.request_timeout,
+            dlg.opencode_host,
+            dlg.opencode_port,
+            dlg.opencode_model,
+            dlg.opencode_model_refresh,
+            dlg.opencode_start_server,
+            dlg.opencode_wsl_path,
+            dlg.opencode_startup_timeout,
+            dlg.wizard_max_sessions,
+            dlg.opencode_config_path,
+            dlg.open_opencode_config_btn,
+            dlg.test_connection_btn,
+        ),
+        "Skills": (
+            dlg.web_default,
+            dlg.save_docs_default,
+            dlg.project_tools_default,
+            dlg.fold_system_into_prompt,
+        ),
         "Validator": (dlg.validator_enabled, dlg.validator_max_attempts, dlg.net_hide_prefixes),
     }
     for title, widgets in fields.items():
@@ -90,9 +107,15 @@ def test_every_setting_round_trips_through_settings_json_skills_included(qapp, n
         "llm_backend": "opencode",
         "common_llm": {"context_window": 400000, "request_timeout": 312.5},
         "opencode": {
-            "port": 4100, "host": "10.0.0.2", "model": "openai/gpt-5.4", "wsl_path": "/mnt/c/oc",
-            "startup_timeout": 90.25, "web_default": True, "save_docs_default": False,
-            "project_tools_default": True, "fold_system_into_prompt": True,
+            "port": 4100,
+            "host": "10.0.0.2",
+            "model": "openai/gpt-5.4",
+            "wsl_path": "/mnt/c/oc",
+            "startup_timeout": 90.25,
+            "web_default": True,
+            "save_docs_default": False,
+            "project_tools_default": True,
+            "fold_system_into_prompt": True,
         },
         "wizard": {"max_concurrent_sessions": 7},
     }
@@ -112,18 +135,25 @@ def test_every_setting_round_trips_through_settings_json_skills_included(qapp, n
     dlg.fold_system_into_prompt.setChecked(False)
     dlg._on_save()
     opencode = load_settings()["opencode"]
-    assert (opencode["web_default"], opencode["save_docs_default"], opencode["project_tools_default"],
-            opencode["fold_system_into_prompt"]) == (False, True, False, False)
+    assert (
+        opencode["web_default"],
+        opencode["save_docs_default"],
+        opencode["project_tools_default"],
+        opencode["fold_system_into_prompt"],
+    ) == (False, True, False, False)
 
 
 def test_save_keeps_every_key_the_dialog_does_not_own_as_stored_at_save_time(qapp, no_network):
     """Save overwrites only its own fields: the wizard's keys (``set_wizard_setting``), keys of
     a newer Studio and keys written while the dialog was open all survive."""
-    save_settings({
-        "llm_backend": "opencode", "custom_output_format": "fmt",
-        "opencode": {"port": 4100, "a_newer_key": 1},
-        "wizard": {"max_concurrent_sessions": 3, "last_skill": "dcdc"},
-    })
+    save_settings(
+        {
+            "llm_backend": "opencode",
+            "custom_output_format": "fmt",
+            "opencode": {"port": 4100, "a_newer_key": 1},
+            "wizard": {"max_concurrent_sessions": 3, "last_skill": "dcdc"},
+        }
+    )
     dlg = _open(qapp)
     while_open = load_settings()  # the wizard writes a key while Settings is open
     while_open["wizard"]["written_while_open"] = True
@@ -134,7 +164,10 @@ def test_save_keeps_every_key_the_dialog_does_not_own_as_stored_at_save_time(qap
     assert saved["custom_output_format"] == "fmt"
     assert saved["opencode"]["a_newer_key"] == 1 and saved["opencode"]["port"] == 4100
     assert saved["wizard"] == {
-        "max_concurrent_sessions": 5, "last_skill": "dcdc", "written_while_open": True}
+        "max_concurrent_sessions": 5,
+        "last_skill": "dcdc",
+        "written_while_open": True,
+    }
     assert dlg.get_settings() == saved
 
 
@@ -151,14 +184,18 @@ def test_save_replaces_a_section_it_owns_that_is_not_an_object(qapp, no_network)
 
 
 def test_save_refuses_when_the_stored_settings_cannot_be_read_and_writes_nothing(
-        qapp, no_network, monkeypatch):
+    qapp, no_network, monkeypatch
+):
     """Never fall back to {} at Save: writing only the dialog's keys would wipe the rest."""
     stored = '{"wizard": {"last_skill": "dcdc"}'  # damaged (or half-read)
     from procedo.studio.core.studio_settings import get_settings_path
 
     errors: list[tuple[str, str]] = []
-    monkeypatch.setattr(settings_dialog.QMessageBox, "critical",
-                        lambda parent, title, text: errors.append((title, text)))
+    monkeypatch.setattr(
+        settings_dialog.QMessageBox,
+        "critical",
+        lambda parent, title, text: errors.append((title, text)),
+    )
     dlg = _open(qapp)
     get_settings_path().write_text(stored, encoding="utf-8")
     dlg._on_save()
@@ -177,8 +214,10 @@ def test_a_wizard_setting_is_never_written_over_settings_it_cannot_read():
 
     save_settings({"llm_backend": "none", "wizard": {"other": 1}})
     StudioAuthoringApi.set_wizard_setting(None, "max_concurrent_sessions", 4)
-    assert load_settings() == {"llm_backend": "none",
-                               "wizard": {"other": 1, "max_concurrent_sessions": 4}}
+    assert load_settings() == {
+        "llm_backend": "none",
+        "wizard": {"other": 1, "max_concurrent_sessions": 4},
+    }
     damaged = '{"llm_backend": "none", "wizard": '
     get_settings_path().write_text(damaged, encoding="utf-8")
     with pytest.raises(ValueError, match="settings.json"):
@@ -205,10 +244,14 @@ def test_the_validator_page_saves_to_the_project_config(qapp, no_network, projec
 
 
 def test_a_project_config_that_cannot_be_saved_is_said_and_the_app_settings_still_save(
-        qapp, no_network, project, monkeypatch):
+    qapp, no_network, project, monkeypatch
+):
     errors: list[tuple[str, str]] = []
-    monkeypatch.setattr(settings_dialog.QMessageBox, "critical",
-                        lambda parent, title, text: errors.append((title, text)))
+    monkeypatch.setattr(
+        settings_dialog.QMessageBox,
+        "critical",
+        lambda parent, title, text: errors.append((title, text)),
+    )
     dlg = _open(qapp, project)
     (project / "config" / "config.json").write_text('{"project_id": ', encoding="utf-8")
     dlg.validator_enabled.setChecked(False)
@@ -233,7 +276,9 @@ def test_without_a_project_the_validator_page_is_disabled_and_says_why(qapp, no_
     dlg.reject()
 
 
-def test_the_server_pill_says_connected_with_the_model_count_only_when_models_came_back(qapp, no_network):
+def test_the_server_pill_says_connected_with_the_model_count_only_when_models_came_back(
+    qapp, no_network
+):
     dlg = _open(qapp)
     dlg.show()
     assert dlg.opencode_server_pill.isHidden()  # the opening probe found no server
@@ -269,7 +314,7 @@ def test_nothing_overlaps_or_is_cut_at_the_minimum_size(qapp, no_network, projec
         assert rect.right() < content.width(), f"{widget!r} {widget.property('text')} is cut"
         assert widget.height() >= widget.minimumSizeHint().height(), f"{widget!r} is crushed"
     for i, (a, ra) in enumerate(rects):
-        for b, rb in rects[i + 1:]:
+        for b, rb in rects[i + 1 :]:
             assert not ra.intersects(rb), f"{a!r} overlaps {b!r}"
     for button in (dlg.save_btn, dlg.cancel_btn):
         assert button.visibleRegion().boundingRect().height() == button.height()
@@ -284,8 +329,7 @@ def test_a_dialog_deleted_while_its_model_probe_runs_is_never_touched(qapp, monk
 
     gate, errors = threading.Event(), []
     monkeypatch.setattr(threading, "excepthook", errors.append)
-    monkeypatch.setattr(settings_dialog, "fetch_opencode_models",
-                        lambda url: gate.wait(5) and [])
+    monkeypatch.setattr(settings_dialog, "fetch_opencode_models", lambda url: gate.wait(5) and [])
     dlg = SettingsDialog(None)
     assert dlg._models_probe_in_flight
     shiboken6.delete(dlg)
@@ -299,6 +343,7 @@ def test_a_dialog_deleted_while_its_model_probe_runs_is_never_touched(qapp, monk
 
 class _SlowManager:
     """A server manager whose start / health check each take ~1 s (never a real server)."""
+
     instances: list = []
 
     def __init__(self, config):
@@ -341,6 +386,7 @@ class _SlowBackend:
 def _slow_test_connection(monkeypatch, tmp_path):
     from procedo.studio.dialogs import settings_backend_probe as probe
     from procedo.studio.llm import opencode_backend, server_manager
+
     shown, cleaned = [], []
     monkeypatch.setattr(probe, "ensure_master_config", lambda seed_from=None: None)
     monkeypatch.setattr(probe, "build_launch_config", lambda root, launch_dir=None: tmp_path)
@@ -349,15 +395,20 @@ def _slow_test_connection(monkeypatch, tmp_path):
     monkeypatch.setattr(server_manager, "OpenCodeServerManager", _SlowManager)
     monkeypatch.setattr(opencode_backend, "OpenCodeBackend", _SlowBackend)
     for kind in ("information", "warning", "critical"):
-        monkeypatch.setattr(probe.QMessageBox, kind,
-                            staticmethod(lambda parent, title, text, kind=kind: shown.append((kind, title, text))))
+        monkeypatch.setattr(
+            probe.QMessageBox,
+            kind,
+            staticmethod(lambda parent, title, text, kind=kind: shown.append((kind, title, text))),
+        )
     _SlowManager.instances.clear()
     return shown, cleaned
 
 
-def test_test_connection_runs_off_the_gui_thread_and_shows_the_same_result(qapp, no_network, project,
-                                                                          monkeypatch, tmp_path):
+def test_test_connection_runs_off_the_gui_thread_and_shows_the_same_result(
+    qapp, no_network, project, monkeypatch, tmp_path
+):
     from PySide6.QtCore import QTimer
+
     shown, cleaned = _slow_test_connection(monkeypatch, tmp_path)
     dlg = _open(qapp, project)
     dlg.backend_combo.setCurrentText("opencode")
@@ -390,8 +441,9 @@ def test_test_connection_runs_off_the_gui_thread_and_shows_the_same_result(qapp,
     dlg.reject()
 
 
-def test_closing_the_dialog_mid_test_shows_nothing_and_still_stops_its_server(qapp, no_network, project,
-                                                                             monkeypatch, tmp_path):
+def test_closing_the_dialog_mid_test_shows_nothing_and_still_stops_its_server(
+    qapp, no_network, project, monkeypatch, tmp_path
+):
     shown, cleaned = _slow_test_connection(monkeypatch, tmp_path)
     dlg = _open(qapp, project)
     dlg.backend_combo.setCurrentText("opencode")
@@ -408,9 +460,11 @@ def test_closing_the_dialog_mid_test_shows_nothing_and_still_stops_its_server(qa
     assert shown == []
 
 
-def test_start_server_is_off_while_a_test_runs_and_comes_back_as_it_was(qapp, no_network, project,
-                                                                       monkeypatch, tmp_path):
+def test_start_server_is_off_while_a_test_runs_and_comes_back_as_it_was(
+    qapp, no_network, project, monkeypatch, tmp_path
+):
     from unittest.mock import MagicMock
+
     shown, _ = _slow_test_connection(monkeypatch, tmp_path)
     dlg = _open(qapp, project)
     dlg.backend_combo.setCurrentText("opencode")
@@ -430,9 +484,11 @@ def test_start_server_is_off_while_a_test_runs_and_comes_back_as_it_was(qapp, no
     dlg.reject()
 
 
-def test_test_connection_does_nothing_while_a_start_server_poll_runs(qapp, no_network, project,
-                                                                   monkeypatch, tmp_path):
+def test_test_connection_does_nothing_while_a_start_server_poll_runs(
+    qapp, no_network, project, monkeypatch, tmp_path
+):
     from PySide6.QtCore import QTimer
+
     shown, _ = _slow_test_connection(monkeypatch, tmp_path)
     dlg = _open(qapp, project)
     dlg.backend_combo.setCurrentText("opencode")
@@ -489,6 +545,7 @@ class _LifecycleBackend:
 
     def start(self):
         from opencode_client.lifecycle import ServerUnavailable
+
         try:
             self.events.append(self._lifecycle.ensure_running())
         except ServerUnavailable:
@@ -502,21 +559,27 @@ class _LifecycleBackend:
 
 
 def test_the_chat_test_runs_on_the_manager_s_server_and_the_manager_stops_it_after(
-        monkeypatch, tmp_path):
+    monkeypatch, tmp_path
+):
     """No second server: one only the manager can stop by its Linux pid (stopping wsl.exe
     alone can leave it running)."""
     import opencode_client.lifecycle as package_lifecycle
     from procedo.studio.dialogs import settings_backend_probe as probe
     from procedo.studio.llm import opencode_backend, server_manager
+
     events, spawned = [], []
     monkeypatch.setattr(probe, "ensure_master_config", lambda seed_from=None: None)
     monkeypatch.setattr(probe, "build_launch_config", lambda root, launch_dir=None: tmp_path)
     monkeypatch.setattr(probe, "get_opencode_launch_test_dir", lambda: tmp_path)
     monkeypatch.setattr(probe, "remove_launch_files", lambda d: None)
-    monkeypatch.setattr(server_manager, "OpenCodeServerManager",
-                        lambda config: _RecordingManager(config, events))
-    monkeypatch.setattr(opencode_backend, "OpenCodeBackend",
-                        lambda config, lifecycle: _LifecycleBackend(config, lifecycle, events))
+    monkeypatch.setattr(
+        server_manager, "OpenCodeServerManager", lambda config: _RecordingManager(config, events)
+    )
+    monkeypatch.setattr(
+        opencode_backend,
+        "OpenCodeBackend",
+        lambda config, lifecycle: _LifecycleBackend(config, lifecycle, events),
+    )
     monkeypatch.setattr(package_lifecycle, "_health_ok", lambda *a, **k: False)
 
     def popen(*args, **kwargs):
@@ -537,9 +600,14 @@ def test_studio_exiting_while_a_test_connection_runs_stops_its_server(monkeypatc
 
     from procedo.studio.dialogs import settings_backend_probe as probe
     from procedo.studio.llm import opencode_backend, server_manager
+
     hooks, seen = [], []
-    monkeypatch.setattr(probe, "atexit", SimpleNamespace(register=hooks.append, unregister=hooks.remove),
-                        raising=False)
+    monkeypatch.setattr(
+        probe,
+        "atexit",
+        SimpleNamespace(register=hooks.append, unregister=hooks.remove),
+        raising=False,
+    )
     monkeypatch.setattr(probe, "ensure_master_config", lambda seed_from=None: None)
     monkeypatch.setattr(probe, "build_launch_config", lambda root, launch_dir=None: tmp_path)
     monkeypatch.setattr(probe, "get_opencode_launch_test_dir", lambda: tmp_path)
@@ -550,7 +618,9 @@ def test_studio_exiting_while_a_test_connection_runs_stops_its_server(monkeypatc
             seen.append(self.stop in hooks)  # Studio exits during the boot
             return False
 
-    monkeypatch.setattr(server_manager, "OpenCodeServerManager", lambda config: _Booting(config, []))
+    monkeypatch.setattr(
+        server_manager, "OpenCodeServerManager", lambda config: _Booting(config, [])
+    )
     monkeypatch.setattr(opencode_backend, "OpenCodeBackend", _LifecycleBackend)
     answer = probe.SettingsBackendProbe._run_test("opencode", None, "127.0.0.1", 5005, None)
     assert seen == [True]

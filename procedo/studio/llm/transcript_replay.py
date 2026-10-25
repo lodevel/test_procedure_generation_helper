@@ -6,6 +6,7 @@ prior conversation as a single 'Conversation so far' preamble built here. Pure (
 Qt/HTTP), unit-testable; replays only the human-visible ChatMessage.content (never
 the giant full_prompt/full_response), matching the text-only contract.
 """
+
 from __future__ import annotations
 
 # Model-FACING preamble (not just a user disclaimer): the prior tool results are

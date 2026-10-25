@@ -35,6 +35,7 @@ forms — display strings in ``unsafe`` plus the structured ``unsafe_targets``
 records (:func:`_attach_unsafe`) — so the host recovery receives the exact
 endpoint/channel set with its stored reconnect data, never a parsed string.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -53,7 +54,7 @@ _build_device = _ops._build_device
 _exec_op = _ops._exec_op
 _ns_base = _ops._ns_base
 _open_no_reset = _ops._open_no_reset
-_raw_send = _ops._raw_send          # read only through the ``d`` seam (check_held's probe)
+_raw_send = _ops._raw_send  # read only through the ``d`` seam (check_held's probe)
 _safe_name = _ops._safe_name
 
 
@@ -65,8 +66,14 @@ def _bench():
 # State-changing / safe-off helpers.
 # ---------------------------------------------------------------------------
 
-_READ_VERBS = {"measure_voltage", "measure_current", "measure_power",
-               "get_voltage", "get_current", "get_power"}
+_READ_VERBS = {
+    "measure_voltage",
+    "measure_current",
+    "measure_power",
+    "get_voltage",
+    "get_current",
+    "get_power",
+}
 # NB: query_raw / write_raw are deliberately NOT reads here — a raw SCPI command
 # MAY assert an output, so they count as state-changing for energized-tracking.
 # Over-tracking is harmless: it only adds a redundant safe-off on a failed batch.
@@ -82,7 +89,7 @@ def _is_state_changing(op: dict, lifecycle: dict) -> bool:
     default to state-changing (errs toward a redundant, harmless safe-off)."""
     etype, _, verb = (op.get("op") or "").partition(".")
     if not (lifecycle.get(etype) or {}).get("cleanup"):
-        return False        # scope/fncore (no output) — never energizing
+        return False  # scope/fncore (no output) — never energizing
     return verb not in _READ_VERBS
 
 
@@ -90,11 +97,11 @@ def _device_channels(procedure_json: dict, device: str) -> list:
     """Declared channel numbers for a device (from the procedure equipment), so a
     channel-less state-changer (raw SCPI / tracking) can be safe-off'd on every
     channel rather than just CH1. Falls back to [1] when undeterminable."""
-    for eq in (procedure_json.get("equipment") or []):
+    for eq in procedure_json.get("equipment") or []:
         if eq.get("id") != device:
             continue
         out = []
-        for c in (eq.get("channels") or []):
+        for c in eq.get("channels") or []:
             if isinstance(c, int):
                 out.append(c)
             elif isinstance(c, dict):
@@ -105,8 +112,9 @@ def _device_channels(procedure_json: dict, device: str) -> list:
     return [1]
 
 
-def _safe_off(procedure_json, ns, energized, etype_of, lifecycle, res,
-              session=None, bench_map=None) -> list:
+def _safe_off(
+    procedure_json, ns, energized, etype_of, lifecycle, res, session=None, bench_map=None
+) -> list:
     """Drive energized PSU/ELOAD outputs OFF in cleanup-priority order (ELOAD
     priority 10 before PSU priority 20).  Reuses the pack emit by synthesizing an
     ``<etype>.<off_verb> … on=False`` op per touched channel.  Best-effort — a
@@ -127,18 +135,17 @@ def _safe_off(procedure_json, ns, energized, etype_of, lifecycle, res,
     for device, channels in energized.items():
         etype = etype_of.get(device, "")
         cleanup = (lifecycle.get(etype) or {}).get("cleanup")
-        if not cleanup:                # scope/fncore: nothing to power down
+        if not cleanup:  # scope/fncore: nothing to power down
             continue
         off_verb = cleanup.get("off_op", "output")
         items.append((cleanup.get("priority", 100), etype, device, channels, off_verb))
     failures: list = []
     for _prio, etype, device, channels, off_verb in sorted(items, key=lambda t: t[0]):
         known = sorted(c for c in channels if c is not None)
-        if None in channels:   # a channel-less state-changer (raw SCPI / tracking)
+        if None in channels:  # a channel-less state-changer (raw SCPI / tracking)
             known = sorted(set(known) | set(_device_channels(procedure_json, device)))
-        for ch in (known or [1]):
-            off_op = {"op": f"{etype}.{off_verb}", "device": device,
-                      "channel": ch, "on": False}
+        for ch in known or [1]:
+            off_op = {"op": f"{etype}.{off_verb}", "device": device, "channel": ch, "on": False}
             try:
                 _exec_op(procedure_json, off_op, ns)
                 res.log.append(f"safe-off {device} CH{ch}")
@@ -148,8 +155,7 @@ def _safe_off(procedure_json, ns, energized, etype_of, lifecycle, res,
                 failures.append(f"{device} CH{ch}")
                 res.log.append(f"UNSAFE: safe-off {device} CH{ch} FAILED: {exc}")
                 if session is not None:
-                    _record_unconfirmed(session, device, etype, {ch},
-                                        (bench_map or {}).get(device))
+                    _record_unconfirmed(session, device, etype, {ch}, (bench_map or {}).get(device))
     return failures
 
 
@@ -162,22 +168,28 @@ class _Session:
     def __init__(self) -> None:
         self.res = _ResStub()
         self.ns = _ns_base(self.res)
-        self.held: dict = {}        # device -> driver instance (per_session)
-        self.etype_of: dict = {}    # device -> equipment type (held only)
-        self.energized: dict = {}   # device -> {channels} touched (held only)
+        self.held: dict = {}  # device -> driver instance (per_session)
+        self.etype_of: dict = {}  # device -> equipment type (held only)
+        self.energized: dict = {}  # device -> {channels} touched (held only)
         self.lifecycle: dict = {}
         self.bundle_loaded = False
-        self.procedure_json: dict | None = None   # the last document a frame carried
-        self.bench = None           # BenchState (bench-session runs; sibling-owned)
+        self.procedure_json: dict | None = None  # the last document a frame carried
+        self.bench = None  # BenchState (bench-session runs; sibling-owned)
         # device/endpoint -> {"etype","channels","bench"}: safe-off targets
         # whose OFF was never confirmed (module docstring: unconfirmed-off
         # memory).  Removed ONLY by _confirm_off; survives handle drops.
         self.unconfirmed_off: dict = {}
-        self._in_teardown = False   # run-once latch (also signal re-entrancy guard)
+        self._in_teardown = False  # run-once latch (also signal re-entrancy guard)
 
 
-def _ensure_held(session: _Session, bench_map: dict, device: str, etype: str,
-                 probe_refuse: bool = True, identity_gate: bool = True) -> str:
+def _ensure_held(
+    session: _Session,
+    bench_map: dict,
+    device: str,
+    etype: str,
+    probe_refuse: bool = True,
+    identity_gate: bool = True,
+) -> str:
     """Open a per_session device ONCE (no reset) into ``held`` + bind it in the
     shared namespace.  Idempotent — a held device is reused across commands.
     RETURNS the hold key the instance lives under in ``held`` — the routed
@@ -202,8 +214,7 @@ def _ensure_held(session: _Session, bench_map: dict, device: str, etype: str,
       instrument answers.  The raw context keeps the gate ON: a raw line
       still refuses, typed, on an unresolved identity mismatch.
     A rebuild failure still propagates as the ordinary error it always was."""
-    key = _resolve_hold(session, bench_map, device, etype,
-                          probe_refuse, identity_gate)
+    key = _resolve_hold(session, bench_map, device, etype, probe_refuse, identity_gate)
     if key is not None:
         return key
     if device not in bench_map:
@@ -229,9 +240,10 @@ def _fold_endpoint(session, bench, etype):
     if not bench:
         return None
     from rules_packager_base import bench_endpoints as be
+
     try:
         return be.canonical_endpoint(bench, (session.lifecycle or {}).get(etype))
-    except ValueError:                      # no address: name-keyed, as today
+    except ValueError:  # no address: name-keyed, as today
         return None
 
 
@@ -265,23 +277,23 @@ def _drop_stale(session, device, current) -> bool:
     so the fresh instance is retargeted instead of skipped.  Returns True
     when dropped (the caller resolves fresh at the current address)."""
     rec = _hold_meta(session).get(device)
-    if (device not in session.held or rec is None or current is None
-            or rec["endpoint"] == current):
+    if device not in session.held or rec is None or current is None or rec["endpoint"] == current:
         return False
     chans = set(session.energized.get(device) or ())
     if chans:
-        _record_unconfirmed(session, rec["endpoint"], session.etype_of.get(device, ""),
-                            chans, rec["bench"])
+        _record_unconfirmed(
+            session, rec["endpoint"], session.etype_of.get(device, ""), chans, rec["bench"]
+        )
     _close_held_device(session, device)
     _hold_meta(session).pop(device, None)
     session.res.log.append(
         f"{device}: address changed ({rec['endpoint']} -> {current}); "
-        "stale instance closed, reopening at the current address")
+        "stale instance closed, reopening at the current address"
+    )
     return True
 
 
-def _resolve_hold(session, bench_map: dict, device, etype,
-                  probe_refuse: bool, identity_gate: bool):
+def _resolve_hold(session, bench_map: dict, device, etype, probe_refuse: bool, identity_gate: bool):
     """The ``_ensure_held`` resolution rule (owner ruling, 2026-08-27).  Returns the
     hold key of a reused instance, or ``None`` when the caller must open
     fresh (nothing held, or a stale name binding was just dropped).
@@ -322,12 +334,11 @@ def _resolve_hold(session, bench_map: dict, device, etype,
     current = _fold_endpoint(session, bench_map.get(device), etype)
     if session.bench is not None:
         key = session.bench.enter(session, device, bench_map.get(device), etype)
-        if key != device:          # routed onto a held endpoint (view or fold)
+        if key != device:  # routed onto a held endpoint (view or fold)
             # Boundary health check (F-H6): same probe + one-rebuild +
             # identity check as acquire_run, before reusing the instance.
             b = _bench()
-            if (b.check_held(globals(), session, key, identity_gate) == "rebuilt"
-                    and probe_refuse):
+            if b.check_held(globals(), session, key, identity_gate) == "rebuilt" and probe_refuse:
                 refusal = b.state_lost_refusal(session, [key])
                 if refusal is not None:
                     raise b.HealthRefusal(refusal)
@@ -342,8 +353,9 @@ def _resolve_hold(session, bench_map: dict, device, etype,
     return None
 
 
-def _record_unconfirmed(session: _Session, device, etype: str, channels,
-                        bench: dict | None = None) -> None:
+def _record_unconfirmed(
+    session: _Session, device, etype: str, channels, bench: dict | None = None
+) -> None:
     """Record one safe-off target whose OFF failed or errored (unconfirmed-off
     memory, module docstring).  Called AT the failure site so a later handle
     drop can never hide the target.  A bench-session name is folded onto its
@@ -360,7 +372,8 @@ def _record_unconfirmed(session: _Session, device, etype: str, channels,
             device = routed
             bench = dict(session.bench.bench_of.get(routed) or bench or {}) or None
     entry = session.unconfirmed_off.setdefault(
-        device, {"etype": etype, "channels": set(), "bench": None})
+        device, {"etype": etype, "channels": set(), "bench": None}
+    )
     entry["channels"] |= {c for c in channels if c is not None} or {1}
     if bench and entry["bench"] is None:
         entry["bench"] = bench
@@ -400,22 +413,34 @@ def _retry_unconfirmed(session: _Session, devices) -> list:
             bench = entry.get("bench")
             if not bench:
                 session.res.log.append(
-                    f"UNSAFE: {device} off never confirmed and no stored "
-                    "connection data to retry")
+                    f"UNSAFE: {device} off never confirmed and no stored connection data to retry"
+                )
                 unsafe.extend(f"{device} CH{ch}" for ch in sorted(chans))
                 continue
             try:
-                _ensure_held(session, {device: bench}, device, entry["etype"],
-                             probe_refuse=False, identity_gate=False)
+                _ensure_held(
+                    session,
+                    {device: bench},
+                    device,
+                    entry["etype"],
+                    probe_refuse=False,
+                    identity_gate=False,
+                )
             except Exception as exc:  # noqa: BLE001
-                session.res.log.append(
-                    f"UNSAFE: retry reconnect {device} FAILED: {exc}")
+                session.res.log.append(f"UNSAFE: retry reconnect {device} FAILED: {exc}")
                 unsafe.extend(f"{device} CH{ch}" for ch in sorted(chans))
                 continue
-        unsafe.extend(_safe_off(
-            session.procedure_json or {}, session.ns, {device: chans},
-            {**session.etype_of, device: entry["etype"]},
-            session.lifecycle, session.res, session=session))
+        unsafe.extend(
+            _safe_off(
+                session.procedure_json or {},
+                session.ns,
+                {device: chans},
+                {**session.etype_of, device: entry["etype"]},
+                session.lifecycle,
+                session.res,
+                session=session,
+            )
+        )
     return unsafe
 
 
@@ -429,10 +454,14 @@ def _attach_unsafe(session: _Session, resp: dict, unsafe: list) -> dict:
     if unsafe:
         resp["unsafe"] = unsafe
         resp["unsafe_targets"] = [
-            {"device": device, "etype": rec["etype"],
-             "channels": sorted(rec["channels"]) or [1],
-             "bench": dict(rec["bench"]) if rec["bench"] else None}
-            for device, rec in sorted(session.unconfirmed_off.items())]
+            {
+                "device": device,
+                "etype": rec["etype"],
+                "channels": sorted(rec["channels"]) or [1],
+                "bench": dict(rec["bench"]) if rec["bench"] else None,
+            }
+            for device, rec in sorted(session.unconfirmed_off.items())
+        ]
     return resp
 
 
@@ -460,23 +489,30 @@ def _safe_off_all_held(session: _Session) -> list:
     unsafe: list = []
     if declared:
         try:
-            unsafe = _safe_off(session.procedure_json or {}, session.ns, declared,
-                               session.etype_of, session.lifecycle, session.res,
-                               session=session)
+            unsafe = _safe_off(
+                session.procedure_json or {},
+                session.ns,
+                declared,
+                session.etype_of,
+                session.lifecycle,
+                session.res,
+                session=session,
+            )
         except Exception as exc:  # noqa: BLE001
             session.res.log.append(f"UNSAFE: safe-off-all FAILED: {exc}")
             for device, chans in declared.items():
-                _record_unconfirmed(session, device,
-                                    session.etype_of.get(device, ""), chans)
+                _record_unconfirmed(session, device, session.etype_of.get(device, ""), chans)
             unsafe = sorted(declared)
     session.energized.clear()
     unsafe.extend(_retry_unconfirmed(session, prior - set(declared)))
     # Backstop: NEVER report clean while any off is unconfirmed — e.g. a
     # still-held device with a recorded channel outside its declared set
     # was neither swept nor retried above.
-    leftover = [f"{d} CH{c}"
-                for d, rec in sorted(session.unconfirmed_off.items())
-                for c in sorted(rec["channels"])]
+    leftover = [
+        f"{d} CH{c}"
+        for d, rec in sorted(session.unconfirmed_off.items())
+        for c in sorted(rec["channels"])
+    ]
     unsafe.extend(x for x in leftover if x not in unsafe)
     return unsafe
 

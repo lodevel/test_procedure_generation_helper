@@ -97,8 +97,8 @@ def _check_python_syntax(ctx: ValidatorContext) -> ValidationOutcome:
 
 
 _BUILTIN_REGISTRATIONS: Iterable[tuple[str, object]] = (
-    ("rules_packager_base.validate_procedure",    _validate_procedure),
-    ("core.check_python_syntax",                  _check_python_syntax),
+    ("rules_packager_base.validate_procedure", _validate_procedure),
+    ("core.check_python_syntax", _check_python_syntax),
 )
 
 

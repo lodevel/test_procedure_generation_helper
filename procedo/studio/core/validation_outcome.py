@@ -3,6 +3,7 @@ mapping from validator reports, parse errors and exceptions into it. One shape f
 consumer (the LLM feedback loop, the validator buttons, the structured-error dialog, the
 validators registry). No GUI imports.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -89,10 +90,7 @@ def render_validation_outcome_summary(outcome: "ValidationOutcome") -> str:
         return "Procedure validates clean."
     if outcome.ok:
         return f"Procedure passes with {n_warn} warning(s) — see Findings."
-    return (
-        f"Procedure has {n_err} error(s) and {n_warn} warning(s) — "
-        f"see Findings."
-    )
+    return f"Procedure has {n_err} error(s) and {n_warn} warning(s) — see Findings."
 
 
 # --------------------------------------------------------------------------- #
@@ -169,10 +167,12 @@ def outcome_from_parse_error(exc: Any) -> ValidationOutcome:
         code=getattr(exc, "code", "PARSE_ERROR") or "PARSE_ERROR",
         message=str(exc) if str(exc) else getattr(exc, "message", ""),
         severity="error",
-        location=_format_location({
-            "line": getattr(exc, "line", None),
-            "column": getattr(exc, "column", None),
-        }),
+        location=_format_location(
+            {
+                "line": getattr(exc, "line", None),
+                "column": getattr(exc, "column", None),
+            }
+        ),
         fix_hint=getattr(exc, "fix_hint", "") or "",
     )
     return ValidationOutcome(ok=False, skipped=False, issues=[issue])

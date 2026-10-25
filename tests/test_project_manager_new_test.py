@@ -12,12 +12,18 @@ from procedo.studio.core.project_manager import ProjectManager
 
 
 def _tree(root: Path) -> dict[str, bytes]:
-    return {p.relative_to(root).as_posix(): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
+    return {
+        p.relative_to(root).as_posix(): p.read_bytes()
+        for p in sorted(root.rglob("*"))
+        if p.is_file()
+    }
 
 
 def _procedure(test_id: str) -> bytes:
-    text = (f'{{\n  "id": "{test_id}",\n  "description": "",\n  "equipment": [],\n'
-            f'  "steps": [],\n  "expected": []\n}}\n')
+    text = (
+        f'{{\n  "id": "{test_id}",\n  "description": "",\n  "equipment": [],\n'
+        f'  "steps": [],\n  "expected": []\n}}\n'
+    )
     return text.replace("\n", os.linesep).encode()
 
 

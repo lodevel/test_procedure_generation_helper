@@ -31,7 +31,8 @@ class BoardDataCheckBox(QCheckBox):
         root = context.project_manager.project_root if is_text else None
         available = root is not None and odb_archive.find(root) is not None
         selected = bool(
-            available and getattr(context, "board_data_enabled", False)
+            available
+            and getattr(context, "board_data_enabled", False)
             and getattr(context, "board_data_project", None) == root
         )
         self.blockSignals(True)

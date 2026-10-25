@@ -1,9 +1,9 @@
-﻿"""Test fixtures."""
+"""Test fixtures."""
+
 import pytest
 from . import temp_guard
-from procedo.studio.llm import (
-    LLMRequest, LLMTask, NoneBackend, OpenCodeBackend, OpenCodeConfig
-)
+from procedo.studio.llm import LLMRequest, LLMTask, NoneBackend, OpenCodeBackend, OpenCodeConfig
+
 
 def _populate_pack_registry() -> None:
     """Populate the process-global pack registry for in-process parser tests.
@@ -19,15 +19,16 @@ def _populate_pack_registry() -> None:
     try:
         import importlib
         from rules_packager_base.rules.v2_0_2.parser._default_registry import (
-            set_default_pack_parsers, register_schema_fragment,
-            register_equipment_claims, clear_registry,
+            set_default_pack_parsers,
+            register_schema_fragment,
+            register_equipment_claims,
+            clear_registry,
         )
     except Exception:
         return
     clear_registry()
     parsers = {}
-    for module_path in ("labscpi_pack.rules.v2_0_1.parser",
-                        "fncore_pack.rules.v2_0_1.parser"):
+    for module_path in ("labscpi_pack.rules.v2_0_1.parser", "fncore_pack.rules.v2_0_1.parser"):
         try:
             mod = importlib.import_module(module_path)
         except Exception:
@@ -58,40 +59,59 @@ def _register_per_user_sandbox(config):
     try:
         from procedo.core import testing
     except ModuleNotFoundError as exc:
-        if exc.name not in ("procedo", "procedo.core"):  # a broken sandbox must stop the run, not skip it
+        if exc.name not in (
+            "procedo",
+            "procedo.core",
+        ):  # a broken sandbox must stop the run, not skip it
             raise
         return
     testing.register_plugin(config)
 
+
 @pytest.fixture
 def sample_llm_request_minimal():
     return LLMRequest(
-        task=LLMTask.GENERATE_CODE_FROM_JSON, strict_mode=True,
-        procedure_json=None, test_code=None, procedure_text=None,
-        rules_content=None, session_summary=None, user_message=None
+        task=LLMTask.GENERATE_CODE_FROM_JSON,
+        strict_mode=True,
+        procedure_json=None,
+        test_code=None,
+        procedure_text=None,
+        rules_content=None,
+        session_summary=None,
+        user_message=None,
     )
+
 
 @pytest.fixture
 def sample_llm_request_simple():
     return LLMRequest(
-        task=LLMTask.GENERATE_CODE_FROM_JSON, strict_mode=False,
+        task=LLMTask.GENERATE_CODE_FROM_JSON,
+        strict_mode=False,
         procedure_json='{"name": "Test", "steps": [{"text": "Step 1"}]}',
-        test_code=None, procedure_text=None, rules_content=None,
-        session_summary=None, user_message=None
+        test_code=None,
+        procedure_text=None,
+        rules_content=None,
+        session_summary=None,
+        user_message=None,
     )
+
 
 @pytest.fixture
 def sample_json_artifact():
     return '{"name": "LED Test", "steps": [{"text": "Connect LED"}]}'
 
+
 @pytest.fixture
 def sample_llm_response_json():
     return {
-        "type": "llm_turn", "task": "generate_code_from_json",
-        "assistant_message": "Done", "validation": {"status": "pass"},
+        "type": "llm_turn",
+        "task": "generate_code_from_json",
+        "assistant_message": "Done",
+        "validation": {"status": "pass"},
         "proposals": {"test_code": {"mode": "replace", "content": "def test(): pass"}},
-        "session_delta": {}
+        "session_delta": {},
     }
+
 
 @pytest.fixture
 def available_backend():

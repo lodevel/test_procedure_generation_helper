@@ -1,4 +1,5 @@
 """Exercise board and chat binding through real window startup and workers."""
+
 import threading
 import time
 
@@ -6,7 +7,10 @@ import pytest
 from PySide6.QtTest import QTest
 
 from .test_main_window_characterization import (
-    _make_project, make_window as make_window, mbox as mbox, qapp as qapp,
+    _make_project,
+    make_window as make_window,
+    mbox as mbox,
+    qapp as qapp,
 )
 from procedo.studio.core import odb_inspect
 from procedo.studio.widgets.netlist_panel import NetlistPanel, _LIVE_WORKERS
@@ -21,8 +25,7 @@ def _until(app, predicate):
 
 
 def _board(name):
-    return {"components": [{"refdes": name, "pins": [], "properties": {}}],
-            "nets": [], "error": ""}
+    return {"components": [{"refdes": name, "pins": [], "properties": {}}], "nets": [], "error": ""}
 
 
 def test_cli_startup_discards_late_no_project_result(make_window, qapp, tmp_path, monkeypatch):
@@ -55,7 +58,9 @@ def test_cli_startup_discards_late_no_project_result(make_window, qapp, tmp_path
         _until(qapp, lambda: not _LIVE_WORKERS)
 
 
-def test_cli_startup_binds_chat_when_text_is_already_selected(make_window, qapp, tmp_path, monkeypatch):
+def test_cli_startup_binds_chat_when_text_is_already_selected(
+    make_window, qapp, tmp_path, monkeypatch
+):
     root = _make_project(tmp_path / "project")
     (root / "board.tgz").write_bytes(b"synthetic archive")
     monkeypatch.setattr(odb_inspect, "load_board", lambda project: _board("U_CURRENT"))
@@ -73,7 +78,9 @@ def test_cli_startup_binds_chat_when_text_is_already_selected(make_window, qapp,
 
 
 @pytest.mark.parametrize("same_project", [False, True])
-def test_latest_board_load_wins_even_when_older_worker_finishes_last(qapp, tmp_path, monkeypatch, same_project):
+def test_latest_board_load_wins_even_when_older_worker_finishes_last(
+    qapp, tmp_path, monkeypatch, same_project
+):
     old_root = tmp_path / "old"
     new_root = old_root if same_project else tmp_path / "new"
     old_started = threading.Event()

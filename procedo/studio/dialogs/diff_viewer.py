@@ -15,26 +15,46 @@ from pathlib import PurePath
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QTextCharFormat
 from PySide6.QtWidgets import (
-    QDialog, QFrame, QLabel, QPlainTextEdit, QPushButton, QSizePolicy, QSplitter, QVBoxLayout,
+    QDialog,
+    QFrame,
+    QLabel,
+    QPlainTextEdit,
+    QPushButton,
+    QSizePolicy,
+    QSplitter,
+    QVBoxLayout,
 )
 
 from procedo.ui import ui_kit
 
 from .. import theme
-from ..core.proposal import ADDED, HEADER, REMOVED, changed_lines, count_changes, diff_lines, diff_rows
+from ..core.proposal import (
+    ADDED,
+    HEADER,
+    REMOVED,
+    changed_lines,
+    count_changes,
+    diff_lines,
+    diff_rows,
+)
 from ..widgets.python_highlighter import PythonSyntaxHighlighter
 from ..widgets.json_highlighter import JsonSyntaxHighlighter
 from ..widgets.editor_card import CodeEditor, tint_lines
 from ..widgets.text_highlighter import ProcedureTextHighlighter
 
 #: The panes' syntax colours, by the file's suffix (the views' own highlighters).
-_HIGHLIGHTERS = {".md": ProcedureTextHighlighter, ".json": JsonSyntaxHighlighter,
-                 ".py": PythonSyntaxHighlighter}
+_HIGHLIGHTERS = {
+    ".md": ProcedureTextHighlighter,
+    ".json": JsonSyntaxHighlighter,
+    ".py": PythonSyntaxHighlighter,
+}
 #: How many rows of findings the validator banner shows before it scrolls.
 _BANNER_ROWS = 6
 
 
-def _line_format(background: QColor | None = None, foreground: QColor | None = None) -> QTextCharFormat:
+def _line_format(
+    background: QColor | None = None, foreground: QColor | None = None
+) -> QTextCharFormat:
     fmt = QTextCharFormat()
     if background is not None:
         fmt.setBackground(background)
@@ -46,11 +66,16 @@ def _line_format(background: QColor | None = None, foreground: QColor | None = N
 def _diff_marks(diff: list[str]) -> dict[int, QTextCharFormat]:
     """The unified diff's colours, by what each row is (:func:`diff_rows`): added lines green,
     removed red, the headers (file names, ``@@``) in the accent."""
-    marks = {HEADER: _line_format(foreground=theme.tone("accent_deep")),
-             ADDED: _line_format(theme.tone("pill_success_bg"), theme.tone("pill_success_fg")),
-             REMOVED: _line_format(theme.tone("pill_danger_bg"), theme.tone("pill_danger_fg"))}
-    return {number: marks[kind] for number, (kind, _, _) in enumerate(diff_rows(diff), 1)
-            if kind in marks}
+    marks = {
+        HEADER: _line_format(foreground=theme.tone("accent_deep")),
+        ADDED: _line_format(theme.tone("pill_success_bg"), theme.tone("pill_success_fg")),
+        REMOVED: _line_format(theme.tone("pill_danger_bg"), theme.tone("pill_danger_fg")),
+    }
+    return {
+        number: marks[kind]
+        for number, (kind, _, _) in enumerate(diff_rows(diff), 1)
+        if kind in marks
+    }
 
 
 class DiffViewer(QDialog):
@@ -58,8 +83,15 @@ class DiffViewer(QDialog):
     proposal failed validation, says why; *counter* (this file, of how many) when it has several.
     ``decision`` is what the user decided: "accept", "reject", or "" (the window was closed)."""
 
-    def __init__(self, original: str, proposed: str, file_name: str = "", parent=None,
-                 banner: str = "", counter: tuple[int, int] = (1, 1)):
+    def __init__(
+        self,
+        original: str,
+        proposed: str,
+        file_name: str = "",
+        parent=None,
+        banner: str = "",
+        counter: tuple[int, int] = (1, 1),
+    ):
         super().__init__(parent)
         self.setWindowTitle(f"Review Changes: {file_name}" if file_name else "Review Changes")
         self.setMinimumSize(800, 500)
@@ -81,8 +113,9 @@ class DiffViewer(QDialog):
         subtitle.append("nothing is written until you accept")
         approval = ui_kit.set_pill(QLabel(), "warning", "Approval needed")
         approval.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)  # centred
-        header = ui_kit.HeaderBand("Review the proposed changes", " · ".join(subtitle),
-                                   [approval], stacked=True)
+        header = ui_kit.HeaderBand(
+            "Review the proposed changes", " · ".join(subtitle), [approval], stacked=True
+        )
         self.reject_btn = ui_kit.set_state(QPushButton("Reject"), "danger", True)
         self.reject_btn.clicked.connect(lambda: self._decide("reject"))
         self.accept_btn = QPushButton("Accept changes")
@@ -101,7 +134,9 @@ class DiffViewer(QDialog):
         panes.setChildrenCollapsible(False)
         tint_removed = _line_format(theme.tone("pill_danger_bg"))
         tint_added = _line_format(theme.tone("pill_success_bg"))
-        self.original_view = self._pane(panes, "Original", self._original, self._removed, tint_removed)
+        self.original_view = self._pane(
+            panes, "Original", self._original, self._removed, tint_removed
+        )
         self.proposed_view = self._pane(panes, "Proposed", self._proposed, self._added, tint_added)
 
         unified = ui_kit.Card("Unified diff")
@@ -146,8 +181,9 @@ class DiffViewer(QDialog):
             view.setFixedHeight(rows * view.fontMetrics().lineSpacing() + 2 * view.frameWidth() + 1)
         return frame
 
-    def _pane(self, panes: QSplitter, title: str, text: str, changed: list[int],
-              tint: QTextCharFormat) -> CodeEditor:
+    def _pane(
+        self, panes: QSplitter, title: str, text: str, changed: list[int], tint: QTextCharFormat
+    ) -> CodeEditor:
         """An Original / Proposed card: *text* with its line numbers, the *changed* lines tinted."""
         card = ui_kit.Card(title, self._file_name)
         editor = CodeEditor()
@@ -164,14 +200,18 @@ class DiffViewer(QDialog):
     def _changes_note(self) -> str:
         added, removed = count_changes(self._diff)
         plus, minus = (theme.tone(f"pill_{tone}_fg").name() for tone in ("success", "danger"))
-        return (f"Changes: <b style='color:{plus}'>+{added}</b> lines, "
-                f"<b style='color:{minus}'>−{removed}</b> lines")
+        return (
+            f"Changes: <b style='color:{plus}'>+{added}</b> lines, "
+            f"<b style='color:{minus}'>−{removed}</b> lines"
+        )
 
     def showEvent(self, event) -> None:  # noqa: N802 (Qt)
         """Open on the first change (each pane on its own side's, else the other's)."""
         super().showEvent(event)
-        for editor, own, other in ((self.original_view, self._removed, self._added),
-                                   (self.proposed_view, self._added, self._removed)):
+        for editor, own, other in (
+            (self.original_view, self._removed, self._added),
+            (self.proposed_view, self._added, self._removed),
+        ):
             first = (own or other or [0])[0]
             if first:
                 editor.jump_to_line(first)
@@ -184,8 +224,14 @@ class DiffViewer(QDialog):
             self.reject()
 
     @staticmethod
-    def review(original: str, proposed: str, file_name: str = "", parent=None, banner: str = "",
-               counter: tuple[int, int] = (1, 1)) -> str:
+    def review(
+        original: str,
+        proposed: str,
+        file_name: str = "",
+        parent=None,
+        banner: str = "",
+        counter: tuple[int, int] = (1, 1),
+    ) -> str:
         """Show the diff window; what the user decided: "accept", "reject" or "" (closed)."""
         dialog = DiffViewer(original, proposed, file_name, parent, banner, counter)
         dialog.exec()

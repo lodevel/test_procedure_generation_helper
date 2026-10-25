@@ -103,7 +103,11 @@ def test_a_locked_file_stops_the_delete_before_anything_is_removed(tmp_path, mon
     with open(tests / "Foo" / "test.py", "r", encoding="utf-8"):
         with pytest.raises(TestFolderError, match="nothing was removed"):
             delete_test(tests, tests / "Foo")
-    assert sorted(p.name for p in (tests / "Foo").iterdir()) == ["procedure.json", "procedure_text.md", "test.py"]
+    assert sorted(p.name for p in (tests / "Foo").iterdir()) == [
+        "procedure.json",
+        "procedure_text.md",
+        "test.py",
+    ]
 
 
 # -- rename -------------------------------------------------------------------
@@ -113,9 +117,12 @@ def test_rename_moves_the_folder_ids_and_references(tmp_path):
     root, tests = _project(tmp_path, "Foo", "Other")
     (root / "config").mkdir()
     (root / "config" / "config.json").write_text(
-        json.dumps({"test_order": {"order": ["Other", "Foo"]}, "x": "µ"}), encoding="utf-8")
+        json.dumps({"test_order": {"order": ["Other", "Foo"]}, "x": "µ"}), encoding="utf-8"
+    )
     (root / "scenarios").mkdir()
-    (root / "scenarios" / "s1.json").write_text(json.dumps({"tests": ["Foo", "Other"]}), encoding="utf-8")
+    (root / "scenarios" / "s1.json").write_text(
+        json.dumps({"tests": ["Foo", "Other"]}), encoding="utf-8"
+    )
     (root / "scenarios" / "s2.json").write_text(json.dumps({"tests": ["Other"]}), encoding="utf-8")
 
     new_dir, warnings = rename_test(root, tests, tests / "Foo", "Bar", [])
@@ -124,19 +131,30 @@ def test_rename_moves_the_folder_ids_and_references(tmp_path):
     assert json.loads((new_dir / "procedure.json").read_text(encoding="utf-8"))["id"] == "Bar"
     config = json.loads((root / "config" / "config.json").read_text(encoding="utf-8"))
     assert config == {"test_order": {"order": ["Other", "Bar"]}, "x": "µ"}
-    assert json.loads((root / "scenarios" / "s1.json").read_text(encoding="utf-8"))["tests"] == ["Bar", "Other"]
-    assert (root / "scenarios" / "s2.json").read_text(encoding="utf-8") == json.dumps({"tests": ["Other"]})
+    assert json.loads((root / "scenarios" / "s1.json").read_text(encoding="utf-8"))["tests"] == [
+        "Bar",
+        "Other",
+    ]
+    assert (root / "scenarios" / "s2.json").read_text(encoding="utf-8") == json.dumps(
+        {"tests": ["Other"]}
+    )
     text = (root / "config" / "config.json").read_text(encoding="utf-8")  # today's layout
     assert text == json.dumps(json.loads(text), indent=2, ensure_ascii=False) + "\n"
     # a scenario is rewritten by the project's own Scenarios.rename_test_in: same bytes as the Bench writes
-    assert (root / "scenarios" / "s1.json").read_text(encoding="utf-8") == json.dumps({"tests": ["Bar", "Other"]}, indent=2)
+    assert (root / "scenarios" / "s1.json").read_text(encoding="utf-8") == json.dumps(
+        {"tests": ["Bar", "Other"]}, indent=2
+    )
 
 
 def test_rename_refuses_an_existing_name_and_touches_nothing(tmp_path):
     root, tests = _project(tmp_path, "Foo", "Bar")
     with pytest.raises(TestFolderError, match="A test named 'Bar' already exists"):
         rename_test(root, tests, tests / "Foo", "Bar", [])
-    assert sorted(p.name for p in (tests / "Bar").iterdir()) == ["procedure.json", "procedure_text.md", "test.py"]
+    assert sorted(p.name for p in (tests / "Bar").iterdir()) == [
+        "procedure.json",
+        "procedure_text.md",
+        "test.py",
+    ]
     assert json.loads((tests / "Foo" / "procedure.json").read_text(encoding="utf-8"))["id"] == "Foo"
 
 
@@ -166,7 +184,9 @@ def test_an_in_sync_test_stays_in_sync(tmp_path):
 
 def test_an_out_of_sync_test_stays_out_of_sync(tmp_path):
     root, tests = _project(tmp_path, "Foo")
-    (tests / "Foo" / ".llm_session.json").write_text('{"artifacts_in_sync": false}', encoding="utf-8")
+    (tests / "Foo" / ".llm_session.json").write_text(
+        '{"artifacts_in_sync": false}', encoding="utf-8"
+    )
     new_dir, _ = rename_test(root, tests, tests / "Foo", "Bar", [])
     assert test_sync.is_out_of_sync(new_dir, []) is True
 
@@ -182,7 +202,9 @@ def test_an_unreadable_reference_is_a_warning(tmp_path):
     (root / "config").mkdir()
     (root / "config" / "config.json").write_text("{broken", encoding="utf-8")
     new_dir, warnings = rename_test(root, tests, tests / "Foo", "Bar", [])
-    assert new_dir.exists() and len(warnings) == 1 and warnings[0].startswith("config.json test_order")
+    assert (
+        new_dir.exists() and len(warnings) == 1 and warnings[0].startswith("config.json test_order")
+    )
     assert (root / "config" / "config.json").read_text(encoding="utf-8") == "{broken"
 
 
@@ -225,12 +247,16 @@ def test_a_rename_never_acknowledges_an_edit_the_warning_shows(tmp_path):
 def test_a_failed_folder_rename_touches_nothing(tmp_path):
     root, tests = _project(tmp_path, "Foo")
     (root / "config").mkdir()
-    (root / "config" / "config.json").write_text(json.dumps({"test_order": {"order": ["Foo"]}}), encoding="utf-8")
+    (root / "config" / "config.json").write_text(
+        json.dumps({"test_order": {"order": ["Foo"]}}), encoding="utf-8"
+    )
     with open(tests / "Foo" / "test.py", "r", encoding="utf-8"):
         with pytest.raises(TestFolderError, match="Could not rename"):
             rename_test(root, tests, tests / "Foo", "Bar", [])
     assert json.loads((tests / "Foo" / "procedure.json").read_text(encoding="utf-8"))["id"] == "Foo"
-    assert json.loads((root / "config" / "config.json").read_text(encoding="utf-8"))["test_order"]["order"] == ["Foo"]
+    assert json.loads((root / "config" / "config.json").read_text(encoding="utf-8"))["test_order"][
+        "order"
+    ] == ["Foo"]
 
 
 # -- the Tests list drives them --------------------------------------------------
@@ -306,4 +332,3 @@ def test_the_list_deletes_through_the_core_after_confirmation(tmp_path, qapp, mo
     WorkspaceTab._delete_test(fake, tests / "Foo")
     assert not (tests / "Foo").exists()
     fake.test_deleted.emit.assert_called_once_with(tests / "Foo")
-

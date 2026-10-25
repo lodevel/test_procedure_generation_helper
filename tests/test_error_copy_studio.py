@@ -35,7 +35,9 @@ def test_a_studio_error_box_copies_its_text_and_stays_open(qapp, hook, show):
     seen = {}
 
     def poke():
-        box = next(w for w in qapp.topLevelWidgets() if isinstance(w, QMessageBox) and w.isVisible())
+        box = next(
+            w for w in qapp.topLevelWidgets() if isinstance(w, QMessageBox) and w.isVisible()
+        )
         copy = box.findChild(QPushButton, error_copy.COPY_BUTTON_NAME)
         if copy is not None:
             copy.click()

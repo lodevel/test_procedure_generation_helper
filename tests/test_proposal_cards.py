@@ -13,7 +13,14 @@ from types import SimpleNamespace
 import pytest
 
 from procedo.studio.core.proposal import (
-    APPLIED, DISCARDED, PENDING, REJECTED, FileChange, FileText, Proposal, discard_pending,
+    APPLIED,
+    DISCARDED,
+    PENDING,
+    REJECTED,
+    FileChange,
+    FileText,
+    Proposal,
+    discard_pending,
 )
 from procedo.studio.dialogs.diff_viewer import DiffViewer
 from procedo.studio.dock.chat_messages import CLOSED, ProposalCard, ProposalMessage
@@ -23,7 +30,11 @@ import procedo.studio.tabs.llm_validator_loop as llm_validator_loop
 import procedo.studio.tabs.text_actions as text_actions
 
 from .test_main_window_characterization import (
-    _make_project, _open_project, _settle, make_window as make_window, mbox as mbox,
+    _make_project,
+    _open_project,
+    _settle,
+    make_window as make_window,
+    mbox as mbox,
     qapp as qapp,
 )
 
@@ -32,6 +43,7 @@ PROPOSED_TEXT = "# t1\n\nBody of t1.\n\n## Steps\n1. Set PSU1 CH1 voltage = 28 V
 
 
 # --- the proposal itself (Qt-free) ------------------------------------------------------------
+
 
 def _proposal(text, proposed, log):
     box = {"text": text}
@@ -83,9 +95,12 @@ def test_an_outdated_proposal_never_applies_not_even_reviewed():
     log = []
     source = {"text": "x\n"}
     box = {"text": "a\n"}
-    p = Proposal([FileChange("procedure.json", lambda: box["text"], "b\n")],
-                 lambda: log.append("applied"), lambda: log.append("rejected"),
-                 inputs=[FileText("procedure_text.md", lambda: source["text"])])
+    p = Proposal(
+        [FileChange("procedure.json", lambda: box["text"], "b\n")],
+        lambda: log.append("applied"),
+        lambda: log.append("rejected"),
+        inputs=[FileText("procedure_text.md", lambda: source["text"])],
+    )
     source["text"] = "x\ny\n"
     assert p.outdated() == ["procedure_text.md"] and p.stale()
     assert not p.accept() and not p.accept(reviewed=True)
@@ -95,6 +110,7 @@ def test_an_outdated_proposal_never_applies_not_even_reviewed():
 def test_an_accept_that_raises_leaves_it_waiting_with_the_error():
     def fail():
         raise PermissionError("test.py is read-only")
+
     p = Proposal([FileChange("test.py", lambda: "a\n", "b\n")], fail, lambda: None)
     assert not p.accept()
     assert (p.state, p.error) == (PENDING, "Not applied: test.py is read-only")
@@ -112,8 +128,12 @@ def test_a_decided_proposal_keeps_only_what_its_card_shows(decide):
 
 def test_a_proposal_that_failed_validation_applies_only_reviewed():
     log = []
-    p = Proposal([FileChange("procedure_text.md", lambda: "a\n", "b\n")],
-                 lambda: log.append("applied"), lambda: None, "Proposal failed validation")
+    p = Proposal(
+        [FileChange("procedure_text.md", lambda: "a\n", "b\n")],
+        lambda: log.append("applied"),
+        lambda: None,
+        "Proposal failed validation",
+    )
     assert p.needs_review() and not p.accept() and log == []
     assert p.accept(reviewed=True) and log == ["applied"]
 
@@ -123,8 +143,11 @@ def test_discard_pending_leaves_decided_ones():
     _, waiting = _proposal("a\n", "b\n", log)
     _, done = _proposal("a\n", "c\n", log)
     done.accept()
-    messages = [SimpleNamespace(proposal=waiting), SimpleNamespace(proposal=done),
-                SimpleNamespace(role="system")]
+    messages = [
+        SimpleNamespace(proposal=waiting),
+        SimpleNamespace(proposal=done),
+        SimpleNamespace(role="system"),
+    ]
     assert discard_pending(messages) == 1
     assert (waiting.state, done.state) == (DISCARDED, APPLIED)
     assert not waiting.accept() and log == ["applied"]
@@ -132,11 +155,13 @@ def test_discard_pending_leaves_decided_ones():
 
 # --- in the window ----------------------------------------------------------------------------
 
+
 @pytest.fixture
 def opened(make_window, tmp_path, monkeypatch):
     # The text reconstruction needs the grammar wheel: here it hands the proposal back as is.
-    monkeypatch.setattr(text_actions, "reconstructed_or_error",
-                        lambda content, current, **kw: (content, None, None))
+    monkeypatch.setattr(
+        text_actions, "reconstructed_or_error", lambda content, current, **kw: (content, None, None)
+    )
     root = _make_project(tmp_path / "proj", tests=("t1", "t2"))
     w = make_window()
     _open_project(w, root)
@@ -197,7 +222,9 @@ def test_a_proposal_waits_as_a_card_and_accept_applies_it_as_the_dialog_did(open
     assert w.artifact_manager.get_content(card.kind) == expected
     assert card.pill.text() == "● Modified"  # an edit, as if typed: Save writes it
     assert (_last(view).content, _last(view).tone) == (
-        f"✓ Applied changes to {card.file_name}", "success")
+        f"✓ Applied changes to {card.file_name}",
+        "success",
+    )
     assert message.proposal.state == APPLIED
     assert not shown[0].actions.isVisibleTo(shown[0])
     assert shown[0].state_line.text() == "✓ Applied"
@@ -212,7 +239,9 @@ def test_reject_leaves_the_artifact_unchanged(opened):
     assert view.text_card.editor.toPlainText() == TEXT
     assert w.artifact_manager.get_content(view.text_card.kind) == TEXT
     assert (_last(view).content, _last(view).tone) == (
-        "✗ Rejected changes to procedure_text.md", "danger")
+        "✗ Rejected changes to procedure_text.md",
+        "danger",
+    )
     assert _cards(w)[0].state_line.text() == "✗ Rejected"
 
 
@@ -225,12 +254,14 @@ def _review(monkeypatch, button):
         if button:
             getattr(dialog, button).click()
         return 0
+
     monkeypatch.setattr(DiffViewer, "exec", fake_exec)
     return shown
 
 
 def test_a_card_whose_file_changed_since_applies_only_from_the_diff_against_the_current_text(
-        opened, monkeypatch):
+    opened, monkeypatch
+):
     w = opened
     view = w.text_only_tab
     view._handle_text_proposal(_llm(PROPOSED_TEXT))
@@ -267,11 +298,14 @@ def test_accepting_one_card_makes_the_others_for_that_file_stale(opened):
     assert second.state_line.text().startswith("⚠ The file changed since")
 
 
-@pytest.mark.parametrize("button, state, text", [
-    ("accept_btn", APPLIED, PROPOSED_TEXT),
-    ("reject_btn", REJECTED, TEXT),
-    ("", PENDING, TEXT),  # the window closed: nothing decided
-])
+@pytest.mark.parametrize(
+    "button, state, text",
+    [
+        ("accept_btn", APPLIED, PROPOSED_TEXT),
+        ("reject_btn", REJECTED, TEXT),
+        ("", PENDING, TEXT),  # the window closed: nothing decided
+    ],
+)
 def test_view_diff_decides_as_the_cards_buttons(opened, monkeypatch, button, state, text):
     w = opened
     view = w.text_only_tab
@@ -312,8 +346,12 @@ def test_opening_another_test_discards_the_waiting_cards(opened):
     view._handle_text_proposal(_llm(PROPOSED_TEXT))
     _settle()
     w.json_code_tab._handle_code_proposal(_llm("def main():\n    return 2\n"))
-    waiting = [m.proposal for v in w._get_llm_tabs() for m in v.tab_context.messages
-               if isinstance(m, ProposalMessage)]
+    waiting = [
+        m.proposal
+        for v in w._get_llm_tabs()
+        for m in v.tab_context.messages
+        if isinstance(m, ProposalMessage)
+    ]
     assert len(waiting) == 2
 
     w.open_test(w.root / "tests" / "t2")
@@ -327,11 +365,15 @@ def test_opening_another_test_discards_the_waiting_cards(opened):
 
 def test_a_quick_parse_result_waits_as_a_card_unless_the_json_is_empty(opened, monkeypatch):
     from procedo.studio.pack_ops import pack_parsers
+
     w = opened
     view = w.text_json_tab
     _show(w, view)
-    monkeypatch.setattr(pack_parsers, "parse_text",
-                        lambda text, project_root=None: ({"id": "t1", "steps": [{"n": 1}]}, []))
+    monkeypatch.setattr(
+        pack_parsers,
+        "parse_text",
+        lambda text, project_root=None: ({"id": "t1", "steps": [{"n": 1}]}, []),
+    )
     expected = json.dumps({"id": "t1", "steps": [{"n": 1}]}, indent=2)
     before = view.json_card.editor.toPlainText()
 
@@ -352,12 +394,14 @@ def test_a_quick_parse_result_waits_as_a_card_unless_the_json_is_empty(opened, m
 
 # --- a reply for another test, Parse + Generate's input, a failed Accept --------------------
 
+
 class _Asked:
     """The LLM worker of a request: never runs; the test delivers its reply."""
 
     def __init__(self, *args, **kwargs):
         self.finished = self.error = self.thinking_chunk = self.text_chunk = SimpleNamespace(
-            connect=lambda slot: None)
+            connect=lambda slot: None
+        )
 
     def start(self):
         pass
@@ -367,7 +411,8 @@ class _Asked:
 
 
 def test_a_reply_that_arrives_after_a_test_switch_is_never_a_card_for_the_new_test(
-        opened, monkeypatch):
+    opened, monkeypatch
+):
     w = opened
     view = w.text_only_tab
     monkeypatch.setattr(llm_tab_mixin, "LLMWorker", _Asked)
@@ -397,6 +442,7 @@ def test_a_late_reply_is_dropped_whole_before_anything_reads_it(opened, monkeypa
     """Nothing of a reply for a closed test reaches the test open now: no validator run, no
     findings, no session or chat change, no error dialog."""
     from dataclasses import asdict
+
     w = opened
     view = w.text_only_tab
     monkeypatch.setattr(llm_tab_mixin, "LLMWorker", _Asked)
@@ -404,14 +450,18 @@ def test_a_late_reply_is_dropped_whole_before_anything_reads_it(opened, monkeypa
     t2 = w.root / "tests" / "t2"
     w.open_test(t2)
     touched = []
-    monkeypatch.setattr(llm_validator_loop, "validate_response", lambda *a, **k: touched.append("v"))
+    monkeypatch.setattr(
+        llm_validator_loop, "validate_response", lambda *a, **k: touched.append("v")
+    )
     monkeypatch.setattr(view, "_parse_response_to_dict", lambda r: touched.append("parse"))
-    monkeypatch.setattr(w.dock, "show_validation_result_from_list",
-                        lambda issues: touched.append("findings"))
+    monkeypatch.setattr(
+        w.dock, "show_validation_result_from_list", lambda issues: touched.append("findings")
+    )
     session, messages = asdict(w.session_state), list(view.tab_context.messages)
     files = {p.name: p.read_bytes() for p in t2.iterdir() if p.is_file()}
-    reply = SimpleNamespace(raw_response="{}", success=True, total_tokens=1,
-                            procedure_text=_llm(PROPOSED_TEXT))
+    reply = SimpleNamespace(
+        raw_response="{}", success=True, total_tokens=1, procedure_text=_llm(PROPOSED_TEXT)
+    )
 
     view._handle_llm_response(reply)
 
@@ -435,14 +485,23 @@ def generated(opened, monkeypatch):
     """Parse + Generate run on t1 (whose procedure.json and test.py already hold content): its
     card waits in the Text view."""
     from procedo.studio.pack_ops import pack_parsers
+
     w = opened
-    monkeypatch.setattr(pack_parsers, "parse_text",
-                        lambda text, project_root=None: ({"id": "t1", "steps": [{"n": 1}]}, []))
-    monkeypatch.setattr(pack_parsers, "generate_code",
-                        lambda proc, project_root=None: ("def main():\n    return 1\n", []))
+    monkeypatch.setattr(
+        pack_parsers,
+        "parse_text",
+        lambda text, project_root=None: ({"id": "t1", "steps": [{"n": 1}]}, []),
+    )
+    monkeypatch.setattr(
+        pack_parsers,
+        "generate_code",
+        lambda proc, project_root=None: ("def main():\n    return 1\n", []),
+    )
     w.t1 = w.root / "tests" / "t1"
-    w.on_disk = {name: (w.t1 / name).read_bytes()
-                 for name in ("procedure_text.md", "procedure.json", "test.py")}
+    w.on_disk = {
+        name: (w.t1 / name).read_bytes()
+        for name in ("procedure_text.md", "procedure.json", "test.py")
+    }
     w.text_only_tab._on_parse_and_generate()
     _settle(lambda: _cards(w))
     (w.card,) = _cards(w)
@@ -477,6 +536,7 @@ def read_only(tmp_path):
     def make(path):
         path.chmod(stat.S_IREAD)
         made.append(path)
+
     yield make
     for path in made:
         path.chmod(stat.S_IREAD | stat.S_IWRITE)
@@ -484,14 +544,19 @@ def read_only(tmp_path):
 
 def _json_editors(w):
     """Every view's procedure.json and test.py cards."""
-    return [card for view in w._get_llm_tabs() for card in view.cards
-            if card.artifact_name in ("procedure_json", "test_code")]
+    return [
+        card
+        for view in w._get_llm_tabs()
+        for card in view.cards
+        if card.artifact_name in ("procedure_json", "test_code")
+    ]
 
 
 def _fails_after_the_json(w, read_only):
     """Accept the Parse + Generate card with test.py read-only: procedure.json is written,
     test.py is not — and every editor shows what is on disk."""
     from procedo.studio.core import ArtifactType
+
     card = w.card
     read_only(w.t1 / "test.py")
     card.accept_button.click()
@@ -500,8 +565,9 @@ def _fails_after_the_json(w, read_only):
     assert card.state_line.text().startswith("✗ procedure.json saved, test.py not: ")
     assert card.state_line.toolTip() == card.proposal.error
     assert card.accept_button.isVisibleTo(card)  # Accept again once the cause is fixed
-    assert not any("Parse + Generate complete" in m.content
-                   for m in w.text_only_tab.tab_context.messages)
+    assert not any(
+        "Parse + Generate complete" in m.content for m in w.text_only_tab.tab_context.messages
+    )
     am = w.artifact_manager
     json_on_disk = (w.t1 / "procedure.json").read_text(encoding="utf-8")
     assert json.loads(json_on_disk) == {"id": "t1", "steps": [{"n": 1}]}
@@ -531,7 +597,8 @@ def test_rejecting_after_a_partial_accept_says_the_json_stays_written(generated,
     card = _fails_after_the_json(w, read_only)
     card.reject_button.click()
     assert _last(w.text_only_tab).content == (
-        "✗ Parse + Generate — changes rejected. procedure.json stays as written.")
+        "✗ Parse + Generate — changes rejected. procedure.json stays as written."
+    )
 
 
 def test_an_accept_whose_text_save_fails_writes_nothing(generated, read_only, mbox):
@@ -557,12 +624,14 @@ def test_a_request_that_failed_early_leaves_no_test_behind(opened, monkeypatch):
     """A request on t1 that fails after its run started (its prompt cannot be built) must not
     make the next request — on t2 — inherit t1: t2's reply is t2's."""
     from procedo.studio.core.proposal import current_test
+
     w = opened
     view = w.text_only_tab
     monkeypatch.setattr(llm_tab_mixin, "LLMWorker", _Asked)
 
     def refuse(self, request, **kwargs):
         raise llm_tab_mixin.TaskPromptNotDeclaredError("no prompt declared")
+
     monkeypatch.setattr(llm_tab_mixin.PromptBuilder, "build", refuse)
     view._run_task_async(LLMTask.REVIEW_TEXT_PROCEDURE)  # on t1: ends early
     monkeypatch.undo()
@@ -577,6 +646,7 @@ def test_a_request_that_failed_early_leaves_no_test_behind(opened, monkeypatch):
 
 def test_a_reply_for_a_test_deleted_and_recreated_is_dropped(opened, monkeypatch):
     import shutil
+
     w = opened
     view = w.text_only_tab
     monkeypatch.setattr(llm_tab_mixin, "LLMWorker", _Asked)
@@ -596,11 +666,15 @@ def test_a_reply_for_a_test_deleted_and_recreated_is_dropped(opened, monkeypatch
 
 
 def test_a_proposal_that_failed_validation_shows_its_findings_before_any_accept(
-        opened, monkeypatch):
+    opened, monkeypatch
+):
     w = opened
     view = w.text_only_tab
-    monkeypatch.setattr(text_actions, "reconstructed_or_error",
-                        lambda content, current, **kw: (None, content, "Step 1: no verb"))
+    monkeypatch.setattr(
+        text_actions,
+        "reconstructed_or_error",
+        lambda content, current, **kw: (None, content, "Step 1: no verb"),
+    )
     view._handle_text_proposal(_llm(PROPOSED_TEXT))
     _settle()
     (card,) = _cards(w)
@@ -617,6 +691,7 @@ def test_a_proposal_that_failed_validation_shows_its_findings_before_any_accept(
         banners.append(dialog._banner)
         dialog.accept_btn.click()
         return 0
+
     monkeypatch.setattr(DiffViewer, "exec", fake_exec)
     card.diff_button.click()
     assert "Step 1: no verb" in banners[0]

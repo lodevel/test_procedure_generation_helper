@@ -16,6 +16,7 @@ the function runs, each half second, the frames the reader queued are read — a
 (``cancel_run``, ``prompt_response``) is handled as the main loop would; any other is dropped
 (none comes: the host's lock holds the channel).
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -24,7 +25,7 @@ import sys
 import threading
 from pathlib import Path
 
-_BEAT_S = 0.5   # a progress frame each half second while a call frame is served
+_BEAT_S = 0.5  # a progress frame each half second while a call frame is served
 
 
 class CallStopped(Exception):
@@ -59,11 +60,12 @@ def _heartbeat(d: dict, node_path: str):
 
 def _check(d: dict):
     """``check_cancelled`` of the call (see the module docstring)."""
+
     def check() -> None:
         bench = d["_bench"]()
         reader = bench._READER
         while reader is not None and (item := reader.poll()) is not None:
-            if item is bench._EOF:                  # re-queued: the main loop still tears down
+            if item is bench._EOF:  # re-queued: the main loop still tears down
                 raise CallStopped("the host closed the channel")
             try:
                 req = json.loads(item)
@@ -76,6 +78,7 @@ def _check(d: dict):
                 bench.handle(d, d["_SESSION"], req)
             elif cmd:
                 print(f"frame {cmd!r} dropped: a call is running", file=sys.stderr, flush=True)
+
     return check
 
 
@@ -91,15 +94,32 @@ def _call(d: dict, req: dict) -> dict:
     from rules_packager_base.function_calls import FunctionWorker
     from rules_packager_base.rules.v2_0_2.parser.manual_run import make_call
 
-    document, node_path, work_dir = req.get("procedure_json"), req.get("node_path", ""), req.get("work_dir")
+    document, node_path, work_dir = (
+        req.get("procedure_json"),
+        req.get("node_path", ""),
+        req.get("work_dir"),
+    )
     if not isinstance(document, dict):
-        return {"ok": False, "kind": "NoProcedure", "error": "the call frame carries no procedure document"}
+        return {
+            "ok": False,
+            "kind": "NoProcedure",
+            "error": "the call frame carries no procedure document",
+        }
     if not work_dir or not Path(work_dir).is_dir():
-        return {"ok": False, "kind": "NoWorkDir", "error": f"no run folder to call in: {work_dir!r}"}
+        return {
+            "ok": False,
+            "kind": "NoWorkDir",
+            "error": f"no run folder to call in: {work_dir!r}",
+        }
     try:
         with FunctionWorker(work_dir, once=True) as worker:
-            reading = make_call(document, d["_sib"]("_engine_ops_manual").run_inputs(req), node_path, worker,
-                                _check(d))
+            reading = make_call(
+                document,
+                d["_sib"]("_engine_ops_manual").run_inputs(req),
+                node_path,
+                worker,
+                _check(d),
+            )
     except CallStopped as exc:
         return {"ok": False, "kind": "Stopped", "error": str(exc)}
     if reading is None:

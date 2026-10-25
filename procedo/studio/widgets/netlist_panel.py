@@ -15,15 +15,26 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal, QThread, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QWidget, QLineEdit, QTabWidget,
-    QTreeWidget, QCheckBox, QSplitter, QApplication,
+    QVBoxLayout,
+    QHBoxLayout,
+    QWidget,
+    QLineEdit,
+    QTabWidget,
+    QTreeWidget,
+    QCheckBox,
+    QSplitter,
+    QApplication,
 )
 
 from procedo.core import board_view, odb_archive
 from procedo.ui import ui_kit
 from procedo.core.board_netlist import filter_components, filter_nets, read_hide_prefixes
 from procedo.ui.board_viewer import (
-    ROLE_COPY, BoardImageWell, component_item, net_item, selected_target,
+    ROLE_COPY,
+    BoardImageWell,
+    component_item,
+    net_item,
+    selected_target,
 )
 
 from ..core import odb_inspect
@@ -70,8 +81,7 @@ class _RenderWorker(QThread):
             z, w = odb_inspect.render_target(self._root, self._refdes, self._pad)
         except Exception:  # noqa: BLE001
             z, w = None, None
-        self.done.emit(str(z) if z else "", str(w) if w else "",
-                       self._refdes, self._pad or "")
+        self.done.emit(str(z) if z else "", str(w) if w else "", self._refdes, self._pad or "")
 
 
 class NetlistPanel(ui_kit.Card):
@@ -88,7 +98,7 @@ class NetlistPanel(ui_kit.Card):
         self._project_root = None
         self._load_worker = None
         self._rendering = False
-        self._render_pending = None         # (refdes, pad) to render after current
+        self._render_pending = None  # (refdes, pad) to render after current
         self._sel_timer = QTimer(self)
         self._sel_timer.setSingleShot(True)
         self._sel_timer.timeout.connect(self._render_selection)
@@ -139,15 +149,17 @@ class NetlistPanel(ui_kit.Card):
         self._show_hidden = QCheckBox("Show auto nets (Net*)")
         self._show_hidden.setToolTip(
             "Show auto-generated net names (e.g. NetD16_A) hidden by default. "
-            "Configure the hidden prefixes in the project settings.")
+            "Configure the hidden prefixes in the project settings."
+        )
         self._show_hidden.toggled.connect(self._refilter)
         row.addWidget(self._show_hidden)
         self._status = ui_kit.note()
         self._status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(self._status, 1)
         tl.addLayout(row)
-        tl.addWidget(ui_kit.note("Double-click a row to copy its name · select it to see it "
-                                 "on the board."))
+        tl.addWidget(
+            ui_kit.note("Double-click a row to copy its name · select it to see it on the board.")
+        )
         split.addWidget(top)
 
         bottom = QWidget()
@@ -181,13 +193,15 @@ class NetlistPanel(ui_kit.Card):
         self.set_hint(tgz.name if tgz is not None else "")
         self._viewer.board = project_root
         self._viewer.subtitle = tgz.name if tgz is not None else ""
-        self._hide_prefixes = read_hide_prefixes(project_root / "config" if project_root is not None else None)
+        self._hide_prefixes = read_hide_prefixes(
+            project_root / "config" if project_root is not None else None
+        )
         self.set_status("")
         self._board_read.set(True)
         worker = _LoadWorker(project_root)
         self._load_worker = worker
         _LIVE_WORKERS.add(worker)
-        worker.done.connect(self._on_loaded)            # auto-dropped if we die
+        worker.done.connect(self._on_loaded)  # auto-dropped if we die
         worker.finished.connect(lambda w=worker: _LIVE_WORKERS.discard(w))
         worker.finished.connect(worker.deleteLater)
         worker.start()
@@ -205,8 +219,10 @@ class NetlistPanel(ui_kit.Card):
         else:
             self.set_board([], [])
             self.set_status(
-                data.get("error") if isinstance(data, dict) and data.get("error")
-                else "No ODB++ archive for this project.")
+                data.get("error")
+                if isinstance(data, dict) and data.get("error")
+                else "No ODB++ archive for this project."
+            )
 
     def set_board(self, components: list, nets: list) -> None:
         self._components = list(components or [])
@@ -220,14 +236,21 @@ class NetlistPanel(ui_kit.Card):
 
     def _refilter(self, *_) -> None:
         cs = filter_components(self._components, self._search.text())
-        ns = filter_nets(self._nets, self._search.text(),
-                         self._hide_prefixes, self._show_hidden.isChecked())
-        for tree, make, rows in ((self._comp_tree, component_item, cs), (self._net_tree, net_item, ns)):
+        ns = filter_nets(
+            self._nets, self._search.text(), self._hide_prefixes, self._show_hidden.isChecked()
+        )
+        for tree, make, rows in (
+            (self._comp_tree, component_item, cs),
+            (self._net_tree, net_item, ns),
+        ):
             tree.clear()
             tree.addTopLevelItems([make(row) for row in rows])
         if self._components or self._nets:
-            parts = (f"{len(cs)} parts" if len(cs) == len(self._components)
-                     else f"{len(cs)} of {len(self._components)} parts")
+            parts = (
+                f"{len(cs)} parts"
+                if len(cs) == len(self._components)
+                else f"{len(cs)} of {len(self._components)} parts"
+            )
             self._status.setText(f"{parts} · {len(ns)} nets")
 
     def _on_double_click(self, item, _col=0) -> None:
@@ -236,12 +259,12 @@ class NetlistPanel(ui_kit.Card):
         text = item.data(0, ROLE_COPY)
         if text:
             QApplication.clipboard().setText(str(text))
-            self.set_status(f"\U0001F4CB  Copied '{text}' to clipboard")
+            self.set_status(f"\U0001f4cb  Copied '{text}' to clipboard")
 
     # -- selection -> render --------------------------------------------------
 
     def _on_sel_changed(self, *_) -> None:
-        self._sel_timer.start(250)                  # debounce
+        self._sel_timer.start(250)  # debounce
 
     def _render_selection(self) -> None:
         sel = selected_target(self._tabs.currentWidget())
@@ -255,12 +278,13 @@ class NetlistPanel(ui_kit.Card):
         z, w = odb_inspect.cached_image_paths(self._project_root, refdes, pin)
         if z or w:
             self._render_pending = None
-            self._viewer.show_image(QPixmap(str(z)) if z else None,
-                                    QPixmap(str(w)) if w else None, cap)
+            self._viewer.show_image(
+                QPixmap(str(z)) if z else None, QPixmap(str(w)) if w else None, cap
+            )
             return
         self._viewer.show_message(f"Generating {cap}…")
         if self._rendering:
-            self._render_pending = (refdes, pad)    # latest wins
+            self._render_pending = (refdes, pad)  # latest wins
             return
         self._rendering = True
         worker = _RenderWorker(self._project_root, refdes, pin)

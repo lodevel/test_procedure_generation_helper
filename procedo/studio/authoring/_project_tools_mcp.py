@@ -27,6 +27,7 @@ Wizard queries discover arbitrary property names and project requested columns.
 The aggregate chat snapshot selects common semantic property names locally;
 unrecognized fields are explicitly listed as omitted.
 """
+
 import importlib.util
 import json
 import os
@@ -84,8 +85,7 @@ TOOLS = [
             "connection; a path through a resistor is not. Single-pin components "
             "alone do not prove a test point."
         ),
-        "inputSchema": {"type": "object", "properties": {},
-                        "additionalProperties": False},
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
     {
         "name": "list_property_fields",
@@ -164,8 +164,7 @@ TOOLS = [
             "properties": {
                 "refdes": {
                     "type": "string",
-                    "description": "The exact reference designator of the "
-                    "component to fetch.",
+                    "description": "The exact reference designator of the component to fetch.",
                 },
                 "fields": {
                     "type": "array",
@@ -238,6 +237,7 @@ TOOLS = [
 
 # --- JSON-RPC framing helpers (mirror _pdf_tool_mcp) ---------------------------
 
+
 def _text_result(payload):
     """Wrap *payload* as an MCP text content result.
 
@@ -272,6 +272,7 @@ def _components_result(rows):
 
 
 # --- per-process board cache -------------------------------------------------
+
 
 class _Board:
     """Per-process cache of the parsed board (the tgz parse is slow).
@@ -327,7 +328,9 @@ class _Board:
             if self._netlist is None:
                 data = _board_images.run_cli(self.odb_tgz, ["--list-nets"])
                 if self._identity() != identity:
-                    raise _board_images.CliError("ODB++ archive changed while being read; request it again.")
+                    raise _board_images.CliError(
+                        "ODB++ archive changed while being read; request it again."
+                    )
                 self._netlist = data
             return self._netlist, identity
 
@@ -347,6 +350,7 @@ class _Board:
 # --- tool implementations ------------------------------------------------------
 # Each returns an MCP text-content result. CLI failures surface as a readable
 # message (never an exception that kills the request loop).
+
 
 def _err_result(exc):
     return _text_result(f"Could not read the project board: {exc}")
@@ -374,12 +378,10 @@ def _tool_list_components(board, args):
         return _text_result("list_components: 'fields' must be a list of strings.")
     if refdes_prefix is not None and not isinstance(refdes_prefix, str):
         return _text_result(
-            "list_components: 'refdes_prefix' must be a comma-separated string "
-            "like 'U,IC'."
+            "list_components: 'refdes_prefix' must be a comma-separated string like 'U,IC'."
         )
     try:
-        rows = board.components(
-            fields=fields, filter_kv=filter_kv, refdes_prefix=refdes_prefix)
+        rows = board.components(fields=fields, filter_kv=filter_kv, refdes_prefix=refdes_prefix)
         return _components_result(rows)
     except _board_images.CliError as exc:
         return _err_result(exc)
@@ -442,7 +444,8 @@ def _tool_board_context(board, _args):
             raise ValueError(
                 f"Board context is {size} UTF-8 bytes; the limit is {limit} bytes. "
                 "The complete board cannot fit in one response. Reduce the board "
-                "context at its source; retrying or paging will not provide it here.")
+                "context at its source; retrying or paging will not provide it here."
+            )
         return _text_result(text)
     except (_board_images.CliError, ValueError) as exc:
         result = _err_result(exc)
@@ -458,8 +461,14 @@ def _tool_get_bom(board, _args):
     """
     base = os.path.dirname(os.path.abspath(board.odb_tgz))
     candidates = [
-        "bom.csv", "BOM.csv", "bom.txt", "BOM.txt",
-        "bom.json", "BOM.json", "bom.xlsx", "BOM.xlsx",
+        "bom.csv",
+        "BOM.csv",
+        "bom.txt",
+        "BOM.txt",
+        "bom.json",
+        "BOM.json",
+        "bom.xlsx",
+        "BOM.xlsx",
     ]
     for name in candidates:
         path = os.path.join(base, name)
@@ -491,12 +500,14 @@ def _tool_list_test_points(board, _args):
         if len(pins) != 1:
             continue
         pin = pins[0]
-        points.append({
-            "refdes": comp.get("refdes"),
-            "side": comp.get("side"),
-            "pin": pin.get("name"),
-            "net": pin.get("net"),
-        })
+        points.append(
+            {
+                "refdes": comp.get("refdes"),
+                "side": comp.get("side"),
+                "pin": pin.get("name"),
+                "net": pin.get("net"),
+            }
+        )
     return _text_result(points)
 
 
@@ -540,6 +551,7 @@ def main(argv=None):
     board = _Board(odb_tgz, project_root)  # lazy: nothing parsed until a tool is called
 
     import _mcp_serve  # sibling module (authoring/ is sys.path[0] for the
+
     # launched script); avoids triggering the heavy authoring/__init__ chain.
     dispatch = {name: (lambda a, h=h: h(board, a)) for name, h in _DISPATCH.items()}
     _mcp_serve.serve(SERVER_INFO, TOOLS, dispatch)

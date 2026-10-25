@@ -47,8 +47,7 @@ class DocumentController:
         elif mw.session_state.artifacts_in_sync:
             set_pill(mw.sync_pill, "success", "\u21c4 JSON \u2194 Code in sync")
             mw.sync_pill.setToolTip(
-                "procedure.json and test.py are in sync.\n"
-                "Click to view status."
+                "procedure.json and test.py are in sync.\nClick to view status."
             )
         else:
             set_pill(mw.sync_pill, "warning", "\u21c4 Sync unconfirmed \u00b7 acknowledge")
@@ -68,7 +67,7 @@ class DocumentController:
             QMessageBox.information(
                 mw,
                 "Artifacts In Sync",
-                "procedure.json and test.py are currently marked as in sync."
+                "procedure.json and test.py are currently marked as in sync.",
             )
             return
 
@@ -79,7 +78,7 @@ class DocumentController:
             "One was modified without the other during this session.\n\n"
             "Are you sure both artifacts are now coherent?",
             QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+            QMessageBox.No,
         )
 
         if result == QMessageBox.Yes:
@@ -147,66 +146,54 @@ class DocumentController:
         # Only sync the PREVIOUSLY active tab (the one being deactivated).
         # We must not sync all non-current tabs, as they may hold stale
         # content for shared artifacts (e.g. procedure.json).
-        if hasattr(mw, '_previous_tab_index'):
+        if hasattr(mw, "_previous_tab_index"):
             prev_tab = mw.view_stack.widget(mw._previous_tab_index)
             if prev_tab is not None and prev_tab != mw.view_stack.widget(index):
-                if hasattr(prev_tab, 'sync_editors_to_artifacts'):
+                if hasattr(prev_tab, "sync_editors_to_artifacts"):
                     prev_tab.sync_editors_to_artifacts()
-                if hasattr(prev_tab, 'on_deactivated'):
+                if hasattr(prev_tab, "on_deactivated"):
                     prev_tab.on_deactivated()
 
         mw._previous_tab_index = index
 
         tab = mw.view_stack.widget(index)
-        if hasattr(tab, 'on_activated') and mw.artifact_manager is not None:
+        if hasattr(tab, "on_activated") and mw.artifact_manager is not None:
             tab.on_activated()
 
         # Switch chat context to current tab's TabContext
-        if hasattr(mw, 'dock') and hasattr(tab, 'tab_context'):
+        if hasattr(mw, "dock") and hasattr(tab, "tab_context"):
             mw.dock.chat_panel.switch_context(tab.tab_context)
             mw.dock.raw_viewer.switch_context(tab.tab_context)
             # Findings are per-test (session_state), no context switch needed
 
             # If this tab has a running LLM worker, restore in-flight UI
-            worker = getattr(tab, '_worker', None)
+            worker = getattr(tab, "_worker", None)
             if worker and worker.isRunning():
                 mw.dock.chat_panel.add_thinking_message()
                 mw.dock.chat_panel.set_llm_active(True)
                 # Restore all accumulated streaming text so far
                 if worker.accumulated_thinking:
-                    mw.dock.chat_panel.append_thinking_text(
-                        worker.accumulated_thinking
-                    )
+                    mw.dock.chat_panel.append_thinking_text(worker.accumulated_thinking)
                 if worker.accumulated_response:
-                    mw.dock.chat_panel.append_response_text(
-                        worker.accumulated_response
-                    )
+                    mw.dock.chat_panel.append_response_text(worker.accumulated_response)
                 # Disconnect any stale connections before reconnecting
                 # to avoid duplicate text from multiple connections
                 try:
-                    worker.thinking_chunk.disconnect(
-                        mw.dock.chat_panel.append_thinking_text
-                    )
+                    worker.thinking_chunk.disconnect(mw.dock.chat_panel.append_thinking_text)
                 except (RuntimeError, TypeError):
                     # best-effort: disconnect raises when the signal was
                     # never connected (RuntimeError) or the slot owner is
                     # gone (TypeError)
                     pass
                 try:
-                    worker.text_chunk.disconnect(
-                        mw.dock.chat_panel.append_response_text
-                    )
+                    worker.text_chunk.disconnect(mw.dock.chat_panel.append_response_text)
                 except (RuntimeError, TypeError):
                     # best-effort: same as above -- stale connection may
                     # not exist
                     pass
                 # Reconnect streaming signals to the restored thinking widget
-                worker.thinking_chunk.connect(
-                    mw.dock.chat_panel.append_thinking_text
-                )
-                worker.text_chunk.connect(
-                    mw.dock.chat_panel.append_response_text
-                )
+                worker.thinking_chunk.connect(mw.dock.chat_panel.append_thinking_text)
+                worker.text_chunk.connect(mw.dock.chat_panel.append_response_text)
 
         # Update save action label to be context-aware
         mw.save_action.setText(f"&Save {VIEWS[index][0]}")
@@ -236,7 +223,7 @@ class DocumentController:
         self.discard_proposals()
 
         # Save current session state (includes validation_issues) before switching
-        if hasattr(mw, 'session_state') and mw.session_state and mw.session_state._file_path:
+        if hasattr(mw, "session_state") and mw.session_state and mw.session_state._file_path:
             try:
                 if reason := unreachable(mw.session_state._file_path):
                     raise OSError(reason)
@@ -250,9 +237,7 @@ class DocumentController:
         am.media_cue = mw.loading
         mw.artifact_manager.set_test_dir(path)
         mw.artifact_manager.load_all()  # Load existing files from disk
-        mw.artifact_manager.set_exclusion_patterns(
-            mw.project_manager.get_equipment_patterns()
-        )
+        mw.artifact_manager.set_exclusion_patterns(mw.project_manager.get_equipment_patterns())
 
         # Initialize session state (empty, not with path)
         mw.session_state = SessionState()
@@ -265,19 +250,21 @@ class DocumentController:
         # ChatHistoryManager removed: chat history is now per-tab only
 
         # Update tab contexts with real managers (fixes None reference issue)
-        if hasattr(mw.text_only_tab, 'tab_context'):
+        if hasattr(mw.text_only_tab, "tab_context"):
             mw.text_only_tab.tab_context.update_managers(mw.artifact_manager)
-        if hasattr(mw.text_json_tab, 'tab_context'):
+        if hasattr(mw.text_json_tab, "tab_context"):
             mw.text_json_tab.tab_context.update_managers(mw.artifact_manager)
-        if hasattr(mw.json_code_tab, 'tab_context'):
+        if hasattr(mw.json_code_tab, "tab_context"):
             mw.json_code_tab.tab_context.update_managers(mw.artifact_manager)
 
         # Point findings panel at the new session state (per-test findings)
         mw.dock.findings_panel.set_session(mw.session_state)
 
-        log.debug(f"Artifacts exist - JSON: {mw.artifact_manager.procedure_json.exists_on_disk}, "
-                  f"Code: {mw.artifact_manager.test_code.exists_on_disk}, "
-                  f"Text: {mw.artifact_manager.procedure_text.exists_on_disk}")
+        log.debug(
+            f"Artifacts exist - JSON: {mw.artifact_manager.procedure_json.exists_on_disk}, "
+            f"Code: {mw.artifact_manager.test_code.exists_on_disk}, "
+            f"Text: {mw.artifact_manager.procedure_text.exists_on_disk}"
+        )
 
         # Highlight the opened test in workspace
         mw.workspace_widget.set_opened_test(path)
@@ -308,7 +295,7 @@ class DocumentController:
         # Switch to appropriate tab only on first test load.
         # When switching between tests, preserve the user's current tab.
         previous_index = mw.view_stack.currentIndex()
-        if not hasattr(mw, '_has_opened_test'):
+        if not hasattr(mw, "_has_opened_test"):
             mw._has_opened_test = True
             # Default to the Text tab (text-only authoring view).
             mw.view_stack.setCurrentWidget(mw.text_only_tab)
@@ -385,13 +372,17 @@ class DocumentController:
         baseline follows it, and the procedure.json editors show what is on disk. False for a
         test closed since: its session file is the baseline (the artifact manager's)."""
         from ..widgets.editor_card import refresh_editor_after_save
+
         mw = self._mw
         if am is not mw.artifact_manager:
             return False
         content = am.get_content(ArtifactType.PROCEDURE_JSON)
         state, name = mw.session_state, ArtifactManager.PROCEDURE_JSON_NAME
-        if (state is not None and state.artifacts_in_sync
-                and state.artifact_hashes.get(name) == am.sync_hash(name, saved)):
+        if (
+            state is not None
+            and state.artifacts_in_sync
+            and state.artifact_hashes.get(name) == am.sync_hash(name, saved)
+        ):
             state.artifact_hashes = {**state.artifact_hashes, name: am.sync_hash(name, content)}
             state.save()
         for tab in mw._get_llm_tabs():
@@ -421,7 +412,9 @@ class DocumentController:
             if mw.session_state.artifacts_in_sync:
                 mw.session_state.artifacts_in_sync = False
                 mw.session_state.save()
-                log.info("Artifacts marked out of sync: content hashes differ from acknowledged baseline")
+                log.info(
+                    "Artifacts marked out of sync: content hashes differ from acknowledged baseline"
+                )
 
     def check_for_external_changes(self):
         """Detect files edited outside the workflow editor since the last acknowledgment.
@@ -472,7 +465,7 @@ class DocumentController:
         # Sync only the current tab — inactive tabs may hold stale content
         # for shared artifacts like procedure.json
         current_tab = mw.view_stack.currentWidget()
-        if hasattr(current_tab, 'sync_editors_to_artifacts'):
+        if hasattr(current_tab, "sync_editors_to_artifacts"):
             current_tab.sync_editors_to_artifacts()
 
         try:
@@ -513,7 +506,7 @@ class DocumentController:
         # Sync only the CURRENT tab to catch un-saved editor changes.
         # Inactive tabs may have stale content for shared artifacts.
         current_tab = mw.view_stack.currentWidget()
-        if hasattr(current_tab, 'sync_editors_to_artifacts'):
+        if hasattr(current_tab, "sync_editors_to_artifacts"):
             current_tab.sync_editors_to_artifacts()
 
         dirty = []
@@ -530,10 +523,11 @@ class DocumentController:
         result = QMessageBox.question(
             mw,
             "Unsaved Changes",
-            "You have unsaved changes in:\n  \u2022 " + "\n  \u2022 ".join(dirty) +
-            "\n\nSave before continuing?",
+            "You have unsaved changes in:\n  \u2022 "
+            + "\n  \u2022 ".join(dirty)
+            + "\n\nSave before continuing?",
             QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
-            QMessageBox.Save
+            QMessageBox.Save,
         )
 
         if result == QMessageBox.Save:
@@ -547,7 +541,7 @@ class DocumentController:
         """Handle window close."""
         mw = self._mw
         # Save session state (validation_issues are already in session_state)
-        if hasattr(mw, 'session_state') and mw.session_state:
+        if hasattr(mw, "session_state") and mw.session_state:
             try:
                 mw.session_state.save()
             except Exception as e:
@@ -568,7 +562,7 @@ class DocumentController:
 
         # Stop all tab backends
         for tab in mw._get_llm_tabs():
-            if hasattr(tab, 'tab_context') and tab.tab_context._backend:
+            if hasattr(tab, "tab_context") and tab.tab_context._backend:
                 log.debug(f"Stopping backend for {tab.__class__.__name__}")
                 tab.tab_context._backend.stop()
 

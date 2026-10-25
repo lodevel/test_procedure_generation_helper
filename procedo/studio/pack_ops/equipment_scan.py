@@ -1,6 +1,7 @@
 """The equipment types a procedure text declares, found by a heading scan that
 mirrors the wheel's lenient heading forms (the section universe comes from
 the bundle's ownership map)."""
+
 from __future__ import annotations
 
 import re
@@ -11,7 +12,7 @@ from procedo.core import section_ownership
 
 from . import pack_parsers
 
-_EQUIP_LINE_RE = None    # lazily compiled
+_EQUIP_LINE_RE = None  # lazily compiled
 _HEADING_LINE_RE = None  # lazily compiled
 
 
@@ -33,7 +34,7 @@ def _heading_name(line: str, known_sections: frozenset[str]) -> Optional[str]:
     if m is None:
         return None
     name = m.group(1)
-    if line[2:3] in (" ", "\t"):        # spaced form: heading for any name
+    if line[2:3] in (" ", "\t"):  # spaced form: heading for any name
         return name
     return name if name.lower() in known_sections else None
 
@@ -52,7 +53,8 @@ def section_scan_names(
     names: tuple[str, ...] = ()
     try:
         names = tuple(
-            str(n).strip().lower() for n in pack_parsers.get_section_ownership(project_root))
+            str(n).strip().lower() for n in pack_parsers.get_section_ownership(project_root)
+        )
     except Exception:  # noqa: BLE001 — no wheel/bundle reachable: fallback
         pass
     known = frozenset(n for n in names if n) or section_ownership.CANONICAL_SECTIONS

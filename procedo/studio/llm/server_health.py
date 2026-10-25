@@ -7,6 +7,7 @@ work and feeds results through :class:`ServerStatus` / :func:`classify_install`.
 The whole point is that when the server won't start the user sees WHY (WSL
 missing, opencode missing, port busy, timeout) instead of a silent dud.
 """
+
 from __future__ import annotations
 
 import socket
@@ -37,12 +38,8 @@ _MESSAGES = {
     ServerError.PORT_IN_USE: (
         "The OpenCode server could not bind its port — it is already in use."
     ),
-    ServerError.START_TIMEOUT: (
-        "The OpenCode server did not become ready in time."
-    ),
-    ServerError.START_FAILED: (
-        "The OpenCode server process failed to start."
-    ),
+    ServerError.START_TIMEOUT: ("The OpenCode server did not become ready in time."),
+    ServerError.START_FAILED: ("The OpenCode server process failed to start."),
 }
 
 

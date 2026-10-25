@@ -5,6 +5,7 @@ project bundle survives Studio's renames and refactors.
 A Qt adapter (it makes the skill-chat widget). ``skill_menu`` imports this module, so this one
 imports ``skill_menu`` only inside a function.
 """
+
 from __future__ import annotations
 
 import logging
@@ -40,7 +41,8 @@ class StudioAuthoringApi:
         if now != self._root:
             raise ProjectChanged(
                 f"The open project changed since this wizard started (it was {self._root}, "
-                f"now {now}). Reopen {self._root}, or close the wizard and start it again.")
+                f"now {now}). Reopen {self._root}, or close the wizard and start it again."
+            )
         return getattr(self._mw, "project_manager", None)
 
     @property
@@ -70,7 +72,8 @@ class StudioAuthoringApi:
     def sync_meta_text(self, text: str) -> str:
         root = self.project_root
         synced, _warnings = engine_async.wait(
-            root, lambda: pack_parsers.sync_meta_text(text, project_root=root))
+            root, lambda: pack_parsers.sync_meta_text(text, project_root=root)
+        )
         return synced
 
     def parse_procedure_text(self, text: str) -> dict:
@@ -84,8 +87,15 @@ class StudioAuthoringApi:
     def wizard_skills(self) -> dict:
         return {w.skill_id: w for w in load_wizards(self.project_root)}
 
-    def new_skill_chat(self, skill, *, tab_id: str, with_context: bool = False,
-                       parent=None, dispatch_gate: Optional[Callable[..., None]] = None):
+    def new_skill_chat(
+        self,
+        skill,
+        *,
+        tab_id: str,
+        with_context: bool = False,
+        parent=None,
+        dispatch_gate: Optional[Callable[..., None]] = None,
+    ):
         sources, documents_dir = self._context_sources() if with_context else (None, None)
         return SkillChatWidget(
             [skill] if skill else [],

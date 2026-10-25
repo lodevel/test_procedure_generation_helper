@@ -15,7 +15,14 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPalette, QTextCharFormat, QTextCursor, QTextFormat
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QTextEdit, QVBoxLayout,
+    QApplication,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPlainTextEdit,
+    QPushButton,
+    QTextEdit,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -74,8 +81,9 @@ def tint_lines(editor: QPlainTextEdit, marks: dict[int, QTextCharFormat]) -> Non
         whole.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
         cursors = [whole]
         if block.next().isValid():
-            whole.movePosition(QTextCursor.MoveOperation.NextCharacter,
-                               QTextCursor.MoveMode.KeepAnchor)
+            whole.movePosition(
+                QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor
+            )
         else:
             end = QTextCursor(block)
             end.movePosition(QTextCursor.MoveOperation.EndOfBlock)
@@ -109,8 +117,9 @@ class CodeEditor(QPlainTextEdit):
         font = ui_kit.mono_font(self.font())
         font.setPixelSize(_FONT_PX)
         self.setFont(font)
-        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth if wrap
-                             else QPlainTextEdit.LineWrapMode.NoWrap)
+        self.setLineWrapMode(
+            QPlainTextEdit.LineWrapMode.WidgetWidth if wrap else QPlainTextEdit.LineWrapMode.NoWrap
+        )
         self._marks: dict[int, str] = {}
         self._highlighted = range(0)
         self._gutter = _Gutter(self)
@@ -176,8 +185,9 @@ class CodeEditor(QPlainTextEdit):
         """A pale accent, opaque (the accent at 22/255 over the editor's base)."""
         base, accent = self.palette().color(QPalette.ColorRole.Base), self._accent()
         share = 22 / 255
-        return QColor.fromRgbF(*(b + (a - b) * share for a, b in
-                                 zip(accent.getRgbF()[:3], base.getRgbF()[:3])))
+        return QColor.fromRgbF(
+            *(b + (a - b) * share for a, b in zip(accent.getRgbF()[:3], base.getRgbF()[:3]))
+        )
 
     def paint_gutter(self, gutter: QWidget, area: QRect) -> None:
         painter = QPainter(gutter)
@@ -200,8 +210,14 @@ class CodeEditor(QPlainTextEdit):
                 mark = self._marks.get(line)
                 painter.setFont(bold if mark else self.font())
                 painter.setPen(accent if mark else number_color)
-                painter.drawText(0, top, width, self.fontMetrics().height(),
-                                 Qt.AlignmentFlag.AlignRight, mark or str(line))
+                painter.drawText(
+                    0,
+                    top,
+                    width,
+                    self.fontMetrics().height(),
+                    Qt.AlignmentFlag.AlignRight,
+                    mark or str(line),
+                )
             block = block.next()
             top = bottom
         painter.end()
@@ -217,8 +233,15 @@ class EditorCard(QFrame):
     #: Save wrote the artifact to disk.
     saved = Signal()
 
-    def __init__(self, tab: BaseTab, kind: ArtifactType, file_name: str, *, wrap: bool = True,
-                 placeholder: str = "") -> None:
+    def __init__(
+        self,
+        tab: BaseTab,
+        kind: ArtifactType,
+        file_name: str,
+        *,
+        wrap: bool = True,
+        placeholder: str = "",
+    ) -> None:
         super().__init__()
         self.setObjectName("card")
         self._tab = tab

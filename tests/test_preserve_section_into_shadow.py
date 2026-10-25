@@ -35,14 +35,20 @@ def test_live_workflows_preserved_into_shadow(tmp_path):
     real = tmp_path / "real" / "config"
     shadow = tmp_path / "shadow" / "config"
 
-    _write(real / "config.json", {
-        "manifest": {"name": "real"},
-        "workflows": {"text_json": {"tasks": [{"id": "live"}]}},
-    })
-    _write(shadow / "config.json", {
-        "manifest": {"name": "shadow edit"},
-        "workflows": {"text_json": {"tasks": [{"id": "STALE"}]}},
-    })
+    _write(
+        real / "config.json",
+        {
+            "manifest": {"name": "real"},
+            "workflows": {"text_json": {"tasks": [{"id": "live"}]}},
+        },
+    )
+    _write(
+        shadow / "config.json",
+        {
+            "manifest": {"name": "shadow edit"},
+            "workflows": {"text_json": {"tasks": [{"id": "STALE"}]}},
+        },
+    )
 
     preserve_section_into_shadow(real, shadow, "workflows")
 
@@ -61,10 +67,13 @@ def test_live_missing_workflows_drops_section_from_shadow(tmp_path):
     shadow = tmp_path / "shadow" / "config"
 
     _write(real / "config.json", {"manifest": {"name": "no workflows live"}})
-    _write(shadow / "config.json", {
-        "manifest": {"name": "shadow"},
-        "workflows": {"text_json": {"tasks": [{"id": "stale"}]}},
-    })
+    _write(
+        shadow / "config.json",
+        {
+            "manifest": {"name": "shadow"},
+            "workflows": {"text_json": {"tasks": [{"id": "stale"}]}},
+        },
+    )
 
     preserve_section_into_shadow(real, shadow, "workflows")
 

@@ -24,7 +24,9 @@ def app():
     app.setStyleSheet(stylesheet)
 
 
-@pytest.mark.parametrize("theme_id, dark", [("original", False), ("dark", True), ("pride_dark", True)])
+@pytest.mark.parametrize(
+    "theme_id, dark", [("original", False), ("dark", True), ("pride_dark", True)]
+)
 def test_studio_colours_follow_benchs_theme(app, theme_id, dark):
     bench_theme.apply_app_theme(theme_id, app)
 
@@ -41,19 +43,25 @@ def _colour(value) -> str:
 
 def _colour_helpers(module) -> dict:
     """The module's own public helpers that take no argument (its colours, among others)."""
-    return {name: f for name, f in vars(module).items()
-            if inspect.isfunction(f) and f.__module__ == module.__name__
-            and not name.startswith("_")
-            and all(p.default is not p.empty for p in inspect.signature(f).parameters.values())}
+    return {
+        name: f
+        for name, f in vars(module).items()
+        if inspect.isfunction(f)
+        and f.__module__ == module.__name__
+        and not name.startswith("_")
+        and all(p.default is not p.empty for p in inspect.signature(f).parameters.values())
+    }
 
 
 def _bench_colours() -> dict:
     """Bench's colours by name: its theme's helpers, its stylesheet's tokens."""
     colours = {f"theme.{name}": f() for name, f in _colour_helpers(bench_theme).items()}
-    colours.update({f"token {key}": value
-                    for key, value in fluent_qss.tokens(bench_theme.is_dark()).items()})
-    return {name: _colour(value) for name, value in colours.items()
-            if isinstance(value, (str, QColor))}
+    colours.update(
+        {f"token {key}": value for key, value in fluent_qss.tokens(bench_theme.is_dark()).items()}
+    )
+    return {
+        name: _colour(value) for name, value in colours.items() if isinstance(value, (str, QColor))
+    }
 
 
 def test_no_studio_colour_repeats_one_of_benchs_in_both_themes(app):
@@ -63,9 +71,14 @@ def test_no_studio_colour_repeats_one_of_benchs_in_both_themes(app):
     for theme_id in ("original", "dark"):
         bench_theme.apply_app_theme(theme_id, app)
         bench = _bench_colours()
-        seen[theme_id] = {name: {b for b, v in bench.items() if v == _colour(f())}
-                          for name, f in _colour_helpers(theme).items()}
+        seen[theme_id] = {
+            name: {b for b, v in bench.items() if v == _colour(f())}
+            for name, f in _colour_helpers(theme).items()
+        }
     assert _colour_helpers(theme)  # not vacuous
-    copies = {name: both for name in seen["original"]
-              if (both := seen["original"][name] & seen["dark"][name])}
+    copies = {
+        name: both
+        for name in seen["original"]
+        if (both := seen["original"][name] & seen["dark"][name])
+    }
     assert copies == {}

@@ -7,6 +7,7 @@ gone with this process. Real daemons run on this interpreter where the pin is
 about the process; a fake process stands in where the pin needs a hang or a death
 on a chosen frame.
 """
+
 from __future__ import annotations
 
 import io
@@ -32,7 +33,12 @@ from procedo.engine_client import _engine_ops as engine_ops  # noqa: E402
 from procedo.engine_client import engine, engine_session  # noqa: E402
 from procedo.studio.pack_ops import pack_parsers  # noqa: E402
 
-_DAEMON = Path(__file__).resolve().parent.parent / "procedo" / "engine_client" / "_execute_op_subprocess.py"
+_DAEMON = (
+    Path(__file__).resolve().parent.parent
+    / "procedo"
+    / "engine_client"
+    / "_execute_op_subprocess.py"
+)
 _REAL_POPEN = subprocess.Popen
 
 
@@ -45,7 +51,7 @@ def project(tmp_path, monkeypatch):
     venv = project_venv.ProjectVenv(Path(sys.executable), root / "bundle")
     monkeypatch.setattr(engine_session, "_resolve_project_python", lambda _root: venv)
     monkeypatch.setattr(engine, "_slots", {})
-    monkeypatch.setattr(engine, "_closed", False)   # an earlier test's exit hook closed it
+    monkeypatch.setattr(engine, "_closed", False)  # an earlier test's exit hook closed it
     yield root
     for slot in engine._slots.values():
         if slot.session is not None:
@@ -139,7 +145,9 @@ def test_stop_ends_the_instances_running_out_of_a_venv_and_only_those(project, s
     proc = _session(project)._proc
     engine.stop(venv_folder=tmp_path / "another_venv")
     assert proc.poll() is None
-    engine.stop(venv_folder=Path(sys.executable).parent.parent)   # the venv this test's interpreter is in
+    engine.stop(
+        venv_folder=Path(sys.executable).parent.parent
+    )  # the venv this test's interpreter is in
     assert proc.poll() is not None
     assert _session(project) is None
     assert _available(project)["ok"] and len(spawns) == 2
@@ -181,10 +189,16 @@ def test_a_dead_instance_is_not_restarted_to_be_replaced(project, spawns):
 
 def test_a_tools_instance_claims_its_venv_for_its_pid_until_it_ends(project, spawns, monkeypatch):
     seen: list = []
-    monkeypatch.setattr(project_venv, "claim_engine",
-                        lambda root, pid, role: seen.append(("claim", pid, role)) or project / "venv")
-    monkeypatch.setattr(project_venv, "release_engine",
-                        lambda folder, pid, role: seen.append(("release", pid, role)))
+    monkeypatch.setattr(
+        project_venv,
+        "claim_engine",
+        lambda root, pid, role: seen.append(("claim", pid, role)) or project / "venv",
+    )
+    monkeypatch.setattr(
+        project_venv,
+        "release_engine",
+        lambda folder, pid, role: seen.append(("release", pid, role)),
+    )
     assert _available(project)["ok"] and _available(project)["ok"]
     pid = _session(project)._proc.pid
     assert seen == [("claim", pid, "tools")]
@@ -195,10 +209,14 @@ def test_a_tools_instance_claims_its_venv_for_its_pid_until_it_ends(project, spa
 @pytest.fixture
 def claims(monkeypatch, project):
     seen: list = []
-    monkeypatch.setattr(project_venv, "claim_engine",
-                        lambda root, pid, role: seen.append(("claim", pid)) or project / "venv")
-    monkeypatch.setattr(project_venv, "release_engine",
-                        lambda folder, pid, role: seen.append(("release", pid)))
+    monkeypatch.setattr(
+        project_venv,
+        "claim_engine",
+        lambda root, pid, role: seen.append(("claim", pid)) or project / "venv",
+    )
+    monkeypatch.setattr(
+        project_venv, "release_engine", lambda folder, pid, role: seen.append(("release", pid))
+    )
     return seen
 
 
@@ -216,15 +234,16 @@ def test_a_restarted_process_releases_the_old_claim_before_it_claims(project, sp
     first = _session(project)._proc
     first.kill()
     first.wait(timeout=10)
-    assert _available(project)["ok"]                  # the same session starts it again
+    assert _available(project)["ok"]  # the same session starts it again
     second = _session(project)._proc
     assert claims == [("claim", first.pid), ("release", first.pid), ("claim", second.pid)]
 
 
 def test_close_kills_a_process_that_ignores_stdin_eof(project):
     sess = engine_session.RemoteSession(project, role="tools")
-    sess._proc = _REAL_POPEN([sys.executable, "-c", "import time; time.sleep(60)"],
-                             stdin=subprocess.PIPE)
+    sess._proc = _REAL_POPEN(
+        [sys.executable, "-c", "import time; time.sleep(60)"], stdin=subprocess.PIPE
+    )
     started = time.monotonic()
     sess.close(grace=0.5)
     assert sess._proc.poll() is not None and time.monotonic() - started < 10
@@ -232,8 +251,16 @@ def test_close_kills_a_process_that_ignores_stdin_eof(project):
 
 # --- the roles ----------------------------------------------------------------
 
-_INSTRUMENT = ("exec_ops", "safe_off", "raw", "acquire_run", "release_run", "run_test",
-               "cancel_run", "prompt_response")
+_INSTRUMENT = (
+    "exec_ops",
+    "safe_off",
+    "raw",
+    "acquire_run",
+    "release_run",
+    "run_test",
+    "cancel_run",
+    "prompt_response",
+)
 
 
 @pytest.mark.parametrize("cmd", _INSTRUMENT)
@@ -242,8 +269,9 @@ def test_tools_refuses_every_instrument_and_bench_frame(cmd):
     assert refused["kind"] == "Protocol" and refused["ok"] is False
 
 
-@pytest.mark.parametrize("op", ["export_rows", "refresh_media", "parse_text", "validate",
-                                "display_snapshot", "extract"])
+@pytest.mark.parametrize(
+    "op", ["export_rows", "refresh_media", "parse_text", "validate", "display_snapshot", "extract"]
+)
 def test_run_refuses_every_op_but_its_own(op):
     assert engine_ops.refusal("run", {"cmd": "op", "op": op})["kind"] == "Protocol"
 
@@ -251,35 +279,52 @@ def test_run_refuses_every_op_but_its_own(op):
 def test_each_role_takes_its_own_frames():
     for frame in ({"cmd": "op", "op": "export_rows"}, {"cmd": "ping"}, {"cmd": "shutdown"}):
         assert engine_ops.refusal("tools", frame) is None
-    for frame in ({"cmd": "op", "op": "build_manual_run"}, {"cmd": "op", "op": "build_manual_result"},
-                  {"cmd": "ping"}, {"cmd": "shutdown"}, *({"cmd": c} for c in _INSTRUMENT)):
+    for frame in (
+        {"cmd": "op", "op": "build_manual_run"},
+        {"cmd": "op", "op": "build_manual_result"},
+        {"cmd": "ping"},
+        {"cmd": "shutdown"},
+        *({"cmd": c} for c in _INSTRUMENT),
+    ):
         assert engine_ops.refusal("run", frame) is None
 
 
 def _talk(role: str, frames: list[dict]) -> list[dict]:
-    out, _err = _REAL_POPEN([sys.executable, str(_DAEMON), "--role", role], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, text=True).communicate(
-        "".join(json.dumps(f) + "\n" for f in frames), timeout=60)
+    out, _err = _REAL_POPEN(
+        [sys.executable, str(_DAEMON), "--role", role],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ).communicate("".join(json.dumps(f) + "\n" for f in frames), timeout=60)
     return [json.loads(line) for line in out.splitlines()]
 
 
 def test_the_tools_daemon_refuses_an_instrument_frame_before_it_runs():
-    answers = _talk("tools", [{"cmd": "exec_ops", "ops": [], "bench_map": {}},
-                                 {"cmd": "op", "op": "is_available"}])
+    answers = _talk(
+        "tools",
+        [{"cmd": "exec_ops", "ops": [], "bench_map": {}}, {"cmd": "op", "op": "is_available"}],
+    )
     assert answers[0]["kind"] == "Protocol" and "exec_ops" in answers[0]["error"]
     assert answers[1]["ok"] is True
 
 
 def test_the_run_daemon_refuses_a_tools_op():
-    answers = _talk("run", [{"cmd": "op", "op": "refresh_media", "procedure_json": {}},
-                               {"cmd": "ping"}])
+    answers = _talk(
+        "run", [{"cmd": "op", "op": "refresh_media", "procedure_json": {}}, {"cmd": "ping"}]
+    )
     assert answers[0]["kind"] == "Protocol" and "refresh_media" in answers[0]["error"]
     assert answers[1] == {"ok": True, "pong": True}
 
 
 def test_the_daemon_will_not_start_without_a_role():
-    proc = _REAL_POPEN([sys.executable, str(_DAEMON)], stdin=subprocess.PIPE,
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    proc = _REAL_POPEN(
+        [sys.executable, str(_DAEMON)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
     _out, err = proc.communicate("", timeout=60)
     assert proc.returncode == 2 and "--role" in err
 
@@ -299,7 +344,7 @@ class _Fake:
         self.returncode = None
         self.pid = 4242
         self.terminated = False
-        self.hung = False   # a hung process ignores stdin EOF: only a kill ends it
+        self.hung = False  # a hung process ignores stdin EOF: only a kill ends it
         self._out: queue.Queue = queue.Queue()
         self._pending = 0
         self.stdin, self.stdout, self.stderr = self, self, io.StringIO("")
@@ -336,13 +381,13 @@ class _Fake:
         return self.returncode
 
     def wait(self, timeout=None):
-        if self.returncode is None and self.hung:   # it waits out the grace, as a real one would
+        if self.returncode is None and self.hung:  # it waits out the grace, as a real one would
             time.sleep(timeout or 0)
             raise subprocess.TimeoutExpired("fake engine", timeout)
         self.returncode = self.returncode if self.returncode is not None else 0
         return self.returncode
 
-    def close(self) -> None:   # stdin closed: a hung process does not notice
+    def close(self) -> None:  # stdin closed: a hung process does not notice
         pass
 
     def terminate(self) -> None:
@@ -378,7 +423,7 @@ def test_a_warm_process_past_its_deadline_is_killed_and_not_retried(project, fak
     assert (result["ok"], result["kind"]) == (False, "ParserUnavailable")
     assert "unresponsive" in result["error"]
     assert len(started) == 1 and started[0].terminated
-    assert _available(project, 0.5)["ok"]          # the next op starts afresh
+    assert _available(project, 0.5)["ok"]  # the next op starts afresh
     assert len(started) == 2
 
 
@@ -409,11 +454,14 @@ def test_a_fresh_process_lost_on_its_first_op_is_not_retried(project, fakes, ste
     assert len(started) == 1 and started[0].returncode is not None
 
 
-@pytest.mark.parametrize("answer", [
-    {"ok": False, "kind": "ParseFailure", "error": "bad line", "code": "X", "findings": []},
-    {"ok": False, "kind": "Other", "error": "ValueError: boom"},
-    {"ok": False, "kind": "Protocol", "error": "the tools engine does not take 'raw'"},
-])
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"ok": False, "kind": "ParseFailure", "error": "bad line", "code": "X", "findings": []},
+        {"ok": False, "kind": "Other", "error": "ValueError: boom"},
+        {"ok": False, "kind": "Protocol", "error": "the tools engine does not take 'raw'"},
+    ],
+)
 def test_an_op_failure_reaches_the_caller_unchanged(project, fakes, answer):
     _started, plans = fakes
     plans.append(([json.dumps(answer)], 0.0))
@@ -479,7 +527,7 @@ def test_the_process_works_and_leaves_nothing_outside_the_temp_root(temp_dir, pr
     root = temp_root.root()
     assert kwargs["cwd"] == kwargs["env"]["TEMP"] == kwargs["env"]["TMP"] == str(root)
     proc = _session(project)._proc
-    engine.stop_all()             # the exit hook, before the temp root goes
+    engine.stop_all()  # the exit hook, before the temp root goes
     assert proc.poll() is not None
     temp_root.remove()
     assert list(temp_dir.iterdir()) == []
@@ -518,7 +566,7 @@ def test_switching_project_stops_the_old_ones_process(project, spawns, tmp_path)
     assert manager.set_project_root(project)
     assert _available(project)["ok"]
     proc = _session(project)._proc
-    assert manager.set_project_root(project)       # the same project again: nothing stops
+    assert manager.set_project_root(project)  # the same project again: nothing stops
     assert proc.poll() is None
     assert manager.set_project_root(other)
     assert proc.wait(timeout=10) is not None
@@ -569,8 +617,8 @@ def test_stop_locks_only_the_slots_it_ends(project, spawns, tmp_path):
     other = _other_project(tmp_path)
     assert _available(other)["ok"]
     theirs = engine._slots[("tools", os.path.normcase(os.path.abspath(other)))]
-    with theirs.lock:                         # busy with a frame
-        engine.stop(project_root=project)     # would hang if it locked every slot
+    with theirs.lock:  # busy with a frame
+        engine.stop(project_root=project)  # would hang if it locked every slot
     assert theirs.session is not None
 
 
@@ -606,7 +654,7 @@ def test_run_is_taken_once_while_live_and_fresh_once_its_holder_ended_it(project
     first.shutdown()
     second = engine.run(project)
     assert second is not None and second is not first and not second.alive
-    second.shutdown()                       # never started: ended all the same
+    second.shutdown()  # never started: ended all the same
     assert engine.run(project) is not None
     assert [argv[1:] for argv, _kw in spawns] == [[str(_DAEMON), "--role", "run"]]
 
@@ -616,7 +664,7 @@ def test_a_run_whose_process_died_is_not_restarted_by_the_registry(project, spaw
     assert first.ping()["pong"]
     first._proc.kill()
     first._proc.wait(timeout=10)
-    assert first.ping()["kind"] == "SessionDead"     # the holder learns it: its lost path
+    assert first.ping()["kind"] == "SessionDead"  # the holder learns it: its lost path
     taken, fresh = engine.run_for_recovery(project)
     assert fresh and taken is not first and len(spawns) == 1
     taken.shutdown()
@@ -629,7 +677,7 @@ def test_stop_and_the_exit_hook_leave_a_live_run_to_its_holder(project, spawns):
     engine.stop(venv_folder=Path(sys.executable).parent.parent)
     engine.stop_all()
     assert run.alive and run.ping()["pong"]
-    assert engine.run_for_recovery(project) == (run, False)   # a recovery may still drive it
+    assert engine.run_for_recovery(project) == (run, False)  # a recovery may still drive it
     run.shutdown()
 
 
@@ -648,10 +696,10 @@ def test_a_recovery_safe_off_never_starts_a_second_run_beside_a_live_one(project
     holder's RUN still live, the off goes through it, and it stays its holder's."""
     run = engine.run(project)
     assert run.ping()["pong"]
-    engine.safe_off_remote([], {}, project)   # no packs here: the frame's answer is moot
+    engine.safe_off_remote([], {}, project)  # no packs here: the frame's answer is moot
     assert len(spawns) == 1 and run.alive
     run.shutdown()
-    engine.safe_off_remote([], {}, project)   # a fresh one, ended
+    engine.safe_off_remote([], {}, project)  # a fresh one, ended
     assert len(spawns) == 2 and engine.run(project) is not None
 
 
@@ -674,14 +722,16 @@ def test_a_project_stop_returns_at_once_even_on_a_wedged_engine(project, fakes):
     assert box["res"]["kind"] == "ParserUnavailable" and started[0].terminated
 
 
-def test_a_stop_landing_while_an_instance_is_replaced_leaves_none_running(project, spawns, monkeypatch):
+def test_a_stop_landing_while_an_instance_is_replaced_leaves_none_running(
+    project, spawns, monkeypatch
+):
     """``stop`` takes no lock, so it can land between ``_replace`` retiring the old
     instance and placing the new one: that new one is retired again, never left
     running for a project that just closed."""
     real = engine._replace
 
     def replace_under_a_stop(slot, key, role, root):
-        engine.stop(project_root=project)      # the GUI thread's stop, mid-replace
+        engine.stop(project_root=project)  # the GUI thread's stop, mid-replace
         real(slot, key, role, root)
 
     monkeypatch.setattr(engine, "_replace", replace_under_a_stop)
@@ -699,13 +749,35 @@ def test_extract_runs_what_the_bundle_declares_and_explains_the_rest(tmp_path):
     a validator's finding, never a failed op."""
     pytest.importorskip("rules_packager_base.rules.v2_0_2.extractors")
     (tmp_path / "bundle").mkdir()
-    (tmp_path / "bundle" / "defaults.json").write_text(json.dumps({"extractors": {
-        key: {"module": "rules_packager_base.rules.v2_0_2.extractors", "function": function}
-        for key, function in (("meta", "extract_meta"), ("steps_validate", "validate_steps"))}}), encoding="utf-8")
-    out = engine_ops.run({"op": "extract", "project": str(tmp_path), "keys": ["meta", "steps_validate", "equipment"],
-                          "procedures": [{"id": "T1", "title": "Title"}, ["not", "an", "object"]]})
+    (tmp_path / "bundle" / "defaults.json").write_text(
+        json.dumps(
+            {
+                "extractors": {
+                    key: {
+                        "module": "rules_packager_base.rules.v2_0_2.extractors",
+                        "function": function,
+                    }
+                    for key, function in (
+                        ("meta", "extract_meta"),
+                        ("steps_validate", "validate_steps"),
+                    )
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    out = engine_ops.run(
+        {
+            "op": "extract",
+            "project": str(tmp_path),
+            "keys": ["meta", "steps_validate", "equipment"],
+            "procedures": [{"id": "T1", "title": "Title"}, ["not", "an", "object"]],
+        }
+    )
     assert out["ok"] is True and len(out["results"]) == 2
     first, second = out["results"]
     assert first["data"]["meta"]["display_name"] == "Title (T1)"
-    assert set(first["errors"]) == set(second["errors"]) == {"equipment"}  # the bundle declares none
+    assert (
+        set(first["errors"]) == set(second["errors"]) == {"equipment"}
+    )  # the bundle declares none
     assert "PROC_NOT_OBJECT" in {finding["code"] for finding in second["data"]["steps_validate"]}

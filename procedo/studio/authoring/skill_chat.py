@@ -17,6 +17,7 @@ Pure: no Qt, no backend, no threading — the controller owns the persistent ses
 and calls :meth:`start_user_turn` / :meth:`record_assistant` / :meth:`interpret`.
 That keeps the prompt-assembly and turn logic unit-testable.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

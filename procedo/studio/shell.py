@@ -65,6 +65,7 @@ _ASSISTANT_WIDTH = 342
 
 # ---- Building ------------------------------------------------------------------------------
 
+
 def build_view_column(ws: StudioWorkspace, views: list[QWidget]) -> QWidget:
     """The segmented switch over the stacked views (``ws.view_stack``), the current view's
     files right of the switch; switching calls the document controller's ``on_tab_changed``."""
@@ -113,8 +114,10 @@ def build_frame(ws: StudioWorkspace) -> None:
     layout.addWidget(_header(ws))
     layout.addWidget(body, 1)
     layout.addWidget(_footer(ws))
-    for action, column in ((ws.toggle_workspace_action, ws.workspace_column),
-                           (ws.toggle_dock_action, ws.assistant_column)):
+    for action, column in (
+        (ws.toggle_workspace_action, ws.workspace_column),
+        (ws.toggle_dock_action, ws.assistant_column),
+    ):
         action.toggled.connect(column.setVisible)
     refresh_header(ws)
     refresh_footer(ws)
@@ -146,7 +149,9 @@ def _header(ws: StudioWorkspace) -> ui_kit.HeaderBand:
     ws.sync_pill.setObjectName("actionPill")
     ws.sync_pill.clicked.connect(ws._document_controller.on_sync_indicator_clicked)
     pills = QWidget()
-    pills.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)  # centred, not stretched
+    pills.setSizePolicy(
+        QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+    )  # centred, not stretched
     pills.setLayout(ui_kit.hbox(*ws.artifact_pills.values(), ui_kit.vertical_rule(), ws.sync_pill))
     pills.layout().setSpacing(6)
 
@@ -156,7 +161,8 @@ def _header(ws: StudioWorkspace) -> ui_kit.HeaderBand:
     server_menu = QMenu(ws.server_pill)
     ws.restart_server_action = server_menu.addAction("Restart server")
     ws.restart_server_action.setToolTip(
-        "Restart the backend server (recover a hung / unresponsive backend without relaunching)")
+        "Restart the backend server (recover a hung / unresponsive backend without relaunching)"
+    )
     ws.restart_server_action.triggered.connect(ws._assistant_controller.on_restart_backend)
     server_menu.addAction("LLM settings…").triggered.connect(ws._on_settings)
     ws.server_pill.setMenu(server_menu)
@@ -174,8 +180,12 @@ def _header(ws: StudioWorkspace) -> ui_kit.HeaderBand:
     ws.save_all_btn.clicked.connect(ws._document_controller.on_save_all)
 
     ws.header = ui_kit.HeaderBand(
-        "No test open", "Procedo Studio",
-        [ws.server_pill, tools, ui_kit.vertical_rule(), ws.save_all_btn], mark=mark, status=[pills])
+        "No test open",
+        "Procedo Studio",
+        [ws.server_pill, tools, ui_kit.vertical_rule(), ws.save_all_btn],
+        mark=mark,
+        status=[pills],
+    )
     ws.header.title.setMinimumWidth(210)
     return ws.header
 
@@ -186,12 +196,14 @@ def _footer(ws: StudioWorkspace) -> ui_kit.StatusLine:
     ws.bundle_label = QLabel("Bundle: none")
     ws.validator_label = QLabel()
     ws.loading = ui_kit.LoadingCue()  # background work no card shows (a save's media refresh, …)
-    ws.footer = ui_kit.StatusLine([ws.project_link, ws.rules_link, ws.bundle_label],
-                                  [ws.loading, ws.validator_label])
+    ws.footer = ui_kit.StatusLine(
+        [ws.project_link, ws.rules_link, ws.bundle_label], [ws.loading, ws.validator_label]
+    )
     return ws.footer
 
 
 # ---- Painting the state ----------------------------------------------------------------------
+
 
 def _show_view(ws: StudioWorkspace, index: int) -> None:
     ws.view_buttons.button(index).setChecked(True)
@@ -207,8 +219,11 @@ def refresh_header(ws: StudioWorkspace) -> None:
     ws.header.title.setText(test_dir.name if test_dir else "No test open")
     root = ws.project_manager.project_root
     steps = _step_count(am)
-    parts = ["Procedo Studio", Path(root).name if root else "",
-             f"{steps} step{'' if steps == 1 else 's'}" if steps is not None else ""]
+    parts = [
+        "Procedo Studio",
+        Path(root).name if root else "",
+        f"{steps} step{'' if steps == 1 else 's'}" if steps is not None else "",
+    ]
     ws.header.subtitle.setText(" · ".join(part for part in parts if part))
     unsaved = 0
     for label, kind, file in _ARTIFACTS:
@@ -243,8 +258,7 @@ def refresh_footer(ws: StudioWorkspace) -> None:
     pm = ws.project_manager
     root = Path(pm.project_root) if pm.project_root else None
     ws.project_link.setText(f"Project: {root.name}" if root else "Project: none")
-    ws.project_link.setToolTip(
-        (f"{root}\n" if root else "") + "Click to open a project.")
+    ws.project_link.setToolTip((f"{root}\n" if root else "") + "Click to open a project.")
     rules = Path(pm.rules_root) if pm.rules_root else None
     docs = pm.get_rule_docs()
     own = sum(doc.origin == "project" for doc in docs)
@@ -259,7 +273,8 @@ def refresh_footer(ws: StudioWorkspace) -> None:
     ws.bundle_label.setText(f"Bundle: {bundle_name(root) or 'none'}")
     ws.validator_label.setText(
         f"Validator: {'on' if validator_loop_settings.is_enabled(root) else 'off'}"
-        f" · {validator_loop_settings.max_attempts(root)} attempts")
+        f" · {validator_loop_settings.max_attempts(root)} attempts"
+    )
 
 
 def bundle_name(project_root) -> str:

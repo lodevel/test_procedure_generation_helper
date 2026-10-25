@@ -1,4 +1,5 @@
 """Tests for procedo.studio.authoring.pdf_text (path / bytes / url extraction)."""
+
 from procedo.studio.authoring import pdf_text
 
 
@@ -11,12 +12,16 @@ def make_pdf(path, text="HELLO VIN VOUT GND"):
         b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream",
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     ]
-    pdf = b"%PDF-1.4\n"; offs = []
+    pdf = b"%PDF-1.4\n"
+    offs = []
     for i, o in enumerate(objs, 1):
-        offs.append(len(pdf)); pdf += b"%d 0 obj\n" % i + o + b"\nendobj\n"
-    x = len(pdf); pdf += b"xref\n0 %d\n" % (len(objs)+1) + b"0000000000 65535 f \n"
-    for off in offs: pdf += b"%010d 00000 n \n" % off
-    pdf += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs)+1, x)
+        offs.append(len(pdf))
+        pdf += b"%d 0 obj\n" % i + o + b"\nendobj\n"
+    x = len(pdf)
+    pdf += b"xref\n0 %d\n" % (len(objs) + 1) + b"0000000000 65535 f \n"
+    for off in offs:
+        pdf += b"%010d 00000 n \n" % off
+    pdf += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, x)
     path.write_bytes(pdf)
 
 
@@ -72,9 +77,7 @@ def test_fetch_and_extract_non_pdf_returns_none(monkeypatch):
         def read(self, n):
             return b"<html>not a pdf</html>"
 
-    monkeypatch.setattr(
-        pdf_text.urllib.request, "urlopen", lambda *a, **k: _FakeResp()
-    )
+    monkeypatch.setattr(pdf_text.urllib.request, "urlopen", lambda *a, **k: _FakeResp())
     assert pdf_text.fetch_and_extract("http://example.com/x.pdf") is None
 
 
@@ -96,9 +99,7 @@ def test_fetch_and_extract_pdf_body_recovers_string(monkeypatch, tmp_path):
         def read(self, n):
             return body
 
-    monkeypatch.setattr(
-        pdf_text.urllib.request, "urlopen", lambda *a, **k: _FakeResp()
-    )
+    monkeypatch.setattr(pdf_text.urllib.request, "urlopen", lambda *a, **k: _FakeResp())
     text = pdf_text.fetch_and_extract("http://example.com/net.pdf")
     assert text is not None
     assert "NETWORK PDF OK" in text
@@ -122,9 +123,7 @@ def test_fetch_and_extract_caches_to_save_to(monkeypatch, tmp_path):
         def read(self, n):
             return body
 
-    monkeypatch.setattr(
-        pdf_text.urllib.request, "urlopen", lambda *a, **k: _FakeResp()
-    )
+    monkeypatch.setattr(pdf_text.urllib.request, "urlopen", lambda *a, **k: _FakeResp())
     dest = tmp_path / "docs" / "U86.pdf"  # parent dir does not exist yet
     text = pdf_text.fetch_and_extract("http://example.com/d.pdf", save_to=dest)
     assert text is not None and "CACHED DATASHEET" in text
@@ -149,13 +148,9 @@ def test_fetch_and_extract_oversized_download_returns_none(monkeypatch, tmp_path
             # Return more bytes than requested → triggers the over-cap guard.
             return body + b"\x00" * 100
 
-    monkeypatch.setattr(
-        pdf_text.urllib.request, "urlopen", lambda *a, **k: _FakeResp()
-    )
+    monkeypatch.setattr(pdf_text.urllib.request, "urlopen", lambda *a, **k: _FakeResp())
     assert (
-        pdf_text.fetch_and_extract(
-            "http://example.com/big.pdf", max_download_bytes=len(body)
-        )
+        pdf_text.fetch_and_extract("http://example.com/big.pdf", max_download_bytes=len(body))
         is None
     )
 

@@ -36,12 +36,17 @@ from pathlib import Path  # noqa: E402
 
 from PySide6.QtGui import QCloseEvent  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
-    QApplication, QFileDialog, QMessageBox,
+    QApplication,
+    QFileDialog,
+    QMessageBox,
 )
 
 import procedo.studio.main_window as mw_mod  # noqa: E402
 from procedo.studio.controllers import (  # noqa: E402
-    DocumentController, ExportController, ProjectController, project_controller,
+    DocumentController,
+    ExportController,
+    ProjectController,
+    project_controller,
 )
 from procedo.studio.core import artifact_manager as am_mod  # noqa: E402
 from procedo.studio.core.artifact_manager import ArtifactType  # noqa: E402
@@ -75,6 +80,7 @@ def mbox(monkeypatch):
         def _fn(parent, title="", text="", *a, **k):
             getattr(log, kind).append((str(title), str(text)))
             return ret if ret is not None else log.question_answer
+
         return staticmethod(_fn)
 
     monkeypatch.setattr(QMessageBox, "information", _rec("information", ok))
@@ -119,43 +125,57 @@ def make_window(qapp, monkeypatch, mbox):
 
 # --- fixture project helpers -------------------------------------------------
 
+
 def _make_project(root: Path, tests=("t1",), with_bundle=True) -> Path:
     (root / "config").mkdir(parents=True, exist_ok=True)
     # A project_id: machine-local state (venv, media cache, install stamp) is keyed
     # by it since projects moved to a share, and without one there is none at all.
     (root / "config" / "config.json").write_text(
-        json.dumps({"project_id": "aaaaaaaa-1111-2222-3333-444444444444"}), encoding="utf-8")
+        json.dumps({"project_id": "aaaaaaaa-1111-2222-3333-444444444444"}), encoding="utf-8"
+    )
     if with_bundle:
         (root / "bundle" / "wheels").mkdir(parents=True, exist_ok=True)
         (root / "bundle" / "bundle.json").write_text(
-            json.dumps({"id": "b", "version": "1.0.0"}), encoding="utf-8")
+            json.dumps({"id": "b", "version": "1.0.0"}), encoding="utf-8"
+        )
         # An INSTALLABLE bundle: the install stamp sits beside the venv, and the venv
         # is keyed by the bundle, so a folder with no requirements.txt has no stamp.
         (root / "bundle" / "wheels" / "requirements.txt").write_text("", encoding="utf-8")
     for name in tests:
         d = root / "tests" / name
         d.mkdir(parents=True, exist_ok=True)
-        (d / "procedure_text.md").write_text(
-            f"# {name}\n\nBody of {name}.\n", encoding="utf-8")
+        (d / "procedure_text.md").write_text(f"# {name}\n\nBody of {name}.\n", encoding="utf-8")
         (d / "procedure.json").write_text(
-            json.dumps({"id": name, "steps": []}, indent=2), encoding="utf-8")
-        (d / "test.py").write_text("def main():\n    return 0\n",
-                                   encoding="utf-8")
+            json.dumps({"id": name, "steps": []}, indent=2), encoding="utf-8"
+        )
+        (d / "test.py").write_text("def main():\n    return 0\n", encoding="utf-8")
     return root
 
 
 def _declare_runnable_tasks(root: Path) -> None:
     """Give the project's bundle a prompt for one task per view, as a real bundle does (the
     editor defaults have none, and Studio lists no task in a tab without a runnable one)."""
-    (root / "bundle" / "defaults.json").write_text(json.dumps({"workflows": {
-        tab: {"tasks": [{"id": task, "prompt_template": "P"}]} for tab, task in (
-            ("text_only", "review_text_procedure"), ("text_json", "derive_json_from_text"),
-            ("json_code", "generate_code_from_json"))}}), encoding="utf-8")
+    (root / "bundle" / "defaults.json").write_text(
+        json.dumps(
+            {
+                "workflows": {
+                    tab: {"tasks": [{"id": task, "prompt_template": "P"}]}
+                    for tab, task in (
+                        ("text_only", "review_text_procedure"),
+                        ("text_json", "derive_json_from_text"),
+                        ("json_code", "generate_code_from_json"),
+                    )
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def _settle(until=None, timeout=10):
     """Pump until ``until()`` holds; without one, until no engine call has run for 50 ms (each
     runs off the GUI thread, and an answer may start another)."""
+
     def quiet():
         return not any(t.name == engine_async.THREAD for t in threading.enumerate())
 
@@ -190,8 +210,7 @@ def _menus(w):
     C++ QMenu when the owning QAction wrapper is garbage-collected (verified
     on PySide6 offscreen — a {title: menu} dict alone goes dangling).
     """
-    return [(a.text(), a, a.menu()) for a in w.menu_bar.actions()
-            if a.menu() is not None]
+    return [(a.text(), a, a.menu()) for a in w.menu_bar.actions() if a.menu() is not None]
 
 
 def _layout(menu):
@@ -215,6 +234,7 @@ def _find_action(menu, text):
 # 1. construction offscreen
 # =========================================================================
 
+
 def test_construction_smoke_disabled_backend(make_window):
     # Pins what a bare construction (no project, no show) produces once
     # load_settings returns llm_backend="none": NO server manager is built
@@ -226,15 +246,18 @@ def test_construction_smoke_disabled_backend(make_window):
     assert w.llm_server.server_manager is None
     assert w.llm_server.backend_factory.backend_type == BACKEND_TYPE_NONE
     assert [b.text() for b in w.view_buttons.buttons()] == [
-        "Text", "Text–JSON", "JSON–Code", "Traceability"]
+        "Text",
+        "Text–JSON",
+        "JSON–Code",
+        "Traceability",
+    ]
     assert w.view_stack.currentWidget() is w.text_only_tab
     assert not w.view_column.isEnabled()
     assert not w.dock.isEnabled()
 
     # Header and footer initial state: nothing loaded, Save all off.
     assert w.header.title.text() == "No test open"
-    assert [p.text() for p in w.artifact_pills.values()] == [
-        "Text ○", "JSON ○", "Code ○"]
+    assert [p.text() for p in w.artifact_pills.values()] == ["Text ○", "JSON ○", "Code ○"]
     assert w.sync_pill.text() == "⇄ Sync"
     assert w.project_link.text() == "Project: none"
     assert w.rules_link.text() == "Rules: none"
@@ -254,7 +277,9 @@ def test_construction_smoke_disabled_backend(make_window):
 def test_a_health_probes_verdict_lands_on_the_ui_thread(make_window):
     w = make_window()
     ran = []
-    w.llm_server._on_health_probe_result = lambda sm, alive: ran.append((sm, alive, threading.current_thread()))
+    w.llm_server._on_health_probe_result = lambda sm, alive: ran.append(
+        (sm, alive, threading.current_thread())
+    )
     worker = threading.Thread(target=lambda: w.llm_server._health_verdict(("sm", True)))
     worker.start()
     worker.join(5)
@@ -266,6 +291,7 @@ def test_a_health_probes_verdict_lands_on_the_ui_thread(make_window):
 # 2. menu / action wiring
 # =========================================================================
 
+
 def test_menubar_order_and_menu_contents(make_window):
     # Pins the Menus board (Studio redesign slice 6): the bar in board order
     # (Bench's Project menu holds Project Configuration, Template Manager and
@@ -274,31 +300,50 @@ def test_menubar_order_and_menu_contents(make_window):
     entries = _menus(w)  # keeps action refs alive for the whole test
     by_title = {t: m for t, _, m in entries}
     assert [t for t, _, _ in entries] == [
-        "&File", "&Edit", "&View", "&Project", "S&kills", "&Wizards",
-        "&Packages", "&Help"]
+        "&File",
+        "&Edit",
+        "&View",
+        "&Project",
+        "S&kills",
+        "&Wizards",
+        "&Packages",
+        "&Help",
+    ]
 
     # "&Save Text" (not "&Save"): the first addTab fires currentChanged(0)
     # during __init__, so the context-aware Save label is set from birth.
     assert _layout(by_title["&File"]) == [
-        "&New Project…", "&Open Project…", "Open &Recent", "-",
-        "&Save Text", "Save &All", "&Export", "-",
-        "Se&ttings…", "-",
-        "E&xit"]
-    assert _layout(w.export_menu) == [
-        "Procedure to &Markdown…", "Procedure to &Word…"]
-    assert _layout(by_title["&Edit"]) == [
-        "&Find…", "&Replace…", "-", "Mark Artifacts In &Sync"]
+        "&New Project…",
+        "&Open Project…",
+        "Open &Recent",
+        "-",
+        "&Save Text",
+        "Save &All",
+        "&Export",
+        "-",
+        "Se&ttings…",
+        "-",
+        "E&xit",
+    ]
+    assert _layout(w.export_menu) == ["Procedure to &Markdown…", "Procedure to &Word…"]
+    assert _layout(by_title["&Edit"]) == ["&Find…", "&Replace…", "-", "Mark Artifacts In &Sync"]
     assert _layout(by_title["&View"]) == ["Show &Workspace", "Show &Assistant"]
     assert _layout(by_title["&Project"]) == [
-        "Project &Configuration…", "&Template Manager…", "&Scenarios…"]
+        "Project &Configuration…",
+        "&Template Manager…",
+        "&Scenarios…",
+    ]
     skills = _layout(by_title["S&kills"])
     assert skills[0].startswith("Skill chat…")
     assert skills[-3:] == ["-", "Open skills folder…", "How to write a skill…"]
     assert _layout(by_title["&Wizards"]) == ["Choose a wizard…"]
-    assert _layout(by_title["&Packages"]) == [
-        "Bundle &Library…", "&Install Package…"]
+    assert _layout(by_title["&Packages"]) == ["Bundle &Library…", "&Install Package…"]
     assert _layout(by_title["&Help"]) == [
-        "&DSL Syntax Reference", "Word Export &Keywords…", "-", "&About"]
+        "&DSL Syntax Reference",
+        "Word Export &Keywords…",
+        "-",
+        "&About",
+    ]
 
     # View menu: both column toggles are checkable and start checked (the
     # columns are fixed; only View hides them).
@@ -358,8 +403,7 @@ def test_every_menu_entry_triggers_its_handler(make_window, monkeypatch):
     # still reach their handler when triggered from their new place.
     calls = []
     for _, _, owner, name in _MENU_HANDLERS:
-        monkeypatch.setattr(owner, name,
-                            lambda self, *a, _name=name: calls.append(_name))
+        monkeypatch.setattr(owner, name, lambda self, *a, _name=name: calls.append(_name))
     w = make_window()
     entries = _menus(w)  # keeps action refs alive for the whole test
     by_title = {t: m for t, _, m in entries}
@@ -371,6 +415,7 @@ def test_every_menu_entry_triggers_its_handler(make_window, monkeypatch):
 # =========================================================================
 # 3. host-backed slots
 # =========================================================================
+
 
 def test_host_slots_guard_missing_project(make_window, mbox):
     # Pins the guard inside host-backed slots, triggered from their menu
@@ -386,16 +431,15 @@ def test_host_slots_guard_missing_project(make_window, mbox):
 
     titles = [t for t, _ in mbox.information]
     assert titles == ["Project Configuration", "Scenarios"]
-    assert all("Open or create a project first." == text
-               for _, text in mbox.information)
+    assert all("Open or create a project first." == text for _, text in mbox.information)
 
 
 # =========================================================================
 # 4. project open flows
 # =========================================================================
 
-def test_open_project_dialog_happy_path(make_window, mbox, monkeypatch,
-                                        tmp_path):
+
+def test_open_project_dialog_happy_path(make_window, mbox, monkeypatch, tmp_path):
     # Pins the whole on_open_project -> refresh_after_open wiring: root
     # set, shared recents noted, test list loaded + New Test enabled,
     # footer updated (the project by name, "Rules: none" when the project
@@ -403,8 +447,9 @@ def test_open_project_dialog_happy_path(make_window, mbox, monkeypatch,
     # config dir, project root AND bundle dir) with the bundle-signature
     # baseline seeded.
     root = _make_project(tmp_path / "proj")
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory",
-                        staticmethod(lambda *a, **k: str(root)))
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(root))
+    )
     w = make_window()
 
     w._project_controller.on_open_project()
@@ -432,15 +477,15 @@ def test_open_project_dialog_happy_path(make_window, mbox, monkeypatch,
     assert mbox.warning == []
 
 
-def test_open_project_dialog_invalid_folder_warns(make_window, mbox,
-                                                  monkeypatch, tmp_path):
+def test_open_project_dialog_invalid_folder_warns(make_window, mbox, monkeypatch, tmp_path):
     # Pins the rejection path: a folder with neither tests/ nor config/
     # (and not detectable as a test folder) -> "Invalid Project" warning,
     # nothing set, no recents write.
     bogus = tmp_path / "not_a_project"
     bogus.mkdir()
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory",
-                        staticmethod(lambda *a, **k: str(bogus)))
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(bogus))
+    )
     w = make_window()
 
     w._project_controller.on_open_project()
@@ -450,16 +495,16 @@ def test_open_project_dialog_invalid_folder_warns(make_window, mbox,
     assert [t for t, _ in mbox.warning] == ["Invalid Project"]
 
 
-def test_open_recent_menu_and_missing_dir(make_window, mbox, monkeypatch,
-                                          tmp_path):
+def test_open_recent_menu_and_missing_dir(make_window, mbox, monkeypatch, tmp_path):
     # Pins the Open Recent surface: the menu repopulates from the SHARED
     # app_settings recents; an empty
     # list yields one disabled placeholder; a recent whose folder vanished
     # warns "Project Not Found" and leaves the project unset.
     w = make_window()
     recents: list[str] = []
-    monkeypatch.setattr(app_settings, "load_app_settings",
-                        lambda: {"recent_projects": list(recents)})
+    monkeypatch.setattr(
+        app_settings, "load_app_settings", lambda: {"recent_projects": list(recents)}
+    )
 
     w._project_controller.rebuild_open_recent_menu()
     acts = w._open_recent_menu.actions()
@@ -476,8 +521,9 @@ def test_open_recent_menu_and_missing_dir(make_window, mbox, monkeypatch,
     assert w.project_manager.project_root is None
 
 
-def test_open_recent_on_a_dead_share_asks_off_the_gui_thread(make_window, mbox, monkeypatch,
-                                                              tmp_path):
+def test_open_recent_on_a_dead_share_asks_off_the_gui_thread(
+    make_window, mbox, monkeypatch, tmp_path
+):
     # A recent project on a share that is down: its folder is looked for off the GUI thread
     # (~20 s there), then the user is told it does not exist or cannot be reached.
     w = make_window()
@@ -486,18 +532,22 @@ def test_open_recent_on_a_dead_share_asks_off_the_gui_thread(make_window, mbox, 
     def unreachable(self):
         asked_on.append(threading.current_thread().name)
         raise OSError("[WinError 53] The network path was not found")
+
     monkeypatch.setattr(Path, "is_dir", unreachable)
     w._project_controller.on_open_recent(r"\\nas\gone\proj")
     _settle(lambda: mbox.warning)
     monkeypatch.undo()
     assert asked_on and asked_on[0] != threading.main_thread().name
-    assert mbox.warning == [("Project Not Found", "The project folder does not exist or "
-                             "cannot be reached:\n\\\\nas\\gone\\proj")]
+    assert mbox.warning == [
+        (
+            "Project Not Found",
+            "The project folder does not exist or cannot be reached:\n\\\\nas\\gone\\proj",
+        )
+    ]
     assert w.project_manager.project_root is None
 
 
-def test_an_open_after_a_recent_drops_the_recents_answer(make_window, mbox, monkeypatch,
-                                                         tmp_path):
+def test_an_open_after_a_recent_drops_the_recents_answer(make_window, mbox, monkeypatch, tmp_path):
     root = _make_project(tmp_path / "proj")
     w = make_window()
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: "")
@@ -514,9 +564,15 @@ def test_open_recent_opens_only_the_last_one_asked(make_window, mbox, tmp_path):
     root = _make_project(tmp_path / "proj")
     w = make_window()
     w._project_controller.on_open_recent(str(root))
-    w._project_controller.on_open_recent(str(tmp_path / "gone"))  # asked after: the first answer is dropped
-    _settle(lambda: mbox.warning and not any(t.name == "recent-project-check"
-                                             for t in threading.enumerate()))
+    w._project_controller.on_open_recent(
+        str(tmp_path / "gone")
+    )  # asked after: the first answer is dropped
+    _settle(
+        lambda: (
+            mbox.warning
+            and not any(t.name == "recent-project-check" for t in threading.enumerate())
+        )
+    )
     QApplication.processEvents()
     assert w.project_manager.project_root is None
 
@@ -524,6 +580,7 @@ def test_open_recent_opens_only_the_last_one_asked(make_window, mbox, tmp_path):
 # =========================================================================
 # 5. test-open tab lifecycle
 # =========================================================================
+
 
 def test_open_test_loads_tabs_and_seeds_session(make_window, tmp_path):
     # Pins on_test_opened end to end: managers rebuilt for the folder,
@@ -543,18 +600,21 @@ def test_open_test_loads_tabs_and_seeds_session(make_window, tmp_path):
     assert w.view_column.isEnabled() and w.dock.isEnabled()
     assert w.header.title.text() == "t1"
     assert w.view_stack.currentWidget() is w.text_only_tab
-    assert w.text_only_tab.text_editor.toPlainText() == \
-        (t1 / "procedure_text.md").read_text(encoding="utf-8")
-    assert w.text_json_tab.json_editor.toPlainText() == \
-        (t1 / "procedure.json").read_text(encoding="utf-8")
-    assert [p.text() for p in w.artifact_pills.values()] == [
-        "Text ✓", "JSON ✓", "Code ✓"]
+    assert w.text_only_tab.text_editor.toPlainText() == (t1 / "procedure_text.md").read_text(
+        encoding="utf-8"
+    )
+    assert w.text_json_tab.json_editor.toPlainText() == (t1 / "procedure.json").read_text(
+        encoding="utf-8"
+    )
+    assert [p.text() for p in w.artifact_pills.values()] == ["Text ✓", "JSON ✓", "Code ✓"]
     assert w.sync_pill.text() == "⇄ JSON ↔ Code in sync"
     # First-open baseline: hashes for all three tracked artifacts, saved.
     assert set(w.session_state.artifact_hashes) == {
-        "procedure.json", "test.py", "procedure_text.md"}
-    on_disk = json.loads(
-        (t1 / ".llm_session.json").read_text(encoding="utf-8"))
+        "procedure.json",
+        "test.py",
+        "procedure_text.md",
+    }
+    on_disk = json.loads((t1 / ".llm_session.json").read_text(encoding="utf-8"))
     assert on_disk["artifacts_in_sync"] is True
     assert on_disk["artifact_hashes"] == w.session_state.artifact_hashes
 
@@ -593,14 +653,14 @@ def test_reopen_after_external_edit_flips_sync_state(make_window, tmp_path):
 
     assert w.session_state.artifacts_in_sync is False
     assert w.sync_pill.text() == "⇄ Sync unconfirmed · acknowledge"
-    on_disk = json.loads(
-        (t1 / ".llm_session.json").read_text(encoding="utf-8"))
+    on_disk = json.loads((t1 / ".llm_session.json").read_text(encoding="utf-8"))
     assert on_disk["artifacts_in_sync"] is False
 
 
 # =========================================================================
 # 6. save choke-point: id=folder enforcement + sync transparency (#41)
 # =========================================================================
+
 
 def test_save_enforces_folder_id_without_flipping_sync(make_window, tmp_path):
     # Pins task #41 end to end at the on_save choke-point: a hand-authored
@@ -611,8 +671,7 @@ def test_save_enforces_folder_id_without_flipping_sync(make_window, tmp_path):
     # NOT flip the acknowledged in-sync state.
     root = _make_project(tmp_path / "proj")
     t1 = root / "tests" / "t1"
-    (t1 / "procedure_text.md").write_text(
-        "# WRONG_ID\n\nBody of t1.\n", encoding="utf-8")
+    (t1 / "procedure_text.md").write_text("# WRONG_ID\n\nBody of t1.\n", encoding="utf-8")
     w = make_window()
     _open_project(w, root)
     w.open_test(t1)
@@ -644,12 +703,10 @@ def test_real_edit_save_flips_out_of_sync(make_window, tmp_path):
     w.open_test(t1)
     baseline = dict(w.session_state.artifact_hashes)
 
-    w.text_only_tab.text_editor.setPlainText(
-        "# t1\n\nBody of t1.\n\nNew paragraph.\n")
+    w.text_only_tab.text_editor.setPlainText("# t1\n\nBody of t1.\n\nNew paragraph.\n")
     w._document_controller.on_save()
 
-    assert "New paragraph." in \
-        (t1 / "procedure_text.md").read_text(encoding="utf-8")
+    assert "New paragraph." in (t1 / "procedure_text.md").read_text(encoding="utf-8")
     assert w.session_state.artifacts_in_sync is False
     assert w.sync_pill.text() == "⇄ Sync unconfirmed · acknowledge"
     assert w.session_state.artifact_hashes == baseline  # not re-seeded
@@ -662,6 +719,7 @@ def test_parse_and_generate_marks_in_sync(make_window, monkeypatch, tmp_path, ta
     # accepted), and stays so on reopen.
     from procedo.studio.dock.chat_messages import ProposalMessage
     from procedo.studio.pack_ops import pack_parsers
+
     root = _make_project(tmp_path / "proj")
     t1 = root / "tests" / "t1"
     w = make_window()
@@ -671,14 +729,23 @@ def test_parse_and_generate_marks_in_sync(make_window, monkeypatch, tmp_path, ta
     w._document_controller.on_save()
     assert w.session_state.artifacts_in_sync is False
 
-    monkeypatch.setattr(pack_parsers, "parse_text",
-                        lambda text, project_root=None: ({"id": "t1", "steps": [{"n": 1}]}, []))
-    monkeypatch.setattr(pack_parsers, "generate_code",
-                        lambda proc, project_root=None: ("def main():\n    return 1\n", []))
+    monkeypatch.setattr(
+        pack_parsers,
+        "parse_text",
+        lambda text, project_root=None: ({"id": "t1", "steps": [{"n": 1}]}, []),
+    )
+    monkeypatch.setattr(
+        pack_parsers,
+        "generate_code",
+        lambda proc, project_root=None: ("def main():\n    return 1\n", []),
+    )
     view = getattr(w, tab)
     view._on_parse_and_generate()
-    _settle(lambda: view.tab_context.messages
-            and isinstance(view.tab_context.messages[-1], ProposalMessage))
+    _settle(
+        lambda: (
+            view.tab_context.messages and isinstance(view.tab_context.messages[-1], ProposalMessage)
+        )
+    )
     assert "return 1" not in (t1 / "test.py").read_text(encoding="utf-8")  # waits for Accept
     card = view.tab_context.messages[-1]
     assert isinstance(card, ProposalMessage)
@@ -688,7 +755,10 @@ def test_parse_and_generate_marks_in_sync(make_window, monkeypatch, tmp_path, ta
     assert w.session_state.artifacts_in_sync is True
     assert w.sync_pill.text() == "⇄ JSON ↔ Code in sync"
     assert w.session_state.artifact_hashes == w.artifact_manager.compute_hashes()
-    assert json.loads((t1 / ".llm_session.json").read_text(encoding="utf-8"))["artifacts_in_sync"] is True
+    assert (
+        json.loads((t1 / ".llm_session.json").read_text(encoding="utf-8"))["artifacts_in_sync"]
+        is True
+    )
     assert not w.workspace_widget._stale_artifacts(t1)
 
 
@@ -697,27 +767,33 @@ def test_the_media_refresh_of_an_open_test_keeps_it_in_sync(make_window, monkeyp
     # so the open test's acknowledged baseline follows it. Else the next Ctrl+S un-syncs the
     # test, and switching tests writes the stale baseline over the session file.
     from procedo.studio.pack_ops import pack_parsers
+
     root = _make_project(tmp_path / "proj", tests=("t1", "t2"))
     t1 = root / "tests" / "t1"
     w = make_window()
     _open_project(w, root)
     w.open_test(t1)
-    monkeypatch.setattr(pack_parsers, "refresh_media",
-                        lambda doc, root=None: {**doc, "steps": [{"n": 1, "media": ["P4"]}]})
+    monkeypatch.setattr(
+        pack_parsers,
+        "refresh_media",
+        lambda doc, root=None: {**doc, "steps": [{"n": 1, "media": ["P4"]}]},
+    )
     from procedo.studio.core import test_sync
+
     disk_marks = []  # the open test's baseline is its controller's alone
     monkeypatch.setattr(test_sync, "mark_in_sync", lambda *a: disk_marks.append(a))
     w.text_json_tab._write_parse_and_generate(
-        json.dumps({"id": "t1", "steps": [{"n": 1}]}, indent=2), "def main():\n    return 1\n")
+        json.dumps({"id": "t1", "steps": [{"n": 1}]}, indent=2), "def main():\n    return 1\n"
+    )
     _settle(lambda: "P4" in (t1 / "procedure.json").read_text(encoding="utf-8"))
     _settle()
     assert disk_marks == []
 
     assert w.session_state.artifact_hashes == w.artifact_manager.compute_hashes()
-    w._document_controller.on_save()                                                  # Ctrl+S, nothing edited
+    w._document_controller.on_save()  # Ctrl+S, nothing edited
     assert w.session_state.artifacts_in_sync is True
     assert not w.workspace_widget._stale_artifacts(t1)
-    w.open_test(root / "tests" / "t2")                            # the switch saves t1's session
+    w.open_test(root / "tests" / "t2")  # the switch saves t1's session
     assert not w.workspace_widget._stale_artifacts(t1)
 
 
@@ -726,15 +802,20 @@ def test_an_edited_json_is_not_acknowledged_by_its_own_refresh(make_window, monk
     # project: the engine runs in this process) must not take the user's edit into the baseline.
     from procedo.studio.core import ArtifactType
     from procedo.studio.pack_ops import pack_parsers
+
     root = _make_project(tmp_path / "proj")
     w = make_window()
     _open_project(w, root)
     w.open_test(root / "tests" / "t1")
     assert w.session_state.artifacts_in_sync is True
-    monkeypatch.setattr(engine_async, "call",
-                        lambda project_root, fn, on_done, **k: on_done(engine_async._run(fn)))
-    monkeypatch.setattr(pack_parsers, "refresh_media",
-                        lambda doc, root=None: {**doc, "steps": [{"n": 2, "media": ["P4"]}]})
+    monkeypatch.setattr(
+        engine_async, "call", lambda project_root, fn, on_done, **k: on_done(engine_async._run(fn))
+    )
+    monkeypatch.setattr(
+        pack_parsers,
+        "refresh_media",
+        lambda doc, root=None: {**doc, "steps": [{"n": 2, "media": ["P4"]}]},
+    )
     card = next(c for c in w.text_json_tab.cards if c.kind is ArtifactType.PROCEDURE_JSON)
     card.editor.setPlainText(json.dumps({"id": "t1", "steps": [{"n": 2}]}, indent=2))
     assert card.save()
@@ -745,6 +826,7 @@ def test_the_refresh_of_an_out_of_sync_test_leaves_its_baseline(make_window, mon
     # Out of sync, the JSON's refresh is no acknowledgment: the baseline stays as it was.
     from procedo.studio.core import ArtifactType
     from procedo.studio.pack_ops import pack_parsers
+
     root = _make_project(tmp_path / "proj")
     w = make_window()
     _open_project(w, root)
@@ -753,12 +835,16 @@ def test_the_refresh_of_an_out_of_sync_test_leaves_its_baseline(make_window, mon
     w._document_controller.on_save()
     assert w.session_state.artifacts_in_sync is False
     baseline = dict(w.session_state.artifact_hashes)
-    monkeypatch.setattr(engine_async, "call",
-                        lambda project_root, fn, on_done, **k: on_done(engine_async._run(fn)))
-    monkeypatch.setattr(pack_parsers, "refresh_media",
-                        lambda doc, root=None: {**doc, "steps": [{"n": 1, "media": ["P4"]}]})
+    monkeypatch.setattr(
+        engine_async, "call", lambda project_root, fn, on_done, **k: on_done(engine_async._run(fn))
+    )
+    monkeypatch.setattr(
+        pack_parsers,
+        "refresh_media",
+        lambda doc, root=None: {**doc, "steps": [{"n": 1, "media": ["P4"]}]},
+    )
     card = next(c for c in w.text_json_tab.cards if c.kind is ArtifactType.PROCEDURE_JSON)
-    assert card.save()                                            # the JSON as acknowledged
+    assert card.save()  # the JSON as acknowledged
     assert "P4" in (root / "tests" / "t1" / "procedure.json").read_text(encoding="utf-8")
     assert w.session_state.artifact_hashes == baseline
 
@@ -782,37 +868,51 @@ def test_a_save_rereads_the_open_tests_row_only(make_window, tmp_path):
 
 
 def test_a_media_refresh_landing_after_the_switch_rebaselines_the_session_file(
-        make_window, monkeypatch, tmp_path):
+    make_window, monkeypatch, tmp_path
+):
     # The test closed before the engine answered: its session file is the baseline, so the
     # artifact manager re-takes it there (the controller only holds the open test's).
     from procedo.studio.pack_ops import pack_parsers
+
     root = _make_project(tmp_path / "proj", tests=("t1", "t2"))
     t1 = root / "tests" / "t1"
     w = make_window()
     _open_project(w, root)
     w.open_test(t1)
     answers = []
-    monkeypatch.setattr(engine_async, "call", lambda project_root, fn, on_done, **k: answers.append(
-        lambda: on_done(engine_async._run(fn))))
-    monkeypatch.setattr(pack_parsers, "refresh_media",
-                        lambda doc, root=None: {**doc, "steps": [{"n": 1, "media": ["P4"]}]})
+    monkeypatch.setattr(
+        engine_async,
+        "call",
+        lambda project_root, fn, on_done, **k: answers.append(
+            lambda: on_done(engine_async._run(fn))
+        ),
+    )
+    monkeypatch.setattr(
+        pack_parsers,
+        "refresh_media",
+        lambda doc, root=None: {**doc, "steps": [{"n": 1, "media": ["P4"]}]},
+    )
     w.text_json_tab._write_parse_and_generate(
-        json.dumps({"id": "t1", "steps": [{"n": 1}]}, indent=2), "def main():\n    return 1\n")
+        json.dumps({"id": "t1", "steps": [{"n": 1}]}, indent=2), "def main():\n    return 1\n"
+    )
     w.open_test(root / "tests" / "t2")
     [land] = answers
     land()
 
     assert "P4" in (t1 / "procedure.json").read_text(encoding="utf-8")
     assert not w.workspace_widget._stale_artifacts(t1)
-    assert w.session_state.artifacts_in_sync is True              # t2's own state untouched
+    assert w.session_state.artifacts_in_sync is True  # t2's own state untouched
 
 
-def test_parse_and_generate_with_nothing_changed_opens_no_review(make_window, monkeypatch, tmp_path):
+def test_parse_and_generate_with_nothing_changed_opens_no_review(
+    make_window, monkeypatch, tmp_path
+):
     # The diff compares lines (a final newline on one side only is no change),
     # so output identical to the files on disk is no change at all: no proposal
     # card waits, the files are simply written.
     from procedo.studio.dock.chat_messages import ProposalMessage
     from procedo.studio.pack_ops import pack_parsers
+
     root = _make_project(tmp_path / "proj")
     t1 = root / "tests" / "t1"
     w = make_window()
@@ -820,8 +920,9 @@ def test_parse_and_generate_with_nothing_changed_opens_no_review(make_window, mo
     w.open_test(t1)
     code = (t1 / "test.py").read_text(encoding="utf-8")
     assert code.endswith("\n")
-    monkeypatch.setattr(pack_parsers, "parse_text",
-                        lambda text, project_root=None: ({"id": "t1", "steps": []}, []))
+    monkeypatch.setattr(
+        pack_parsers, "parse_text", lambda text, project_root=None: ({"id": "t1", "steps": []}, [])
+    )
     monkeypatch.setattr(pack_parsers, "generate_code", lambda proc, project_root=None: (code, []))
     w.text_only_tab._on_parse_and_generate()
     _settle()
@@ -857,8 +958,7 @@ def test_sync_indicator_acknowledge_flow(make_window, mbox, tmp_path):
     assert w.session_state.artifacts_in_sync is True
     assert w.session_state.artifact_hashes != old_baseline
     assert w.sync_pill.text() == "⇄ JSON ↔ Code in sync"
-    on_disk = json.loads(
-        (t1 / ".llm_session.json").read_text(encoding="utf-8"))
+    on_disk = json.loads((t1 / ".llm_session.json").read_text(encoding="utf-8"))
     assert on_disk["artifacts_in_sync"] is True
 
     w._document_controller.on_sync_indicator_clicked()  # already in sync -> info box only
@@ -869,8 +969,8 @@ def test_sync_indicator_acknowledge_flow(make_window, mbox, tmp_path):
 # 7. tab-change lifecycle
 # =========================================================================
 
-def test_tab_change_syncs_previous_tab_and_switches_context(make_window,
-                                                            tmp_path):
+
+def test_tab_change_syncs_previous_tab_and_switches_context(make_window, tmp_path):
     # Pins on_tab_changed: ONLY the previously-active tab is synced to
     # artifacts + deactivated (inactive tabs may hold stale shared-artifact
     # content), the new tab is activated, the dock panels switch to the new
@@ -883,8 +983,7 @@ def test_tab_change_syncs_previous_tab_and_switches_context(make_window,
     assert w.save_action.text() == "&Save Text"
 
     calls = []
-    w.text_only_tab.sync_editors_to_artifacts = \
-        lambda: calls.append("sync_prev")
+    w.text_only_tab.sync_editors_to_artifacts = lambda: calls.append("sync_prev")
     w.text_only_tab.on_deactivated = lambda: calls.append("deactivate_prev")
     w.json_code_tab.on_activated = lambda: calls.append("activate_new")
     switched = []
@@ -903,10 +1002,14 @@ def test_switch_to_tab_name_mapping(make_window):
     # (json/text/code) other tools may still call with.
     w = make_window()
     for name, expected in [
-        ("text_only", "text_only_tab"), ("text_json", "text_json_tab"),
-        ("json_code", "json_code_tab"), ("traceability", "traceability_tab"),
-        ("json", "text_json_tab"), ("text", "text_only_tab"),
-        ("code", "json_code_tab"), ("JSON", "text_json_tab"),
+        ("text_only", "text_only_tab"),
+        ("text_json", "text_json_tab"),
+        ("json_code", "json_code_tab"),
+        ("traceability", "traceability_tab"),
+        ("json", "text_json_tab"),
+        ("text", "text_only_tab"),
+        ("code", "json_code_tab"),
+        ("JSON", "text_json_tab"),
     ]:
         w.switch_to_tab(name)
         assert w.view_stack.currentWidget() is getattr(w, expected), name
@@ -915,8 +1018,7 @@ def test_switch_to_tab_name_mapping(make_window):
     assert w.view_stack.currentWidget() is current
 
 
-def test_current_procedure_text_prefers_active_then_text_json(make_window,
-                                                              tmp_path):
+def test_current_procedure_text_prefers_active_then_text_json(make_window, tmp_path):
     # Pins the export content source: the ACTIVE tab's live editor first
     # (unsaved edits export), then text_json, then text_only — never the
     # artifact cache. The Traceability tab has no text_editor, so with it
@@ -938,6 +1040,7 @@ def test_current_procedure_text_prefers_active_then_text_json(make_window,
 # =========================================================================
 # 8. bundle-import live-refresh seams (task #39)
 # =========================================================================
+
 
 def test_bundle_signature_and_stamp_change_detectors(make_window, tmp_path):
     # Pins the two task-#39 change detectors as edge-triggered latches:
@@ -965,8 +1068,7 @@ def test_bundle_signature_and_stamp_change_detectors(make_window, tmp_path):
     assert project_controller.bundle_stamp_changed(w) is False
 
 
-def test_dir_events_start_debounce_and_funnel_refreshes(make_window, monkeypatch,
-                                                        tmp_path):
+def test_dir_events_start_debounce_and_funnel_refreshes(make_window, monkeypatch, tmp_path):
     # Pins the watcher-event -> debounce -> reload funnel: a project-root
     # dir event with a moved bundle signature starts the 300ms single-shot
     # debounce timer (and re-arms the bundle watches); a config-dir event
@@ -997,8 +1099,9 @@ def test_dir_events_start_debounce_and_funnel_refreshes(make_window, monkeypatch
 
     called = []
     w._update_project_rules_indicators = lambda: called.append("rules")
-    monkeypatch.setattr(project_controller, "handle_config_change",
-                        lambda mw: called.append("config"))
+    monkeypatch.setattr(
+        project_controller, "handle_config_change", lambda mw: called.append("config")
+    )
     project_controller.on_bundle_change_debounced(w)
     assert called == ["rules", "config"]
 
@@ -1018,20 +1121,27 @@ def test_handle_config_change_funnel(make_window, monkeypatch, tmp_path):
     w.text_json_tab.refresh_parser_button = lambda: calls.append("tj")
     w.text_only_tab.refresh_parser_button = lambda: calls.append("to")
     w.json_code_tab.refresh_parser_button = lambda: calls.append("jc")
-    monkeypatch.setattr(w.task_config_manager, "reload",
-                        lambda r: calls.append(("reload", r)))
-    monkeypatch.setattr(w.dock.chat_panel, "_refresh_validator_ui_for_context",
-                        lambda ctx: calls.append(("validator_ui", ctx)))
+    monkeypatch.setattr(w.task_config_manager, "reload", lambda r: calls.append(("reload", r)))
+    monkeypatch.setattr(
+        w.dock.chat_panel,
+        "_refresh_validator_ui_for_context",
+        lambda ctx: calls.append(("validator_ui", ctx)),
+    )
 
     project_controller.handle_config_change(w)
 
     assert calls == [
-        "tj", "to", "jc", ("reload", root),
-        ("validator_ui", w.text_only_tab.tab_context)]
+        "tj",
+        "to",
+        "jc",
+        ("reload", root),
+        ("validator_ui", w.text_only_tab.tab_context),
+    ]
 
     # A reload failure is swallowed (logged), never raised.
     def _boom(r):
         raise RuntimeError("broken config.json")
+
     monkeypatch.setattr(w.task_config_manager, "reload", _boom)
     project_controller.handle_config_change(w)  # must not raise
 
@@ -1040,8 +1150,8 @@ def test_handle_config_change_funnel(make_window, monkeypatch, tmp_path):
 # 9. settings dialog wiring
 # =========================================================================
 
-def test_settings_dialog_accept_and_cancel_wiring(make_window, monkeypatch,
-                                                  tmp_path):
+
+def test_settings_dialog_accept_and_cancel_wiring(make_window, monkeypatch, tmp_path):
     # Pins _on_settings: the dialog is constructed with (task_config_manager,
     # window, project_root=..., server_manager=...); on ACCEPT the returned
     # settings replace _settings, the backend is re-initialized, the netlist
@@ -1056,10 +1166,8 @@ def test_settings_dialog_accept_and_cancel_wiring(make_window, monkeypatch,
         exec_result = True
         new_settings = {"llm_backend": "none", "marker": 42}
 
-        def __init__(self, task_config_manager, parent, project_root=None,
-                     server_manager=None):
-            self.args = (task_config_manager, parent, project_root,
-                         server_manager)
+        def __init__(self, task_config_manager, parent, project_root=None, server_manager=None):
+            self.args = (task_config_manager, parent, project_root, server_manager)
             created.append(self)
 
         def exec(self):
@@ -1071,15 +1179,13 @@ def test_settings_dialog_accept_and_cancel_wiring(make_window, monkeypatch,
     monkeypatch.setattr(mw_mod, "SettingsDialog", FakeSettingsDialog)
     events = []
     orig_init = w.llm_server.init_backend
-    w.llm_server.init_backend = lambda: (events.append("init_backend"),
-                                          orig_init())[1]
+    w.llm_server.init_backend = lambda: (events.append("init_backend"), orig_init())[1]
     w.refresh_all_button_labels = lambda: events.append("labels")
     w.text_only_tab.reload_netlist = lambda: events.append("netlist")
 
     w._on_settings()
 
-    assert created[0].args == (w.task_config_manager, w, root,
-                               w.llm_server.server_manager)
+    assert created[0].args == (w.task_config_manager, w, root, w.llm_server.server_manager)
     assert w._settings == {"llm_backend": "none", "marker": 42}
     assert events == ["init_backend", "netlist", "labels"]
 
@@ -1093,6 +1199,7 @@ def test_settings_dialog_accept_and_cancel_wiring(make_window, monkeypatch,
 # =========================================================================
 # 10. unsaved-changes prompt + close flow
 # =========================================================================
+
 
 def test_check_unsaved_changes_prompt_paths(make_window, mbox, tmp_path):
     # Pins check_unsaved_changes: clean -> no prompt; dirty (live editor
@@ -1115,20 +1222,17 @@ def test_check_unsaved_changes_prompt_paths(make_window, mbox, tmp_path):
     assert w._document_controller.check_unsaved_changes() is True
     mbox.question_answer = QMessageBox.StandardButton.Discard
     assert w._document_controller.check_unsaved_changes() is False
-    assert "Dirty body." not in \
-        (t1 / "procedure_text.md").read_text(encoding="utf-8")
+    assert "Dirty body." not in (t1 / "procedure_text.md").read_text(encoding="utf-8")
 
     mbox.question_answer = QMessageBox.StandardButton.Save
     assert w._document_controller.check_unsaved_changes() is False
-    assert "Dirty body." in \
-        (t1 / "procedure_text.md").read_text(encoding="utf-8")
+    assert "Dirty body." in (t1 / "procedure_text.md").read_text(encoding="utf-8")
 
     assert [t for t, _ in mbox.question] == ["Unsaved Changes"] * 3
     assert all("procedure_text.md" in text for _, text in mbox.question)
 
 
-def test_close_event_cancel_keeps_window_clean_accepts(make_window, mbox,
-                                                       tmp_path):
+def test_close_event_cancel_keeps_window_clean_accepts(make_window, mbox, tmp_path):
     # Pins closeEvent: with unsaved changes and the user answering Cancel
     # the event is IGNORED (window survives); once clean it is accepted.
     # Also pins that the session state is saved on close.
@@ -1148,8 +1252,7 @@ def test_close_event_cancel_keeps_window_clean_accepts(make_window, mbox,
     ev2 = QCloseEvent()
     w.window().closeEvent(ev2)
     assert ev2.isAccepted()
-    assert "Not saved yet." in \
-        (t1 / "procedure_text.md").read_text(encoding="utf-8")
+    assert "Not saved yet." in (t1 / "procedure_text.md").read_text(encoding="utf-8")
     assert (t1 / ".llm_session.json").exists()
 
 
@@ -1163,6 +1266,7 @@ def _edited_test_on_a_dead_share(make_window, monkeypatch, tmp_path):
 
     def unreachable(path, text):
         raise OSError(f"[WinError 53] The network path was not found: '{path}'")
+
     monkeypatch.setattr(am_mod, "atomic_write_text", unreachable)
     shown: list[str] = []
     monkeypatch.setattr(w.footer, "show_message", lambda text, *a: shown.append(text))
@@ -1194,8 +1298,7 @@ def test_ctrl_s_that_fails_never_says_saved(make_window, mbox, monkeypatch, tmp_
     assert "Saved" not in shown
 
 
-def test_open_other_test_with_unsaved_changes_cancel_aborts(make_window,
-                                                            mbox, tmp_path):
+def test_open_other_test_with_unsaved_changes_cancel_aborts(make_window, mbox, tmp_path):
     # Pins the switch-away guard in on_test_opened: Cancel on the unsaved
     # prompt keeps the ORIGINAL test loaded (managers untouched); the
     # workspace signal is effectively rolled back.
@@ -1217,6 +1320,7 @@ def test_open_other_test_with_unsaved_changes_cancel_aborts(make_window,
 # =========================================================================
 # 11. test deletion clears the loaded state
 # =========================================================================
+
 
 def test_test_deleted_clears_loaded_state(make_window, tmp_path):
     # Pins on_test_deleted for the CURRENTLY-open test: managers dropped,

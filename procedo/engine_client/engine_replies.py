@@ -1,6 +1,7 @@
 """Editor-facing views of engine replies: the parse failure, the findings and
 reports of validate / reconstruct, and the guided-manual run plan of
 ``build_manual_run`` — each built from the op's JSON dict."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
@@ -128,21 +129,27 @@ class ManualStep:
     quantity: str = ""
     target: str = ""
     expected_text: str = ""
-    verdict: str = ""               # PASS | FAIL | SKIP | "" (pending)
-    media: tuple[dict, ...] = ()    # raw step["media"] entries, pass-through
-    status: str = "pending"         # pending | answered | skipped
+    verdict: str = ""  # PASS | FAIL | SKIP | "" (pending)
+    media: tuple[dict, ...] = ()  # raw step["media"] entries, pass-through
+    status: str = "pending"  # pending | answered | skipped
     control_deciding: bool = False  # blocks forward skip/jump until answered
     iteration: int = 0
     index: int = 0
     # The dict fields (resolved_op: the op with this turn's substitutions, StepDescriptor's) stay out of eq/hash.
     resolved_op: Optional[dict] = field(default=None, compare=False)
     wait_s: Optional[float] = None  # a Wait's delay, read by the engine (the op adds it)
-    wait_refused: str = ""          # or why the engine refused its value (test.py's message)
-    value_text: str = ""            # its {N}'s value as shown, with its unit ("" = none yet)
-    value_note: str = ""            # why a Bind has none (the engine's words)
-    outputs: tuple[dict, ...] = field(default=(), compare=False)  # a Call's: {ref, unit, value_text, note, verdict, check}
-    call: Optional[dict] = field(default=None, compare=False)  # a Call to make: {function, args, kwargs, timeout, args_hash}
-    names: tuple[dict, ...] = field(default=(), compare=False)  # its loop turns' ${…}: {name, value, origin}
+    wait_refused: str = ""  # or why the engine refused its value (test.py's message)
+    value_text: str = ""  # its {N}'s value as shown, with its unit ("" = none yet)
+    value_note: str = ""  # why a Bind has none (the engine's words)
+    outputs: tuple[dict, ...] = field(
+        default=(), compare=False
+    )  # a Call's: {ref, unit, value_text, note, verdict, check}
+    call: Optional[dict] = field(
+        default=None, compare=False
+    )  # a Call to make: {function, args, kwargs, timeout, args_hash}
+    names: tuple[dict, ...] = field(
+        default=(), compare=False
+    )  # its loop turns' ${…}: {name, value, origin}
 
     @classmethod
     def from_dict(cls, d: dict) -> "ManualStep":
@@ -163,12 +170,12 @@ class ManualRunResult:
     ``constants``: the procedure's own names (@LET, @ALLOC, @TABLE), read-only in a run."""
 
     test_name: str = ""
-    steps: tuple[ManualStep, ...] = ()       # on-path plan
-    skipped: tuple[ManualStep, ...] = ()     # off-path bindings (retained as SKIP)
+    steps: tuple[ManualStep, ...] = ()  # on-path plan
+    skipped: tuple[ManualStep, ...] = ()  # off-path bindings (retained as SKIP)
     aborted: bool = False
-    error: str = ""                          # a step's value refused: the run ended there (its message)
+    error: str = ""  # a step's value refused: the run ended there (its message)
     channels: dict = field(default_factory=dict)  # device -> its declared channels, the engine's
-    constants: tuple[dict, ...] = ()         # {name, value, origin}, the engine's
+    constants: tuple[dict, ...] = ()  # {name, value, origin}, the engine's
 
     @classmethod
     def from_dict(cls, d: dict) -> "ManualRunResult":

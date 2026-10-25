@@ -10,6 +10,7 @@ All HTTP is mocked; the backend is built with ``object.__new__`` (bypassing
 Since the opencode_client migration (7985722) the seams live in
 ``opencode_client.client``; the desktop module only re-exports them.
 """
+
 import importlib
 import json
 
@@ -24,6 +25,7 @@ from procedo.studio.llm.transcript_replay import serialize_transcript
 # --------------------------------------------------------------------------- #
 # A) serialize_transcript (pure)                                               #
 # --------------------------------------------------------------------------- #
+
 
 class TestSerializeTranscript:
     def test_empty_list_returns_blank(self):
@@ -64,16 +66,22 @@ class TestSerializeTranscript:
 
     def test_newest_first_survival_under_truncation(self):
         # 10 numbered messages; a tiny budget that fits only the last couple.
-        msgs = [ChatMessage(role="user", content=f"message number {i:02d}", full_prompt="P")
-                for i in range(10)]
+        msgs = [
+            ChatMessage(role="user", content=f"message number {i:02d}", full_prompt="P")
+            for i in range(10)
+        ]
         # budget room for header + ~2 short blocks
-        budget = len(
-            "Conversation so far, replayed after the previous server session was lost. "
-            "The earlier tool results (netlist, BOM, datasheets) are GONE from this new "
-            "session. Before relying on ANY component value, net name, or part number "
-            "quoted below, you MUST re-call the relevant tools to re-verify it -- treat "
-            "the quoted text as a memory aid, not as a trusted source:"
-        ) + 2 + 2 * (len("User: message number 09") + 2)
+        budget = (
+            len(
+                "Conversation so far, replayed after the previous server session was lost. "
+                "The earlier tool results (netlist, BOM, datasheets) are GONE from this new "
+                "session. Before relying on ANY component value, net name, or part number "
+                "quoted below, you MUST re-call the relevant tools to re-verify it -- treat "
+                "the quoted text as a memory aid, not as a trusted source:"
+            )
+            + 2
+            + 2 * (len("User: message number 09") + 2)
+        )
         out = serialize_transcript(msgs, budget)
         # The LAST messages survive, the first do NOT.
         assert "message number 09" in out
@@ -107,6 +115,7 @@ class TestSerializeTranscript:
 # Shared fakes                                                                 #
 # --------------------------------------------------------------------------- #
 
+
 class FakeResponse:
     """Minimal stand-in for a ``requests`` Response."""
 
@@ -133,6 +142,7 @@ def _not_found():
 # B) _is_session_not_found (pure)                                              #
 # --------------------------------------------------------------------------- #
 
+
 class TestSessionLostDetection:
     def test_404_notfounderror_is_true(self):
         assert OpenCodeBackend._is_session_not_found(_not_found()) is True
@@ -154,6 +164,7 @@ class TestSessionLostDetection:
 # C) _send_via_api detect + rehydrate + retry-ONCE                             #
 # --------------------------------------------------------------------------- #
 
+
 class _FakeParser:
     def parse(self, raw, task, plain_text=False):
         return LLMResponse(success=True, assistant_message="ok")
@@ -165,12 +176,10 @@ def _make_backend(create_session_returns="new"):
     from types import SimpleNamespace
 
     be = object.__new__(OpenCodeBackend)
-    be.config = SimpleNamespace(
-        server_url="http://x", request_timeout=30, startup_timeout=5)
+    be.config = SimpleNamespace(server_url="http://x", request_timeout=30, startup_timeout=5)
     # _base_url() delegates to the lifecycle seam since the opencode_client
     # migration (7985722): stub it to hand back the fixed URL.
-    be._lifecycle = SimpleNamespace(
-        ensure_running=lambda timeout=None: "http://x")
+    be._lifecycle = SimpleNamespace(ensure_running=lambda timeout=None: "http://x")
     be._session_id = "old"
     state = {"create_calls": 0, "bodies": [], "prompts": []}
 
@@ -276,8 +285,9 @@ class TestUnsentLinesAreNotReplayed:
             ChatMessage(role="user", content="sent question", full_prompt="P"),
             ChatMessage(role="assistant", content="an answer"),
             ChatMessage(role="user", content="replaced question"),
-            ChatMessage(role="system", content="Not sent: replaced by a new message.",
-                        tone="warning"),
+            ChatMessage(
+                role="system", content="Not sent: replaced by a new message.", tone="warning"
+            ),
             ChatMessage(role="system", content="Server restarted", tone="neutral"),
         ]
         out = serialize_transcript(msgs, 10_000)

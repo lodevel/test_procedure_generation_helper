@@ -35,14 +35,30 @@ def _project(tmp_path, *, bundle_rules=("01_a.md", "02_b.md"), project_docs=()):
     if bundle_rules is not None:
         (root / "bundle" / "rules").mkdir(parents=True)
         (root / "bundle" / "bundle.json").write_text(
-            json.dumps({"id": "baseline", "version": "2.10.0"}), encoding="utf-8")
-        (root / "bundle" / "defaults.json").write_text(json.dumps({"workflows": {  # runnable tabs
-            tab: {"tasks": [{"id": task, "prompt_template": "P"}]} for tab, task in (
-                ("text_only", "review_text_procedure"), ("text_json", "derive_json_from_text"),
-                ("json_code", "generate_code_from_json"))}}), encoding="utf-8")
+            json.dumps({"id": "baseline", "version": "2.10.0"}), encoding="utf-8"
+        )
+        (root / "bundle" / "defaults.json").write_text(
+            json.dumps(
+                {
+                    "workflows": {  # runnable tabs
+                        tab: {"tasks": [{"id": task, "prompt_template": "P"}]}
+                        for tab, task in (
+                            ("text_only", "review_text_procedure"),
+                            ("text_json", "derive_json_from_text"),
+                            ("json_code", "generate_code_from_json"),
+                        )
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
         for name in bundle_rules:
             (root / "bundle" / "rules" / name).write_text(f"bundle {name}", encoding="utf-8")
-    docs = project_docs if isinstance(project_docs, dict) else {n: f"project {n}" for n in project_docs}
+    docs = (
+        project_docs
+        if isinstance(project_docs, dict)
+        else {n: f"project {n}" for n in project_docs}
+    )
     for name, text in docs.items():
         (root / "config" / "project_rules").mkdir(exist_ok=True)
         (root / "config" / "project_rules" / name).write_text(text, encoding="utf-8")
@@ -65,11 +81,17 @@ def _tcm(root, selections=None):
 
 
 def _context(root, pm, tcm, tab="text_json"):
-    return TabContext(tab_id=tab, backend_factory=None, project_manager=pm,
-                      artifact_manager=ArtifactManager(), task_config_manager=tcm)
+    return TabContext(
+        tab_id=tab,
+        backend_factory=None,
+        project_manager=pm,
+        artifact_manager=ArtifactManager(),
+        task_config_manager=tcm,
+    )
 
 
 # ---- S1: keys, expansion, LLM content ------------------------------------------------------
+
 
 def test_rule_docs_are_the_bundle_rules_then_the_project_documents_by_key(tmp_path):
     root = _project(tmp_path, project_docs=("zz.md", "notes.txt", "skip.docx", "b.pdf"))
@@ -77,10 +99,12 @@ def test_rule_docs_are_the_bundle_rules_then_the_project_documents_by_key(tmp_pa
     rules, own = root / "bundle" / "rules", root / "config" / "project_rules"
 
     assert pm.get_rule_docs() == [
-        ("01_a.md", rules / "01_a.md", "bundle"), ("02_b.md", rules / "02_b.md", "bundle"),
+        ("01_a.md", rules / "01_a.md", "bundle"),
+        ("02_b.md", rules / "02_b.md", "bundle"),
         ("project/b.pdf", own / "b.pdf", "project"),
         ("project/notes.txt", own / "notes.txt", "project"),
-        ("project/zz.md", own / "zz.md", "project")]
+        ("project/zz.md", own / "zz.md", "project"),
+    ]
 
 
 def test_a_project_document_named_like_a_bundle_rule_has_its_own_key(tmp_path):
@@ -111,7 +135,9 @@ def test_a_picked_rules_folder_replaces_the_bundle_rules_not_the_project_documen
     assert pm.set_rules_root(root / "picked")
 
     assert [(d.key, d.origin) for d in pm.get_rule_docs()] == [
-        ("p.md", "bundle"), ("project/own.md", "project")]
+        ("p.md", "bundle"),
+        ("project/own.md", "project"),
+    ]
 
 
 @pytest.mark.parametrize("raw", [None, "all"])
@@ -123,8 +149,10 @@ def test_all_selects_the_bundle_rules_and_the_project_documents(tmp_path, raw):
 
     assert context.get_selected_rules() == ["01_a.md", "02_b.md", "project/own.md"]
     content = context.get_selected_rules_content()
-    assert all(f"{who} {name}" in content
-               for who, name in (("bundle", "01_a.md"), ("bundle", "02_b.md"), ("project", "own.md")))
+    assert all(
+        f"{who} {name}" in content
+        for who, name in (("bundle", "01_a.md"), ("bundle", "02_b.md"), ("project", "own.md"))
+    )
 
 
 def test_project_documents_come_after_the_bundle_rules_under_a_header_saying_they_win(tmp_path):
@@ -135,10 +163,18 @@ def test_project_documents_come_after_the_bundle_rules_under_a_header_saying_the
 
     content = _context(root, pm, tcm).get_selected_rules_content()
 
-    order = [content.index(s) for s in (
-        "# Rules from: 02_b.md", "bundle 02_b.md", "project rules win",
-        "# Project rules from: more.txt", "project more.txt",
-        "# Project rules from: own.md", "project own.md")]
+    order = [
+        content.index(s)
+        for s in (
+            "# Rules from: 02_b.md",
+            "bundle 02_b.md",
+            "project rules win",
+            "# Project rules from: more.txt",
+            "project more.txt",
+            "# Project rules from: own.md",
+            "project own.md",
+        )
+    ]
     assert order == sorted(order)
     assert content.count("project rules win") == 1
     assert "01_a.md" not in content
@@ -180,11 +216,16 @@ def test_a_byte_order_mark_is_not_sent(tmp_path):
 def test_a_selected_document_no_longer_there_is_skipped(tmp_path):
     root = _project(tmp_path)
     tcm = _tcm(root, {"text_json": ["project/gone.md", "01_a.md"]})
-    assert _context(root, _pm(root), tcm).get_selected_rules_content().strip().endswith(
-        "bundle 01_a.md")
+    assert (
+        _context(root, _pm(root), tcm)
+        .get_selected_rules_content()
+        .strip()
+        .endswith("bundle 01_a.md")
+    )
 
 
 # ---- S2: adding a document ------------------------------------------------------------------
+
 
 def _source(tmp_path, name, data: bytes) -> Path:
     folder = tmp_path / "outside"
@@ -238,11 +279,15 @@ def test_a_file_appearing_after_the_check_is_not_overwritten_either(tmp_path, mo
     assert [p.name for p in tmp_path.iterdir()] == ["f.md"]  # the temp file went
 
 
-@pytest.mark.parametrize("name,data,match", [
-    ("big.md", b"x" * (64 * 1024 + 1), "64 KB"),
-    ("manual.docx", b"PK", "PDF"),
-    ("latin.txt", "café".encode("latin-1"), "UTF-8"),
-], ids=["over-64-KB", "docx", "not-utf8"])
+@pytest.mark.parametrize(
+    "name,data,match",
+    [
+        ("big.md", b"x" * (64 * 1024 + 1), "64 KB"),
+        ("manual.docx", b"PK", "PDF"),
+        ("latin.txt", "café".encode("latin-1"), "UTF-8"),
+    ],
+    ids=["over-64-KB", "docx", "not-utf8"],
+)
 def test_adding_refuses_too_big_a_pdf_or_non_utf8(tmp_path, name, data, match):
     root = _project(tmp_path)
     pm = _pm(root)
@@ -274,17 +319,21 @@ def test_a_new_document_is_ticked_in_every_explicit_selection_and_saved(tmp_path
     tcm.add_rule_to_selections("project/board.md")  # once only
     tcm.save_config()
 
-    assert all(t.selected_rules == ["01_a.md", "project/board.md"]
-               for t in tcm.get_all_tasks_for_tab("text_json"))
+    assert all(
+        t.selected_rules == ["01_a.md", "project/board.md"]
+        for t in tcm.get_all_tasks_for_tab("text_json")
+    )
     assert all(t.selected_rules == "all" for t in tcm.get_all_tasks_for_tab("json_code"))
     assert all(t.selected_rules == [] for t in tcm.get_all_tasks_for_tab("text_only"))
     saved = json.loads((root / "config" / "config.json").read_text(encoding="utf-8"))
     # Saved: the bundle's task only (the editor-only ones stay inherited).
     assert {t["id"]: t["selected_rules"] for t in saved["workflows"]["text_json"]["tasks"]} == {
-        "derive_json_from_text": ["01_a.md", "project/board.md"]}
+        "derive_json_from_text": ["01_a.md", "project/board.md"]
+    }
 
 
 # ---- S7: PDF project documents ride the message as files ---------------------------------
+
 
 def _pdf_project(tmp_path, selected):
     root = _project(tmp_path, project_docs=("own.md",))
@@ -330,6 +379,7 @@ def test_a_changed_pdf_sends_the_rules_and_the_file_again(tmp_path):
 
 # ---- S2: the picker -------------------------------------------------------------------------
 
+
 def _dialog(root, pm, tcm, tab="text_json"):
     return RuleSelectorDialog(tab, pm, tcm)
 
@@ -337,6 +387,7 @@ def _dialog(root, pm, tcm, tab="text_json"):
 def _rows(dlg):
     """The list's rows: ("msg", text) for a message, (key, label, detail, ticked) for a box."""
     from PySide6.QtWidgets import QCheckBox, QLabel
+
     out = []
     layout = dlg.rules._rows
     for i in range(layout.count()):
@@ -360,13 +411,17 @@ def test_the_picker_lists_bundle_rules_then_a_project_section(qapp, tmp_path):
     dlg = _dialog(root, pm, tcm)
 
     assert _rows(dlg) == [
-        ("01_a.md", "01_a.md", "1 KB", False), ("02_b.md", "02_b.md", "1 KB", True),
-        ("msg", "Project"), ("project/own.md", "own.md", "project · 3 KB", True)]
+        ("01_a.md", "01_a.md", "1 KB", False),
+        ("02_b.md", "02_b.md", "1 KB", True),
+        ("msg", "Project"),
+        ("project/own.md", "own.md", "project · 3 KB", True),
+    ]
     assert dlg.count_label.text().startswith("2 of 3 rules selected")
 
 
 def test_adding_in_the_picker_ticks_the_document_in_every_view_and_warns_above_16_kb(
-        qapp, tmp_path, monkeypatch):
+    qapp, tmp_path, monkeypatch
+):
     root = _project(tmp_path)
     pm = _pm(root)
     tcm = _tcm(root, {"text_json": ["01_a.md"], "json_code": ["02_b.md"]})
@@ -383,7 +438,9 @@ def test_adding_in_the_picker_ticks_the_document_in_every_view_and_warns_above_1
     assert len(warned) == 1 and "16 KB" in warned[0]
     saved = json.loads((root / "config" / "config.json").read_text(encoding="utf-8"))
     for tab in TABS:
-        assert all("project/board.md" in t["selected_rules"] for t in saved["workflows"][tab]["tasks"])
+        assert all(
+            "project/board.md" in t["selected_rules"] for t in saved["workflows"][tab]["tasks"]
+        )
 
 
 def test_adding_a_small_document_does_not_warn_and_a_refusal_is_shown(qapp, tmp_path, monkeypatch):
@@ -429,6 +486,7 @@ def test_open_folder_that_cannot_be_created_says_so(qapp, tmp_path, monkeypatch)
 
 def test_without_a_project_the_picker_says_to_open_one(qapp, tmp_path):
     from procedo.studio.core.task_config import TaskConfigManager as _T
+
     dlg = RuleSelectorDialog("text_json", ProjectManager(), _T(tmp_path / "absent.json"))
     assert ("msg", "Open a project to add documents") in _rows(dlg)
 
@@ -445,6 +503,7 @@ def test_a_document_vanishing_while_the_picker_fills_is_skipped(qapp, tmp_path, 
 
 def test_open_folder_opens_the_project_rules_folder(qapp, tmp_path, monkeypatch):
     from procedo.core import os_open
+
     root = _project(tmp_path)
     opened = []
     monkeypatch.setattr(os_open, "open_path", opened.append)
@@ -461,8 +520,9 @@ def test_the_picker_adds_a_pdf_without_the_text_limits(qapp, tmp_path, monkeypat
     tcm = _tcm(root, {"text_json": ["01_a.md"]})
     src = _source(tmp_path, "board.pdf", b"%PDF" + b"\xff" * (100 * 1024))
     filters = []
-    monkeypatch.setattr(QFileDialog, "getOpenFileName",
-                        lambda *a, **k: filters.append(a[3]) or (str(src), ""))
+    monkeypatch.setattr(
+        QFileDialog, "getOpenFileName", lambda *a, **k: filters.append(a[3]) or (str(src), "")
+    )
     warned = []
     monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a[2]))
     dlg = _dialog(root, _pm(root), tcm)

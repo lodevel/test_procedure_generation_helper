@@ -28,6 +28,7 @@ match the declared ``tools.json`` (which is what the host's per-request tool-gat
 universe is built from). A mismatch exits non-zero rather than serving tools the
 host can't gate.
 """
+
 import argparse
 import importlib.util
 import json
@@ -73,8 +74,7 @@ def _load_tool_folder(tools_dir):
     keep_bytecode_off = sys.dont_write_bytecode
     sys.dont_write_bytecode = True
     try:
-        spec = importlib.util.spec_from_file_location(
-            f"skilltools_{declared_server}", tools_py)
+        spec = importlib.util.spec_from_file_location(f"skilltools_{declared_server}", tools_py)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
     except Exception as exc:  # noqa: BLE001
@@ -93,23 +93,21 @@ def _load_tool_folder(tools_dir):
     if names != declared_tools:
         _die(f"TOOLS {sorted(names)} != tools.json tools {sorted(declared_tools)}")
 
-    advert = [
-        {k: t[k] for k in ("name", "description", "inputSchema")} for t in tools
-    ]
+    advert = [{k: t[k] for k in ("name", "description", "inputSchema")} for t in tools]
     dispatch = {t["name"]: t["handler"] for t in tools}
     return server_name, advert, dispatch
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Generic tool-folder MCP server")
-    parser.add_argument("--tools-dir", required=True,
-                        help="folder holding tools.py + tools.json")
+    parser.add_argument("--tools-dir", required=True, help="folder holding tools.py + tools.json")
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
     server_name, tools, dispatch = _load_tool_folder(args.tools_dir)
     server_info = {"name": server_name, "version": "1.0.0"}
 
     import _mcp_serve  # sibling module (authoring/ is sys.path[0] for the
+
     # launched script); avoids triggering the heavy authoring/__init__ chain.
     _mcp_serve.serve(server_info, tools, dispatch)
 

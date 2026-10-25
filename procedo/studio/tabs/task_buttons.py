@@ -76,8 +76,9 @@ class TaskButtonRow:
 
         # Get label from TaskConfigManager
         label = self._label(task, tab_name, task_id_override=task_id_override)
-        button = task_button(label, callback, force_callback=force_callback,
-                             force_tooltip=force_tooltip)
+        button = task_button(
+            label, callback, force_callback=force_callback, force_tooltip=force_tooltip
+        )
         button.setEnabled(enabled)
         button.setToolTip(tooltip or f"{label}\nTask: {task.value}")
         return button
@@ -108,7 +109,8 @@ class TaskButtonRow:
         button_tasks = [t for t in enabled_tasks if t.id != LLMTask.AD_HOC_CHAT.value]
         if not button_tasks:
             self._action_bar.set_assistant_buttons(
-                [ui_kit.note("No LLM tasks configured", wrap=False)])
+                [ui_kit.note("No LLM tasks configured", wrap=False)]
+            )
             return
 
         buttons = []
@@ -130,15 +132,17 @@ class TaskButtonRow:
 
             force_callback, force_tooltip = force_map.get(task.id, (None, ""))
             # Create button with task_id_override for correct label lookup
-            buttons.append(self.create_button(
-                self._resolve_llm_task(task.id),
-                callback,
-                enabled=invocable,
-                tooltip=tooltip,
-                task_id_override=task.id,
-                force_callback=force_callback,
-                force_tooltip=force_tooltip,
-            ))
+            buttons.append(
+                self.create_button(
+                    self._resolve_llm_task(task.id),
+                    callback,
+                    enabled=invocable,
+                    tooltip=tooltip,
+                    task_id_override=task.id,
+                    force_callback=force_callback,
+                    force_tooltip=force_tooltip,
+                )
+            )
         self._action_bar.set_assistant_buttons(buttons)
 
     @staticmethod
@@ -155,14 +159,14 @@ class TaskButtonRow:
         Custom tasks use AD_HOC_CHAT as the LLM routing task but pass their
         custom_task_id so the correct prompt_template is looked up.
         """
+
         def _callback():
             # Defense in depth (task #22): the button is greyed when the
             # task is undeclared, but re-check so a stale or programmatic
             # click can never run with a substituted chat prompt.
             manager = self._config
             tab_id = self._tab_id
-            if (manager is None or tab_id is None
-                    or not manager.is_task_invocable(tab_id, task_id)):
+            if manager is None or tab_id is None or not manager.is_task_invocable(tab_id, task_id):
                 log.error(
                     f"Refusing custom task '{task_id}': not declared by the "
                     f"active bundle (no prompt_template)"
@@ -173,6 +177,7 @@ class TaskButtonRow:
                 self._run_task(LLMTask.AD_HOC_CHAT, custom_task_id=task_id)
             else:
                 log.warning(f"Tab {self._owner_name} has no _run_task_async method")
+
         return _callback
 
     def _label(self, task: LLMTask, tab_name: str, task_id_override: str = None) -> str:
@@ -196,9 +201,11 @@ class TaskButtonRow:
             if task_config is not None:
                 return task_config.button_label
             else:
-                log.warning(f"Task config not found for {tab_name}.{lookup_id}, using fallback label")
+                log.warning(
+                    f"Task config not found for {tab_name}.{lookup_id}, using fallback label"
+                )
 
         # Fallback: generate label from task name
-        fallback_label = task.value.replace('_', ' ').title()
+        fallback_label = task.value.replace("_", " ").title()
         log.debug(f"Using fallback label '{fallback_label}' for task {task.value}")
         return fallback_label

@@ -58,7 +58,7 @@ class LLMWorker(QThread):
                 f"task={self._request.task}"
             )
 
-            if hasattr(self._backend, 'send_request_streaming'):
+            if hasattr(self._backend, "send_request_streaming"):
                 log.debug("LLMWorker: Using streaming send_request")
                 response = self._backend.send_request_streaming(
                     self._request,

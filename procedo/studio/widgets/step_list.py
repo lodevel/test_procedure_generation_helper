@@ -24,12 +24,14 @@ class StepRow:
     hint: str = ""
 
 
-def step_rows(json_steps: list, blocks_by_n: dict, procedure_text: str,
-              call_hints: dict | None = None) -> list[StepRow]:
+def step_rows(
+    json_steps: list, blocks_by_n: dict, procedure_text: str, call_hints: dict | None = None
+) -> list[StepRow]:
     """One row per numbered JSON step: its text from procedure_text.md (op-call JSON steps carry
     no ``text``), else the step's own ``text``, else its op; its code block when there is one; a
     Call step's function from ``call_hints`` (Call name -> text) when it is there."""
     from ..pack_ops.pack_parsers import step_texts_from_canonical
+
     canonical = step_texts_from_canonical(procedure_text or "")
     rows = []
     for step in json_steps:
@@ -66,7 +68,9 @@ class StepListCard(QFrame):
         self.tree.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.tree.header().setStretchLastSection(True)
-        self.tree.itemClicked.connect(lambda item, _col: self.step_clicked.emit(item.data(0, Qt.ItemDataRole.UserRole)))
+        self.tree.itemClicked.connect(
+            lambda item, _col: self.step_clicked.emit(item.data(0, Qt.ItemDataRole.UserRole))
+        )
         self.note = ui_kit.note()
         column = QVBoxLayout(self)
         column.setContentsMargins(1, 0, 1, 1)  # inside the card's border
@@ -79,7 +83,9 @@ class StepListCard(QFrame):
         footer.addWidget(self.note)
         column.addLayout(footer)
 
-    def show_steps(self, rows: list[StepRow], note: str, pill: tuple[str, str] | None = None) -> None:
+    def show_steps(
+        self, rows: list[StepRow], note: str, pill: tuple[str, str] | None = None
+    ) -> None:
         """*rows* in the list (the selected step stays selected), *note* under it, *pill*
         (tone, text) in the header."""
         current = self.tree.currentItem()
@@ -98,8 +104,11 @@ class StepListCard(QFrame):
             item.setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             if row.block is None:
                 item.setForeground(2, missing)
-            lines = (f"Code lines {row.block.start_line}-{row.block.end_line}" if row.block
-                     else "(no code block — regenerate test.py)")
+            lines = (
+                f"Code lines {row.block.start_line}-{row.block.end_line}"
+                if row.block
+                else "(no code block — regenerate test.py)"
+            )
             tip = f"{row.text}\n\n{row.hint}\n\n{lines}" if row.hint else f"{row.text}\n\n{lines}"
             for column in range(3):
                 item.setToolTip(column, tip)

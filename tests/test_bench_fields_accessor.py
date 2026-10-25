@@ -6,6 +6,7 @@ when no project is open.
 Runs without PySide6:
     PYTHONPATH=. python3 -m pytest tests/test_bench_fields_accessor.py --noconftest -q
 """
+
 from __future__ import annotations
 
 import json
@@ -35,9 +36,25 @@ class TestBenchFieldsAccessor(unittest.TestCase):
 
     def test_editor_mode_reads_the_env_bundle(self):
         d = self.enterContext(tempfile.TemporaryDirectory())
-        (Path(d) / "defaults.json").write_text(json.dumps({"pack_dispatch": {"bench_fields": {
-            "controller": [{"name": "baud", "type": "enum", "default": 115200, "choices": [9600, 115200]}],
-        }}}), encoding="utf-8")
+        (Path(d) / "defaults.json").write_text(
+            json.dumps(
+                {
+                    "pack_dispatch": {
+                        "bench_fields": {
+                            "controller": [
+                                {
+                                    "name": "baud",
+                                    "type": "enum",
+                                    "default": 115200,
+                                    "choices": [9600, 115200],
+                                }
+                            ],
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
         os.environ[BUNDLE_DEFAULTS_PATH] = str(Path(d) / "defaults.json")
         bf = bundle_registry.bench_fields(bundle_capabilities.defaults_path(None))
         self.assertEqual(bf["controller"][0]["choices"], [9600, 115200])

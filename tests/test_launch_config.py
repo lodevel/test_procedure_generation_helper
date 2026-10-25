@@ -14,6 +14,7 @@ Verifies the master = providers-only blueprint + derived opencode.json with the
 The config dir is redirected to a tmp dir via monkeypatching so the test never
 touches the user's real settings folder.
 """
+
 import json
 import sys
 from pathlib import Path
@@ -55,13 +56,18 @@ def test_master_path_is_master_json(config_dir):
 
 def test_ensure_master_strips_model_and_mcp(config_dir, tmp_path):
     seed = tmp_path / "opencode.json"
-    seed.write_text(json.dumps({
-        "provider": {"openai": {"models": {"gpt-5": {}}}},
-        "model": "openai/gpt-5",
-        "small_model": "openai/gpt-5-mini",
-        "mcp": {"stale_tools": {"type": "local", "command": ["x"]}},
-        "theme": "dark",
-    }), encoding="utf-8")
+    seed.write_text(
+        json.dumps(
+            {
+                "provider": {"openai": {"models": {"gpt-5": {}}}},
+                "model": "openai/gpt-5",
+                "small_model": "openai/gpt-5-mini",
+                "mcp": {"stale_tools": {"type": "local", "command": ["x"]}},
+                "theme": "dark",
+            }
+        ),
+        encoding="utf-8",
+    )
 
     master = lc.ensure_master_config(seed_from=seed)
     data = json.loads(master.read_text(encoding="utf-8"))
@@ -88,9 +94,14 @@ def test_ensure_master_generated_once(config_dir, tmp_path):
 def test_build_launch_config_master_has_no_mcp(config_dir):
     # Master with providers only; no model/mcp.
     master = lc.get_opencode_master_path()
-    master.write_text(json.dumps({
-        "provider": {"openai": {"models": {"gpt-5": {}}}},
-    }), encoding="utf-8")
+    master.write_text(
+        json.dumps(
+            {
+                "provider": {"openai": {"models": {"gpt-5": {}}}},
+            }
+        ),
+        encoding="utf-8",
+    )
 
     launch_dir = lc.build_launch_config(project_root=None)
     derived = json.loads(_config(launch_dir).read_text(encoding="utf-8"))
@@ -127,14 +138,16 @@ def test_build_launch_config_fresh_mcp_paths_with_project(config_dir, tmp_path):
     tgz.write_bytes(b"fake-archive")
     (project / "bundle" / "rules").mkdir(parents=True)  # a loadable bundle with rules
     (project / "bundle" / "bundle.json").write_text(
-        json.dumps({"id": "baseline", "version": "2.10.0"}), encoding="utf-8")
+        json.dumps({"id": "baseline", "version": "2.10.0"}), encoding="utf-8"
+    )
     (project / "bundle" / "defaults.json").write_text("{}", encoding="utf-8")
 
     # Create a deterministic BUNDLED tool folder so we can assert its command.
     myfix_dir = project / "bundle" / "authoring_skills" / "myfix"
     myfix_dir.mkdir(parents=True)
     (myfix_dir / "tools.json").write_text(
-        json.dumps({"server": "myfix_tools", "tools": ["t"]}), encoding="utf-8")
+        json.dumps({"server": "myfix_tools", "tools": ["t"]}), encoding="utf-8"
+    )
     (myfix_dir / "tools.py").write_text(
         'SERVER_NAME = "myfix_tools"\nTOOLS = [{"name": "t", "description": "d",'
         ' "inputSchema": {"type": "object"}, "handler": lambda a: "ok"}]\n',
@@ -205,11 +218,16 @@ def test_build_launch_config_strips_model_defensively(config_dir):
     them leak into the derived launch config — they're stripped defensively so
     the blueprint stays project-agnostic (OpenCode auto-picks). (MINOR fix.)"""
     master = lc.get_opencode_master_path()
-    master.write_text(json.dumps({
-        "provider": {"a": {}},
-        "model": "openai/gpt-5",
-        "small_model": "openai/gpt-5-mini",
-    }), encoding="utf-8")
+    master.write_text(
+        json.dumps(
+            {
+                "provider": {"a": {}},
+                "model": "openai/gpt-5",
+                "small_model": "openai/gpt-5-mini",
+            }
+        ),
+        encoding="utf-8",
+    )
 
     launch_dir = lc.build_launch_config(project_root=None)
     derived = json.loads(_config(launch_dir).read_text(encoding="utf-8"))
@@ -264,9 +282,13 @@ def test_the_run_skill_universe_file_is_written_atomically(tmp_path, monkeypatch
     """A child skill reading the gate universe never sees a half-written file."""
     written = []
     real = lc.atomic_write_text
-    monkeypatch.setattr(lc, "atomic_write_text", lambda path, text: (written.append(path), real(path, text)))
-    monkeypatch.setattr("procedo.studio.authoring.tool_folders.build_skill_tools_universe",
-                        lambda project_root: {"srv": ["tool"]})
+    monkeypatch.setattr(
+        lc, "atomic_write_text", lambda path, text: (written.append(path), real(path, text))
+    )
+    monkeypatch.setattr(
+        "procedo.studio.authoring.tool_folders.build_skill_tools_universe",
+        lambda project_root: {"srv": ["tool"]},
+    )
     lc._build_run_skill_block(tmp_path / "proj", tmp_path / "launch", "secret")
     universe = launch_files.launch_file_path(tmp_path / "launch", launch_files.UNIVERSE_FILE)
     assert written == [universe]
@@ -279,7 +301,9 @@ def test_the_master_blueprint_is_written_atomically(config_dir, monkeypatch, tmp
     seed.write_text(json.dumps({"theme": "dark"}), encoding="utf-8")
     written = []
     real = lc.atomic_write_text
-    monkeypatch.setattr(lc, "atomic_write_text", lambda path, text: (written.append(path), real(path, text)))
+    monkeypatch.setattr(
+        lc, "atomic_write_text", lambda path, text: (written.append(path), real(path, text))
+    )
     master = lc.ensure_master_config(seed_from=seed)
     assert written == [master]
     assert json.loads(master.read_text(encoding="utf-8")) == {"theme": "dark"}

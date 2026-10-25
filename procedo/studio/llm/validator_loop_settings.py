@@ -29,6 +29,7 @@ open and toggle simultaneously, the last writer wins (which is fine for
 a 1-operator setting; both windows will reflect the persisted value on
 their next ``switch_context``).
 """
+
 from __future__ import annotations
 
 import logging
@@ -67,6 +68,7 @@ def max_attempts(project_root: Path | None) -> int:
     """The project's validator retry budget (``validator_loop.max_attempts``), else the
     built-in default."""
     from ..core.task_config import DEFAULT_MAX_VALIDATOR_ATTEMPTS
+
     if project_root is not None:
         value = load_settings(project_root).get("max_attempts")
         try:
@@ -97,5 +99,3 @@ def save_setting(project_root: Path, key: str, value: Any) -> None:
     section = data.get(SECTION_NAME)
     data[SECTION_NAME] = {**section, key: value} if isinstance(section, dict) else {key: value}
     config_manager.write_unified_config(config_dir, data)
-
-

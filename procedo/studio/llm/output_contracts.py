@@ -85,8 +85,6 @@ This contract ensures you stay focused on JSON and code artifacts only.
 """
 
 
-
-
 def render_section_emit_list(ownership: SectionOwnership) -> str:
     """Render the procedure_text section-ownership instruction block from a
     resolved SectionOwnership. Lists the LLM-owned sections in the bundle's
@@ -130,9 +128,7 @@ def render_section_emit_list(ownership: SectionOwnership) -> str:
     return "\n".join(lines)
 
 
-def get_contract_for_tab(
-    tab_id: str, *, ownership: "SectionOwnership | None" = None
-) -> str:
+def get_contract_for_tab(tab_id: str, *, ownership: "SectionOwnership | None" = None) -> str:
     """
     Get the output contract for a specific tab.
 
@@ -171,13 +167,13 @@ def get_contract_for_tab(
 def get_allowed_artifacts(tab_id: str) -> list[str]:
     """
     Get the list of artifacts allowed for a specific tab.
-    
+
     Args:
         tab_id: Tab identifier ("text_json", "json_code")
-        
+
     Returns:
         List of allowed artifact names
-        
+
     Raises:
         ValueError: If tab_id is not recognized
     """
@@ -186,10 +182,10 @@ def get_allowed_artifacts(tab_id: str) -> list[str]:
         "text_json": ["procedure_text", "procedure_json"],
         "json_code": ["procedure_json", "test_code"],
     }
-    
+
     if tab_id not in allowed:
         raise ValueError(f"Unknown tab_id: {tab_id}. Valid values: {list(allowed.keys())}")
-    
+
     return allowed[tab_id]
 
 
@@ -202,13 +198,11 @@ TASK_OUTPUT_CONTRACTS = {
     LLMTask.REVIEW_TEXT_PROCEDURE: ["procedure_text"],
     LLMTask.REVIEW_JSON: ["procedure_json"],
     LLMTask.REVIEW_TEXT_VS_JSON: ["procedure_text", "procedure_json"],
-    
     # JSON-Code Tab Tasks
     LLMTask.GENERATE_CODE_FROM_JSON: ["test_code"],
     LLMTask.DERIVE_JSON_FROM_CODE: ["procedure_json"],
     LLMTask.REVIEW_CODE: ["test_code"],
     LLMTask.REVIEW_CODE_VS_JSON: ["procedure_json", "test_code"],
-    
     # Ad-hoc chat uses tab-level contract (no task-specific restriction)
     LLMTask.AD_HOC_CHAT: None,
 }
@@ -217,10 +211,10 @@ TASK_OUTPUT_CONTRACTS = {
 def get_task_expected_artifacts(task: LLMTask) -> Optional[list[str]]:
     """
     Get the list of artifacts expected for a specific task.
-    
+
     Args:
         task: LLM task type
-        
+
     Returns:
         List of expected artifact names, or None if task uses tab-level contract
     """

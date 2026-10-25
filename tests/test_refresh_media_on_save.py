@@ -5,6 +5,7 @@ accepted from the LLM has none, or stale ones; saving it runs the same
 catalogue, so what reaches disk (and the editor buffer) is what the parser
 would have produced. On parser output the save changes nothing.
 """
+
 from __future__ import annotations
 
 import json
@@ -22,8 +23,14 @@ _HAND = {
     "id": "GPO",
     "steps": [
         {"n": 1, "op": "connect", "text": "the load + to P4 pin 1"},
-        {"n": 2, "op": "wait", "seconds": 1,
-         "media": [{"type": "image", "ref": {"component": "STALE", "pin": None}, "caption": "STALE"}]},
+        {
+            "n": 2,
+            "op": "wait",
+            "seconds": 1,
+            "media": [
+                {"type": "image", "ref": {"component": "STALE", "pin": None}, "caption": "STALE"}
+            ],
+        },
     ],
     "expected": [],
 }
@@ -45,7 +52,7 @@ rules_pack: rules_packager_base@2.0.5
 
 
 def _manager(tmp_path):
-    test_dir = tmp_path / "GPO"          # no project layout above: the engine stand-in answers at once
+    test_dir = tmp_path / "GPO"  # no project layout above: the engine stand-in answers at once
     test_dir.mkdir()
     manager = ArtifactManager()
     manager.set_test_dir(test_dir)
@@ -60,8 +67,10 @@ def test_a_hand_written_json_gets_its_media_on_save(tmp_path):
 
     saved = json.loads((tmp_path / "GPO" / "procedure.json").read_text(encoding="utf-8"))
     assert [m["caption"] for m in saved["steps"][0]["media"]] == ["P4 pin 1"]
-    assert "media" not in saved["steps"][1]                    # stale media on a non-text op is gone
-    assert manager.get_content(ArtifactType.PROCEDURE_JSON) == json.dumps(saved, indent=2, ensure_ascii=False)
+    assert "media" not in saved["steps"][1]  # stale media on a non-text op is gone
+    assert manager.get_content(ArtifactType.PROCEDURE_JSON) == json.dumps(
+        saved, indent=2, ensure_ascii=False
+    )
 
 
 def test_parser_output_is_saved_unchanged(tmp_path):
@@ -91,6 +100,7 @@ def test_refresh_media_is_the_catalogue():
 
 def _saved_over_a_baseline(tmp_path, *, acknowledged):
     from procedo.studio.core import test_sync
+
     manager = _manager(tmp_path)
     test_dir = tmp_path / "GPO"
     text = json.dumps(_HAND, indent=2)
@@ -100,9 +110,9 @@ def _saved_over_a_baseline(tmp_path, *, acknowledged):
     else:
         (test_dir / "test.py").write_text("x = 1\n", encoding="utf-8")
         test_sync.mark_in_sync(test_dir, [])
-        (test_dir / "test.py").write_text("x = 2\n", encoding="utf-8")   # edited since: out of sync
+        (test_dir / "test.py").write_text("x = 2\n", encoding="utf-8")  # edited since: out of sync
     manager.set_content(ArtifactType.PROCEDURE_JSON, text)
-    manager.save_artifact(ArtifactType.PROCEDURE_JSON)                 # the refresh rewrites the media
+    manager.save_artifact(ArtifactType.PROCEDURE_JSON)  # the refresh rewrites the media
     assert "P4 pin 1" in (test_dir / "procedure.json").read_text(encoding="utf-8")
     return test_sync.is_out_of_sync(test_dir, [])
 
@@ -118,6 +128,6 @@ def test_the_refresh_write_does_not_acknowledge_an_out_of_sync_test(tmp_path):
 def test_the_refresh_write_gives_a_never_acknowledged_test_no_baseline(tmp_path):
     manager = _manager(tmp_path)
     manager.set_content(ArtifactType.PROCEDURE_JSON, json.dumps(_HAND, indent=2))
-    manager.save_artifact(ArtifactType.PROCEDURE_JSON)               # the refresh rewrites the media
+    manager.save_artifact(ArtifactType.PROCEDURE_JSON)  # the refresh rewrites the media
     assert "P4 pin 1" in (tmp_path / "GPO" / "procedure.json").read_text(encoding="utf-8")
     assert not (tmp_path / "GPO" / ".llm_session.json").exists()

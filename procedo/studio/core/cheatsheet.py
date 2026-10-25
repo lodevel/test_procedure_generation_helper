@@ -24,13 +24,14 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-PREBUILT_NAME = "cheatsheet.md"   # a bundle-shipped sheet takes precedence
+PREBUILT_NAME = "cheatsheet.md"  # a bundle-shipped sheet takes precedence
 _SCHEMA_RE = re.compile(r"schema", re.IGNORECASE)
 
 
 # --------------------------------------------------------------------------
 # Fence-aware doc model
 # --------------------------------------------------------------------------
+
 
 def _parse_doc(text: str) -> list[tuple[str, str]]:
     """``[(kind, line)]`` where kind is 'heading'|'fence'|'text'. Headings inside
@@ -133,6 +134,7 @@ def _canonical_form_tables(lines):
 # Bundle access
 # --------------------------------------------------------------------------
 
+
 def _manifest_entries(root: Path) -> list[dict]:
     """Ordered doc entries from ``manifest.json``; falls back to globbing
     ``*.md`` in filename order when the manifest is missing/unreadable."""
@@ -143,8 +145,10 @@ def _manifest_entries(root: Path) -> list[dict]:
     except (OSError, ValueError):
         # Expected when the manifest is missing/corrupt — glob fallback below.
         logger.debug("manifest.json unreadable under %s; falling back to *.md glob", root)
-    return [{"index": i, "filename": p.name, "source": ""}
-            for i, p in enumerate(sorted(root.glob("*.md")), 1)]
+    return [
+        {"index": i, "filename": p.name, "source": ""}
+        for i, p in enumerate(sorted(root.glob("*.md")), 1)
+    ]
 
 
 def doc_title(filename: str, text: str) -> str:
@@ -171,18 +175,21 @@ def list_docs(rules_root) -> list[dict]:
             text = (root / fn).read_text(encoding="utf-8")
         except OSError:
             continue
-        docs.append({
-            "title": doc_title(fn, text),
-            "filename": fn,
-            "source": entry.get("source", ""),
-            "text": text,
-        })
+        docs.append(
+            {
+                "title": doc_title(fn, text),
+                "filename": fn,
+                "source": entry.get("source", ""),
+                "text": text,
+            }
+        )
     return docs
 
 
 # --------------------------------------------------------------------------
 # Cheat-sheet
 # --------------------------------------------------------------------------
+
 
 def build_cheatsheet(rules_root) -> str:
     """Compact DSL cheat-sheet (markdown) for the bundle at *rules_root*.
@@ -241,8 +248,7 @@ def build_cheatsheet(rules_root) -> str:
                 tbl = _first_table(sec[1]) if sec else None
                 if tbl:
                     sheet += [f"### {label}", ""] + tbl + [""]
-            sec = _section_body(lines,
-                                lambda h: "expected" in h and "criterion" in h)
+            sec = _section_body(lines, lambda h: "expected" in h and "criterion" in h)
             if sec:
                 tbl = _first_table(sec[1])
                 if tbl:

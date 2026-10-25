@@ -8,6 +8,7 @@ URL now; WHO starts ``opencode serve`` behind it is a
 :class:`OpenCodeServerManager`, is bound to that seam by
 :class:`procedo.studio.llm.lifecycle_adapters.ManagerLifecycle`.
 """
+
 from opencode_client.client import (  # noqa: F401
     OpenCodeBackend,
     OpenCodeConfig,

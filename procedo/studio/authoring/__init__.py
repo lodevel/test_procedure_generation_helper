@@ -6,6 +6,7 @@ pure-Python core — value object, single-folder loader, and cross-location
 discovery. Qt surfaces live in the editor's UI modules and depend on this core,
 not the other way round.
 """
+
 from .context import ContextBundle, ContextItem, ContextSource, assemble
 from .context_sources import (
     ArtifactProvider,

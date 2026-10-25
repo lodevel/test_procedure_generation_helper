@@ -20,6 +20,7 @@ correlate the (now possibly out-of-order) responses; ``send`` holds a lock so
 whole-line writes never interleave. The sibling servers' handlers are quick and
 side-effect-light, so concurrent dispatch is safe for them too.
 """
+
 import json
 import sys
 import threading
@@ -45,8 +46,13 @@ def _dispatch_call(rid, params, dispatch):
     name = params.get("name")
     handler = dispatch.get(name)
     if handler is None:
-        send({"jsonrpc": "2.0", "id": rid,
-              "error": {"code": -32602, "message": f"unknown tool: {name}"}})
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": rid,
+                "error": {"code": -32602, "message": f"unknown tool: {name}"},
+            }
+        )
         return
     try:
         result = handler(params.get("arguments") or {})
@@ -54,8 +60,13 @@ def _dispatch_call(rid, params, dispatch):
             result = text_result(result)
         send({"jsonrpc": "2.0", "id": rid, "result": result})
     except Exception as exc:  # noqa: BLE001 — never let one request kill the server
-        send({"jsonrpc": "2.0", "id": rid,
-              "error": {"code": -32603, "message": f"internal error: {exc}"}})
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": rid,
+                "error": {"code": -32603, "message": f"internal error: {exc}"},
+            }
+        )
 
 
 def serve(server_info, tools, dispatch):
@@ -84,17 +95,18 @@ def serve(server_info, tools, dispatch):
             continue
         try:
             if method == "initialize":
-                client_ver = (req.get("params") or {}).get(
-                    "protocolVersion", "2024-11-05")
-                send({
-                    "jsonrpc": "2.0",
-                    "id": rid,
-                    "result": {
-                        "protocolVersion": client_ver,
-                        "capabilities": {"tools": {}},
-                        "serverInfo": server_info,
-                    },
-                })
+                client_ver = (req.get("params") or {}).get("protocolVersion", "2024-11-05")
+                send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": rid,
+                        "result": {
+                            "protocolVersion": client_ver,
+                            "capabilities": {"tools": {}},
+                            "serverInfo": server_info,
+                        },
+                    }
+                )
             elif method == "tools/list":
                 send({"jsonrpc": "2.0", "id": rid, "result": {"tools": tools}})
             elif method == "tools/call":
@@ -108,14 +120,18 @@ def serve(server_info, tools, dispatch):
             elif method == "ping":
                 send({"jsonrpc": "2.0", "id": rid, "result": {}})
             else:
-                send({
+                send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": rid,
+                        "error": {"code": -32601, "message": f"method not found: {method}"},
+                    }
+                )
+        except Exception as exc:  # noqa: BLE001 — never let one request kill the loop
+            send(
+                {
                     "jsonrpc": "2.0",
                     "id": rid,
-                    "error": {"code": -32601, "message": f"method not found: {method}"},
-                })
-        except Exception as exc:  # noqa: BLE001 — never let one request kill the loop
-            send({
-                "jsonrpc": "2.0",
-                "id": rid,
-                "error": {"code": -32603, "message": f"internal error: {exc}"},
-            })
+                    "error": {"code": -32603, "message": f"internal error: {exc}"},
+                }
+            )

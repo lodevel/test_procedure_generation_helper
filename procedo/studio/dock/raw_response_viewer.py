@@ -5,10 +5,7 @@ with Auto-show / Copy / Clear, the text in mono, the latest response's size unde
 Implements Section 10.4 of the spec.
 """
 
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QPlainTextEdit,
-    QPushButton, QCheckBox
-)
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QPlainTextEdit, QPushButton, QCheckBox
 from typing import TYPE_CHECKING, Optional
 
 from procedo.ui import ui_kit
@@ -46,8 +43,11 @@ class RawResponseViewer(QWidget):
         self.copy_btn.clicked.connect(self._on_copy)
         self.clear_btn = QPushButton("Clear")
         self.clear_btn.clicked.connect(self._on_clear)
-        layout.addLayout(ui_kit.hbox(ui_kit.bold("Raw response"), None, self.auto_show_cb,
-                                     self.copy_btn, self.clear_btn))
+        layout.addLayout(
+            ui_kit.hbox(
+                ui_kit.bold("Raw response"), None, self.auto_show_cb, self.copy_btn, self.clear_btn
+            )
+        )
 
         # Text view
         self.text_view = QPlainTextEdit()
@@ -97,7 +97,7 @@ class RawResponseViewer(QWidget):
 
         # Update stats
         char_count = len(raw_text)
-        line_count = raw_text.count('\n') + 1
+        line_count = raw_text.count("\n") + 1
         self.stats_label.setText(f"Latest: {char_count} chars · {line_count} lines")
 
     def _on_copy(self):

@@ -1,6 +1,7 @@
 """Drift-guard fixture: tools.py has "echo" but tools.json lists "not_echo".
 The generic server's drift guard must catch this and exit non-zero.
 """
+
 SERVER_NAME = "fixture_tools"
 
 

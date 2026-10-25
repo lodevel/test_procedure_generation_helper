@@ -67,35 +67,58 @@ class _TextTransform:
 
 
 _SYNC_EQUIPMENT = _TextTransform(
-    "sync_equipment_from_steps", "sync_equipment_btn", "Syncing equipment\u2026",
+    "sync_equipment_from_steps",
+    "sync_equipment_btn",
+    "Syncing equipment\u2026",
     "Sync Equipment failed",
-    applied=("Equipment synced from steps",
-             "🔧 Sync Equipment applied — ## Equipment refreshed from steps. "
-             "Declared types were kept (type conflicts are warned) and "
-             "ratings merged as max(declared, observed)."),
-    same=("Sync Equipment: no changes (everything already declared)",
-          "🔧 Sync Equipment: no changes (## Equipment already matches "
-          "every device referenced in steps)."),
-    refused=("Sync Equipment: REFUSED — unparseable ## Equipment lines (see chat)",
-             "🔧 Sync Equipment REFUSED — the existing ## Equipment block "
-             "has lines that don't parse (wrong syntax, or their pack "
-             "isn't in the active bundle); syncing would delete them. "
-             "Nothing was changed."))
+    applied=(
+        "Equipment synced from steps",
+        "🔧 Sync Equipment applied — ## Equipment refreshed from steps. "
+        "Declared types were kept (type conflicts are warned) and "
+        "ratings merged as max(declared, observed).",
+    ),
+    same=(
+        "Sync Equipment: no changes (everything already declared)",
+        "🔧 Sync Equipment: no changes (## Equipment already matches "
+        "every device referenced in steps).",
+    ),
+    refused=(
+        "Sync Equipment: REFUSED — unparseable ## Equipment lines (see chat)",
+        "🔧 Sync Equipment REFUSED — the existing ## Equipment block "
+        "has lines that don't parse (wrong syntax, or their pack "
+        "isn't in the active bundle); syncing would delete them. "
+        "Nothing was changed.",
+    ),
+)
 
 _SYNC_META = _TextTransform(
-    "sync_meta_text", "sync_meta_btn", "Syncing meta\u2026", "Sync Meta failed",
-    applied=("Meta synced from bundle",
-             "🏷️ Sync Meta applied — ## Meta regenerated from the active bundle "
-             "(pack versions re-pinned; board / format_version preserved)."),
-    same=("Sync Meta: no changes (## Meta already matches the bundle)",
-          "🏷️ Sync Meta: no changes (## Meta already matches the active bundle)."))
+    "sync_meta_text",
+    "sync_meta_btn",
+    "Syncing meta\u2026",
+    "Sync Meta failed",
+    applied=(
+        "Meta synced from bundle",
+        "🏷️ Sync Meta applied — ## Meta regenerated from the active bundle "
+        "(pack versions re-pinned; board / format_version preserved).",
+    ),
+    same=(
+        "Sync Meta: no changes (## Meta already matches the bundle)",
+        "🏷️ Sync Meta: no changes (## Meta already matches the active bundle).",
+    ),
+)
 
 _RENUMBER_STEPS = _TextTransform(
-    "renumber_steps_text", "renumber_steps_btn", "Renumbering steps\u2026", "Renumber failed",
-    applied=("Steps renumbered",
-             "🔢 Renumber Steps applied — every step in ## Steps is now sequential 1..N."),
+    "renumber_steps_text",
+    "renumber_steps_btn",
+    "Renumbering steps\u2026",
+    "Renumber failed",
+    applied=(
+        "Steps renumbered",
+        "🔢 Renumber Steps applied — every step in ## Steps is now sequential 1..N.",
+    ),
     same=("Steps already sequential", "🔢 Renumber Steps: already sequential — no changes."),
-    warns=False)
+    warns=False,
+)
 
 
 class TextActionsMixin(PackGatingMixin):
@@ -107,11 +130,13 @@ class TextActionsMixin(PackGatingMixin):
         """Renumber steps, Sync Equipment and Sync Meta (hidden until the installed wheel
         provides it: ``refresh_parser_button``)."""
         self.renumber_steps_btn = self.create_button(
-            "Renumber steps", self._on_renumber_steps,
+            "Renumber steps",
+            self._on_renumber_steps,
             tooltip="Rewrite the leading N. on every step in ## Steps to be sequential 1..N — useful after inserting a step in the middle",
         )
         self.sync_equipment_btn = self.create_button(
-            "Sync Equipment", self._on_sync_equipment,
+            "Sync Equipment",
+            self._on_sync_equipment,
             tooltip=(
                 "Rescan ## Steps and REGENERATE ## Equipment from device "
                 "references. The existing block is replaced — operator "
@@ -121,7 +146,8 @@ class TextActionsMixin(PackGatingMixin):
             ),
         )
         self.sync_meta_btn = self.create_button(
-            "Sync Meta", self._on_sync_meta,
+            "Sync Meta",
+            self._on_sync_meta,
             tooltip=(
                 "Regenerate ## Meta (format_version / board / rules_pack / "
                 "labscpi_pack / fncore_pack) from the active bundle — no LLM. "
@@ -136,6 +162,7 @@ class TextActionsMixin(PackGatingMixin):
 
     def _gated_equipment_types(self, project_root) -> list[str]:
         from ..pack_ops import equipment_scan
+
         return equipment_scan.equipment_types_in(self.text_card.editor.toPlainText(), project_root)
 
     def refresh_parser_button(self) -> bool:
@@ -170,21 +197,27 @@ class TextActionsMixin(PackGatingMixin):
     def _transform_text(self, how: _TextTransform) -> None:
         """Run *how* on the text off the GUI thread; :meth:`_text_transformed` takes its answer."""
         from ..pack_ops import pack_parsers
+
         original = self.text_card.editor.toPlainText()
         if not original:
             return
         project_root = getattr(self.project_manager, "project_root", None)
         transform = getattr(pack_parsers, how.op)
         engine_async.call(
-            project_root, lambda: transform(original, project_root=project_root),
+            project_root,
+            lambda: transform(original, project_root=project_root),
             lambda answer: self._text_transformed(how, original, answer),
-            button=getattr(self, how.button), cue=self.text_card.loading, cue_label=how.cue_label)
+            button=getattr(self, how.button),
+            cue=self.text_card.loading,
+            cue_label=how.cue_label,
+        )
 
     def _text_transformed(self, how: _TextTransform, original: str, answer) -> None:
         """Apply the transformed text, unless refused or unchanged (the text left as it is, so
         the dirty flag doesn't flip needlessly); the outcome goes to the status bar and the chat,
         the warnings with it."""
         from procedo.engine_client import engine_session
+
         try:
             new_text, warnings = answer() if how.warns else (answer(), [])
         except engine_session.ParserUnavailable as exc:
@@ -218,6 +251,7 @@ class TextActionsMixin(PackGatingMixin):
         write itself is always correct.
         """
         from ..pack_ops import pack_parsers
+
         sent = self.text_card.editor.toPlainText()
         text = sent.strip()
         if not text:
@@ -225,9 +259,13 @@ class TextActionsMixin(PackGatingMixin):
             return
         project_root = getattr(self.project_manager, "project_root", None)
         engine_async.call(
-            project_root, lambda: pack_parsers.parse_text(text, project_root=project_root),
+            project_root,
+            lambda: pack_parsers.parse_text(text, project_root=project_root),
             lambda answer: self._parse_and_generate_parsed(sent, answer),
-            button=self.parse_and_generate_btn, cue=self.text_card.loading, cue_label="Parsing\u2026")
+            button=self.parse_and_generate_btn,
+            cue=self.text_card.loading,
+            cue_label="Parsing\u2026",
+        )
 
     def _parse_and_generate_abort(self, reason: str) -> None:
         self.main_window.dock.chat_panel.add_system_message(reason, tone="danger")
@@ -237,6 +275,7 @@ class TextActionsMixin(PackGatingMixin):
         from procedo.engine_client import engine_session
 
         from ..pack_ops import pack_parsers
+
         try:
             procedure, parse_warnings = answer()
         except engine_session.ParserUnavailable as e:
@@ -245,8 +284,10 @@ class TextActionsMixin(PackGatingMixin):
         except Exception as e:
             log.exception("Parse + Generate: parse_text raised")
             from ..dialogs.validator_error_dialog import ValidatorErrorDialog
+
             ValidatorErrorDialog.show_from_exception(
-                e, title="Parse + Generate — parser findings",
+                e,
+                title="Parse + Generate — parser findings",
                 intro="The deterministic Text→JSON parser rejected the input.",
                 parent=self,
             )
@@ -255,7 +296,8 @@ class TextActionsMixin(PackGatingMixin):
         if parse_warnings:
             warn_lines = "\n".join(f"  • {w}" for w in parse_warnings)
             self._parse_and_generate_abort(
-                f"✗ Parse + Generate aborted — parser produced {len(parse_warnings)} warning(s).")
+                f"✗ Parse + Generate aborted — parser produced {len(parse_warnings)} warning(s)."
+            )
             self.show_warning(
                 "Parse + Generate — strict",
                 f"Parser produced {len(parse_warnings)} warning(s); aborting "
@@ -264,9 +306,13 @@ class TextActionsMixin(PackGatingMixin):
             return
         project_root = getattr(self.project_manager, "project_root", None)
         engine_async.call(
-            project_root, lambda: pack_parsers.generate_code(procedure, project_root=project_root),
+            project_root,
+            lambda: pack_parsers.generate_code(procedure, project_root=project_root),
             lambda answer: self._parse_and_generate_generated(sent, procedure, answer),
-            button=self.parse_and_generate_btn, cue=self.text_card.loading, cue_label="Generating code\u2026")
+            button=self.parse_and_generate_btn,
+            cue=self.text_card.loading,
+            cue_label="Generating code\u2026",
+        )
 
     def _parse_and_generate_generated(self, sent: str, procedure: dict, answer) -> None:
         """JSON → code (strict) answered: offer both files as one card."""
@@ -285,8 +331,10 @@ class TextActionsMixin(PackGatingMixin):
         except Exception as e:
             log.exception("Parse + Generate: generate_code raised")
             from ..dialogs.validator_error_dialog import ValidatorErrorDialog
+
             ValidatorErrorDialog.show_from_exception(
-                e, title="Parse + Generate — codegen findings",
+                e,
+                title="Parse + Generate — codegen findings",
                 intro="The deterministic JSON→Code generator failed.",
                 parent=self,
             )
@@ -295,7 +343,8 @@ class TextActionsMixin(PackGatingMixin):
         if gen_warnings:
             warn_lines = "\n".join(f"  • {w}" for w in gen_warnings)
             self._parse_and_generate_abort(
-                f"✗ Parse + Generate aborted — codegen produced {len(gen_warnings)} warning(s).")
+                f"✗ Parse + Generate aborted — codegen produced {len(gen_warnings)} warning(s)."
+            )
             self.show_warning(
                 "Parse + Generate — strict",
                 f"Codegen produced {len(gen_warnings)} warning(s); aborting "
@@ -306,8 +355,11 @@ class TextActionsMixin(PackGatingMixin):
             return
 
         code = keep_pinned_constants(
-            code, (self.artifact_manager.get_content(ArtifactType.TEST_CODE) or "").strip(),
-            procedure, "Parse + Generate")
+            code,
+            (self.artifact_manager.get_content(ArtifactType.TEST_CODE) or "").strip(),
+            procedure,
+            "Parse + Generate",
+        )
 
         def current(kind):
             return lambda: self.artifact_manager.get_content(kind) or ""
@@ -316,14 +368,19 @@ class TextActionsMixin(PackGatingMixin):
             kept = proposal.written()  # an Accept that failed part-way wrote these
             self._parse_and_generate_abort(
                 "✗ Parse + Generate — changes rejected."
-                + (f" {' + '.join(kept)} stays as written." if kept else ""))
+                + (f" {' + '.join(kept)} stays as written." if kept else "")
+            )
 
         proposal = Proposal(
-            [FileChange("procedure.json", current(ArtifactType.PROCEDURE_JSON), procedure_str),
-             FileChange("test.py", current(ArtifactType.TEST_CODE), code)],
-            lambda: self._write_parse_and_generate(procedure_str, code), rejected,
+            [
+                FileChange("procedure.json", current(ArtifactType.PROCEDURE_JSON), procedure_str),
+                FileChange("test.py", current(ArtifactType.TEST_CODE), code),
+            ],
+            lambda: self._write_parse_and_generate(procedure_str, code),
+            rejected,
             inputs=[FileText("procedure_text.md", self.text_card.editor.toPlainText)],
-            test=current_test(self.artifact_manager))
+            test=current_test(self.artifact_manager),
+        )
         if any(change.base.strip() for change in proposal.changes):
             self.main_window.dock.chat_panel.offer_proposal(self.tab_context, proposal)
         else:  # nothing there yet to overwrite: written at once
@@ -340,8 +397,10 @@ class TextActionsMixin(PackGatingMixin):
             raise OSError(f"{self.text_card.file_name} could not be saved")
 
         written: list[str] = []
-        files = ((ArtifactType.PROCEDURE_JSON, "procedure.json", procedure_str),
-                 (ArtifactType.TEST_CODE, "test.py", code))
+        files = (
+            (ArtifactType.PROCEDURE_JSON, "procedure.json", procedure_str),
+            (ArtifactType.TEST_CODE, "test.py", code),
+        )
         try:
             for kind, name, content in files:
                 self._write_artifact(kind, content)
@@ -374,7 +433,6 @@ class TextActionsMixin(PackGatingMixin):
         except Exception:
             self.artifact_manager.set_content(kind, held)
             raise
-
 
     # ---- the assistant on the text --------------------------------------------------------
 
@@ -410,16 +468,20 @@ class TextActionsMixin(PackGatingMixin):
         test = self._ensure_run_state().test
         engine_async.call(
             project_root,
-            lambda: reconstructed_or_error(content_str, current_content,
-                                           task_override=override, project_root=project_root),
+            lambda: reconstructed_or_error(
+                content_str, current_content, task_override=override, project_root=project_root
+            ),
             lambda answer: self._offer_reconstructed(current_content, test, answer),
-            cue=self.text_card.loading, cue_label="Preparing the proposal\u2026")
+            cue=self.text_card.loading,
+            cue_label="Preparing the proposal\u2026",
+        )
 
     def _offer_reconstructed(self, current_content: str, test, answer) -> None:
         """The reconstruction answered: offer it as a card for the text it was made from."""
         reconstructed, best_effort, err = answer()
-        if not engine_async.unchanged(self.text_card.editor, current_content,
-                                      self.status_message.emit):
+        if not engine_async.unchanged(
+            self.text_card.editor, current_content, self.status_message.emit
+        ):
             return
         banner = ""
         if err:
@@ -432,10 +494,7 @@ class TextActionsMixin(PackGatingMixin):
             # Invalid proposal, but a best-effort document exists: still offer it,
             # its card warning and the diff window showing the findings, so the
             # operator can fix / apply / reject it instead of it being silently dropped.
-            banner = (
-                "Proposal failed validation — review and fix before "
-                "applying:\n" + err
-            )
+            banner = "Proposal failed validation — review and fix before applying:\n" + err
             content_str = best_effort
         else:
             content_str = reconstructed

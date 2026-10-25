@@ -9,6 +9,7 @@ caller that needs the result before it returns (the wizards' authoring API is sy
 Without a project there is no engine: those calls refuse at once (``ParserUnavailable``), on the
 GUI thread.
 """
+
 from __future__ import annotations
 
 import itertools
@@ -37,6 +38,7 @@ def _run(fn: Callable[[], Any]) -> Answer:
 
         def answer():
             raise error
+
         return answer
     return lambda: result
 
@@ -82,8 +84,15 @@ def _settle(widget_call: Callable[..., Any], *args: Any) -> None:
         pass
 
 
-def call(project_root: Optional[Path], fn: Callable[[], Any], on_done: Callable[[Answer], None],
-         *, button=None, cue=None, cue_label: str = "") -> None:
+def call(
+    project_root: Optional[Path],
+    fn: Callable[[], Any],
+    on_done: Callable[[Answer], None],
+    *,
+    button=None,
+    cue=None,
+    cue_label: str = "",
+) -> None:
     """Run ``fn()`` (an engine call for ``project_root``, its inputs already read) off the GUI
     thread, then ``on_done(answer)`` on it. While it runs ``button`` is disabled and another
     call for it is ignored, and ``cue`` (a :class:`procedo.ui.ui_kit.LoadingCue`, where the
@@ -110,8 +119,7 @@ def call(project_root: Optional[Path], fn: Callable[[], Any], on_done: Callable[
         return
     inbox = _the_inbox()
     ticket, send = inbox.expect(done), inbox.send
-    threading.Thread(target=lambda: send((ticket, _run(fn))), name=THREAD,
-                     daemon=True).start()
+    threading.Thread(target=lambda: send((ticket, _run(fn))), name=THREAD, daemon=True).start()
 
 
 def busy(button) -> bool:

@@ -59,18 +59,23 @@ class TextOnlyTab(TextActionsMixin, LLMTabMixin, BaseTab):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        self.text_card = self.add_card(EditorCard(
-            self, ArtifactType.PROCEDURE_TEXT, "procedure_text.md",
-            placeholder=(
-                "Write your test procedure here in natural language...\n\n"
-                "This tab loads a smaller rule context (text DSL + grammars only) "
-                "to keep token usage low."
-            ),
-        ))
+        self.text_card = self.add_card(
+            EditorCard(
+                self,
+                ArtifactType.PROCEDURE_TEXT,
+                "procedure_text.md",
+                placeholder=(
+                    "Write your test procedure here in natural language...\n\n"
+                    "This tab loads a smaller rule context (text DSL + grammars only) "
+                    "to keep token usage low."
+                ),
+            )
+        )
         self.text_editor = self.text_card.editor
         self.text_highlighter = ProcedureTextHighlighter(self.text_editor.document())
         self.parse_and_generate_btn = self._pack_button(
-            "⚡ Parse + Generate", self._on_parse_and_generate,
+            "⚡ Parse + Generate",
+            self._on_parse_and_generate,
             "One click: Text → JSON → test.py (strict; aborts on any warning)",
         )
         self.text_card.changed.connect(self._regate_pack_buttons)
@@ -90,10 +95,11 @@ class TextOnlyTab(TextActionsMixin, LLMTabMixin, BaseTab):
         split.setStretchFactor(1, 0)
         split.setSizes([600, _NETLIST_WIDTH])
         layout.addWidget(split, stretch=1)
-        self._netlist_loaded_root = object()   # sentinel — first show triggers a load
+        self._netlist_loaded_root = object()  # sentinel — first show triggers a load
 
-        layout.addWidget(self._create_action_bar(
-            self._text_file_buttons(), [self.parse_and_generate_btn]))
+        layout.addWidget(
+            self._create_action_bar(self._text_file_buttons(), [self.parse_and_generate_btn])
+        )
 
     def showEvent(self, event):  # noqa: N802 — Qt override
         super().showEvent(event)

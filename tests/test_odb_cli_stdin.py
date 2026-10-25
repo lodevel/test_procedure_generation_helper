@@ -1,4 +1,5 @@
 """Noninteractive board readers must not inherit a busy Windows input pipe."""
+
 import json
 import os
 from pathlib import Path
@@ -9,7 +10,7 @@ import time
 import pytest
 
 
-_CHILD = r'''
+_CHILD = r"""
 import json
 import os
 from pathlib import Path
@@ -57,36 +58,46 @@ else:
     worker.join()
 (root / 'result.json').write_text(json.dumps(result), encoding='utf-8')
 reader.join(10)
-'''
+"""
 
 
-@pytest.mark.parametrize('mode', ['panel', 'mcp'])
+@pytest.mark.parametrize("mode", ["panel", "mcp"])
 def test_board_reader_finishes_while_inherited_stdin_is_being_read(tmp_path, mode):
-    board = {'components': [{'refdes': 'U1', 'pins': [{'name': '1', 'net': 'RESET'}],
-                             'properties': {'MPN': 'MCU'}}],
-             'nets': [{'net': 'RESET', 'nodes': [{'refdes': 'U1', 'pin': '1'}]}]}
-    (tmp_path / 'board.tgz').write_bytes(b'synthetic archive')
-    (tmp_path / 'cli.py').write_text('import json\nprint(json.dumps(' + repr(board) + '))\n',
-                                    encoding='utf-8')
-    child = tmp_path / 'reader.py'
-    child.write_text(_CHILD, encoding='utf-8')
+    board = {
+        "components": [
+            {"refdes": "U1", "pins": [{"name": "1", "net": "RESET"}], "properties": {"MPN": "MCU"}}
+        ],
+        "nets": [{"net": "RESET", "nodes": [{"refdes": "U1", "pin": "1"}]}],
+    }
+    (tmp_path / "board.tgz").write_bytes(b"synthetic archive")
+    (tmp_path / "cli.py").write_text(
+        "import json\nprint(json.dumps(" + repr(board) + "))\n", encoding="utf-8"
+    )
+    child = tmp_path / "reader.py"
+    child.write_text(_CHILD, encoding="utf-8")
     env = os.environ.copy()
     # The child must import this checkout even when CI has not installed it.
     editor = Path(__file__).resolve().parents[1]
-    env['PYTHONPATH'] = os.pathsep.join([str(editor), str(editor / 'external/opencode_client'),
-                                       env.get('PYTHONPATH', '')])
-    proc = subprocess.Popen([sys.executable, str(child), str(tmp_path), mode], env=env,
-                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    output = tmp_path / 'result.json'
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(editor), str(editor / "external/opencode_client"), env.get("PYTHONPATH", "")]
+    )
+    proc = subprocess.Popen(
+        [sys.executable, str(child), str(tmp_path), mode],
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    output = tmp_path / "result.json"
     try:
         deadline = time.monotonic() + 20
         while not output.exists() and time.monotonic() < deadline:
             time.sleep(0.01)
-        assert output.exists(), 'reader did not finish while stdin remained open'
-        result = json.loads(output.read_text(encoding='utf-8'))
-        assert result.get('components') == board['components'], result.get('error')
-        if mode == 'mcp':
-            assert result['nets'] == board['nets']
+        assert output.exists(), "reader did not finish while stdin remained open"
+        result = json.loads(output.read_text(encoding="utf-8"))
+        assert result.get("components") == board["components"], result.get("error")
+        if mode == "mcp":
+            assert result["nets"] == board["nets"]
     finally:
         proc.stdin.close()
         proc.stdin = None
@@ -95,4 +106,4 @@ def test_board_reader_finishes_while_inherited_stdin_is_being_read(tmp_path, mod
         except subprocess.TimeoutExpired:
             proc.kill()
             _, stderr = proc.communicate(timeout=5)
-        assert proc.returncode == 0, stderr.decode('utf-8', 'replace')
+        assert proc.returncode == 0, stderr.decode("utf-8", "replace")

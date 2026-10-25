@@ -6,6 +6,7 @@ these probes instead of hardcoding failure lists, so on a properly provisioned
 machine (project bundle / matched grammar packs installed, native Windows
 console) the same tests RUN.
 """
+
 from __future__ import annotations
 
 import functools
@@ -19,7 +20,12 @@ from pathlib import Path
 
 # --- the project's engine, answered in this process ---------------------------
 
-_DAEMON = Path(__file__).resolve().parent.parent / "procedo" / "engine_client" / "_execute_op_subprocess.py"
+_DAEMON = (
+    Path(__file__).resolve().parent.parent
+    / "procedo"
+    / "engine_client"
+    / "_execute_op_subprocess.py"
+)
 
 
 @functools.lru_cache(maxsize=1)
@@ -90,7 +96,9 @@ def labscpi_psu_reconstruct_available() -> bool:
         from tests._qt_stub import ensure_workflow_editor_importable
 
         ensure_workflow_editor_importable()
-        answer = engine_answer({"op": "reconstruct", "fragment": _PSU_FRAGMENT, "prior": _PSU_PRIOR})
+        answer = engine_answer(
+            {"op": "reconstruct", "fragment": _PSU_FRAGMENT, "prior": _PSU_PRIOR}
+        )
         return answer.get("success") is True
     except Exception:
         return False

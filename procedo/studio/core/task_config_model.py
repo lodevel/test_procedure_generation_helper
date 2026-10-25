@@ -20,6 +20,7 @@ class TaskConfig:
     ``selected_rules`` onto each task. ``None`` after load means "use all
     available rules" (consumer-side expansion).
     """
+
     id: str
     name: str
     button_label: str
@@ -48,6 +49,7 @@ class TaskConfig:
 @dataclass
 class ChatConfig:
     """Per-tab configuration for the AD_HOC_CHAT feature (chat panel)."""
+
     enabled: bool = True
     system_prompt: Optional[str] = None
 

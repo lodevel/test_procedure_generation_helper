@@ -1,4 +1,5 @@
 """Tests for the skill-chat session (the pure bridge brain)."""
+
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -43,17 +44,17 @@ def test_changed_context_is_resent_then_drops_back_to_delta():
     s = SkillChatSession(_skill("SYS"), context_text="CTX1")
     s.start_user_turn("q1")
     s.record_assistant("a1")
-    s.set_context("CTX2")                       # user checks new context mid-chat
+    s.set_context("CTX2")  # user checks new context mid-chat
     assert s.start_user_turn("q2") == "CTX2\n\nq2"
     s.record_assistant("a2")
-    assert s.start_user_turn("q3") == "q3"      # unchanged again -> delta only
+    assert s.start_user_turn("q3") == "q3"  # unchanged again -> delta only
 
 
 def test_unchanged_context_is_not_resent():
     s = SkillChatSession(_skill("SYS"), context_text="CTX")
     s.start_user_turn("q1")
     s.record_assistant("a1")
-    s.set_context("CTX")                        # same value re-set -> not re-sent
+    s.set_context("CTX")  # same value re-set -> not re-sent
     assert s.start_user_turn("q2") == "q2"
 
 
@@ -68,7 +69,9 @@ def test_turns_recorded_in_order():
     s.record_assistant("a1")
     s.start_user_turn("q2")
     assert [(t.role, t.content) for t in s.turns] == [
-        ("user", "q1"), ("assistant", "a1"), ("user", "q2"),
+        ("user", "q1"),
+        ("assistant", "a1"),
+        ("user", "q2"),
     ]
 
 
@@ -84,10 +87,10 @@ def test_started_false_before_any_turn():
 
 def test_kickoff_is_context_only_system_separate():
     s = SkillChatSession(_skill("SYS"), context_text="CTX")
-    assert s.kickoff() == "CTX"             # context only; no "User:" line
-    assert s.system_prompt == "SYS"         # the skill rides as system
-    assert s.started is False               # records no turn
-    s.record_assistant("draft")             # the kickoff reply commits the context
+    assert s.kickoff() == "CTX"  # context only; no "User:" line
+    assert s.system_prompt == "SYS"  # the skill rides as system
+    assert s.started is False  # records no turn
+    s.record_assistant("draft")  # the kickoff reply commits the context
     assert s.started is True
     # context already delivered on kickoff -> the follow-up is a delta only
     assert s.start_user_turn("more") == "more"
@@ -95,14 +98,14 @@ def test_kickoff_is_context_only_system_separate():
 
 def test_kickoff_falls_back_when_no_context():
     s = SkillChatSession(_skill("SYS"))
-    assert s.kickoff() == "Begin."          # never an empty body
+    assert s.kickoff() == "Begin."  # never an empty body
     assert s.system_prompt == "SYS"
 
 
 def test_failed_first_send_resends_context():
     s = SkillChatSession(_skill("SYS"), context_text="CTX")
     assert s.start_user_turn("q1") == "CTX\n\nq1"
-    s.drop_last_user_turn()                 # send failed -> un-stage the user turn
+    s.drop_last_user_turn()  # send failed -> un-stage the user turn
     assert s.turns == []
     # the context rode the failed turn, so it is re-sent on the retry
     assert s.start_user_turn("q1 again") == "CTX\n\nq1 again"
@@ -126,19 +129,20 @@ def test_interpret_empty_when_nothing():
 def test_drop_last_user_turn():
     s = SkillChatSession(_skill())
     s.start_user_turn("q1")
-    s.drop_last_user_turn()                      # unanswered user turn removed
+    s.drop_last_user_turn()  # unanswered user turn removed
     assert s.turns == []
     s.start_user_turn("q2")
     s.record_assistant("a2")
-    s.drop_last_user_turn()                      # last turn is assistant -> no-op
+    s.drop_last_user_turn()  # last turn is assistant -> no-op
     assert [t.role for t in s.turns] == ["user", "assistant"]
 
 
 def test_parser_plain_text_is_success_and_untruncated():
     from procedo.studio.llm.response_parser import ResponseParser
+
     long = "x" * 1200
     r = ResponseParser().parse(long, None, plain_text=True)
     assert r.success is True
-    assert r.assistant_message == long          # full draft, not capped at 500
+    assert r.assistant_message == long  # full draft, not capped at 500
     # without plain_text, a non-JSON reply is still a failure (unchanged).
     assert ResponseParser().parse("just prose", None).success is False

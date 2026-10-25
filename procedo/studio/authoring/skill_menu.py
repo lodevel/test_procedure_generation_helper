@@ -253,7 +253,8 @@ def _launch_wizard_flow(main_window, flow) -> None:
 
 def _hold_modeless(main_window, attr: str, dialog) -> None:
     """Keep a modeless dialog alive on ``main_window.<attr>`` (the GC would collect it);
-    closing it deletes it and drops the entry."""
+    closing it deletes it and drops the entry. A project switch closes them
+    (:func:`close_project_windows`)."""
     from PySide6.QtCore import Qt
 
     refs = getattr(main_window, attr, None)
@@ -263,6 +264,17 @@ def _hold_modeless(main_window, attr: str, dialog) -> None:
     refs.append(dialog)
     dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
     dialog.destroyed.connect(lambda *_: refs.remove(dialog) if dialog in refs else None)
+
+
+def close_project_windows(main_window) -> bool:
+    """Close the Skill chat windows and the wizards, which work on the open project, each
+    through its own close (its turns and backends stop; a wizard may ask to discard its
+    work): False when one stays open."""
+    for attr in ("_skill_chat_dialogs", "_wizard_dialogs"):
+        for dialog in list(getattr(main_window, attr, None) or ()):
+            if not dialog.close():
+                return False
+    return True
 
 
 def _refresh_main_after_wizard(main_window, result) -> None:

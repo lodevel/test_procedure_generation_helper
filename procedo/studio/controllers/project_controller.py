@@ -32,6 +32,7 @@ from procedo.core.paths import exists_quiet
 from procedo.engine_client import engine
 
 from .. import _project_local_state
+from ..authoring.skill_menu import close_project_windows
 
 if TYPE_CHECKING:
     from ..main_window import StudioWorkspace
@@ -61,39 +62,29 @@ class ProjectController(QObject):
 
         # The dialog seeded the template and wrote the identity (apply_project_settings).
         project_path = Path(dialog.project_location) / dialog.project_name
-
-        # Point the editor's navigation model at the freshly-created project.
-        mw.project_manager.set_project_root(project_path)
-        app_settings.add_recent_project(str(project_path))
-
-        # Now initialize the UI with the new project
-        mw.workspace_widget._load_test_list()
-        mw.workspace_widget.new_test_btn.setEnabled(True)
-
-        # Detect rules (will prompt user if not found)
-        mw.project_manager.detect_rules_root()
-
-        # Switch task configurations to the freshly-created project so
-        # any workflow saves land in the new ``config.json``. The
-        # registered reload callback refreshes button labels.
-        mw.task_config_manager.reload(mw.project_manager.project_root)
-
-        # Update the footer (project, rules)
-        mw._update_project_rules_indicators()
-        refresh_parser_buttons(mw)
-        watch_project_config(mw)
-
-        # Show the Workspace column if hidden
-        mw.toggle_workspace_action.setChecked(True)
-        mw.llm_server.restart_for_project()
-
-        # Show success message
+        if not self._open(project_path):
+            return
         QMessageBox.information(
             mw,
             "Project Created",
             f"Project created successfully at:\n{project_path}\n\n"
             "You can now create test folders using the Workspace tab.",
         )
+
+    def _open(self, root: Path) -> bool:
+        """Switch Studio to the project at *root*. The windows working on the open project
+        close first (:func:`close_project_windows`); one that stays open (its discard
+        question cancelled) keeps the project open. False when nothing switched."""
+        mw = self._mw
+        pm = mw.project_manager
+        if not pm.is_valid_project_root(root):
+            return False
+        if root != pm.project_root and not close_project_windows(mw):
+            return False
+        pm.set_project_root(root)
+        app_settings.add_recent_project(str(root))
+        self.refresh_after_open()
+        return True
 
     def refresh_after_open(self):
         """Common UI refresh after a project root is set (open / recent)."""
@@ -153,10 +144,7 @@ class ProjectController(QObject):
                 f"The project folder does not exist or cannot be reached:\n{path_str}",
             )
             return
-        path = Path(path_str)
-        if mw.project_manager.set_project_root(path):
-            app_settings.add_recent_project(str(path))
-            self.refresh_after_open()
+        self._open(Path(path_str))
 
     def on_open_project(self):
         """Handle open project action."""
@@ -172,38 +160,22 @@ class ProjectController(QObject):
             return
 
         project_path = Path(path)
-
-        # Try to set as project root
-        if mw.project_manager.set_project_root(project_path):
-            app_settings.add_recent_project(str(project_path))
-            self.refresh_after_open()
-        else:
-            # Maybe user selected a test folder directly?
-            detected_root = mw.project_manager.detect_project_from_test_folder(project_path)
-            if detected_root:
-                mw.project_manager.set_project_root(detected_root)
-                mw.workspace_widget._load_test_list()
-                mw.workspace_widget.new_test_btn.setEnabled(True)
-                mw.project_manager.detect_rules_root()
-
-                # Switch task configurations to the detected project root.
-                mw.task_config_manager.reload(mw.project_manager.project_root)
-
-                # Update the footer (project, rules)
-                mw._update_project_rules_indicators()
-                refresh_parser_buttons(mw)
-                watch_project_config(mw)
-
-                # Show the Workspace column
-                mw.toggle_workspace_action.setChecked(True)
-                mw.llm_server.restart_for_project()
-            else:
-                QMessageBox.warning(
-                    mw,
-                    "Invalid Project",
-                    "Selected folder does not appear to be a valid project root.\n\n"
-                    "A valid project should contain a 'tests/' or 'config/' folder.",
-                )
+        pm = mw.project_manager
+        # Maybe the user selected a test folder directly?
+        root = (
+            project_path
+            if pm.is_valid_project_root(project_path)
+            else pm.detect_project_from_test_folder(project_path)
+        )
+        if root is None:
+            QMessageBox.warning(
+                mw,
+                "Invalid Project",
+                "Selected folder does not appear to be a valid project root.\n\n"
+                "A valid project should contain a 'tests/' or 'config/' folder.",
+            )
+            return
+        self._open(root)
 
 
 def _folder_there(path_str: str) -> bool:

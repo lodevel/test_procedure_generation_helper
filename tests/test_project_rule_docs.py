@@ -36,7 +36,10 @@ def _project(tmp_path, *, bundle_rules=("01_a.md", "02_b.md"), project_docs=()):
         (root / "bundle" / "rules").mkdir(parents=True)
         (root / "bundle" / "bundle.json").write_text(
             json.dumps({"id": "baseline", "version": "2.10.0"}), encoding="utf-8")
-        (root / "bundle" / "defaults.json").write_text("{}", encoding="utf-8")
+        (root / "bundle" / "defaults.json").write_text(json.dumps({"workflows": {  # runnable tabs
+            tab: {"tasks": [{"id": task, "prompt_template": "P"}]} for tab, task in (
+                ("text_only", "review_text_procedure"), ("text_json", "derive_json_from_text"),
+                ("json_code", "generate_code_from_json"))}}), encoding="utf-8")
         for name in bundle_rules:
             (root / "bundle" / "rules" / name).write_text(f"bundle {name}", encoding="utf-8")
     docs = project_docs if isinstance(project_docs, dict) else {n: f"project {n}" for n in project_docs}
@@ -276,8 +279,9 @@ def test_a_new_document_is_ticked_in_every_explicit_selection_and_saved(tmp_path
     assert all(t.selected_rules == "all" for t in tcm.get_all_tasks_for_tab("json_code"))
     assert all(t.selected_rules == [] for t in tcm.get_all_tasks_for_tab("text_only"))
     saved = json.loads((root / "config" / "config.json").read_text(encoding="utf-8"))
+    # Saved: the bundle's task only (the editor-only ones stay inherited).
     assert {t["id"]: t["selected_rules"] for t in saved["workflows"]["text_json"]["tasks"]} == {
-        t.id: ["01_a.md", "project/board.md"] for t in tcm.get_all_tasks_for_tab("text_json")}
+        "derive_json_from_text": ["01_a.md", "project/board.md"]}
 
 
 # ---- S7: PDF project documents ride the message as files ---------------------------------

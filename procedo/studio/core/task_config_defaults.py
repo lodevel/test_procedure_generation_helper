@@ -4,7 +4,6 @@ the typed task / chat caches of ``TaskConfigManager``."""
 from __future__ import annotations
 
 import os
-from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -105,43 +104,6 @@ def load_pack_workflow_defaults(project_root: Optional[Path]) -> Dict[str, Any]:
     return workflows if isinstance(workflows, dict) else {}
 
 
-def apply_editor_field_fallback(pack: Dict[str, Any]) -> Dict[str, Any]:
-    """Fill None fields in pack-declared tasks from the editor's same-id
-    task. Pack still defines the task universe — editor-only tasks/tabs
-    are not pulled in. Returns a deep copy; ``pack`` is left untouched.
-
-    Lets the bundle ship sparse ``{id, prompt_template}`` tasks while
-    still satisfying ``TaskConfig.__init__`` (which needs ``name`` and
-    ``button_label``).
-    """
-    enriched = deepcopy(pack) if isinstance(pack, dict) else {}
-    for tab_id, tab_cfg in enriched.items():
-        if not isinstance(tab_cfg, dict):
-            continue
-        pack_tasks = tab_cfg.get("tasks")
-        if not isinstance(pack_tasks, list):
-            continue
-        editor_tab = _DEFAULT_WORKFLOWS_RAW.get(tab_id, {})
-        editor_tasks = (
-            editor_tab.get("tasks", [])
-            if isinstance(editor_tab, dict) else []
-        )
-        editor_by_id: Dict[str, Dict[str, Any]] = {}
-        for et in editor_tasks:
-            if isinstance(et, dict) and isinstance(et.get("id"), str):
-                editor_by_id[et["id"]] = et
-        for i, t in enumerate(pack_tasks):
-            if not isinstance(t, dict):
-                continue
-            editor_t = editor_by_id.get(t.get("id"), {})
-            merged = dict(editor_t)
-            for k, v in t.items():
-                if v is not None:
-                    merged[k] = v
-            pack_tasks[i] = merged
-    return enriched
-
-
 def workflows_to_caches(
     workflows: Dict[str, Any],
     *,
@@ -180,9 +142,10 @@ def workflows_to_caches(
                 if task.selected_rules is None and tab_level_selected is not None:
                     task.selected_rules = clone_selected_rules(tab_level_selected)
                 tasks.append(task)
-        elif tab_level_selected is not None and tab_id in DEFAULT_TASK_CONFIGS:
+        elif tasks_data is None and tab_level_selected is not None and tab_id in DEFAULT_TASK_CONFIGS:
             # Tab declares selected_rules but no tasks: fill in defaults
             # so the rules propagate (was a silent drop pre-Codex review).
+            # An empty list is a tab that lists no task (none runnable): kept empty.
             for d in DEFAULT_TASK_CONFIGS[tab_id]:
                 t = TaskConfig(**asdict(d))
                 t.selected_rules = clone_selected_rules(tab_level_selected)

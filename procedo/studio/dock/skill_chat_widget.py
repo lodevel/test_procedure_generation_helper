@@ -80,6 +80,16 @@ _INPUT_HEIGHT = 52
 _PICKER_WIDTH = 400
 
 
+def _start_or_fail(chat, start) -> None:
+    """Run *start*, one step of starting *chat*'s turn: a failure, now or when the gate or the
+    backend's start releases it later, ends the turn as a failed reply (never a locked chat)."""
+    try:
+        start()
+    except Exception:
+        log.exception("skill-chat dispatch failed")
+        chat._on_error("Failed to start — see logs.")
+
+
 def _colours() -> dict[str, str]:
     """Bench's palette (light or dark, as the app wears it): the transcript is HTML, so it
     takes the stylesheet's colours by name."""
@@ -147,8 +157,9 @@ class SkillChatWidget(QWidget):
                 of firing immediately — e.g. a batch wizard's concurrency scheduler,
                 which calls ``fire`` now (slot free) or stores it to fire later
                 (queued). ``interactive`` is True for a user answer (may jump the
-                queue), False for an initial build. None → fire at once (the
-                Skills-menu chat path, unchanged).
+                queue), False for an initial build. A turn that ends before its stored
+                fire runs (Stop) emits ``busy_changed(False)``: the host drops that fire
+                then. None → fire at once (the Skills-menu chat path, unchanged).
             parent: Parent widget.
         """
         super().__init__(parent)
@@ -161,6 +172,8 @@ class SkillChatWidget(QWidget):
 
         # The in-flight worker (the dedicated backend, ``_llm``, comes with the UI's cue).
         self._worker: Optional[LLMWorker] = None
+        # A turn is out, from its send to its reply or failure (``is_busy``).
+        self._busy = False
         # The most recent assistant draft (what a host Inserts / parses). Empty
         # until the first reply lands.
         self._latest_draft: str = ""
@@ -345,8 +358,9 @@ class SkillChatWidget(QWidget):
 
     @property
     def is_busy(self) -> bool:
-        """True while a turn runs or waits for the AI server's start."""
-        return self._worker is not None or self._llm.waiting
+        """True from a turn's send to its reply or failure: while it waits in the host's
+        ``dispatch_gate`` queue, for the AI server's start, or runs."""
+        return self._busy
 
     def set_skill(self, skill) -> None:
         """Pin/switch the active skill (programmatic twin of ``_on_skill_changed``):
@@ -453,14 +467,24 @@ class SkillChatWidget(QWidget):
 
     def stop(self) -> None:
         """Public Stop: cancel the in-flight turn (host-facing). The wizard's
-        *Abandon* calls this to halt a running build. No-op when idle or merely
-        queued by the host (no worker yet) — the host cancels the queued fire on its side; one
-        waiting for the AI server's start is not sent."""
+        *Abandon* calls this to halt a running build. A turn not started yet (queued by the
+        host's ``dispatch_gate``, or waiting for the AI server's start) is not sent: the chat
+        says so and unlocks, and ``busy_changed(False)`` tells the host to drop its stored fire.
+        No-op when idle."""
         self._on_stop()
 
-    def set_input_placeholder(self, text: str) -> None:
-        """Tailor the input box's prompt hint (host-facing convenience)."""
-        self._input.setPlaceholderText(text)
+    def drop_queued_send(self, reason: str) -> bool:
+        """Drop the turn waiting for the AI server's start: the chat unlocks and says
+        ``Not sent: <reason>``. False when none waits."""
+        if not self._llm.drop_queued():
+            return False
+        self._on_error(f"Not sent: {reason}")
+        return True
+
+    def update_backend_factory(self, factory) -> None:
+        """Follow a replaced AI server, as the Studio tabs do: the next turn starts its
+        backend from *factory*."""
+        self._llm.set_factory(factory)
 
     def set_status(self, text: str) -> None:
         """Write the widget's status line (host-facing convenience)."""
@@ -527,24 +551,23 @@ class SkillChatWidget(QWidget):
         context are attached to it."""
         self._set_busy(True)  # pending OR running: lock the UI, block a re-submit
         files = self._session.pending_files
-        try:
-            if self._dispatch_gate is not None:
-                self._dispatch_gate(
-                    lambda: self._really_dispatch(prompt, files), interactive=interactive
-                )
-            else:
-                self._really_dispatch(prompt, files)
-        except Exception:
-            # A synchronous dispatch/setup failure (the scheduler already released
-            # any slot it took) must not leave the widget locked with no worker.
-            log.exception("skill-chat dispatch failed")
-            self._set_busy(False)
-            self._status.set_full_text("Failed to start — see logs.")
+        if self._dispatch_gate is None:
+            self._really_dispatch(prompt, files)
+        else:
+            gate = self._dispatch_gate
+            _start_or_fail(
+                self,
+                lambda: gate(lambda: self._really_dispatch(prompt, files), interactive=interactive),
+            )
 
     def _really_dispatch(self, prompt: str, files: list) -> None:
         """The actual fire, run immediately or released later by the gate (the UI already
         locked busy): on the dedicated backend, once it has started off the GUI thread."""
-        self._llm.await_backend(lambda backend: self._fire(backend, prompt, files))
+
+        def fire(backend) -> None:
+            _start_or_fail(self, lambda: self._fire(backend, prompt, files))
+
+        _start_or_fail(self, lambda: self._llm.await_backend(fire))
 
     def _fire(self, backend, prompt: str, files: list) -> None:
         """Build the worker on *backend* and start streaming."""
@@ -702,7 +725,8 @@ class SkillChatWidget(QWidget):
         if self._worker is not None:
             self._worker.cancel()
             self._status.set_full_text("Stopping…")
-        elif self._llm.drop_queued():
+        elif self._busy:  # queued by the host, or waiting for the AI server's start
+            self._llm.drop_queued()
             self._on_error("Not sent: cancelled.")
 
     def _on_skill_changed(self, index: int) -> None:
@@ -742,8 +766,7 @@ class SkillChatWidget(QWidget):
         if not self._llm.relaunch_server():
             self._status.set_full_text("This backend has no restartable server.")
             return
-        if self._llm.drop_queued():
-            self._on_error("Not sent: the AI server is restarting.")
+        self.drop_queued_send("the AI server is restarting.")
         # Cancel any in-flight (possibly hung) request: the next send reconnects to the
         # fresh server.
         if self._worker is not None:
@@ -809,6 +832,7 @@ class SkillChatWidget(QWidget):
     # -- state ----------------------------------------------------------------
 
     def _set_busy(self, busy: bool) -> None:
+        self._busy = busy
         self._send_btn.setEnabled(not busy)
         self._input.setEnabled(not busy)
         self._stop_btn.setEnabled(busy)

@@ -136,8 +136,8 @@ def skill_chat(qapp, monkeypatch):
     monkeypatch.setattr("procedo.studio.core.studio_settings.load_settings", lambda: {})
     made = []
 
-    def make(factory):
-        made.append(scw.SkillChatWidget([_skill()], factory, backend_tab_id="my_wizard"))
+    def make(factory, **kwargs):
+        made.append(scw.SkillChatWidget([_skill()], factory, backend_tab_id="my_wizard", **kwargs))
         return made[-1]
 
     yield make
@@ -150,11 +150,12 @@ def test_a_skill_chat_retries_after_a_fallback_none_backend(skill_chat):
     """It kept the fallback: "server down" on every send until Restart. A backend nobody
     keeps or waits for is stopped."""
     fallback, real, later = NoneBackend(reason="server down"), _Backend(), _Backend()
-    llm = skill_chat(_Factory())._llm
-    llm._on_started((None, fallback, False))
+    factory = _Factory()
+    llm = skill_chat(factory)._llm
+    llm._on_started((factory, fallback, False))
     assert llm.backend is None
-    llm._on_started((None, real, True))
-    llm._on_started((None, later, True))  # a second start never replaces it
+    llm._on_started((factory, real, True))
+    llm._on_started((factory, later, True))  # a second start never replaces it
     assert llm.backend is real and not real.stopped and later.stopped
 
 
@@ -164,3 +165,69 @@ def test_a_skill_chat_without_a_factory_has_a_none_backend(skill_chat):
     llm = skill_chat(None)._llm
     llm.await_backend(fired.append)  # no server involved: fired at once
     assert isinstance(llm.backend, NoneBackend) and fired == [llm.backend]
+
+
+def test_a_skill_chat_turn_queued_by_the_host_is_busy_and_never_doubled(skill_chat):
+    """A turn the wizard's scheduler holds (``dispatch_gate``) read as not busy: a second
+    programmatic turn was accepted, and the scheduler dropped it silently."""
+    queued = []
+    chat = skill_chat(_Factory(), dispatch_gate=lambda fire, *, interactive: queued.append(fire))
+    assert chat.send_user_turn("hello")
+
+    assert chat.is_busy
+    assert not chat.send_user_turn("again")
+    assert len(queued) == 1
+    assert [turn.content for turn in chat._session.turns] == ["hello"]
+
+
+def test_a_skill_chat_follows_a_replaced_factory(skill_chat):
+    """It kept its creation-time factory: after a project switch its turns went to the
+    retired server. A start the old factory still had out is stopped; the turn asks the new."""
+    old_backend, stale, new_backend = _Backend(), _Backend(), _Backend()
+    old, new = _Factory(), _Factory(new_backend, backend_type="none")
+    llm = skill_chat(old)._llm
+    llm._on_started((old, old_backend, True))
+    llm.set_factory(new)
+    assert old_backend.stopped and llm.backend is None
+
+    fired = []
+    llm._requested = True  # the old factory's start is still out
+    llm.await_backend(fired.append)
+    llm._on_started((old, stale, True))
+    assert stale.stopped and not new_backend.stopped
+    assert fired == [new_backend] and llm.backend is new_backend and new.asked == ["my_wizard"]
+
+
+def test_stop_ends_a_turn_the_host_still_holds(skill_chat):
+    """The wizard's Abandon dropped its queued fire and stopped the chat: no worker and
+    nothing waiting for the server, so the chat stayed busy (locked) for good."""
+    queued = []
+    chat = skill_chat(_Factory(), dispatch_gate=lambda fire, *, interactive: queued.append(fire))
+    went = []
+    chat.busy_changed.connect(went.append)
+    assert chat.send_user_turn("hello")
+
+    chat.stop()
+
+    assert not chat.is_busy and went == [True, False]
+    assert chat._blocks[-1] == ("System", "Not sent: cancelled.") and chat._session.turns == []
+    assert chat.send_user_turn("again") and len(queued) == 2
+
+
+def test_a_turn_that_fails_to_start_once_the_backend_answers_unlocks_the_chat(
+    skill_chat, monkeypatch
+):
+    factory = _Factory()
+    chat = skill_chat(factory)
+    failed = []
+    chat.reply_failed.connect(failed.append)
+
+    def broken(*_args):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(chat, "_fire", broken)
+    chat._llm._requested = True  # a start is out: the turn waits for it
+    assert chat.send_user_turn("hello") and chat.is_busy
+    chat._llm._on_started((factory, _Backend(), True))
+
+    assert not chat.is_busy and failed == ["Failed to start — see logs."]

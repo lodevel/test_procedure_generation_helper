@@ -20,6 +20,7 @@ from PySide6.QtCore import QObject
 from procedo.core.off_gui import answer_to
 
 from .. import shell
+from ..dock.skill_chat_widget import SkillChatWidget
 from ..llm import OpenCodeConfig
 from ..llm.backend_factory import BACKEND_TYPE_OPENCODE, BackendConfig, BackendFactory
 from ..llm.launch_files import remove_launch_files
@@ -227,6 +228,8 @@ class LLMServerController(QObject):
             return
         # A send waiting for the old server's start never goes to the new one: not sent, now.
         self.drop_waiting_sends(RESTARTING)
+        for chat in self._skill_chats():
+            chat.drop_queued_send(RESTARTING)
         # A manual restart (Restart backend / project switch) clears any
         # auto-recovery give-up state so the fresh manager is auto-recoverable.
         self.reset_recovery()
@@ -352,11 +355,17 @@ class LLMServerController(QObject):
         """
         return self._backend_factory
 
+    def _skill_chats(self) -> list:
+        """The open skill chats (the Skills-menu window's): each holds its own backend."""
+        return self._mw.findChildren(SkillChatWidget)
+
     def _update_all_tab_contexts(self):
-        """Update all tab contexts with the current backend factory."""
+        """Update all tab contexts and skill chats with the current backend factory."""
         for tab in self._mw._get_llm_tabs():
             if hasattr(tab, "tab_context"):
                 tab.tab_context.update_backend_factory(self._backend_factory)
+        for chat in self._skill_chats():
+            chat.update_backend_factory(self._backend_factory)
 
         log.info("Backend factory propagated to all tab contexts")
 

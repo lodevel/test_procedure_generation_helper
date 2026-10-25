@@ -170,7 +170,7 @@ class TaskConfigManager:
         takes it explicitly).
         """
         # Project mode: first migrate any legacy tab_contexts.json, then
-        # list the bundle + project workflows the way Project Configuration does.
+        # list the bundle + project workflows from the listing Project Configuration shows.
         if self._project_root is not None:
             task_config_migrations.migrate_project_tab_contexts(self._project_root)
 
@@ -198,6 +198,10 @@ class TaskConfigManager:
             self._project_workflow_snapshot = deepcopy(project_workflows)
 
             merged = effective_workflows(bundle, project_workflows)
+            for tab in merged.values():  # no runnable task: the tab lists none (the snapshot keeps its rows)
+                if not any(isinstance(t, dict) and is_runnable(t.get("prompt_template"))
+                           for t in tab.get("tasks") or []):
+                    tab["tasks"] = []
             # Run button-label migration on the merged dict so older
             # per-project configs upgrade cleanly. Also migrate the
             # snapshot so future saves persist the upgraded labels.

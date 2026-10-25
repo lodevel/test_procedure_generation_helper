@@ -45,17 +45,12 @@ def format_chat_warnings(warnings: list[str]) -> str:
     return "\n\n⚠ Warnings:\n" + "\n".join(f"• {w}" for w in warnings)
 
 
-#: The warnings marking a Sync Equipment answer that left the text as it was rather than
-#: delete lines: an unparseable line, or a device no loaded pack writes.
-_SYNC_REFUSALS = ("[SYNCEQP_BLOCKED]", "[EQP_NO_EMITTER]")
-
-
 @dataclass(frozen=True)
 class _TextTransform:
     """A deterministic rewrite of procedure_text.md: the ``pack_parsers`` function (text →
     ``(text, warnings)``, or the text alone without *warns*), the button it runs from, and the
-    (status, chat) it says when the text is *applied*, already the *same*, or *refused* (a
-    blocked answer, when given)."""
+    (status, chat) it says when the text is *applied*, already the *same*, or *refused* (per
+    warning code marking an answer that left the text as it was, when given)."""
 
     op: str
     button: str
@@ -63,7 +58,7 @@ class _TextTransform:
     error_title: str
     applied: tuple[str, str]
     same: tuple[str, str]
-    refused: Optional[tuple[str, str]] = None
+    refused: Optional[dict[str, tuple[str, str]]] = None
     warns: bool = True
 
 
@@ -83,13 +78,20 @@ _SYNC_EQUIPMENT = _TextTransform(
         "🔧 Sync Equipment: no changes (## Equipment already matches "
         "every device referenced in steps).",
     ),
-    refused=(
-        "Sync Equipment: REFUSED — unparseable ## Equipment lines (see chat)",
-        "🔧 Sync Equipment REFUSED — the existing ## Equipment block "
-        "has lines that don't parse (wrong syntax, or their pack "
-        "isn't in the active bundle); syncing would delete them. "
-        "Nothing was changed.",
-    ),
+    refused={
+        "[SYNCEQP_BLOCKED]": (
+            "Sync Equipment: REFUSED — unparseable ## Equipment lines (see chat)",
+            "🔧 Sync Equipment REFUSED — the existing ## Equipment block "
+            "has lines that don't parse (wrong syntax, or their pack "
+            "isn't in the active bundle); syncing would delete them. "
+            "Nothing was changed.",
+        ),
+        "[EQP_NO_EMITTER]": (
+            "Sync Equipment: REFUSED — no loaded pack writes one of the equipment lines (see chat)",
+            "🔧 Sync Equipment REFUSED — no loaded pack writes the "
+            "## Equipment line of the device named below. Nothing was changed.",
+        ),
+    },
 )
 
 _SYNC_META = _TextTransform(
@@ -226,8 +228,10 @@ class TextActionsMixin(PackGatingMixin):
             return
         if not engine_async.unchanged(self.text_card.editor, original, self.status_message.emit):
             return
-        if how.refused and any(code in w for w in warnings for code in _SYNC_REFUSALS):
-            status, chat = how.refused
+        refused = how.refused or {}
+        refusal = next((refused[c] for c in refused if any(c in w for w in warnings)), None)
+        if refusal:
+            status, chat = refusal
         elif new_text == original:
             status, chat = how.same
         else:

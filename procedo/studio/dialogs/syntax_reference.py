@@ -4,7 +4,7 @@ A non-modal singleton window the operator keeps open beside the Text editor
 while authoring. The header names the active bundle and holds *Find in page*;
 the page list on the left has the auto-extracted **Cheat sheet** (landing page)
 plus every full rule doc from the active bundle; the page on the right renders
-the selected page's Markdown on a white card (``ui_kit.MarkdownView``).
+the selected page's Markdown on a white card (``markdown_view.MarkdownView``).
 
 Optional feature: with no project / no installed bundle it shows a friendly
 placeholder, never an error.

@@ -73,7 +73,7 @@ _BSR_PATH = _RUNNER.parent / "_bench_session_runner.py"
 _CHANNEL_PATH = _RUNNER.parent / "_frame_channel.py"
 
 # Load the siblings FIRST under their canonical names so the daemon's lazy
-# ``import _bench_session_runner`` (and the runner's ``from _frame_channel import``)
+# ``import _bench_session_runner`` (and the run_test's ``_sib("_frame_channel")``)
 # resolve to the same module objects.
 if "_frame_channel" in sys.modules:
     frame_channel = sys.modules["_frame_channel"]

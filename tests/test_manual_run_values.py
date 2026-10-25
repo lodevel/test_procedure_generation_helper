@@ -30,7 +30,7 @@ _ENGINE_SRC = Path(__file__).resolve().parents[2] / "rules_packager" / "src"
 
 _HEAD = (
     "# T\nDesc.\n\n## Meta\nformat_version: 2.0.1\nboard: B\n"
-    "rules_pack: rules_packager_base@2.13.1\n\n## Equipment\nDMM_GENERIC : dmm\n\n## Steps\n"
+    "rules_pack: rules_packager_base@2.14.0\n\n## Equipment\nDMM_GENERIC : dmm\n\n## Steps\n"
 )
 _FOR = (
     "@LET BASE = 10\n@FOR j IN 0..1\n"

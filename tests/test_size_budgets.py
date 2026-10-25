@@ -12,8 +12,7 @@ EXCEPT units that already exceed a cap today; those are grandfathered at their
 current measurement (a ceiling they may only shrink under, never grow past).
 A new 1500-line non-allowlisted module fails immediately.
 
-The god files (``llm/opencode_backend.py``, ...) are intentionally NOT
-carved here; this only freezes their size so the debt cannot compound.
+A god file is not carved here; this only freezes its size so the debt cannot compound.
 
 Pure ``pathlib`` + ``ast`` — imports nothing, so it runs headless with no
 bundle / pack / Qt available.
@@ -39,9 +38,7 @@ _SKIP_DIRS = {"__pycache__", "build", "dist", ".venv"}
 # grandfathered unit may shrink but never grow.  Do NOT relax to make room —
 # carve the file, then lower or delete its entry.
 
-FILE_BUDGET: dict[str, int] = {
-    "studio/llm/opencode_backend.py": 1251,  # +9: bare-except cleanup log lines
-}
+FILE_BUDGET: dict[str, int] = {}
 
 CLASS_METHOD_BUDGET: dict[tuple[str, str], int] = {}
 

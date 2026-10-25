@@ -34,7 +34,7 @@ Schema (project ``config.json``):
 Single-writer contract: the workflows section is owned by
 ``TaskConfigManager`` (and any GUI editor that routes through it).
 ``ProjectConfigDialog._commit_shadow`` preserves the on-disk workflows
-section across its shadow-staging commit (see config_manager_dialog.py).
+section across its shadow-staging commit (see ``procedo/ui/config_manager_dialog/project_config.py``).
 """
 
 from __future__ import annotations

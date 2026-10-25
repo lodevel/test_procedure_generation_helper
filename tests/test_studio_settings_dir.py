@@ -7,7 +7,7 @@ import argparse
 import re
 from pathlib import Path
 
-from procedo.core import app_identity, temp_root
+from procedo.core import app_identity, paths, temp_root
 from procedo.ui import error_copy
 
 from procedo.studio import __main__ as studio_main
@@ -110,6 +110,7 @@ def test_studio_start_reads_its_settings_under_procedos_organization(monkeypatch
     monkeypatch.setattr("procedo.studio.logging_config.setup_logging", lambda **kw: None)
     monkeypatch.setattr(studio_main, "QApplication", _App)
     monkeypatch.setattr(temp_root, "_sweep_leftovers", lambda: None)
+    monkeypatch.setattr(paths, "warm_universal_in_background", lambda: None)
     monkeypatch.setattr(studio_main, "MainWindow", _Window)
     monkeypatch.setattr(studio_main, "apply_app_theme", lambda name, app: name)
     monkeypatch.setattr(

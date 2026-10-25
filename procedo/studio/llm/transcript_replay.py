@@ -23,6 +23,8 @@ _HEADER = (
 )
 #: Starts the chat note of a send that never went out; with its user line it is not history.
 NOT_SENT = "Not sent: "
+#: Why a send waiting for the AI server is dropped when another test opens.
+TEST_CHANGED = "the test changed."
 _ROLE_LABEL = {"user": "User", "assistant": "Assistant", "system": "Note"}
 
 

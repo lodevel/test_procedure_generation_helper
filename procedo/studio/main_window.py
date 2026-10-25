@@ -19,7 +19,7 @@ from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 
 from procedo.ui import library_dialog
 from procedo.core.config_manager_dialog import ProjectConfigDialog, TemplateManagerDialog
-from procedo.core.install_helper_dialog import InstallPackageDialog
+from procedo.ui.install_helper_dialog import InstallPackageDialog
 from procedo.core import project_seeding
 from procedo.core.paths import exists_quiet
 from procedo.ui.scenario_dialog import ScenarioManagerDialog
@@ -316,7 +316,7 @@ class StudioWorkspace(QWidget):
                     )
 
     def _on_install_package(self):
-        """Packages -> Install Package: the shared procedo.core dialog."""
+        """Packages -> Install Package: the shared procedo.ui dialog."""
         InstallPackageDialog(self).exec()
 
     def _setup_central_widget(self):

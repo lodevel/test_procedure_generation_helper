@@ -1,0 +1,4 @@
+# Bulk mechanical reformats - skip in blame.
+# Enable locally: git config blame.ignoreRevsFile .git-blame-ignore-revs
+# ruff format, one-time pass
+dfe702b515b22d8bd70f4efe473594869e40573c

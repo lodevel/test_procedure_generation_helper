@@ -127,8 +127,6 @@ import types
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from _frame_channel import _cancelled_poll, _emit, _FrameStdout, _prompt_via_frames
-
 # ---------------------------------------------------------------------------
 # Per-session bench state (attached to ``_Session.bench`` on first use).
 # ---------------------------------------------------------------------------
@@ -724,6 +722,7 @@ def in_work_dir(path):
 
 def _cmd_run_test(d: dict, session, req: dict):
     """Run one generated test inside the holder.  Returns ``(response, stop)``."""
+    channel = d["_sib"]("_frame_channel")  # THE stdin channel: the run's frames ride it
     st = _state(session)
     run = st.runs.get(req.get("run_id"))
     if run is None:
@@ -742,7 +741,7 @@ def _cmd_run_test(d: dict, session, req: dict):
     rdir = Path(results_dir)
     if run.cancelled:
         # Stopped before it started: no op of the test (its setup resets instruments), the ladder only.
-        _emit(d, {"kind": "ack", "cmd": "cancel_run", "ok": True, "run_id": run.run_id})
+        channel._emit(d, {"kind": "ack", "cmd": "cancel_run", "ok": True, "run_id": run.run_id})
         return _ladder(
             d, session, run, types.SimpleNamespace(aborted=True, overall="ABORTED"), None, rdir
         )
@@ -789,14 +788,14 @@ def _cmd_run_test(d: dict, session, req: dict):
         owned=owned,
         keep_state=run.keep_state,
         results_dir=rdir,
-        prompt=lambda text: _prompt_via_frames(d, st, run, text),
-        cancelled=lambda: _cancelled_poll(d, st, run),
+        prompt=lambda text: channel._prompt_via_frames(d, st, run, text),
+        cancelled=lambda: channel._cancelled_poll(d, st, run),
     )
     # Attributes, not kwargs: the wheel is the bundle's, so an older
     # ExecutionContext without the fields must not raise here.
     ctx.stop_at_first_fail = bool(req.get("stop_at_first_fail", False))
     ctx.switch_off_on_stop = bool(req.get("switch_off_on_stop", True))
-    out = _FrameStdout(d)
+    out = channel._FrameStdout(d)
     saved_stdout = sys.stdout
     sys.stdout = out
     ctx.install()  # route test_helpers.prompt() to frames

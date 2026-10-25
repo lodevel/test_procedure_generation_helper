@@ -36,7 +36,7 @@ er = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(er)
 
 _HEAD = ("# T\nDesc.\n\n## Meta\nformat_version: 2.0.1\nboard: B\n"
-         "rules_pack: rules_packager_base@2.13.0\n\n## Equipment\nDMM_GENERIC : dmm\n\n## Steps\n")
+         "rules_pack: rules_packager_base@2.13.1\n\n## Equipment\nDMM_GENERIC : dmm\n\n## Steps\n")
 
 # Procedures copied from the engine's own tests (rules/v2_0_2/tests): a linear
 # read pair with an operator judgement, an @IF/@ELSE branch on a reading

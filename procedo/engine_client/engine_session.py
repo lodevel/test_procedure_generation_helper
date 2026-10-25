@@ -15,7 +15,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Optional
 
-from procedo.core import temp_root
+from procedo.core import run_provenance, temp_root
 from . import project_venv
 
 # Default timeouts (seconds).
@@ -85,12 +85,20 @@ class RemoteSession:
         self._write_lock = threading.RLock()  # one frame at a time on stdin, re-entrant: see _post
         self._dead = False
         self._bundle_dir: Optional[str] = None
+        #: The bundle this process runs on, read where its venv is resolved (``_start``): what
+        #: a bench session's runs record (``BenchSession.bundle``). None until it starts, or
+        #: when the project folder did not answer then.
+        self.bundle: Optional[run_provenance.BundleUsed] = None
         self._claim: Optional[tuple[Optional[Path], int]] = None  # (venv folder, pid) claimed
 
     # -- lifecycle ---------------------------------------------------------
     def _start(self) -> None:
         venv = _resolve_project_python(self._project_root)  # may raise ParserUnavailable
         self._bundle_dir = str(venv.bundle_dir)
+        try:
+            self.bundle = run_provenance.bundle_used(self._project_root)
+        except OSError:
+            self.bundle = None
         runner = Path(__file__).resolve().parent / "_execute_op_subprocess.py"
         # The child's temp files go with this app's, and so does a relative write of a
         # frame without a working folder (an exec_ops frame names the run's own).

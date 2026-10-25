@@ -92,6 +92,23 @@ def test_many_ops_start_one_process(project, spawns):
         assert kwargs["creationflags"] == subprocess.CREATE_NO_WINDOW
 
 
+def test_a_process_reports_the_bundle_read_where_its_venv_was_resolved(project, spawns):
+    """What a bench session's runs record as their bundle: read when the process started,
+    kept when the share's bundle changes later (another PC swaps it)."""
+    from procedo.core import run_provenance
+
+    bundle_json = project / "bundle" / "bundle.json"
+    bundle_json.write_text(
+        '{"id": "b", "version": "1.0", "python_packages": ["pkg==1"]}', encoding="utf-8"
+    )
+    (project / "bundle" / "defaults.json").write_text("{}", encoding="utf-8")
+    assert _available(project)["ok"]
+    bundle_json.write_text('{"id": "b", "version": "2.0"}', encoding="utf-8")
+    assert _session(project).bundle == run_provenance.BundleUsed(
+        {"id": "b", "version": "1.0"}, ("pkg==1",)
+    )
+
+
 def test_a_moved_bundle_gets_a_fresh_process_and_the_old_one_exits(project, spawns):
     assert _available(project)["ok"]
     old = _session(project)._proc

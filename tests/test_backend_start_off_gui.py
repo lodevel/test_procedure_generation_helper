@@ -25,6 +25,7 @@ from procedo.studio.tabs import llm_tab_mixin
 
 from .test_lazy_backend import _Answers
 from .test_lazy_backend import skill_chat as skill_chat
+from .test_skill_needed_context import _skill
 from .test_main_window_characterization import _make_project, _open_project
 from .test_main_window_characterization import make_window as make_window
 from .test_main_window_characterization import mbox as mbox
@@ -542,3 +543,26 @@ def test_a_project_switch_drops_the_waiting_send_at_once(opened, monkeypatch, tm
     assert _Worker.made == [] and [b.stopped for b in _Backend.made] == [True]
     assert raised == []
     assert _lines(view)[-1] == "Not sent: the AI server is restarting."
+
+
+def test_a_project_switch_drops_the_skill_chat_s_waiting_turn_and_gives_it_the_new_factory(
+    opened, monkeypatch, tmp_path
+):
+    """The Skills-menu chat stays open across a switch: its waiting turn got the retired
+    server's failure as its reply, and its next turns went to that factory."""
+    w = opened
+    server = _SlowServer()
+    factory = _factory(monkeypatch, server)
+    w.llm_server.server_manager = server  # the server the switch restarts
+    w._cli_args_processed = True
+    monkeypatch.setattr("procedo.studio.core.studio_settings.load_settings", lambda: {})
+    chat = scw.SkillChatWidget([_skill()], factory, backend_tab_id="skill_chat", parent=w)
+    assert chat.send_user_turn("hello")
+
+    _open_project(w, _make_project(tmp_path / "other"))
+
+    assert chat._blocks[-1] == ("System", "Not sent: the AI server is restarting.")
+    assert not chat.is_busy and chat._llm.factory is w.llm_server.backend_factory
+    _spin(lambda: not chat._llm._requested)  # the old start answers: nobody's, stopped
+    assert _Worker.made == [] and [b.stopped for b in _Backend.made] == [True]
+    chat.shutdown()

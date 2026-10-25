@@ -52,8 +52,19 @@ class SkillChatBackend(QObject):
         self._queued = fire
         self._starting.set(True)
         if not self._requested:
-            self._requested = True
-            request_backend(self.factory, self.tab_id, self._on_started)
+            self._request()
+
+    def _request(self) -> None:
+        self._requested = True
+        request_backend(self.factory, self.tab_id, self._on_started)
+
+    def set_factory(self, factory) -> None:
+        """Follow a replaced AI server (a project switch, a Settings save): the kept backend
+        is stopped and the next turn starts one from *factory*."""
+        self.factory = factory
+        if self.backend is not None:
+            _stop(self.backend)
+            self.backend = None
 
     def drop_queued(self) -> bool:
         """Drop the turn waiting for the backend (its start goes on): True when one was."""
@@ -67,9 +78,14 @@ class SkillChatBackend(QObject):
         """The start answered (GUI thread): kept as ``start_backend`` says, the queued turn
         fired on it (on a fallback ``NoneBackend`` its reply is the server's failure). One
         nobody uses — the chat shut down meanwhile, or not kept and no turn waiting — is
-        stopped."""
-        _factory, backend, keep = answer
+        stopped, as is one a replaced factory started: the waiting turn asks the new one."""
+        factory, backend, keep = answer
         self._requested = False
+        if factory is not self.factory:
+            _stop(backend)
+            if self._queued is not None and not self._closed:
+                self._request()
+            return
         fire = None if self._closed else self._queued
         self.drop_queued()
         if keep and not self._closed and self.backend is None:

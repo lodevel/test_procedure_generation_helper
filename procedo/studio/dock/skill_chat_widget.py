@@ -461,9 +461,18 @@ class SkillChatWidget(QWidget):
         waiting for the AI server's start is not sent."""
         self._on_stop()
 
-    def set_input_placeholder(self, text: str) -> None:
-        """Tailor the input box's prompt hint (host-facing convenience)."""
-        self._input.setPlaceholderText(text)
+    def drop_queued_send(self, reason: str) -> bool:
+        """Drop the turn waiting for the AI server's start: the chat unlocks and says
+        ``Not sent: <reason>``. False when none waits."""
+        if not self._llm.drop_queued():
+            return False
+        self._on_error(f"Not sent: {reason}")
+        return True
+
+    def update_backend_factory(self, factory) -> None:
+        """Follow a replaced AI server, as the Studio tabs do: the next turn starts its
+        backend from *factory*."""
+        self._llm.set_factory(factory)
 
     def set_status(self, text: str) -> None:
         """Write the widget's status line (host-facing convenience)."""
@@ -705,8 +714,8 @@ class SkillChatWidget(QWidget):
         if self._worker is not None:
             self._worker.cancel()
             self._status.set_full_text("Stopping…")
-        elif self._llm.drop_queued():
-            self._on_error("Not sent: cancelled.")
+        else:
+            self.drop_queued_send("cancelled.")
 
     def _on_skill_changed(self, index: int) -> None:
         """Combo path: switch the active skill. (The combo is disabled while a
@@ -745,8 +754,7 @@ class SkillChatWidget(QWidget):
         if not self._llm.relaunch_server():
             self._status.set_full_text("This backend has no restartable server.")
             return
-        if self._llm.drop_queued():
-            self._on_error("Not sent: the AI server is restarting.")
+        self.drop_queued_send("the AI server is restarting.")
         # Cancel any in-flight (possibly hung) request: the next send reconnects to the
         # fresh server.
         if self._worker is not None:

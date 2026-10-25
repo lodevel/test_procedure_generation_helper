@@ -150,11 +150,12 @@ def test_a_skill_chat_retries_after_a_fallback_none_backend(skill_chat):
     """It kept the fallback: "server down" on every send until Restart. A backend nobody
     keeps or waits for is stopped."""
     fallback, real, later = NoneBackend(reason="server down"), _Backend(), _Backend()
-    llm = skill_chat(_Factory())._llm
-    llm._on_started((None, fallback, False))
+    factory = _Factory()
+    llm = skill_chat(factory)._llm
+    llm._on_started((factory, fallback, False))
     assert llm.backend is None
-    llm._on_started((None, real, True))
-    llm._on_started((None, later, True))  # a second start never replaces it
+    llm._on_started((factory, real, True))
+    llm._on_started((factory, later, True))  # a second start never replaces it
     assert llm.backend is real and not real.stopped and later.stopped
 
 
@@ -177,3 +178,21 @@ def test_a_skill_chat_turn_queued_by_the_host_is_busy_and_never_doubled(skill_ch
     assert not chat.send_user_turn("again")
     assert len(queued) == 1
     assert [turn.content for turn in chat._session.turns] == ["hello"]
+
+
+def test_a_skill_chat_follows_a_replaced_factory(skill_chat):
+    """It kept its creation-time factory: after a project switch its turns went to the
+    retired server. A start the old factory still had out is stopped; the turn asks the new."""
+    old_backend, stale, new_backend = _Backend(), _Backend(), _Backend()
+    old, new = _Factory(), _Factory(new_backend, backend_type="none")
+    llm = skill_chat(old)._llm
+    llm._on_started((old, old_backend, True))
+    llm.set_factory(new)
+    assert old_backend.stopped and llm.backend is None
+
+    fired = []
+    llm._requested = True  # the old factory's start is still out
+    llm.await_backend(fired.append)
+    llm._on_started((old, stale, True))
+    assert stale.stopped and not new_backend.stopped
+    assert fired == [new_backend] and llm.backend is new_backend and new.asked == ["my_wizard"]

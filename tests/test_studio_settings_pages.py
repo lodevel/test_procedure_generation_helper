@@ -441,6 +441,31 @@ def test_test_connection_runs_off_the_gui_thread_and_shows_the_same_result(
     dlg.reject()
 
 
+def test_test_connection_with_no_backend_says_so_and_creates_no_launch_test_folder(
+    qapp, no_network, project, monkeypatch, tmp_path
+):
+    from procedo.studio.dialogs import settings_backend_probe as probe
+
+    config = tmp_path / "opencode"
+    monkeypatch.setattr(launch_config, "get_opencode_config_dir", lambda: config)
+    shown = []
+    monkeypatch.setattr(
+        probe.QMessageBox,
+        "information",
+        staticmethod(lambda parent, title, text: shown.append((title, text))),
+    )
+    dlg = _open(qapp, project)
+    dlg.backend_combo.setCurrentText("none")
+    dlg.test_connection_btn.click()
+    for _ in range(20):
+        qapp.processEvents()
+        time.sleep(0.005)  # a test worker, had one started, would have run by now
+    assert shown == [("Test Connection", "No backend selected.")]
+    assert dlg.test_connection_btn.isEnabled() and not dlg.test_connection_cue.active
+    assert not config.exists()
+    dlg.reject()
+
+
 def test_closing_the_dialog_mid_test_shows_nothing_and_still_stops_its_server(
     qapp, no_network, project, monkeypatch, tmp_path
 ):

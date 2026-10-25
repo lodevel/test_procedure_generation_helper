@@ -16,11 +16,11 @@ from tests._qt_stub import ensure_workflow_editor_importable
 
 ensure_workflow_editor_importable()
 
-from procedo.studio.core.validators_registry import (
+from procedo.studio.core.validators_registry import (  # noqa: E402
     ValidatorContext,
     ensure_builtins_registered,
     get,
-)  # noqa: E402
+)
 from procedo.engine_client import _engine_ops as engine_ops  # noqa: E402
 from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
 

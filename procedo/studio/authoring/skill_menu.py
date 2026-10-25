@@ -267,10 +267,10 @@ def _hold_modeless(main_window, attr: str, dialog) -> None:
 
 
 def close_project_windows(main_window) -> bool:
-    """Close the Skill chat windows and the wizards, which work on the open project, each
-    through its own close (its turns and backends stop; a wizard may ask to discard its
-    work): False when one stays open."""
-    for attr in ("_skill_chat_dialogs", "_wizard_dialogs"):
+    """Close the wizards, then the Skill chat windows, which work on the open project, each
+    through its own close (its turns and backends stop): False when one stays open. The
+    wizards go first: one may ask to discard its work, and a Cancel leaves the chats open."""
+    for attr in ("_wizard_dialogs", "_skill_chat_dialogs"):
         for dialog in list(getattr(main_window, attr, None) or ()):
             if not dialog.close():
                 return False

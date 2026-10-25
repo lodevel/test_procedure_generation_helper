@@ -53,6 +53,8 @@ class ProjectController(QObject):
         """Handle new project creation."""
         self._forget_recent()
         mw = self._mw
+        if not self._may_leave_project():
+            return  # asked before the dialog: a Cancel creates nothing
         # Shared, bundle-backed New Project — the SAME dialog the main app
         # uses: creates dirs + venv + bundle ref + starter test, so
         # editor-made projects are openable/runnable by the main app.
@@ -62,7 +64,7 @@ class ProjectController(QObject):
 
         # The dialog seeded the template and wrote the identity (apply_project_settings).
         project_path = Path(dialog.project_location) / dialog.project_name
-        if not self._open(project_path):
+        if not self._switch(project_path):
             return
         QMessageBox.information(
             mw,
@@ -71,21 +73,34 @@ class ProjectController(QObject):
             "You can now create test folders using the Workspace tab.",
         )
 
-    def _open(self, root: Path) -> bool:
-        """Switch Studio to the project at *root*. The open test may close (its unsaved
-        changes asked about, as when another test opens) and the windows working on the open
-        project close (:func:`close_project_windows`), then the test closes; a cancelled
-        question keeps the project open. False when nothing switched."""
+    def _may_leave_project(self) -> bool:
+        """The open project may be left: the open test may close (its unsaved changes asked
+        about, as when another test opens) and the windows working on the project closed
+        (:func:`close_project_windows`). False when a question was cancelled."""
         mw = self._mw
-        pm = mw.project_manager
+        return mw._document_controller.may_leave_test() and close_project_windows(mw)
+
+    def _open(self, root: Path) -> bool:
+        """Switch Studio to the project at *root*, once the open one may be left (unless
+        *root* is the open one). False when nothing switched."""
+        pm = self._mw.project_manager
         if not pm.is_valid_project_root(root):
+            _warn_invalid_project(self._mw)
             return False
-        if root != pm.project_root:
-            documents = mw._document_controller
-            if not documents.may_leave_test() or not close_project_windows(mw):
-                return False
-            documents.leave_test()
-        pm.set_project_root(root)
+        if root != pm.project_root and not self._may_leave_project():
+            return False
+        return self._switch(root)
+
+    def _switch(self, root: Path) -> bool:
+        """Set the project root to *root* (the open project may be left): the old project's
+        test closes. False, with a warning, when *root* is no project."""
+        mw = self._mw
+        leaving = root != mw.project_manager.project_root
+        if not mw.project_manager.set_project_root(root):
+            _warn_invalid_project(mw)
+            return False
+        if leaving:
+            mw._document_controller.leave_test()
         app_settings.add_recent_project(str(root))
         self.refresh_after_open()
         return True
@@ -172,14 +187,18 @@ class ProjectController(QObject):
             else pm.detect_project_from_test_folder(project_path)
         )
         if root is None:
-            QMessageBox.warning(
-                mw,
-                "Invalid Project",
-                "Selected folder does not appear to be a valid project root.\n\n"
-                "A valid project should contain a 'tests/' or 'config/' folder.",
-            )
+            _warn_invalid_project(mw)
             return
         self._open(root)
+
+
+def _warn_invalid_project(mw) -> None:
+    QMessageBox.warning(
+        mw,
+        "Invalid Project",
+        "Selected folder does not appear to be a valid project root.\n\n"
+        "A valid project should contain a 'tests/' or 'config/' folder.",
+    )
 
 
 def _folder_there(path_str: str) -> bool:

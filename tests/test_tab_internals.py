@@ -170,7 +170,8 @@ def test_a_text_transform_applies_its_answer_or_says_why_not(
     assert view.text_card.editor.toPlainText() == after
 
 
-def test_sync_equipment_refuses_a_blocked_answer_and_leaves_the_text(opened, monkeypatch):
+@pytest.mark.parametrize("refusal", [_BLOCKED, "line 0 [EQP_NO_EMITTER] Sync aborted"])
+def test_sync_equipment_refuses_a_blocked_answer_and_leaves_the_text(opened, monkeypatch, refusal):
     w = opened
     view = w.text_only_tab
     w.view_stack.setCurrentWidget(view)
@@ -178,7 +179,7 @@ def test_sync_equipment_refuses_a_blocked_answer_and_leaves_the_text(opened, mon
     monkeypatch.setattr(
         engine,
         "tools_op",
-        _Tools(reply=lambda spec: {"ok": True, "text": "# gone\n", "warnings": [_BLOCKED]}),
+        _Tools(reply=lambda spec: {"ok": True, "text": "# gone\n", "warnings": [refusal]}),
     )
     said, chats = [], []
     view.status_message.connect(said.append)
@@ -191,7 +192,7 @@ def test_sync_equipment_refuses_a_blocked_answer_and_leaves_the_text(opened, mon
     assert chats == [
         "\U0001f527 Sync Equipment REFUSED \u2014 the existing ## Equipment block has lines that "
         "don't parse (wrong syntax, or their pack isn't in the active bundle); syncing would "
-        "delete them. Nothing was changed.\n\n\u26a0 Warnings:\n\u2022 " + _BLOCKED
+        "delete them. Nothing was changed.\n\n\u26a0 Warnings:\n\u2022 " + refusal
     ]
     assert view.text_card.editor.toPlainText() == before
 

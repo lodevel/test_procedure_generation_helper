@@ -45,8 +45,9 @@ def format_chat_warnings(warnings: list[str]) -> str:
     return "\n\n⚠ Warnings:\n" + "\n".join(f"• {w}" for w in warnings)
 
 
-#: The warning marking a Sync Equipment answer that would delete unparseable lines.
-_SYNCEQP_BLOCKED = "[SYNCEQP_BLOCKED]"
+#: The warnings marking a Sync Equipment answer that left the text as it was rather than
+#: delete lines: an unparseable line, or a device no loaded pack writes.
+_SYNC_REFUSALS = ("[SYNCEQP_BLOCKED]", "[EQP_NO_EMITTER]")
 
 
 @dataclass(frozen=True)
@@ -225,7 +226,7 @@ class TextActionsMixin(PackGatingMixin):
             return
         if not engine_async.unchanged(self.text_card.editor, original, self.status_message.emit):
             return
-        if how.refused and any(_SYNCEQP_BLOCKED in w for w in warnings):
+        if how.refused and any(code in w for w in warnings for code in _SYNC_REFUSALS):
             status, chat = how.refused
         elif new_text == original:
             status, chat = how.same

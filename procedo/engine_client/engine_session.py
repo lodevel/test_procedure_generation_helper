@@ -96,7 +96,7 @@ class RemoteSession:
         venv = _resolve_project_python(self._project_root)  # may raise ParserUnavailable
         self._bundle_dir = str(venv.bundle_dir)
         try:
-            self.bundle = run_provenance.bundle_used(self._project_root)
+            self.bundle = run_provenance.bundle_used(venv.bundle_dir)  # the one it resolved
         except OSError:
             self.bundle = None
         runner = Path(__file__).resolve().parent / "_execute_op_subprocess.py"

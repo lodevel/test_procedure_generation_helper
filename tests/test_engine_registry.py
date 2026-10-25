@@ -109,6 +109,21 @@ def test_a_process_reports_the_bundle_read_where_its_venv_was_resolved(project, 
     )
 
 
+def test_the_bundle_reported_is_read_from_the_folder_the_venv_was_resolved_from(
+    project, spawns, monkeypatch, tmp_path
+):
+    from procedo.core import run_provenance
+
+    resolved = tmp_path / "resolved_bundle"
+    resolved.mkdir()
+    (resolved / "bundle.json").write_text('{"id": "b", "version": "1.0"}', encoding="utf-8")
+    (resolved / "defaults.json").write_text("{}", encoding="utf-8")
+    venv = project_venv.ProjectVenv(Path(sys.executable), resolved)
+    monkeypatch.setattr(engine_session, "_resolve_project_python", lambda _root: venv)
+    assert _available(project)["ok"]
+    assert _session(project).bundle == run_provenance.BundleUsed({"id": "b", "version": "1.0"})
+
+
 def test_a_moved_bundle_gets_a_fresh_process_and_the_old_one_exits(project, spawns):
     assert _available(project)["ok"]
     old = _session(project)._proc

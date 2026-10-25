@@ -62,8 +62,6 @@ exclude = [
     "external/**",
     "procedo/studio/__main__.py",
     "procedo/studio/dock/chat_panel.py",
-    # Formatting grows these past the structure caps (test_size_budgets); carve first.
-    "procedo/studio/dock/skill_chat_widget.py",
 ]
 line-ending = "auto"
 

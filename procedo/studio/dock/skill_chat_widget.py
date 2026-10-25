@@ -44,7 +44,11 @@ from typing import Optional
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QTextEdit, QPushButton, QCheckBox, QComboBox,
+    QWidget,
+    QVBoxLayout,
+    QTextEdit,
+    QPushButton,
+    QComboBox,
 )
 
 from procedo.ui import fluent_qss, theme, ui_kit
@@ -53,6 +57,7 @@ from ..authoring import ContextBundle, SkillChatSession, assemble
 from ..widgets.composer_input import ComposerInput
 from ..widgets.skill_context_picker import SkillContextPicker
 from .skill_chat_backend import WORKING, SkillChatBackend
+from .skill_chat_toggles import ToolToggles
 from ..llm.backend_base import LLMRequest, LLMTask
 from ..llm.context_usage import format_context_usage, used_tokens
 from ..llm.worker import LLMWorker
@@ -182,22 +187,22 @@ class SkillChatWidget(QWidget):
         self._context_limit = 16384  # token window for the context-% readout
         try:
             from ..core.studio_settings import load_settings
+
             _s = load_settings()
             opencode_settings = _s.get("opencode", {}) or {}
             _common = _s.get("common_llm", {}) or {}
             self._context_limit = int(
-                _common.get("context_window", _common.get("max_tokens", 16384)) or 16384)
+                _common.get("context_window", _common.get("max_tokens", 16384)) or 16384
+            )
         except Exception:
             log.exception("skill-chat could not read Settings defaults")
-        self._web_default = bool(opencode_settings.get("web_default", False))
-        self._save_docs_default = bool(opencode_settings.get("save_docs_default", False))
-        self._project_tools_default = bool(
-            opencode_settings.get("project_tools_default", False))
+        self._toggles = ToolToggles(opencode_settings)
 
         # The picker is built ONLY when sources are supplied; otherwise the host
         # pushes the context (and no context panel is shown).
         self._picker: Optional[SkillContextPicker] = (
-            SkillContextPicker(sources, documents_dir=documents_dir) if sources else None)
+            SkillContextPicker(sources, documents_dir=documents_dir) if sources else None
+        )
         if self._picker is not None:
             self._picker.tick(_needed(self._skill))
         self._setup_ui()
@@ -208,7 +213,7 @@ class SkillChatWidget(QWidget):
 
     def _setup_ui(self) -> None:
         """Board S9: the Conversation card beside the "Context to push" card (when there is a
-        picker), the composer card under them (the three toggles, the input, Run skill / Send,
+        picker), the composer card under them (the three toggles, :class:`ToolToggles`, the input, Run skill / Send,
         the status and context readouts, Stop / Clear / Restart)."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -226,8 +231,11 @@ class SkillChatWidget(QWidget):
             self._skill_combo.setMinimumWidth(_PICKER_WIDTH)
             self._skill_combo.currentIndexChanged.connect(self._on_skill_changed)
             self.header = ui_kit.HeaderBand(
-                "Skill chat", (self._skill.when_to_use or "") if self._skill else "",
-                [ui_kit.note("Skill", wrap=False), self._skill_combo], stacked=True)
+                "Skill chat",
+                (self._skill.when_to_use or "") if self._skill else "",
+                [ui_kit.note("Skill", wrap=False), self._skill_combo],
+                stacked=True,
+            )
             layout.addWidget(self.header)  # until a host takes it (take_header)
 
         # Transcript (left) | context picker (right, only when a picker exists).
@@ -252,50 +260,12 @@ class SkillChatWidget(QWidget):
             cards.addWidget(self._picker, 1)
         layout.addLayout(cards, 1)
 
-        # Web toggle — exposes OpenCode's webfetch + websearch tools for this
-        # chat only (per-request override). OFF by default: with web on, even a
-        # no-code skill could be steered into leaking the attached context via a
-        # crafted URL, so the user opts in explicitly.
-        self._web_checkbox = QCheckBox("🌐 Web access (search + fetch)")
-        self._web_checkbox.setToolTip(
-            "Let the skill search the web and fetch pages (e.g. to confirm a "
-            "power IC or find a datasheet).\n"
-            "Off by default — only enable it for skills you trust, since web "
-            "access can be used to leak the context you attached."
-        )
-        # Default checked state comes from Settings (per-chat overridable).
-        self._web_checkbox.setChecked(self._web_default)
-
-        # Project-data tools toggle — exposes the project_tools MCP server for
-        # this chat only, letting the LLM PULL board data (netlist, components,
-        # test points) on demand instead of having it all pushed up front. OFF
-        # by default (Settings can flip the default); per-chat overridable.
-        self._project_tools_checkbox = QCheckBox("🔧 Project data tools (pull)")
-        self._project_tools_checkbox.setToolTip(
-            "Let the skill pull board data on demand — query the netlist, list "
-            "or inspect components, and read test points — instead of pushing "
-            "it all into the context up front.\n"
-            "Off by default; enable it so the model can fetch exactly the "
-            "board data it needs."
-        )
-        self._project_tools_checkbox.setChecked(self._project_tools_default)
-
-        self._save_docs_checkbox = QCheckBox("💾 Save datasheets")
-        self._save_docs_checkbox.setToolTip(
-            "Let the model SAVE datasheets it downloads into the project's "
-            "documents folder (sandboxed) for reuse by future tests. Needs "
-            "🌐 web on. Off by default."
-        )
-        self._save_docs_checkbox.setChecked(self._save_docs_default)
-
-        toggles = ui_kit.hbox(self._web_checkbox, self._project_tools_checkbox,
-                              self._save_docs_checkbox, None)
-        toggles.setSpacing(16)
-
         # Input box (Enter sends, Shift+Enter newline — the Assistant column's input).
         self._input = ComposerInput(
             "Optional: prime the skill before Run (e.g. 'build the test for U86'), "
-            "then refine over the next turns…", _INPUT_HEIGHT)
+            "then refine over the next turns…",
+            _INPUT_HEIGHT,
+        )
         self._input.submitted.connect(self._on_send)
 
         # Action row: Run skill / Send, the readouts, then the icon buttons.
@@ -307,7 +277,8 @@ class SkillChatWidget(QWidget):
             self._run_btn.setToolTip(
                 "Start the skill using the checked context. Type a message first to "
                 "PRIME it (e.g. which rail/IC to build) — or leave it empty to run "
-                "the skill from the top.")
+                "the skill from the top."
+            )
             self._run_btn.clicked.connect(self._on_run)
             buttons.addWidget(self._run_btn)
 
@@ -322,7 +293,8 @@ class SkillChatWidget(QWidget):
         self._status = ui_kit.ElidingLabel()
         self._status.setObjectName("fieldNote")  # muted, like a note
         self._work_timer = WorkTimer(
-            on_tick=lambda s: self._status.set_full_text(f"Thinking… {s}"), parent=self)
+            on_tick=lambda s: self._status.set_full_text(f"Thinking… {s}"), parent=self
+        )
         # Context-usage readout. We show the LATEST turn's total tokens as the
         # current context size: OpenCode holds the persistent session, so the last
         # turn's reported usage IS the live context (system + history + tool
@@ -342,15 +314,17 @@ class SkillChatWidget(QWidget):
         self._trash_btn.clicked.connect(self.clear)
         # Stays enabled even while busy — the point is to recover a HUNG send.
         self._restart_btn = ui_kit.icon_button(
-            "refresh", "Restart the backend server (recover a hung / unresponsive "
-            "backend without relaunching the editor)")
+            "refresh",
+            "Restart the backend server (recover a hung / unresponsive "
+            "backend without relaunching the editor)",
+        )
         self._restart_btn.clicked.connect(self._on_restart_backend)
         for button in (self._stop_btn, self._trash_btn, self._restart_btn):
             buttons.addWidget(button)
 
         composer = ui_kit.Card()
         composer.body.setSpacing(8)
-        composer.body.addLayout(toggles)
+        composer.body.addLayout(self._toggles.row)
         composer.body.addWidget(self._input)
         composer.body.addLayout(buttons)
         layout.addWidget(composer)
@@ -555,8 +529,9 @@ class SkillChatWidget(QWidget):
         files = self._session.pending_files
         try:
             if self._dispatch_gate is not None:
-                self._dispatch_gate(lambda: self._really_dispatch(prompt, files),
-                                    interactive=interactive)
+                self._dispatch_gate(
+                    lambda: self._really_dispatch(prompt, files), interactive=interactive
+                )
             else:
                 self._really_dispatch(prompt, files)
         except Exception:
@@ -575,8 +550,7 @@ class SkillChatWidget(QWidget):
         """Build the worker on *backend* and start streaming."""
         self._llm.ensure_session()
 
-        _declared = list(
-            (getattr(self._skill, "metadata", None) or {}).get("mcp_tools") or [])
+        _declared = list((getattr(self._skill, "metadata", None) or {}).get("mcp_tools") or [])
 
         # run_skill (skill-invokes-skill) is opt-in: a skill must declare it in
         # `mcp_tools`. When it does, mint this (depth-0) session's HMAC chain-token
@@ -589,17 +563,22 @@ class SkillChatWidget(QWidget):
             _secret = getattr(getattr(backend, "config", None), "run_skill_secret", None)
             if _secret:
                 from ..authoring import rs_core
+
                 _tok = rs_core.sign(
-                    {"depth": 0, "visited": [self._skill.skill_id]}, _secret.encode())
-                _sys = (f"[HOST] Your run_skill chain_token is: {_tok}\n"
-                        f"[HOST] If (and only if) you call run_skill, pass this exact "
-                        f"chain_token as the chain_token argument.\n\n{_sys}")
+                    {"depth": 0, "visited": [self._skill.skill_id]}, _secret.encode()
+                )
+                _sys = (
+                    f"[HOST] Your run_skill chain_token is: {_tok}\n"
+                    f"[HOST] If (and only if) you call run_skill, pass this exact "
+                    f"chain_token as the chain_token argument.\n\n{_sys}"
+                )
                 _run_skill = True
             else:
                 log.warning(
                     "skill %r declares run_skill but no signing secret is available "
                     "(OpenCode backend not pre-warmed?); recursion is unavailable.",
-                    getattr(self._skill, "skill_id", "?"))
+                    getattr(self._skill, "skill_id", "?"),
+                )
 
         request = LLMRequest(
             task=LLMTask.AD_HOC_CHAT,
@@ -607,9 +586,9 @@ class SkillChatWidget(QWidget):
             # SKILL.md as the governing system prompt (not buried in the body);
             # carries the [HOST] run_skill token preamble when recursion is enabled.
             system_prompt=_sys,
-            web_enabled=self._web_checkbox.isChecked(),
-            save_docs_enabled=self._save_docs_checkbox.isChecked(),
-            project_tools_enabled=self._project_tools_checkbox.isChecked(),
+            web_enabled=self._toggles.web.isChecked(),
+            save_docs_enabled=self._toggles.save_docs.isChecked(),
+            project_tools_enabled=self._toggles.project_tools.isChecked(),
             # A skill exposes ONLY its own tools: it declares the server(s) it
             # uses in frontmatter (e.g. board_bringup -> `mcp_tools: [board_tools]`);
             # the backend turns those on and every other skill tool explicitly off.
@@ -783,17 +762,20 @@ class SkillChatWidget(QWidget):
         c = _colours()
         body = html.escape(text).replace("\n", "<br>")
         if speaker == "System":
-            return (f'<p align="center" style="margin:6px 0;"><span style="background-color:'
-                    f'{c["selected_bg"]}; color:{c["accent_deep"]}; font-size:12px; '
-                    f'font-weight:600;">&nbsp;&nbsp;{body}&nbsp;&nbsp;</span></p>')
+            return (
+                f'<p align="center" style="margin:6px 0;"><span style="background-color:'
+                f"{c['selected_bg']}; color:{c['accent_deep']}; font-size:12px; "
+                f'font-weight:600;">&nbsp;&nbsp;{body}&nbsp;&nbsp;</span></p>'
+            )
         user = speaker == "You"
-        fill, line = ((c["selected_bg"], c["selected_border"]) if user
-                      else (c["panel"], c["border"]))
+        fill, line = (c["selected_bg"], c["selected_border"]) if user else (c["panel"], c["border"])
         shape = 'align="right"' if user else 'width="100%"'
-        return (f'<table {shape} border="1" cellspacing="0" cellpadding="8" '
-                f'style="margin:5px 0; border-collapse:collapse; border-style:solid; '
-                f'border-color:{line}; background-color:{fill};"><tr><td '
-                f'style="color:{c["text"]};">{body}</td></tr></table>')
+        return (
+            f'<table {shape} border="1" cellspacing="0" cellpadding="8" '
+            f'style="margin:5px 0; border-collapse:collapse; border-style:solid; '
+            f'border-color:{line}; background-color:{fill};"><tr><td '
+            f'style="color:{c["text"]};">{body}</td></tr></table>'
+        )
 
     def _repaint(self, live: Optional[tuple[str, str]] = None) -> None:
         """Repaint the whole transcript from ``self._blocks`` plus an optional
@@ -801,8 +783,7 @@ class SkillChatWidget(QWidget):
         blocks = list(self._blocks)
         if live is not None:
             blocks.append(live)
-        self._transcript.setHtml(
-            "".join(self._block_html(sp, tx) for sp, tx in blocks))
+        self._transcript.setHtml("".join(self._block_html(sp, tx) for sp, tx in blocks))
         self._scroll_to_end()
 
     def _render_transcript(self) -> None:
@@ -815,9 +796,7 @@ class SkillChatWidget(QWidget):
         ]
         self._repaint()
 
-    def _append_line(
-        self, speaker: str, text: str, newline_before: bool = False
-    ) -> None:
+    def _append_line(self, speaker: str, text: str, newline_before: bool = False) -> None:
         # ``newline_before`` is a no-op now (blocks have their own spacing); the
         # parameter is kept so existing call sites don't change.
         self._blocks.append((speaker, text))

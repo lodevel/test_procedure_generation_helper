@@ -72,15 +72,19 @@ class ProjectController(QObject):
         )
 
     def _open(self, root: Path) -> bool:
-        """Switch Studio to the project at *root*. The windows working on the open project
-        close first (:func:`close_project_windows`); one that stays open (its discard
-        question cancelled) keeps the project open. False when nothing switched."""
+        """Switch Studio to the project at *root*. The open test may close (its unsaved
+        changes asked about, as when another test opens) and the windows working on the open
+        project close (:func:`close_project_windows`), then the test closes; a cancelled
+        question keeps the project open. False when nothing switched."""
         mw = self._mw
         pm = mw.project_manager
         if not pm.is_valid_project_root(root):
             return False
-        if root != pm.project_root and not close_project_windows(mw):
-            return False
+        if root != pm.project_root:
+            documents = mw._document_controller
+            if not documents.may_leave_test() or not close_project_windows(mw):
+                return False
+            documents.leave_test()
         pm.set_project_root(root)
         app_settings.add_recent_project(str(root))
         self.refresh_after_open()

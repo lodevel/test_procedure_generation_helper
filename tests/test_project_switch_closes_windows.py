@@ -1,7 +1,9 @@
-"""The windows that work on the open project do not survive a project switch: Open Project, a
-recent project and New Project first close the Skill chat windows and the wizards, each through
-its own close (its turn and backend stop). One that will not close (a wizard whose discard
-question was cancelled) keeps the open project. Reopening the open project keeps them."""
+"""What works on the open project does not survive a project switch: Open Project, a recent
+project and New Project first ask about the open test's unsaved changes (as opening another test
+does) and close the Skill chat windows and the wizards, each through its own close (its turn and
+backend stop); then the open test closes. A cancelled question (Cancel on the unsaved changes, a
+wizard whose discard question was cancelled) keeps the open project. Reopening the open project
+keeps them."""
 
 from __future__ import annotations
 
@@ -10,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 import shiboken6
 from PySide6.QtCore import QCoreApplication, QEvent
-from PySide6.QtWidgets import QDialog, QFileDialog
+from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
 from procedo.studio.authoring import skill_menu
 from procedo.studio.controllers import project_controller
@@ -127,3 +129,42 @@ def test_reopening_the_open_project_keeps_its_windows(opened, monkeypatch):
     wizard.keep = False
     wizard.close()
     _flush_deletes()
+
+
+EDITED = "# t1\n\nEdited, unsaved.\n"
+
+
+@pytest.mark.parametrize("how", SWITCHES)
+def test_cancel_on_the_open_test_s_unsaved_changes_cancels_the_switch(
+    opened, mbox, monkeypatch, tmp_path, how
+):
+    w = opened
+    before = w.project_manager.project_root
+    w.open_test(before / "tests" / "t1")
+    am = w.artifact_manager
+    w.text_only_tab.text_editor.setPlainText(EDITED)
+    mbox.question_answer = QMessageBox.StandardButton.Cancel
+
+    _switch(w, monkeypatch, how, _make_project(tmp_path / "other"))
+
+    assert [t for t, _ in mbox.question] == ["Unsaved Changes"]
+    assert w.project_manager.project_root == before and w.artifact_manager is am
+    assert w.text_only_tab.text_editor.toPlainText() == EDITED
+
+
+def test_after_a_switch_no_test_of_the_old_project_stays_open(opened, mbox, monkeypatch, tmp_path):
+    w = opened
+    t1 = w.project_manager.project_root / "tests" / "t1"
+    w.open_test(t1)
+    w.text_only_tab.text_editor.setPlainText(EDITED)
+    mbox.question_answer = QMessageBox.StandardButton.Discard
+
+    _switch(w, monkeypatch, "open", _make_project(tmp_path / "other"))
+
+    assert [t for t, _ in mbox.question] == ["Unsaved Changes"]
+    assert w.project_manager.project_root == tmp_path / "other"
+    assert w.artifact_manager is None and w.session_state is None
+    assert w.text_only_tab.text_editor.toPlainText() == ""
+    assert not w.view_column.isEnabled() and not w.dock.isEnabled()
+    assert w.header.title.text() == "No test open"
+    assert "Edited" not in (t1 / "procedure_text.md").read_text(encoding="utf-8")

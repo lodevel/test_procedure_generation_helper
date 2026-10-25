@@ -17,7 +17,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QComboBox, QFrame, QLabel, QPushButton
 
-from procedo.ui import ui_kit
+from procedo.ui import markdown_view, ui_kit
 from procedo.studio.authoring import ContextItem, ContextSource
 from procedo.studio.core import project_manager
 from procedo.studio import shell
@@ -380,7 +380,7 @@ def test_word_keywords_shows_the_main_apps_reference_in_its_own_dialog(qapp):
         (2, "Template Location"),
         (2, "Template Resolution"),
     ]
-    tables = ui_kit._tables(document.rootFrame())
+    tables = markdown_view._tables(document.rootFrame())
     assert [tables[0].cellAt(0, c).firstCursorPosition().block().text() for c in range(2)] == [
         "Syntax",
         "Purpose",

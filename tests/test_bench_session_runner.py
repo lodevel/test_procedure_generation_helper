@@ -70,9 +70,18 @@ _RUNNER = (
     / "_execute_op_subprocess.py"
 )
 _BSR_PATH = _RUNNER.parent / "_bench_session_runner.py"
+_CHANNEL_PATH = _RUNNER.parent / "_frame_channel.py"
 
-# Load the sibling FIRST under its canonical name so the daemon's lazy
-# ``import _bench_session_runner`` resolves to the same module object.
+# Load the siblings FIRST under their canonical names so the daemon's lazy
+# ``import _bench_session_runner`` (and the runner's ``from _frame_channel import``)
+# resolve to the same module objects.
+if "_frame_channel" in sys.modules:
+    frame_channel = sys.modules["_frame_channel"]
+else:
+    _cspec = importlib.util.spec_from_file_location("_frame_channel", _CHANNEL_PATH)
+    frame_channel = importlib.util.module_from_spec(_cspec)
+    sys.modules["_frame_channel"] = frame_channel
+    _cspec.loader.exec_module(frame_channel)
 if "_bench_session_runner" in sys.modules:
     bsr = sys.modules["_bench_session_runner"]
 else:
@@ -329,7 +338,7 @@ class _BenchBase(unittest.TestCase):
         self.proto = _ProtoCapture()
         er._PROTO_OUT = self.proto
         self.addCleanup(lambda: setattr(er, "_PROTO_OUT", None))
-        self.addCleanup(lambda: setattr(bsr, "_READER", None))
+        self.addCleanup(lambda: setattr(frame_channel, "_READER", None))
         # run_test re-asserts the daemon's SIGTERM/SIGINT handlers — restore
         # the pytest process's handlers afterwards.
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -360,8 +369,8 @@ class _BenchBase(unittest.TestCase):
         return resp
 
     def _reader(self, script):
-        bsr._READER = bsr.Reader(_ScriptedStream(script, self.proto))
-        return bsr._READER
+        frame_channel._READER = frame_channel.Reader(_ScriptedStream(script, self.proto))
+        return frame_channel._READER
 
     def _module(self, code) -> Path:
         path = Path(self.tmp.name) / "test.py"
@@ -1894,13 +1903,13 @@ class RunTestTests(_BenchBase):
         self.assertIn("ack", self.proto.kinds())
         self.assertTrue(self._offs())  # ladder safe-off ran
         # the stale response reaches the MAIN loop and is dropped: no response
-        line = bsr._READER.next_line()
+        line = frame_channel._READER.next_line()
         self.assertIsNotNone(line)
         late, stop = self._dispatch(s, json.loads(line))
         self.assertFalse(stop)
         self.assertIsNone(late)
         # EOF signalled through the queue — the loop would reach _teardown
-        self.assertIsNone(bsr._READER.next_line())
+        self.assertIsNone(frame_channel._READER.next_line())
         # session alive: next acquire works
         self._dispatch(s, {"cmd": "release_run", "run_id": rid})
         self.assertTrue(self._acquire(s, [_claim("T-B", "PSU1", dev="PHYS")])["ok"])

@@ -2,7 +2,7 @@
 
 Imported as a PLAIN SIBLING (``_sib``), never through the ``procedo`` package (it is
 absent from project venvs). The daemon passes its module globals (``d``) so this module uses its
-frame writer, its protocol channel and THE stdin reader (``_bench_session_runner``) with no import
+frame writer, its protocol channel and THE stdin reader (``_frame_channel``) with no import
 cycle.
 
 The function runs in a one-call functions worker (``FunctionWorker(once=True)``) in the run's
@@ -63,9 +63,10 @@ def _check(d: dict):
 
     def check() -> None:
         bench = d["_bench"]()
-        reader = bench._READER
+        channel = d["_sib"]("_frame_channel")
+        reader = channel._READER
         while reader is not None and (item := reader.poll()) is not None:
-            if item is bench._EOF:  # re-queued: the main loop still tears down
+            if item is channel._EOF:  # re-queued: the main loop still tears down
                 raise CallStopped("the host closed the channel")
             try:
                 req = json.loads(item)

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QDialog, QPushButton
 
-from procedo.ui import ui_kit
+from procedo.ui import markdown_view, ui_kit
 from procedo.ui import help as help_pkg
 
 
@@ -31,7 +31,7 @@ class WordKeywordsDialog(QDialog):
         body = ui_kit.framed(
             self, ui_kit.HeaderBand("Word export keywords"), ui_kit.FooterBand([close_btn])
         )
-        self.page = ui_kit.MarkdownView(markdown)
+        self.page = markdown_view.MarkdownView(markdown)
         body.addWidget(self.page, 1)
 
 

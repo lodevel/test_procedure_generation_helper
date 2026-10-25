@@ -121,8 +121,8 @@ def setup_logging(
 
     formatter = logging.Formatter(fmt, datefmt="%H:%M:%S")
 
-    # Configure root logger for our package
-    root_logger = logging.getLogger("procedo.studio")
+    # Configure root logger for everything Studio imports (procedo.*)
+    root_logger = logging.getLogger("procedo")
     root_logger.setLevel(level)
     root_logger.handlers.clear()
 

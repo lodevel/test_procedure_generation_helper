@@ -16,7 +16,7 @@ from ..llm.code_constants_merge import equipment_ids_from_procedure, preserve_be
 log = logging.getLogger(__name__)
 
 
-def keep_pinned_constants(code: str, current_code: str, procedure, source: str) -> str:
+def keep_pinned_constants(code: str, current_code: str, procedure: object, source: str) -> str:
     """*code* with *current_code*'s pinned constants for *procedure*'s equipment put back (a
     procedure.json dict; anything else has no equipment); *source* names the regen in the log."""
     ids = equipment_ids_from_procedure(procedure) if isinstance(procedure, dict) else []

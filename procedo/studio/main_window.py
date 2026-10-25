@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QFileSystemWatcher, QTimer
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 
-from procedo.core import library_dialog
+from procedo.ui import library_dialog
 from procedo.core.config_manager_dialog import ProjectConfigDialog, TemplateManagerDialog
 from procedo.core.install_helper_dialog import InstallPackageDialog
 from procedo.core import project_seeding

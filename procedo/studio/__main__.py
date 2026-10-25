@@ -116,7 +116,7 @@ def main() -> int:
     log.info("Procedo Studio starting")
     log.debug(f"CLI args: {args}")
 
-    from procedo.core import app_identity, temp_root
+    from procedo.core import app_identity, paths, temp_root
     
     # Validate arguments
     if args.test_dir and args.test_name:
@@ -128,6 +128,7 @@ def main() -> int:
     app_identity.claim_taskbar_identity(app_identity.STUDIO_APP_ID)
     app = QApplication(sys.argv)
     temp_root.start(app)
+    paths.warm_universal_in_background()
     app.setApplicationName("Procedo Studio")
     app.setApplicationVersion("0.1.0")
     app.setOrganizationName(app_identity.SETTINGS_ORGANIZATION)

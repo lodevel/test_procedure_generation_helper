@@ -32,6 +32,7 @@ from procedo.core.paths import exists_quiet
 from procedo.engine_client import engine
 
 from .. import _project_local_state
+from ..authoring.skill_menu import close_project_windows
 
 if TYPE_CHECKING:
     from ..main_window import StudioWorkspace
@@ -52,6 +53,8 @@ class ProjectController(QObject):
         """Handle new project creation."""
         self._forget_recent()
         mw = self._mw
+        if not self._may_leave_project():
+            return  # asked before the dialog: a Cancel creates nothing
         # Shared, bundle-backed New Project — the SAME dialog the main app
         # uses: creates dirs + venv + bundle ref + starter test, so
         # editor-made projects are openable/runnable by the main app.
@@ -61,39 +64,46 @@ class ProjectController(QObject):
 
         # The dialog seeded the template and wrote the identity (apply_project_settings).
         project_path = Path(dialog.project_location) / dialog.project_name
-
-        # Point the editor's navigation model at the freshly-created project.
-        mw.project_manager.set_project_root(project_path)
-        app_settings.add_recent_project(str(project_path))
-
-        # Now initialize the UI with the new project
-        mw.workspace_widget._load_test_list()
-        mw.workspace_widget.new_test_btn.setEnabled(True)
-
-        # Detect rules (will prompt user if not found)
-        mw.project_manager.detect_rules_root()
-
-        # Switch task configurations to the freshly-created project so
-        # any workflow saves land in the new ``config.json``. The
-        # registered reload callback refreshes button labels.
-        mw.task_config_manager.reload(mw.project_manager.project_root)
-
-        # Update the footer (project, rules)
-        mw._update_project_rules_indicators()
-        refresh_parser_buttons(mw)
-        watch_project_config(mw)
-
-        # Show the Workspace column if hidden
-        mw.toggle_workspace_action.setChecked(True)
-        mw.llm_server.restart_for_project()
-
-        # Show success message
+        if not self._switch(project_path):
+            return
         QMessageBox.information(
             mw,
             "Project Created",
             f"Project created successfully at:\n{project_path}\n\n"
             "You can now create test folders using the Workspace tab.",
         )
+
+    def _may_leave_project(self) -> bool:
+        """The open project may be left: the open test may close (its unsaved changes asked
+        about, as when another test opens) and the windows working on the project closed
+        (:func:`close_project_windows`). False when a question was cancelled."""
+        mw = self._mw
+        return mw._document_controller.may_leave_test() and close_project_windows(mw)
+
+    def _open(self, root: Path) -> bool:
+        """Switch Studio to the project at *root*, once the open one may be left (unless
+        *root* is the open one). False when nothing switched."""
+        pm = self._mw.project_manager
+        if not pm.is_valid_project_root(root):
+            _warn_invalid_project(self._mw)
+            return False
+        if root != pm.project_root and not self._may_leave_project():
+            return False
+        return self._switch(root)
+
+    def _switch(self, root: Path) -> bool:
+        """Set the project root to *root* (the open project may be left): the old project's
+        test closes. False, with a warning, when *root* is no project."""
+        mw = self._mw
+        leaving = root != mw.project_manager.project_root
+        if not mw.project_manager.set_project_root(root):
+            _warn_invalid_project(mw)
+            return False
+        if leaving:
+            mw._document_controller.leave_test()
+        app_settings.add_recent_project(str(root))
+        self.refresh_after_open()
+        return True
 
     def refresh_after_open(self):
         """Common UI refresh after a project root is set (open / recent)."""
@@ -153,10 +163,7 @@ class ProjectController(QObject):
                 f"The project folder does not exist or cannot be reached:\n{path_str}",
             )
             return
-        path = Path(path_str)
-        if mw.project_manager.set_project_root(path):
-            app_settings.add_recent_project(str(path))
-            self.refresh_after_open()
+        self._open(Path(path_str))
 
     def on_open_project(self):
         """Handle open project action."""
@@ -172,38 +179,26 @@ class ProjectController(QObject):
             return
 
         project_path = Path(path)
+        pm = mw.project_manager
+        # Maybe the user selected a test folder directly?
+        root = (
+            project_path
+            if pm.is_valid_project_root(project_path)
+            else pm.detect_project_from_test_folder(project_path)
+        )
+        if root is None:
+            _warn_invalid_project(mw)
+            return
+        self._open(root)
 
-        # Try to set as project root
-        if mw.project_manager.set_project_root(project_path):
-            app_settings.add_recent_project(str(project_path))
-            self.refresh_after_open()
-        else:
-            # Maybe user selected a test folder directly?
-            detected_root = mw.project_manager.detect_project_from_test_folder(project_path)
-            if detected_root:
-                mw.project_manager.set_project_root(detected_root)
-                mw.workspace_widget._load_test_list()
-                mw.workspace_widget.new_test_btn.setEnabled(True)
-                mw.project_manager.detect_rules_root()
 
-                # Switch task configurations to the detected project root.
-                mw.task_config_manager.reload(mw.project_manager.project_root)
-
-                # Update the footer (project, rules)
-                mw._update_project_rules_indicators()
-                refresh_parser_buttons(mw)
-                watch_project_config(mw)
-
-                # Show the Workspace column
-                mw.toggle_workspace_action.setChecked(True)
-                mw.llm_server.restart_for_project()
-            else:
-                QMessageBox.warning(
-                    mw,
-                    "Invalid Project",
-                    "Selected folder does not appear to be a valid project root.\n\n"
-                    "A valid project should contain a 'tests/' or 'config/' folder.",
-                )
+def _warn_invalid_project(mw) -> None:
+    QMessageBox.warning(
+        mw,
+        "Invalid Project",
+        "Selected folder does not appear to be a valid project root.\n\n"
+        "A valid project should contain a 'tests/' or 'config/' folder.",
+    )
 
 
 def _folder_there(path_str: str) -> bool:

@@ -213,26 +213,13 @@ class DocumentController:
             QMessageBox.warning(mw, "Open Test", reason)
             return
 
-        # Check for unsaved changes before loading a new test
-        if mw.artifact_manager and self.check_unsaved_changes():
-            return  # User cancelled
-
-        # Check artifact coherence before switching away
-        if mw.artifact_manager and self.check_artifact_coherence():
-            return  # User wants to review
+        if not self.may_leave_test():
+            return  # User cancelled, or wants to review
 
         self.discard_proposals()
         # a send waiting for the AI server is not sent
         mw.llm_server.drop_waiting_sends(TEST_CHANGED)
-
-        # Save current session state (includes validation_issues) before switching
-        if hasattr(mw, "session_state") and mw.session_state and mw.session_state._file_path:
-            try:
-                if reason := unreachable(mw.session_state._file_path):
-                    raise OSError(reason)
-                mw.session_state.save()
-            except Exception as e:
-                log.warning(f"Failed to save session state before switching tests: {e}")
+        self._save_session()
 
         # Initialize managers for this test
         am = mw.artifact_manager = ArtifactManager()
@@ -308,6 +295,32 @@ class DocumentController:
         if mw.view_stack.currentIndex() == previous_index:
             self.on_tab_changed(previous_index)
 
+    def may_leave_test(self) -> bool:
+        """The open test may close (another test or another project opens): its unsaved
+        changes saved or discarded, its out-of-sync artifacts acknowledged. False when the
+        user cancelled."""
+        mw = self._mw
+        if mw.artifact_manager and self.check_unsaved_changes():
+            return False
+        return not (mw.artifact_manager and self.check_artifact_coherence())
+
+    def _save_session(self) -> None:
+        """Save the open test's session state (includes validation_issues) before it closes."""
+        mw = self._mw
+        if hasattr(mw, "session_state") and mw.session_state and mw.session_state._file_path:
+            try:
+                if reason := unreachable(mw.session_state._file_path):
+                    raise OSError(reason)
+                mw.session_state.save()
+            except Exception as e:
+                log.warning(f"Failed to save session state before the test closed: {e}")
+
+    def leave_test(self) -> None:
+        """Another project opens: the open test's session is saved and the test closed."""
+        if self._mw.artifact_manager:
+            self._save_session()
+            self._close_test()
+
     def on_test_deleted(self, path: Path):
         """Handle a test folder being deleted."""
         mw = self._mw
@@ -315,28 +328,34 @@ class DocumentController:
 
         # If the deleted test was the currently opened one, clear everything
         if mw.artifact_manager and mw.artifact_manager.test_dir == path:
-            self.discard_proposals()
-            mw.artifact_manager = None
-            mw.session_state = None
-
-            # Clear editors
-            mw.text_only_tab.text_editor.clear()
-            mw.text_json_tab.text_editor.clear()
-            mw.text_json_tab.json_editor.clear()
-            mw.json_code_tab.json_editor.clear()
-            mw.json_code_tab.code_editor.clear()
-
-            # Disable the views and the Assistant
-            mw.view_column.setEnabled(False)
-            mw.dock.setEnabled(False)
-
-            # Reset the header
-            mw._update_status_indicators()
-
-            # Clear opened test highlight
-            mw.workspace_widget.set_opened_test(None)
+            self._close_test()
 
         mw.footer.show_message(f"Deleted test: {path.name}", 3000)
+
+    def _close_test(self) -> None:
+        """Close the open test: its proposals discarded, the editors cleared, the views and
+        the Assistant disabled."""
+        mw = self._mw
+        self.discard_proposals()
+        mw.artifact_manager = None
+        mw.session_state = None
+
+        # Clear editors
+        mw.text_only_tab.text_editor.clear()
+        mw.text_json_tab.text_editor.clear()
+        mw.text_json_tab.json_editor.clear()
+        mw.json_code_tab.json_editor.clear()
+        mw.json_code_tab.code_editor.clear()
+
+        # Disable the views and the Assistant
+        mw.view_column.setEnabled(False)
+        mw.dock.setEnabled(False)
+
+        # Reset the header
+        mw._update_status_indicators()
+
+        # Clear opened test highlight
+        mw.workspace_widget.set_opened_test(None)
 
     def discard_proposals(self):
         """The open test is closing: the proposal cards made for it, still waiting in any

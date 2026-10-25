@@ -161,6 +161,8 @@ class SkillChatWidget(QWidget):
 
         # The in-flight worker (the dedicated backend, ``_llm``, comes with the UI's cue).
         self._worker: Optional[LLMWorker] = None
+        # A turn is out, from its send to its reply or failure (``is_busy``).
+        self._busy = False
         # The most recent assistant draft (what a host Inserts / parses). Empty
         # until the first reply lands.
         self._latest_draft: str = ""
@@ -345,8 +347,9 @@ class SkillChatWidget(QWidget):
 
     @property
     def is_busy(self) -> bool:
-        """True while a turn runs or waits for the AI server's start."""
-        return self._worker is not None or self._llm.waiting
+        """True from a turn's send to its reply or failure: while it waits in the host's
+        ``dispatch_gate`` queue, for the AI server's start, or runs."""
+        return self._busy
 
     def set_skill(self, skill) -> None:
         """Pin/switch the active skill (programmatic twin of ``_on_skill_changed``):
@@ -809,6 +812,7 @@ class SkillChatWidget(QWidget):
     # -- state ----------------------------------------------------------------
 
     def _set_busy(self, busy: bool) -> None:
+        self._busy = busy
         self._send_btn.setEnabled(not busy)
         self._input.setEnabled(not busy)
         self._stop_btn.setEnabled(busy)

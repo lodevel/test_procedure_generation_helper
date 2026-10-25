@@ -136,8 +136,8 @@ def skill_chat(qapp, monkeypatch):
     monkeypatch.setattr("procedo.studio.core.studio_settings.load_settings", lambda: {})
     made = []
 
-    def make(factory):
-        made.append(scw.SkillChatWidget([_skill()], factory, backend_tab_id="my_wizard"))
+    def make(factory, **kwargs):
+        made.append(scw.SkillChatWidget([_skill()], factory, backend_tab_id="my_wizard", **kwargs))
         return made[-1]
 
     yield make
@@ -164,3 +164,16 @@ def test_a_skill_chat_without_a_factory_has_a_none_backend(skill_chat):
     llm = skill_chat(None)._llm
     llm.await_backend(fired.append)  # no server involved: fired at once
     assert isinstance(llm.backend, NoneBackend) and fired == [llm.backend]
+
+
+def test_a_skill_chat_turn_queued_by_the_host_is_busy_and_never_doubled(skill_chat):
+    """A turn the wizard's scheduler holds (``dispatch_gate``) read as not busy: a second
+    programmatic turn was accepted, and the scheduler dropped it silently."""
+    queued = []
+    chat = skill_chat(_Factory(), dispatch_gate=lambda fire, *, interactive: queued.append(fire))
+    assert chat.send_user_turn("hello")
+
+    assert chat.is_busy
+    assert not chat.send_user_turn("again")
+    assert len(queued) == 1
+    assert [turn.content for turn in chat._session.turns] == ["hello"]

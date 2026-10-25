@@ -55,11 +55,6 @@ class SkillChatBackend(QObject):
             self._requested = True
             request_backend(self.factory, self.tab_id, self._on_started)
 
-    @property
-    def waiting(self) -> bool:
-        """A turn waits for the backend's start."""
-        return self._queued is not None
-
     def drop_queued(self) -> bool:
         """Drop the turn waiting for the backend (its start goes on): True when one was."""
         queued, self._queued = self._queued, None

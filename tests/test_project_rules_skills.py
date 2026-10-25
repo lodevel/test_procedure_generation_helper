@@ -178,6 +178,7 @@ def test_the_skill_chat_request_carries_the_selected_pdf(tmp_path, qapp, monkeyp
     assert sent[-1].attachments == [docs[3].path]
     assert "## project/d.pdf" in sent[-1].raw_prompt
     widget._worker = None
+    widget._set_busy(False)  # the reply landed
     widget._session.record_assistant("reply")
     widget.send_user_turn("more")
     assert sent[-1].attachments == [] and sent[-1].raw_prompt == "more"

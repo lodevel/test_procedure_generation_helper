@@ -19,7 +19,7 @@ def stderr_log(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "excepthook", sys.excepthook)
     monkeypatch.setattr(threading, "excepthook", threading.excepthook)
     monkeypatch.setattr(logging_config.atexit, "register", lambda fn: None)
-    logger = logging.getLogger("procedo.studio")
+    logger = logging.getLogger("procedo")
     before = list(logger.handlers)
     logging_config.setup_logging(log_file=tmp_path / "studio.log")
     stream = sys.stderr
@@ -39,9 +39,7 @@ def test_a_log_handler_that_fails_does_not_recurse(stderr_log, monkeypatch):
     stream, _ = stderr_log
     monkeypatch.setattr(sys, "stderr", stream)
     handler = next(
-        h
-        for h in logging.getLogger("procedo.studio").handlers
-        if isinstance(h, logging.FileHandler)
+        h for h in logging.getLogger("procedo").handlers if isinstance(h, logging.FileHandler)
     )
 
     def emit(record):
@@ -86,3 +84,9 @@ def test_threads_writing_at_once_lose_no_line(stderr_log):
     for t in threads:
         t.join()
     assert log.read_text(encoding="utf-8").count("stderr: line ") == 200
+
+
+def test_the_engine_client_logs_into_the_studio_log(stderr_log):
+    _, log = stderr_log
+    logging.getLogger("procedo.engine_client._engine_ops").warning("engine call failed")
+    assert "engine call failed" in log.read_text(encoding="utf-8")

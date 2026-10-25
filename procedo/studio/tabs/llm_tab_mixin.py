@@ -31,7 +31,7 @@ from ..llm.backend_base import ValidationIssue
 from ..llm.run_state import LLMRunState
 from ..llm.tab_context import ChatMessage as _ChatMessage
 from ..llm.worker import LLMWorker
-from ..llm.transcript_replay import NOT_SENT, serialize_transcript
+from ..llm.transcript_replay import NOT_SENT, TEST_CHANGED, serialize_transcript
 from .llm_validator_loop import ValidatorLoop
 
 log = logging.getLogger(__name__)
@@ -154,7 +154,7 @@ class LLMTabMixin:
             log.warning(
                 "Dropped the send queued for %s: its test was closed", test[1] if test else None
             )
-            self._post_not_sent("the test changed while the AI server was starting.", "warning")
+            self._post_not_sent(TEST_CHANGED, "warning")
             return
         self._run_task_on(backend, task, retry, kwargs, line)
 

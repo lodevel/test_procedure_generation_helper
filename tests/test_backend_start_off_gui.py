@@ -284,12 +284,12 @@ def test_a_send_a_test_switch_dropped_stays_in_the_chat_and_says_why(opened, mon
     view._run_task_async(LLMTask.AD_HOC_CHAT, user_message="check U5")
     shown = _lines(view)  # at once, while the server starts
     w.open_test(w.root / "tests" / "t2")
-    _spin(lambda: not w.dock.chat_panel.loading.active)
+    assert not w.dock.chat_panel.loading.active  # dropped at once, not when the server answers
 
     assert shown[-1] == "check U5"
     assert _lines(view)[-2:] == [
         "check U5",
-        "Not sent: the test changed while the AI server was starting.",
+        "Not sent: the test changed.",
     ]
     assert _Worker.made == []
 

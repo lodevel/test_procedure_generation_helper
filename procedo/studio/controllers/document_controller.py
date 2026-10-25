@@ -21,6 +21,7 @@ from procedo.ui.ui_kit import set_pill
 
 from ..core import ArtifactManager, ArtifactType, SessionState
 from ..core.proposal import discard_pending
+from ..llm.transcript_replay import TEST_CHANGED
 from ..shell import VIEWS
 from .project_controller import refresh_parser_buttons
 
@@ -221,6 +222,9 @@ class DocumentController:
             return  # User wants to review
 
         self.discard_proposals()
+        mw.llm_server.drop_waiting_sends(
+            TEST_CHANGED
+        )  # a send waiting for the AI server is not sent
 
         # Save current session state (includes validation_issues) before switching
         if hasattr(mw, "session_state") and mw.session_state and mw.session_state._file_path:

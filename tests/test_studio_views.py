@@ -11,13 +11,14 @@ from procedo.studio.pack_ops import bundle_capabilities, pack_parsers
 from procedo.studio.widgets.action_bar import ActionBar
 
 from .test_main_window_characterization import (
-    _make_project, _open_project, make_window as make_window, mbox as mbox, qapp as qapp,
+    _declare_runnable_tasks, _make_project, _open_project, make_window as make_window, mbox as mbox, qapp as qapp,
 )
 
 
 @pytest.fixture
 def opened(make_window, tmp_path):
     root = _make_project(tmp_path / "proj")
+    _declare_runnable_tasks(root)
     w = make_window()
     _open_project(w, root)
     w.open_test(root / "tests" / "t1")

@@ -15,13 +15,14 @@ from procedo.studio.dock.chat_messages import MessageWidget
 from procedo.studio.dock.chat_panel import ChatPanel
 
 from .test_main_window_characterization import (
-    _make_project, _open_project, make_window as make_window, mbox as mbox, qapp as qapp,
+    _declare_runnable_tasks, _make_project, _open_project, make_window as make_window, mbox as mbox, qapp as qapp,
 )
 
 
 @pytest.fixture
 def opened(make_window, tmp_path):
     root = _make_project(tmp_path / "proj")
+    _declare_runnable_tasks(root)
     rules = root / "rules"
     rules.mkdir()
     for name in ("a.md", "b.md", "c.md"):

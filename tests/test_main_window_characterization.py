@@ -144,6 +144,15 @@ def _make_project(root: Path, tests=("t1",), with_bundle=True) -> Path:
     return root
 
 
+def _declare_runnable_tasks(root: Path) -> None:
+    """Give the project's bundle a prompt for one task per view, as a real bundle does (the
+    editor defaults have none, and Studio lists no task in a tab without a runnable one)."""
+    (root / "bundle" / "defaults.json").write_text(json.dumps({"workflows": {
+        tab: {"tasks": [{"id": task, "prompt_template": "P"}]} for tab, task in (
+            ("text_only", "review_text_procedure"), ("text_json", "derive_json_from_text"),
+            ("json_code", "generate_code_from_json"))}}), encoding="utf-8")
+
+
 def _settle(until=None, timeout=10):
     """Pump until ``until()`` holds; without one, until no engine call has run for 50 ms (each
     runs off the GUI thread, and an answer may start another)."""

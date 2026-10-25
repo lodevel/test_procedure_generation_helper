@@ -1,6 +1,6 @@
 """The engine daemon's ``globals()`` seam (``d``) holds every key its siblings read.
 
-``_bench_session_runner`` / ``_guided_call`` read the daemon's globals as ``d``;
+``_bench_session_runner`` / ``_frame_channel`` / ``_guided_call`` read the daemon's globals as ``d``;
 ``_safe_off``'s ``_resolve_hold`` (and the ``_bench_session_runner`` functions it calls) read
 ``_safe_off``'s own globals, the ``d`` that ``_ensure_held`` hands them.  The keys are derived by AST from
 the readers, so a future ``d["..."]`` read is covered without editing this test, and an
@@ -75,7 +75,9 @@ def _bench_keys_from(entry: set) -> set:
 
 
 def test_the_daemon_globals_hold_every_key_its_siblings_read():
-    keys = set().union(*(_d_keys(_tree(m)) for m in ("_bench_session_runner", "_guided_call")))
+    keys = set().union(
+        *(_d_keys(_tree(m)) for m in ("_bench_session_runner", "_frame_channel", "_guided_call"))
+    )
     assert "_safe_off_all_held" in keys and "_PROTO_OUT" in keys  # the derivation sees them
     assert sorted(k for k in keys if k not in vars(er)) == []
 

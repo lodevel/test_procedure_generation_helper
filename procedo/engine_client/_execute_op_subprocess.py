@@ -703,7 +703,7 @@ def main() -> None:
 
     # THE one reader thread + queue (bench-session S3), shared with in-run waits
     # (prompt/cancel); EOF comes through it, so the loop reaches the _teardown.
-    reader = _bench().start_reader(sys.stdin)
+    reader = _sib("_frame_channel").start_reader(sys.stdin)
     while True:
         line = reader.next_line()  # blocking; None = EOF (parent closed pipe)
         if line is None:

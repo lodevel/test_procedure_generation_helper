@@ -10,7 +10,7 @@ daemon's device machinery (``_ensure_held`` / ``_safe_off_all_held`` /
 package import cycle.
 
 Concurrency (amended guardrail): EXACTLY ONE new thread — the stdin
-:class:`Reader` — feeding ONE queue.  The daemon main loop and any in-run
+``Reader`` (:mod:`_frame_channel`, with the in-run frame plumbing) — feeding ONE queue.  The daemon main loop and any in-run
 nested waits (prompt / cancel polls) consume from that queue; nothing else is
 concurrent.
 
@@ -114,85 +114,20 @@ ops emit relative screenshot filenames — land beside results.json, matching
 the legacy subprocess path.  An ``exec_ops`` frame runs the same way in its ``work_dir``
 (the guided run's own folder, which the host harvests): one switch for both, :func:`in_work_dir`.
 """
+
 from __future__ import annotations
 
 import contextlib
 import itertools
-import json
 import os
-import queue
 import signal
 import sys
-import threading
 import traceback
 import types
 from dataclasses import dataclass, field
 from pathlib import Path
 
-_EOF = object()          # queue sentinel: parent closed the pipe
-
-
-# ---------------------------------------------------------------------------
-# THE one reader thread + queue.
-# ---------------------------------------------------------------------------
-
-
-class Reader:
-    """Daemon-side stdin reader: one thread pumping lines into one queue.
-
-    Owns EOF detection (implementer note 2): EOF is signalled THROUGH the
-    queue and RE-QUEUED on every consumption, so nested consumers (prompt
-    waits, cancel drains) each observe it and the main loop still reaches
-    the final ``_teardown`` backstop.
-    """
-
-    def __init__(self, stream) -> None:
-        self._q: queue.Queue = queue.Queue()
-        self._thread = threading.Thread(
-            target=self._pump, args=(stream,), daemon=True,
-            name="bench-stdin-reader")
-        self._thread.start()
-
-    def _pump(self, stream) -> None:
-        try:
-            for line in iter(stream.readline, ""):
-                self._q.put(line)
-        except Exception:  # noqa: BLE001 — a dying pipe is EOF, not a crash
-            pass
-        self._q.put(_EOF)
-
-    def get(self):
-        """Blocking: next raw line, or the ``_EOF`` sentinel (re-queued)."""
-        item = self._q.get()
-        if item is _EOF:
-            self._q.put(_EOF)
-        return item
-
-    def poll(self):
-        """Non-blocking: next raw line, ``_EOF`` (re-queued), or None."""
-        try:
-            item = self._q.get_nowait()
-        except queue.Empty:
-            return None
-        if item is _EOF:
-            self._q.put(_EOF)
-        return item
-
-    def next_line(self):
-        """Main-loop accessor: blocking; ``None`` on EOF (mirrors readline)."""
-        item = self.get()
-        return None if item is _EOF else item
-
-
-_READER: Reader | None = None
-
-
-def start_reader(stream) -> Reader:
-    """Create THE reader (called once from the daemon's ``main()``)."""
-    global _READER
-    _READER = Reader(stream)
-    return _READER
-
+from _frame_channel import _cancelled_poll, _emit, _FrameStdout, _prompt_via_frames
 
 # ---------------------------------------------------------------------------
 # Per-session bench state (attached to ``_Session.bench`` on first use).
@@ -204,8 +139,8 @@ class _Run:
     run_id: str
     keep_state: bool
     results_dir: str
-    view: dict            # local equipment name -> canonical endpoint (held key)
-    manual: tuple         # local names of manual (remote False) claims
+    view: dict  # local equipment name -> canonical endpoint (held key)
+    manual: tuple  # local names of manual (remote False) claims
     cancelled: bool = field(default=False)
 
 
@@ -219,13 +154,13 @@ class BenchState:
     """
 
     def __init__(self) -> None:
-        self.runs: dict = {}       # run_id -> _Run (acquired, not yet released)
-        self.active: str | None = None   # the exclusive run holding the bench
-        self.alias: dict = {}      # local name -> endpoint, union across ALL runs
-        self.channels: dict = {}   # endpoint -> set(int), union across ALL runs
-        self.keep_state = False    # last acquire's keep_state (guided F-H6 gate)
+        self.runs: dict = {}  # run_id -> _Run (acquired, not yet released)
+        self.active: str | None = None  # the exclusive run holding the bench
+        self.alias: dict = {}  # local name -> endpoint, union across ALL runs
+        self.channels: dict = {}  # endpoint -> set(int), union across ALL runs
+        self.keep_state = False  # last acquire's keep_state (guided F-H6 gate)
         self.fingerprints: dict = {}  # endpoint -> identity last read at acquire
-        self.bench_of: dict = {}   # endpoint -> admission bench dict (rebuilds)
+        self.bench_of: dict = {}  # endpoint -> admission bench dict (rebuilds)
         # endpoint -> {"was","now"}: UNRESOLVED post-rebuild identity mismatch.
         # STICKY — set once by check_held, never cleared in-session (only a
         # fresh BenchState, i.e. end_session/shutdown, forgets it); safe_off
@@ -255,10 +190,10 @@ class BenchState:
             return key
         if bench:
             from rules_packager_base import bench_endpoints as be
+
             try:
-                key = be.canonical_endpoint(
-                    bench, (session.lifecycle or {}).get(etype))
-            except ValueError:       # no address: name-keyed, as today
+                key = be.canonical_endpoint(bench, (session.lifecycle or {}).get(etype))
+            except ValueError:  # no address: name-keyed, as today
                 return device
             if key in session.held:
                 # Record the routing so channels_for's safe-off union sees
@@ -328,16 +263,26 @@ def identity_refusal(st: BenchState, endpoints) -> HealthRefusal:
     the sticky ``BenchState.identity_mismatch`` records (single message
     shape for the fresh raise, the sticky re-raise and the run_test gate)."""
     eps = sorted(endpoints)
-    return HealthRefusal({
-        "ok": False, "kind": "IdentityChanged", "endpoints": eps,
-        "changes": {k: {"cached": st.identity_mismatch[k]["was"],
-                        "current": st.identity_mismatch[k]["now"]}
-                    for k in eps},
-        "error": (
-            "equipment identity changed at " + ", ".join(eps) + " after a "
-            "lost connection was re-established (connected instrument "
-            "differs from the held fingerprint). Run Start Bench Session "
-            "to review and confirm the change before executing.")})
+    return HealthRefusal(
+        {
+            "ok": False,
+            "kind": "IdentityChanged",
+            "endpoints": eps,
+            "changes": {
+                k: {
+                    "cached": st.identity_mismatch[k]["was"],
+                    "current": st.identity_mismatch[k]["now"],
+                }
+                for k in eps
+            },
+            "error": (
+                "equipment identity changed at " + ", ".join(eps) + " after a "
+                "lost connection was re-established (connected instrument "
+                "differs from the held fingerprint). Run Start Bench Session "
+                "to review and confirm the change before executing."
+            ),
+        }
+    )
 
 
 def check_held(d: dict, session, key: str, identity_gate: bool = True) -> str:
@@ -380,11 +325,10 @@ def check_held(d: dict, session, key: str, identity_gate: bool = True) -> str:
         # Record BEFORE raising: the possibly-energized endpoint has just
         # left ``held``, and only the unconfirmed-off memory keeps it
         # visible to every later safe-off/shutdown sweep (R2 closure).
-        d["_record_unconfirmed"](session, key, etype,
-                                 st.channels_for(session, key), bench)
+        d["_record_unconfirmed"](session, key, etype, st.channels_for(session, key), bench)
         raise RuntimeError(
-            f"held endpoint {key} is gone (reconnect failed: {exc}); "
-            "restart the bench session") from exc
+            f"held endpoint {key} is gone (reconnect failed: {exc}); restart the bench session"
+        ) from exc
     ident = _read_identity(session.held[key])
     cached = st.fingerprints.get(key)
     if cached is not None and ident is not None and ident != cached:
@@ -393,10 +337,10 @@ def check_held(d: dict, session, key: str, identity_gate: bool = True) -> str:
             raise identity_refusal(st, [key])
         session.res.log.append(
             f"{key} connection lost — re-established with a DIFFERENT "
-            f"identity ({cached!r} -> {ident!r}); safety action proceeding")
+            f"identity ({cached!r} -> {ident!r}); safety action proceeding"
+        )
         return "rebuilt"
-    session.res.log.append(
-        f"{key} connection lost — re-established, identity verified")
+    session.res.log.append(f"{key} connection lost — re-established, identity verified")
     return "rebuilt"
 
 
@@ -409,16 +353,22 @@ def state_lost_refusal(session, rebuilt: list) -> dict | None:
     st = _state(session)
     if not st.keep_state:
         return None
-    lost = [k for k in rebuilt
-            if (session.lifecycle.get(session.etype_of.get(k)) or {}).get("cleanup")]
+    lost = [
+        k for k in rebuilt if (session.lifecycle.get(session.etype_of.get(k)) or {}).get("cleanup")
+    ]
     if not lost:
         return None
-    return {"ok": False, "kind": "StateLost", "endpoints": lost,
-            "error": (
-                ", ".join(lost) + " reconnected after a lost connection — "
-                "the keep-state chain is broken there (the DUT may have "
-                "power-cycled). Nothing was run; the session is still "
-                "live. Re-run to continue from here.")}
+    return {
+        "ok": False,
+        "kind": "StateLost",
+        "endpoints": lost,
+        "error": (
+            ", ".join(lost) + " reconnected after a lost connection — "
+            "the keep-state chain is broken there (the DUT may have "
+            "power-cycled). Nothing was run; the session is still "
+            "live. Re-run to continue from here."
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -426,8 +376,7 @@ def state_lost_refusal(session, rebuilt: list) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
-def _retarget_timeout(session, endpoint: str, namespace: str, bench,
-                      label: str) -> None:
+def _retarget_timeout(session, endpoint: str, namespace: str, bench, label: str) -> None:
     """Apply the acquiring claim's declared timeout to a HELD endpoint.
 
     Capability contract (declared in the owning pack's LIFECYCLE data, so the
@@ -473,19 +422,18 @@ def _retarget_timeout(session, endpoint: str, namespace: str, bench,
         return
     cap = (session.lifecycle.get(namespace) or {}).get("retarget_timeout")
     if not isinstance(cap, dict):
-        return                       # absent/malformed capability: max stands
+        return  # absent/malformed capability: max stands
     try:
         field = cap.get("field")
         value = (bench or {}).get(field)
         dev = session.held.get(endpoint)
         if not value or dev is None:
-            return                   # no declared patience / nothing held
+            return  # no declared patience / nothing held
         if st.applied_timeout.get(endpoint) == value:
-            return                   # redundant retarget skipped
+            return  # redundant retarget skipped
         getattr(dev, cap["method"])(value)
     except Exception as exc:  # noqa: BLE001 — NON-fatal, see docstring
-        session.res.log.append(
-            f"{endpoint} timeout retarget failed, keeping current value: {exc}")
+        session.res.log.append(f"{endpoint} timeout retarget failed, keeping current value: {exc}")
         return
     st.applied_timeout[endpoint] = value
     session.res.log.append(f"{endpoint} {field} -> {value} ({label})")
@@ -498,140 +446,9 @@ def _gone_ladder(d: dict, session, key: str, exc) -> dict:
     unsafe = d["_teardown"](session)
     return d["_attach_unsafe"](
         session,
-        {"ok": False, "kind": "ExecError", "session_ended": True,
-         "error": f"{exc}"},
-        unsafe)
-
-
-# ---------------------------------------------------------------------------
-# Frame plumbing shared by the in-run waits.
-# ---------------------------------------------------------------------------
-
-
-def _emit(d: dict, obj: dict) -> None:
-    """Write one daemon->host frame on the protocol channel (no-op when the
-    channel is not wired, i.e. handler-level unit tests without frames)."""
-    out = d.get("_PROTO_OUT")
-    if out is not None:
-        d["_write_frame"](out, obj)
-
-
-def _parse_frame(d: dict, line: str):
-    line = line.strip()
-    if not line:
-        return None
-    try:
-        req = json.loads(line)
-    except Exception as exc:  # noqa: BLE001
-        _emit(d, {"kind": "reject", "ok": False, "error": f"bad frame: {exc}"})
-        return None
-    return req if isinstance(req, dict) else None
-
-
-def _handle_inrun_cancel(d: dict, st: BenchState, req: dict) -> None:
-    rid = req.get("run_id")
-    target = st.runs.get(rid)
-    if target is None:
-        _emit(d, {"kind": "reject", "ok": False, "cmd": "cancel_run",
-                  "error": f"unknown run_id {rid!r}"})
-        return
-    target.cancelled = True
-    _emit(d, {"kind": "ack", "cmd": "cancel_run", "ok": True, "run_id": rid})
-
-
-_IN_RUN_REJECT = ("frame rejected: a test run is in progress "
-                  "(only prompt_response/cancel_run are accepted)")
-
-
-def _cancelled_poll(d: dict, st: BenchState, run: _Run) -> bool:
-    """``ctx.cancelled``: drain frames the reader queued (cancel_run sets the
-    flag; anything else is rejected), then report the flag.  Runs at every
-    step boundary and inside every ``_sleep`` slice."""
-    rd = _READER
-    while rd is not None:
-        item = rd.poll()
-        if item is None:
-            break
-        if item is _EOF:
-            run.cancelled = True   # host gone: stop the test; the main loop
-            break                  # still sees the re-queued EOF -> _teardown
-        req = _parse_frame(d, item)
-        if req is None:
-            continue
-        cmd = req.get("cmd")
-        if cmd == "cancel_run":
-            _handle_inrun_cancel(d, st, req)
-        elif cmd == "prompt_response":
-            _emit(d, {"kind": "reject", "ok": False, "cmd": cmd,
-                      "error": "no prompt outstanding"})
-        else:
-            _emit(d, {"kind": "reject", "ok": False, "cmd": cmd,
-                      "error": _IN_RUN_REJECT})
-    return run.cancelled
-
-
-def _prompt_via_frames(d: dict, st: BenchState, run: _Run, text) -> str:
-    """Holder-side ``ctx.prompt``: a correlated ``{"kind":"prompt"}`` frame, then BLOCK
-    for its prompt_response.  A stop aborts the test (OperatorStop) but never its cleanup
-    (``stop_ignored``): there a prompt after a stop only shows its text (already output)."""
-    from rules_packager_base import OperatorStop, stop_ignored
-    if run.cancelled and stop_ignored():
-        return ""
-    pid = next(st.prompt_seq)
-    _emit(d, {"kind": "prompt", "id": pid, "text": str(text)})
-    rd = _READER
-    if rd is None:
-        raise RuntimeError("no stdin reader; operator prompt unavailable")
-    while True:
-        if run.cancelled and not stop_ignored():
-            raise OperatorStop("operator stop requested during a prompt")
-        item = rd.get()
-        if item is _EOF:
-            run.cancelled = True
-            raise OperatorStop("host closed the pipe during a prompt")
-        req = _parse_frame(d, item)
-        if req is None:
-            continue
-        cmd = req.get("cmd")
-        if cmd == "prompt_response":
-            if req.get("id") == pid:
-                text_val = req.get("text")
-                return "" if text_val is None else str(text_val)
-            _emit(d, {"kind": "reject", "ok": False, "cmd": cmd,
-                      "error": f"stale prompt_response (id {req.get('id')!r}, "
-                               f"expected {pid})"})
-            continue
-        if cmd == "cancel_run":
-            _handle_inrun_cancel(d, st, req)
-            continue           # loop re-checks run.cancelled -> OperatorStop
-        _emit(d, {"kind": "reject", "ok": False, "cmd": cmd,
-                  "error": _IN_RUN_REJECT})
-
-
-class _FrameStdout:
-    """File-like sys.stdout stand-in for the run duration: each complete line
-    becomes an ``{"kind":"output"}`` frame (precedent: progress frames).
-    C-level VISA noise still lands on fd 1 -> stderr (daemon fd isolation)."""
-
-    def __init__(self, d: dict) -> None:
-        self._d = d
-        self._buf = ""
-
-    def write(self, s) -> int:
-        s = str(s)
-        self._buf += s
-        while "\n" in self._buf:
-            line, self._buf = self._buf.split("\n", 1)
-            _emit(self._d, {"kind": "output", "text": line})
-        return len(s)
-
-    def flush(self) -> None:
-        pass
-
-    def close(self) -> None:
-        if self._buf:
-            _emit(self._d, {"kind": "output", "text": self._buf})
-            self._buf = ""
+        {"ok": False, "kind": "ExecError", "session_ended": True, "error": f"{exc}"},
+        unsafe,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -645,18 +462,22 @@ def _claim_channels(bench) -> set:
     ``channel``, ``[1]`` fallback), so this daemon, host recovery and
     generated cleanup can never read the contract apart."""
     from rules_packager_base.bench_endpoints import channels_of
+
     return set(channels_of(bench))
 
 
 def _cmd_acquire_run(d: dict, session, req: dict) -> dict:
     from rules_packager_base import bench_endpoints as be
+
     st = _state(session)
     dry = bool(req.get("dry_run"))
     if not dry and st.active is not None:
         # A dry run takes nothing, so it may plan even while a run is active.
-        return {"ok": False, "kind": "RunActive",
-                "error": f"run {st.active!r} still holds the bench; "
-                         "release it first"}
+        return {
+            "ok": False,
+            "kind": "RunActive",
+            "error": f"run {st.active!r} still holds the bench; release it first",
+        }
     claims = [
         be.UsageClaim(
             test_id=str(c.get("test_id") or ""),
@@ -667,16 +488,17 @@ def _cmd_acquire_run(d: dict, session, req: dict) -> dict:
         )
         for c in (req.get("claims") or [])
     ]
-    policies = {(t, n): p
-                for t, m in (req.get("policies") or {}).items()
-                for n, p in (m or {}).items()}
-    plan = be.reconcile(claims, policies, req.get("profile_defaults"),
-                        session.lifecycle)
+    policies = {
+        (t, n): p for t, m in (req.get("policies") or {}).items() for n, p in (m or {}).items()
+    }
+    plan = be.reconcile(claims, policies, req.get("profile_defaults"), session.lifecycle)
     if isinstance(plan, be.ConflictReport):
-        return {"ok": False, "kind": "EndpointConflict",
-                "error": plan.conflicts[0].message if plan.conflicts
-                else "endpoint conflict",
-                "conflicts": [c.message for c in plan.conflicts]}
+        return {
+            "ok": False,
+            "kind": "EndpointConflict",
+            "error": plan.conflicts[0].message if plan.conflicts else "endpoint conflict",
+            "conflicts": [c.message for c in plan.conflicts],
+        }
     view: dict = {}
     identities: dict = {}
     summary: list = []
@@ -686,15 +508,18 @@ def _cmd_acquire_run(d: dict, session, req: dict) -> dict:
         st.keep_state = bool(req.get("keep_state"))
     for spec in plan.endpoints:
         if spec.effective_policy != "per_session":
-            per_step.append(spec.endpoint)   # test self-manages (full lifecycle)
+            per_step.append(spec.endpoint)  # test self-manages (full lifecycle)
         else:
             for u in spec.usages:
                 prev = view.get(u.claim.local_name)
                 if prev is not None and prev != spec.endpoint:
-                    return {"ok": False, "kind": "EndpointConflict",
-                            "error": f"{u.claim.local_name!r} claims two "
-                                     f"endpoints in one run ({prev} and "
-                                     f"{spec.endpoint})"}
+                    return {
+                        "ok": False,
+                        "kind": "EndpointConflict",
+                        "error": f"{u.claim.local_name!r} claims two "
+                        f"endpoints in one run ({prev} and "
+                        f"{spec.endpoint})",
+                    }
                 view[u.claim.local_name] = spec.endpoint
             if not dry:
                 namespace = d["_namespace_for"](spec.etype, spec.subtype)
@@ -712,18 +537,27 @@ def _cmd_acquire_run(d: dict, session, req: dict) -> dict:
                     return _gone_ladder(d, session, spec.endpoint, exc)
                 # Lazy admission: open ONCE (no reset) under the ENDPOINT key.
                 try:
-                    d["_ensure_held"](session, {spec.endpoint: bench},
-                                      spec.endpoint, namespace)
+                    d["_ensure_held"](session, {spec.endpoint: bench}, spec.endpoint, namespace)
                 except Exception as exc:  # noqa: BLE001 — cannot open: say where
-                    return {"ok": False, "kind": "ExecError", "exception_type": type(exc).__name__,
-                            "error": d["_instrument_error"](spec.usages[0].claim.local_name, bench, exc)}
+                    return {
+                        "ok": False,
+                        "kind": "ExecError",
+                        "exception_type": type(exc).__name__,
+                        "error": d["_instrument_error"](
+                            spec.usages[0].claim.local_name, bench, exc
+                        ),
+                    }
                 # Seam A (per-run timeout retargeting): AFTER _ensure_held —
                 # i.e. after check_held — so a sticky refusal raised above
                 # never retargets.  ``bench`` carries the run's max-merged
                 # connection values (merged_connection update above).
                 _retarget_timeout(
-                    session, spec.endpoint, namespace, bench,
-                    ", ".join(sorted({u.claim.test_id for u in spec.usages})))
+                    session,
+                    spec.endpoint,
+                    namespace,
+                    bench,
+                    ", ".join(sorted({u.claim.test_id for u in spec.usages})),
+                )
                 chans = st.channels.setdefault(spec.endpoint, set())
                 for u in spec.usages:
                     chans.update(_claim_channels(u.claim.bench))
@@ -732,33 +566,51 @@ def _cmd_acquire_run(d: dict, session, req: dict) -> dict:
                 if ident is not None:
                     identities[spec.endpoint] = ident
                     st.fingerprints[spec.endpoint] = ident
-        summary.append({"endpoint": spec.endpoint, "etype": spec.etype,
-                        "policy": spec.effective_policy,
-                        "promoted": spec.promoted,
-                        "usages": [u.claim.label for u in spec.usages]})
+        summary.append(
+            {
+                "endpoint": spec.endpoint,
+                "etype": spec.etype,
+                "policy": spec.effective_policy,
+                "promoted": spec.promoted,
+                "usages": [u.claim.label for u in spec.usages],
+            }
+        )
     if dry:
         # Plan only: nothing opened, nothing held, no run handle, no
         # identity reads — the full plan (or the conflict above) is the
         # whole answer.
-        return {"ok": True, "dry_run": True,
-                "plan": {"endpoints": summary,
-                         "manual": [c.label for c in plan.manual_usages],
-                         "per_step": per_step}}
+        return {
+            "ok": True,
+            "dry_run": True,
+            "plan": {
+                "endpoints": summary,
+                "manual": [c.label for c in plan.manual_usages],
+                "per_step": per_step,
+            },
+        }
     if reconnected:
         refusal = state_lost_refusal(session, reconnected)
         if refusal is not None:
             return refusal
     run_id = f"run-{next(st.run_seq)}"
     st.runs[run_id] = _Run(
-        run_id=run_id, keep_state=bool(req.get("keep_state")),
+        run_id=run_id,
+        keep_state=bool(req.get("keep_state")),
         results_dir=str(req.get("results_dir") or ""),
-        view=view, manual=tuple(c.local_name for c in plan.manual_usages))
+        view=view,
+        manual=tuple(c.local_name for c in plan.manual_usages),
+    )
     st.active = run_id
-    resp = {"ok": True, "run_id": run_id,
-            "plan": {"endpoints": summary,
-                     "manual": [c.label for c in plan.manual_usages],
-                     "per_step": per_step},
-            "identities": identities}
+    resp = {
+        "ok": True,
+        "run_id": run_id,
+        "plan": {
+            "endpoints": summary,
+            "manual": [c.label for c in plan.manual_usages],
+            "per_step": per_step,
+        },
+        "identities": identities,
+    }
     if reconnected:
         resp["reconnected"] = reconnected
     return resp
@@ -770,8 +622,7 @@ def _cmd_release_run(d: dict, session, req: dict) -> dict:
     rid = req.get("run_id")
     run = st.runs.pop(rid, None)
     if run is None:
-        return {"ok": False, "kind": "UnknownRun",
-                "error": f"unknown run_id {rid!r}"}
+        return {"ok": False, "kind": "UnknownRun", "error": f"unknown run_id {rid!r}"}
     if st.active == rid:
         st.active = None
     # Held devices deliberately STAY open — releasing the handle never closes
@@ -819,16 +670,20 @@ def _ladder(d: dict, session, run: _Run, res, escaped, rdir: Path):
     Returns ``(response, stop)``."""
     aborted = bool(getattr(res, "aborted", False))
     errored = escaped is not None or res is None or bool(getattr(res, "error", False))
-    by_procedure = bool(getattr(res, "aborted_by_procedure", False))   # @ABORT: a FAIL, unsafe as an error
+    by_procedure = bool(
+        getattr(res, "aborted_by_procedure", False)
+    )  # @ABORT: a FAIL, unsafe as an error
     summary = {
         "run_id": run.run_id,
         "overall": str(getattr(res, "overall", "ERROR")),
         "aborted": aborted and not errored,
         "error": errored,
-        "exception_type": (getattr(res, "exception_type", "")
-                           or (type(escaped).__name__ if escaped else "")),
-        "exception_message": (getattr(res, "exception_message", "")
-                              or (str(escaped) if escaped else "")),
+        "exception_type": (
+            getattr(res, "exception_type", "") or (type(escaped).__name__ if escaped else "")
+        ),
+        "exception_message": (
+            getattr(res, "exception_message", "") or (str(escaped) if escaped else "")
+        ),
         "stopped": str(getattr(res, "stopped", "") or ""),
         "results_dir": str(rdir),
     }
@@ -841,23 +696,23 @@ def _ladder(d: dict, session, run: _Run, res, escaped, rdir: Path):
             summary["traceback"] = "".join(traceback.format_exception(escaped))
         unsafe = d["_teardown"](session)
         return d["_attach_unsafe"](
-            session, {"ok": True, "result": summary, "session_ended": True},
-            unsafe), True
+            session, {"ok": True, "result": summary, "session_ended": True}, unsafe
+        ), True
     if aborted:
         # Operator stop: ordered safe-off of held power equipment ONLY —
         # session and connections REMAIN, devices stay held (design row 3).
         unsafe = d["_safe_off_all_held"](session)
-        return d["_attach_unsafe"](
-            session, {"ok": True, "result": summary}, unsafe), False
+        return d["_attach_unsafe"](session, {"ok": True, "result": summary}, unsafe), False
     return {"ok": True, "result": summary}, False
 
 
 @contextlib.contextmanager
 def in_work_dir(path):
     """The block runs with the CWD at ``path``, then goes back whatever it raised."""
-    if not path or not os.path.isdir(path):   # no fallback: the frame's op never runs
-        raise NotADirectoryError(f"work_dir does not exist: {path}" if path
-                                 else "exec_ops frame has no work_dir")
+    if not path or not os.path.isdir(path):  # no fallback: the frame's op never runs
+        raise NotADirectoryError(
+            f"work_dir does not exist: {path}" if path else "exec_ops frame has no work_dir"
+        )
     saved = os.getcwd()
     os.chdir(path)
     try:
@@ -872,8 +727,11 @@ def _cmd_run_test(d: dict, session, req: dict):
     st = _state(session)
     run = st.runs.get(req.get("run_id"))
     if run is None:
-        return {"ok": False, "kind": "UnknownRun",
-                "error": f"unknown run_id {req.get('run_id')!r}"}, False
+        return {
+            "ok": False,
+            "kind": "UnknownRun",
+            "error": f"unknown run_id {req.get('run_id')!r}",
+        }, False
     flagged = set(run.view.values()) & set(st.identity_mismatch)
     if flagged:
         # Sticky IdentityChanged: a run handle acquired BEFORE a guided/raw
@@ -885,9 +743,12 @@ def _cmd_run_test(d: dict, session, req: dict):
     if run.cancelled:
         # Stopped before it started: no op of the test (its setup resets instruments), the ladder only.
         _emit(d, {"kind": "ack", "cmd": "cancel_run", "ok": True, "run_id": run.run_id})
-        return _ladder(d, session, run, types.SimpleNamespace(aborted=True, overall="ABORTED"), None, rdir)
+        return _ladder(
+            d, session, run, types.SimpleNamespace(aborted=True, overall="ABORTED"), None, rdir
+        )
     try:
         from rules_packager_base.execution_context import ExecutionContext
+
         mod = _import_test(req.get("module_path") or "")
     except Exception as exc:  # noqa: BLE001 — broken test file: errored ladder
         # A test file that cannot import mid-session is an UNEXPECTED
@@ -898,9 +759,12 @@ def _cmd_run_test(d: dict, session, req: dict):
     finally:
         _reassert_signals(d)
     if getattr(mod, "BENCH_SESSION_API", None) != 1:
-        return {"ok": False, "kind": "unsupported_test",
-                "error": "test module lacks BENCH_SESSION_API; regenerate it "
-                         "with rules_packager >= 2.0.5"}, False
+        return {
+            "ok": False,
+            "kind": "unsupported_test",
+            "error": "test module lacks BENCH_SESSION_API; regenerate it "
+            "with rules_packager >= 2.0.5",
+        }, False
     devices: dict = {}
     owned: dict = {}
     for name, key in run.view.items():
@@ -908,19 +772,22 @@ def _cmd_run_test(d: dict, session, req: dict):
         if inst is None:
             # Context-build failure: the session lost a held endpoint — same
             # errored ladder as res.error (unexpected failure, session ends).
-            gone = RuntimeError(f"held endpoint for {name!r} ({key}) is "
-                                "gone; restart the bench session")
+            gone = RuntimeError(
+                f"held endpoint for {name!r} ({key}) is gone; restart the bench session"
+            )
             return _ladder(d, session, run, None, gone, rdir)
         devices[name] = inst
-        owned[name] = False           # held: never reset/closed by the test
+        owned[name] = False  # held: never reset/closed by the test
     for name in run.manual:
-        devices.setdefault(name, None)   # None-for-manual
+        devices.setdefault(name, None)  # None-for-manual
     try:
         rdir.mkdir(parents=True, exist_ok=True)
     except OSError:
         pass
     ctx = ExecutionContext(
-        devices=devices, owned=owned, keep_state=run.keep_state,
+        devices=devices,
+        owned=owned,
+        keep_state=run.keep_state,
         results_dir=rdir,
         prompt=lambda text: _prompt_via_frames(d, st, run, text),
         cancelled=lambda: _cancelled_poll(d, st, run),
@@ -932,7 +799,7 @@ def _cmd_run_test(d: dict, session, req: dict):
     out = _FrameStdout(d)
     saved_stdout = sys.stdout
     sys.stdout = out
-    ctx.install()                     # route test_helpers.prompt() to frames
+    ctx.install()  # route test_helpers.prompt() to frames
     res, escaped = None, None
     try:
         # Generated scope ops write RELATIVE artifact filenames (e.g.
@@ -960,15 +827,14 @@ def handle(d: dict, session, req: dict):
         return resp, bool(resp.get("session_ended"))
     if cmd == "release_run":
         return _cmd_release_run(d, session, req), False
-    if cmd == "cancel_run":    # read outside a run (see the frame doc): flags it, never answered
+    if cmd == "cancel_run":  # read outside a run (see the frame doc): flags it, never answered
         run = _state(session).runs.get(req.get("run_id"))
         if run is not None:
             run.cancelled = True
         return None, False
-    if cmd == "prompt_response":   # late (Bench's "" after a Stop): posted, so never answered
+    if cmd == "prompt_response":  # late (Bench's "" after a Stop): posted, so never answered
         print(f"late prompt_response dropped (id {req.get('id')!r})", file=sys.stderr)
         return None, False
     if cmd == "run_test":
         return _cmd_run_test(d, session, req)
-    return {"ok": False, "kind": "Protocol",
-            "error": f"unknown cmd {cmd!r}"}, False
+    return {"ok": False, "kind": "Protocol", "error": f"unknown cmd {cmd!r}"}, False

@@ -222,9 +222,8 @@ class DocumentController:
             return  # User wants to review
 
         self.discard_proposals()
-        mw.llm_server.drop_waiting_sends(
-            TEST_CHANGED
-        )  # a send waiting for the AI server is not sent
+        # a send waiting for the AI server is not sent
+        mw.llm_server.drop_waiting_sends(TEST_CHANGED)
 
         # Save current session state (includes validation_issues) before switching
         if hasattr(mw, "session_state") and mw.session_state and mw.session_state._file_path:

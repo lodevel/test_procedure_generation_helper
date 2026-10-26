@@ -290,7 +290,8 @@ class ManualStepSchemaParityTests(unittest.TestCase):
 
         self.assertEqual(
             {f.name for f in fields(engine_replies.ManualStep)},
-            {f.name for f in fields(StepDescriptor)} - {"loop"}  # the run record's: the GUI view never shows it
+            {f.name for f in fields(StepDescriptor)}
+            - {"loop"}  # the run record's: the GUI view never shows it
             | {"wait_s", "wait_refused", "value_text", "value_note", "names"},
         )
 

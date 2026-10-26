@@ -369,9 +369,8 @@ def test_the_write_not_started_op_leaves_the_tests_error_result(tmp_path):
         "ERROR",
     )
     assert written["outcome_details"] == [
-        {
+        {  # before its first step: no step said
             "code": "RUN_ACTIVE",
-            "step": None,
             "then": "stopped",
             "description": "another test is already running on this bench",
         }

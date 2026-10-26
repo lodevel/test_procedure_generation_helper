@@ -18,6 +18,7 @@ from enum import Enum, auto
 
 from procedo.core import starter_test
 from procedo.core.paths import exists_quiet, is_dir_quiet, unreachable
+from procedo.core.test_format import CODE, active_format
 from procedo.core.config_manager import PROJECT_RULES, project_rule_doc_paths
 
 from .fileio import atomic_create
@@ -104,6 +105,7 @@ class TestFolderInfo:
     has_json: bool = False
     has_code: bool = False
     has_text: bool = False
+    is_code: bool = False  # its code version (openhtf/) is the active one: no text tool on it
 
     @classmethod
     def of(cls, folder: Path) -> "TestFolderInfo":
@@ -114,6 +116,7 @@ class TestFolderInfo:
             has_json=exists_quiet(folder / "procedure.json"),
             has_code=exists_quiet(folder / "test.py"),
             has_text=exists_quiet(folder / "procedure_text.md"),
+            is_code=active_format(folder) == CODE,
         )
 
     @property

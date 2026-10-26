@@ -16,7 +16,7 @@ from procedo.core.authoring_api import ProjectChanged
 from procedo.ui import theme as bench_theme
 
 from ..core import odb_inspect
-from ..core.artifact_manager import ArtifactManager, ArtifactType
+from ..core.artifact_manager import ArtifactManager, ArtifactType, code_test_refusal
 from ..core.studio_settings import load_settings, read_settings, save_settings
 from ..dock.skill_chat_widget import SkillChatWidget
 from ..pack_ops import engine_async, pack_parsers
@@ -140,7 +140,10 @@ def _open_project_root(main_window) -> Optional[Path]:
 
 
 def _artifacts(folder: Path) -> ArtifactManager:
-    """An artifact manager on one test folder: its saves apply Studio's rules (folder id, media)."""
+    """An artifact manager on one test folder: its saves apply Studio's rules (folder id, media).
+    RuntimeError (its message for the user) on a code test: its text is not written."""
+    if reason := code_test_refusal(folder):
+        raise RuntimeError(reason)
     am = ArtifactManager()
     am.set_test_dir(folder)
     return am

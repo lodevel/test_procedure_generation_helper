@@ -22,11 +22,30 @@ from typing import Any, Callable, Optional
 
 from procedo.core.starter_test import sanitize_test_id
 from procedo.core.paths import exists_quiet, is_dir_quiet, unreachable
+from procedo.core.test_format import CODE, read_format
 
 from .fileio import atomic_write_text
 from .session_state import read_sync_baseline
 from .sync_utils import normalize_for_hash
 from .test_id import force_json_id, force_text_id_line
+
+
+#: Studio's refusal to work on a code test (its OpenHTF version is active): no view edits one yet.
+CODE_TEST_REFUSAL = (
+    "{name} runs its code version (openhtf/test.py): Studio does not edit code tests yet. "
+    'To edit its text version, set "active": "text" in its test.json. Bench then runs the '
+    "text version."
+)
+
+
+def code_test_refusal(test_dir: Path) -> str:
+    """Why Studio's text tools (the editors, parse, code generation, Sync Equipment, review, a
+    wizard's writes) leave the test in *test_dir* alone: "" for a text test."""
+    active, problem = read_format(test_dir)
+    if active != CODE:
+        return ""
+    refusal = CODE_TEST_REFUSAL.format(name=test_dir.name)
+    return f"{problem}\n\n{refusal}" if problem else refusal
 
 
 class ArtifactType(Enum):

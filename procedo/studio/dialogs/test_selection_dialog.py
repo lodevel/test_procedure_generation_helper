@@ -2,8 +2,9 @@
 
 Both the full Word report and the multi-test Markdown export run over the SAME
 selection (mirroring the main app's checked-procedure list). Rows lacking the
-required artifact (``procedure.json`` for Word, ``procedure_text.md`` for Markdown)
-are shown greyed/disabled; each row names the test's artifacts on its right.
+required artifact (``procedure.json`` for Word, ``procedure_text.md`` for Markdown), and
+code tests (their root files are the inactive text version), are shown greyed/disabled; each
+row names the test's artifacts on its right.
 """
 
 from __future__ import annotations
@@ -51,8 +52,14 @@ class TestSelectionDialog(QDialog):
         )
         self.tests = ui_kit.CheckList()
         for f in folders:
-            available = bool(getattr(f, f"has_{require}", False))
-            detail = f.artifact_state if available else f"{f.artifact_state} — no {require}"
+            available = bool(getattr(f, f"has_{require}", False)) and not f.is_code
+            detail = (
+                f.artifact_state
+                if available
+                else f"{f.artifact_state} — code test"
+                if f.is_code
+                else f"{f.artifact_state} — no {require}"
+            )
             self.tests.add(f.name, f.name, detail, checked=available, enabled=available)
         self.tests.toggled.connect(self._update_count)
         body.addWidget(self.tests, 1)

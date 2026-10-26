@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtWidgets import QMessageBox
 
 from procedo.core.paths import unreachable
+from procedo.core.test_format import CODE, active_format
 from procedo.ui.ui_kit import set_pill
 
 from ..core import ArtifactManager, ArtifactType, SessionState
@@ -31,6 +32,12 @@ if TYPE_CHECKING:
     from ..main_window import StudioWorkspace
 
 log = logging.getLogger(__name__)
+
+#: Studio's refusal to open a code test (its OpenHTF version is active): no view edits one yet.
+CODE_TEST_REFUSAL = (
+    "{name} runs its code version (openhtf/test.py): Studio does not edit code tests yet. "
+    'To edit its text version, set "active": "text" in its test.json.'
+)
 
 
 class DocumentController:
@@ -211,6 +218,10 @@ class DocumentController:
         # and the next save would write the blanks over the real files.
         if reason := unreachable(path):
             QMessageBox.warning(mw, "Open Test", reason)
+            return
+        # Every text tool works on the open test: a code test is never opened by them.
+        if active_format(path) == CODE:
+            QMessageBox.warning(mw, "Open Test", CODE_TEST_REFUSAL.format(name=path.name))
             return
 
         if not self.may_leave_test():

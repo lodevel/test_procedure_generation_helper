@@ -308,51 +308,6 @@ class ArtifactManager:
             "procedure_text": self.procedure_text.last_modified,
         }
 
-    def get_cleanable_files(self) -> list[Path]:
-        """Get list of tool-generated files that can be cleaned."""
-        if self.test_dir is None:
-            return []
-
-        cleanable = []
-
-        # Known tool-generated files
-        tool_files = [
-            self.PROCEDURE_TEXT_NAME,
-            self.SESSION_FILE_NAME,
-        ]
-
-        for name in tool_files:
-            path = self.test_dir / name
-            if exists_quiet(path):
-                cleanable.append(path)
-
-        # Also check for other patterns
-        patterns = ["*.mapping.md", "*.draft.*", ".llm_cache"]
-        for pattern in patterns:
-            try:
-                cleanable.extend(self.test_dir.glob(pattern))
-            except OSError:  # the share dropped: nothing to clean
-                break
-
-        return cleanable
-
-    def get_all_non_canonical_files(self) -> list[Path]:
-        """Get all files except procedure.json and test.py for Clean All."""
-        if self.test_dir is None:
-            return []
-
-        canonical = {self.PROCEDURE_JSON_NAME, self.TEST_CODE_NAME}
-        non_canonical = []
-
-        try:
-            for item in self.test_dir.iterdir():
-                if item.name not in canonical:
-                    non_canonical.append(item)
-        except OSError:  # the share dropped: nothing to clean
-            return []
-
-        return non_canonical
-
     def set_exclusion_patterns(self, patterns: list[re.Pattern[str]]) -> None:
         """Set equipment-configuration patterns to exclude from sync hashing."""
         self._exclusion_patterns = patterns

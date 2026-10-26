@@ -7,12 +7,20 @@ from __future__ import annotations
 
 import importlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 
 # The four DISPLAY domains snapshotted for the app. The validate_* twins are
 # asked per document (``extract``): an on-demand banner, not the paint path.
 _DISPLAY_KEYS = ("meta", "steps", "expected", "equipment")
+
+#: How many tests a sweep reads at once: on a share each read is a round trip, answered
+#: slowly but several at a time (the app reads its own the same way, ``file_cache``).
+_READERS = 8
+
+#: A test whose document could not be read (its entry says why).
+_UNREAD = object()
 
 
 def _load_extractor_decls(bundle_dir: Path) -> dict:
@@ -108,8 +116,11 @@ def _text_newer(procedure_json: Path) -> bool:
     return text_mtime > json_mtime
 
 
-def _extract_test(folder: str, proc_path: Path, fns: dict, resolve_errors: dict) -> dict:
-    """Extract one test. Per-key failures become error markers."""
+def _read_test(folder: str, proc_path: Path, resolve_errors: dict) -> tuple:
+    """One test's files: ``(entry, document)`` — :data:`_UNREAD` when it could not be read,
+    the entry saying why — or ``(None, None)`` for a folder without ``procedure.json``."""
+    if not proc_path.exists():
+        return None, None
     entry: dict = {"folder": folder, "data": {}, "errors": dict(resolve_errors)}
     # Stat BEFORE reading: if the file is rewritten mid-read, the entry
     # carries the OLD mtime, so the app's freshness check (current stat
@@ -123,16 +134,14 @@ def _extract_test(folder: str, proc_path: Path, fns: dict, resolve_errors: dict)
         for key in _DISPLAY_KEYS:
             entry["errors"][key] = f"cannot stat {proc_path.name}: {exc}"
         entry["text_newer"] = False
-        return entry
+        return entry, _UNREAD
     entry["text_newer"] = _text_newer(proc_path)
     try:
-        doc = json.loads(proc_path.read_text(encoding="utf-8"))
+        return entry, json.loads(proc_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         for key in _DISPLAY_KEYS:
             entry["errors"][key] = f"cannot read {proc_path.name}: {exc}"
-        return entry
-    _extract_into(entry, doc, fns)
-    return entry
+        return entry, _UNREAD
 
 
 def _extract_into(entry: dict, doc, fns: dict) -> None:
@@ -169,14 +178,19 @@ def op_display_snapshot(spec: dict) -> dict:
     else:
         folders = [f for f in requested if isinstance(f, str)]
 
+    # The files several tests at a time; the extractors one test after another.
+    paths = [tests_dir / folder / "procedure.json" for folder in folders]
+    with ThreadPoolExecutor(_READERS) as pool:
+        read = list(pool.map(_read_test, folders, paths, [resolve_errors] * len(folders)))
     out = []
-    for folder in folders:
-        proc_path = tests_dir / folder / "procedure.json"
-        if not proc_path.exists():
+    for entry, doc in read:
+        if entry is None:
             # Deleted/never-compiled test: omit it — the store drops
             # requested-but-absent folders from the snapshot.
             continue
-        out.append(_extract_test(folder, proc_path, fns, resolve_errors))
+        if doc is not _UNREAD:
+            _extract_into(entry, doc, fns)  # per-key failures become error markers
+        out.append(entry)
     return {"ok": True, "wheel": wheel_info, "tests": out}
 
 

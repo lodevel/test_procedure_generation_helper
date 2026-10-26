@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Optional
 from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
-from procedo.core import app_settings, display_snapshot
+from procedo.core import app_settings, display_snapshot, project_local_state
 from procedo.ui.new_project_dialog import NewProjectDialog
 from procedo.core.off_gui import run_off_gui
 from procedo.core.paths import exists_quiet
@@ -325,6 +325,7 @@ def on_bundle_change_debounced(mw) -> None:
     buttons via handle_config_change."""
     root = getattr(mw.project_manager, "project_root", None)
     if root is not None:
+        project_local_state.forget_resolved(root)  # what was kept of the old bundle is read again
         engine.stop(project_root=root)  # a TOOLS of the old bundle would sit idle
     mw._update_project_rules_indicators()
     handle_config_change(mw)

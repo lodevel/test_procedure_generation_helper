@@ -124,13 +124,35 @@ def test_the_bundle_reported_is_read_from_the_folder_the_venv_was_resolved_from(
     assert _session(project).bundle == run_provenance.BundleUsed({"id": "b", "version": "1.0"})
 
 
-def test_a_moved_bundle_gets_a_fresh_process_and_the_old_one_exits(project, spawns):
+def test_the_bundle_is_looked_at_once_not_per_op(project, spawns, monkeypatch):
+    """On a share each look at the bundle is a dozen round trips, and the project open used
+    to ask the engine twice per test: the key an instance runs under is read once."""
+    from procedo.core import display_snapshot
+
+    looked, real = [], display_snapshot.bundle_key
+    monkeypatch.setattr(display_snapshot, "bundle_key", lambda r: looked.append(r) or real(r))
+    for _ in range(10):
+        assert _available(project)["ok"]
+    assert len(looked) == 1 and len(spawns) == 1
+
+
+def test_a_moved_bundle_gets_a_fresh_process_once_something_says_so(project, spawns):
+    """A bundle change is followed once a path that makes one says so (every swap, install
+    and pull, and F5: ``forget_resolved``) or the folder watcher's bundle check reads it again;
+    the old process exits."""
+    from procedo.core import display_snapshot, project_local_state
+
     assert _available(project)["ok"]
     old = _session(project)._proc
     os.utime(project / "bundle" / "bundle.json", (1_000_000, 1_000_000))
+    assert _available(project)["ok"] and len(spawns) == 1  # nothing said so yet
+    project_local_state.forget_resolved(project)
     assert _available(project)["ok"]
     assert len(spawns) == 2
     assert old.wait(timeout=10) is not None
+    os.utime(project / "bundle" / "bundle.json", (2_000_000, 2_000_000))
+    assert display_snapshot.bundle_key_current(project) is False  # the watcher's look
+    assert _available(project)["ok"] and len(spawns) == 3
 
 
 def test_a_process_that_died_idle_is_replaced(project, spawns):
@@ -215,6 +237,9 @@ def test_a_dead_instance_is_not_restarted_to_be_replaced(project, spawns):
     proc.kill()
     proc.wait(timeout=10)
     os.utime(project / "bundle" / "bundle.json", (1_000_000, 1_000_000))
+    from procedo.core import project_local_state
+
+    project_local_state.forget_resolved(project)  # the bundle moved: the instance is replaced
     assert _available(project)["ok"]
     assert len(spawns) == 2
 
@@ -616,8 +641,13 @@ def test_a_bundle_change_in_studio_stops_the_projects_process(project, spawns, m
         _update_project_rules_indicators=lambda: None,
     )
     monkeypatch.setattr(project_controller, "handle_config_change", lambda mw: None)
+    from procedo.core import display_snapshot
+
+    # What the next look at the bundle reads.
+    monkeypatch.setattr(display_snapshot, "bundle_key", lambda _root: ("another bundle",))
     project_controller.on_bundle_change_debounced(window)
     assert proc.wait(timeout=10) is not None
+    assert display_snapshot.kept_bundle_key(project) == ("another bundle",)  # read again
 
 
 def test_the_temp_roots_removal_stops_the_processes_first(temp_dir, project, spawns):
@@ -813,3 +843,30 @@ def test_extract_runs_what_the_bundle_declares_and_explains_the_rest(tmp_path):
         set(first["errors"]) == set(second["errors"]) == {"equipment"}
     )  # the bundle declares none
     assert "PROC_NOT_OBJECT" in {finding["code"] for finding in second["data"]["steps_validate"]}
+
+
+def test_a_sweep_reads_its_tests_several_at_a_time_and_answers_them_in_order(tmp_path, monkeypatch):
+    """On a share each read is a round trip: a sweep reads its tests' files in a pool (KC30 B
+    on G:, 43 tests: 6 s -> 1.4 s) — reads that cannot overlap never meet — and the
+    extractors run one test after another; the answer keeps the folders' order."""
+    folders = [f"T{n:02}" for n in range(12)]
+    for folder in folders:
+        (tmp_path / "tests" / folder).mkdir(parents=True)
+        (tmp_path / "tests" / folder / "procedure.json").write_text(
+            json.dumps({"id": folder}), encoding="utf-8"
+        )
+    (tmp_path / "tests" / "no_procedure").mkdir()
+    (tmp_path / "bundle").mkdir()
+    (tmp_path / "bundle" / "defaults.json").write_text("{}", encoding="utf-8")
+    meet, real = threading.Barrier(2, timeout=5), Path.read_text
+
+    def read_meeting(path, *args, **kwargs):
+        if path.name == "procedure.json":
+            meet.wait()  # another test's read runs meanwhile, or this one times out
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_meeting)
+    answer = engine_ops.run({"op": "display_snapshot", "project": str(tmp_path), "tests": None})
+    assert answer["ok"], answer.get("error")
+    assert [entry["folder"] for entry in answer["tests"]] == folders
+    assert not any("cannot read" in why for e in answer["tests"] for why in e["errors"].values())

@@ -4,10 +4,13 @@ Every wheel op the app asks of a project (parse, render, validate, codegen,
 export rows…) is a frame to that project's TOOLS instance,
 ``engine_client/_execute_op_subprocess.py --role tools`` in the project venv, instead of a
 fresh Python per call (docs/plans/engine_process.md). An instance starts on first
-use and is replaced when it died or its key moved: the role, the interpreter or
-the bundle (``display_snapshot.bundle_key``). Bench and Studio are separate OS
-processes, so they never share one. An instance exits when its stdin closes,
-however this process ends, and ``stop_all`` ends them ahead of the temp root's removal.
+use and is replaced when it died or the project's bundle moved
+(``display_snapshot.kept_bundle_key``: read once, and again only when something said
+the bundle may have changed: on a share each look is a dozen round trips). Its venv
+is resolved when it starts. Bench and
+Studio are separate OS processes, so they never share one. An instance exits when its
+stdin closes, however this process ends, and ``stop_all`` ends them ahead of the temp
+root's removal.
 
 A TOOLS instance holds nothing. When a warm one (already running before the
 frame) dies under a frame, the op is retried once in a fresh one; a fresh one
@@ -40,11 +43,13 @@ _LOST = ("SessionDead", "SessionTimeout")
 
 
 class _Slot:
-    """One project's place for one role: its lock and its instance with the key it started under."""
+    """One project's place for one role: its lock and its instance with the interpreter and
+    the bundle key it started under."""
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
-        self.key: Optional[tuple] = None
+        self.python: Optional[str] = None
+        self.bundle: Optional[tuple] = None
         self.session: Optional[engine_session.RemoteSession] = None
         self.generation = 0  # bumped by every stop(), which works without the lock
 
@@ -64,15 +69,14 @@ def tools_op(project_root: Path, spec: dict[str, Any], timeout: float) -> dict[s
 
 
 def _op(role: str, project_root: Path, spec: dict[str, Any], timeout: float) -> dict[str, Any]:
-    venv = engine_session._resolve_project_python(project_root)
-    key = (role, str(venv.python), display_snapshot.bundle_key(project_root))
+    bundle = display_snapshot.kept_bundle_key(project_root)
     slot = _slot(role, project_root)
     with slot.lock:
         if _closed:
             return dict(_CLOSING)
         generation = slot.generation
-        if slot.session is None or slot.session.dead or slot.key != key:
-            if not _replaced(slot, generation, key, role, project_root):
+        if slot.session is None or slot.session.dead or slot.bundle != bundle:
+            if not _replaced(slot, generation, bundle, role, project_root):
                 return dict(_STOPPED)
         session = slot.session
         warm = session.alive
@@ -80,7 +84,7 @@ def _op(role: str, project_root: Path, spec: dict[str, Any], timeout: float) -> 
         if _closed:
             return dict(_CLOSING)
         if result.get("kind") == "SessionDead" and warm and slot.generation == generation:
-            if not _replaced(slot, generation, key, role, project_root):
+            if not _replaced(slot, generation, bundle, role, project_root):
                 return dict(_STOPPED)
             result = slot.session.engine_op(timeout=timeout, **spec)
     if result.get("kind") in _LOST:
@@ -140,20 +144,23 @@ def _slot(role: str, project_root: Path) -> _Slot:
         return _slots.setdefault(name, _Slot())
 
 
-def _replace(slot: _Slot, key: tuple, role: str, project_root: Path) -> None:
-    """A fresh instance in ``slot``; the one it replaces exits."""
+def _replace(slot: _Slot, bundle: tuple, role: str, project_root: Path) -> None:
+    """A fresh instance in ``slot`` for the project's venv (ParserUnavailable when it has
+    none) and ``bundle``; the one it replaces exits."""
+    venv = engine_session._resolve_project_python(project_root)
     if slot.session is not None:
         _retire(slot.session)
-    slot.key, slot.session = key, engine_session.RemoteSession(project_root, role=role)
+    slot.python, slot.bundle = str(venv.python), bundle
+    slot.session = engine_session.RemoteSession(project_root, role=role)
 
 
-def _replaced(slot: _Slot, generation: int, key: tuple, role: str, project_root: Path) -> bool:
+def _replaced(slot: _Slot, generation: int, bundle: tuple, role: str, project_root: Path) -> bool:
     """:func:`_replace`, unless a :func:`stop` landed meanwhile (it takes no lock):
     then the instance just made is retired again and the op answers stopped."""
-    _replace(slot, key, role, project_root)
+    _replace(slot, bundle, role, project_root)
     if slot.generation == generation:
         return True
-    session, slot.session, slot.key = slot.session, None, None
+    session, slot.session, slot.python = slot.session, None, None
     if session is not None:
         _retire(session)
     return False
@@ -186,14 +193,14 @@ def stop(
     )
     project = None if project_root is None else os.path.normcase(os.path.abspath(project_root))
     for (role, name), slot in list(_slots.items()):
-        key = slot.key
+        python = slot.python
         if role == "run":
             continue
         if name == project or (
-            folder and key and os.path.normcase(os.path.abspath(key[1])).startswith(folder)
+            folder and python and os.path.normcase(os.path.abspath(python)).startswith(folder)
         ):
             slot.generation += 1
-            session, slot.session, slot.key = slot.session, None, None
+            session, slot.session, slot.python = slot.session, None, None
             if session is not None:
                 ended.append(session)
     if venv_folder is not None or wait:
@@ -219,7 +226,7 @@ def stop_all() -> None:
     for (role, _name), slot in list(_slots.items()):
         if role == "run":
             continue
-        session, slot.session, slot.key = slot.session, None, None
+        session, slot.session, slot.python = slot.session, None, None
         if session is not None:
             session.close()
 

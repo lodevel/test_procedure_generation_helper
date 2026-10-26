@@ -7,7 +7,9 @@ fresh Python per call (docs/plans/engine_process.md). An instance starts on firs
 use and is replaced when it died or the project's bundle moved
 (``display_snapshot.kept_bundle_key``: read once, and again only when something said
 the bundle may have changed: on a share each look is a dozen round trips). Its venv
-is resolved when it starts. Bench and
+is resolved when it starts. An op that WRITES files or results asks ``fresh``: the bundle
+and the venv are looked at again first, so it never runs on a superseded engine (a sync
+pull replacing wheels sends Studio no event). Bench and
 Studio are separate OS processes, so they never share one. An instance exits when its
 stdin closes, however this process ends, and ``stop_all`` ends them ahead of the temp
 root's removal.
@@ -61,21 +63,36 @@ _CLOSING = {"ok": False, "kind": "ParserUnavailable", "error": "app is closing"}
 _STOPPED = {"ok": False, "kind": "ParserUnavailable", "error": "the project's engine was stopped"}
 
 
-def tools_op(project_root: Path, spec: dict[str, Any], timeout: float) -> dict[str, Any]:
+def tools_op(
+    project_root: Path, spec: dict[str, Any], timeout: float, fresh: bool = False
+) -> dict[str, Any]:
     """``spec`` (an ``_engine_ops`` op) answered by the project's TOOLS instance: the
     op's result dict, or ``{"ok": False, "kind", "error"}``. Raises
-    ParserUnavailable when the project has no venv."""
-    return _op("tools", Path(project_root), spec, timeout)
+    ParserUnavailable when the project has no venv. *fresh*: the op writes files or
+    results — the bundle and the venv are looked at again before it (a display read
+    runs under what was kept)."""
+    return _op("tools", Path(project_root), spec, timeout, fresh)
 
 
-def _op(role: str, project_root: Path, spec: dict[str, Any], timeout: float) -> dict[str, Any]:
-    bundle = display_snapshot.kept_bundle_key(project_root)
+def _op(
+    role: str, project_root: Path, spec: dict[str, Any], timeout: float, fresh: bool
+) -> dict[str, Any]:
+    if fresh:
+        bundle = display_snapshot.read_bundle_key(project_root)
+        python = str(engine_session._resolve_project_python(project_root).python)
+    else:
+        bundle, python = display_snapshot.kept_bundle_key(project_root), None
     slot = _slot(role, project_root)
     with slot.lock:
         if _closed:
             return dict(_CLOSING)
         generation = slot.generation
-        if slot.session is None or slot.session.dead or slot.bundle != bundle:
+        if (
+            slot.session is None
+            or slot.session.dead
+            or slot.bundle != bundle
+            or python not in (None, slot.python)
+        ):
             if not _replaced(slot, generation, bundle, role, project_root):
                 return dict(_STOPPED)
         session = slot.session

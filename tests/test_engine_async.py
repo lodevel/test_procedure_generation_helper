@@ -64,7 +64,7 @@ class _Tools:
             threading.Event(),
         )
 
-    def __call__(self, project_root, spec, timeout):
+    def __call__(self, project_root, spec, timeout, fresh=False):
         if spec["op"] == "is_available":  # the views' gating probe (cached, not this slice's)
             return {"ok": True, "available": True, "reason": ""}
         self.ops.append(spec["op"])

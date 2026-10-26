@@ -136,6 +136,32 @@ def test_the_bundle_is_looked_at_once_not_per_op(project, spawns, monkeypatch):
     assert len(looked) == 1 and len(spawns) == 1
 
 
+def test_a_write_after_a_pull_that_replaced_wheels_never_runs_on_the_old_engine(
+    project, spawns, monkeypatch
+):
+    """A sync pull that replaced only ``bundle/wheels/*.whl`` sends Studio no event and moves
+    none of the stamps the kept key reads; the venv key moves. A display read keeps what was
+    kept; Studio's next generate (a write: ``pack_parsers._engine_call``) looks again — it
+    refuses while there is no environment for the new bundle, then runs on the new one and
+    the old process exits; never on the old one."""
+    assert pack_parsers._engine_call(project, {"op": "is_available"})["ok"]
+    old = _session(project)._proc
+
+    def no_venv(_root):
+        raise engine_session.ParserUnavailable("No machine-local venv for the new bundle")
+
+    monkeypatch.setattr(engine_session, "_resolve_project_python", no_venv)
+    assert _available(project)["ok"] and len(spawns) == 1  # a display read: the kept engine
+    with pytest.raises(engine_session.ParserUnavailable):
+        pack_parsers._engine_call(project, {"op": "is_available"})
+
+    built = project_venv.ProjectVenv(Path(sys.executable.upper()), project / "bundle")
+    monkeypatch.setattr(engine_session, "_resolve_project_python", lambda _root: built)
+    assert pack_parsers._engine_call(project, {"op": "is_available"})["ok"]
+    assert len(spawns) == 2 and spawns[1][0][0] == str(built.python)
+    assert old.wait(timeout=10) is not None
+
+
 def test_a_moved_bundle_gets_a_fresh_process_once_something_says_so(project, spawns):
     """A bundle change is followed once a path that makes one says so (every swap, install
     and pull, and F5: ``forget_resolved``) or the folder watcher's bundle check reads it again;

@@ -137,7 +137,7 @@ def test_the_word_export_asks_the_engine_only_off_the_gui_thread(tmp_path, monke
     monkeypatch.setattr(report_export, "get_project_template", lambda **_kw: tpl)
     asked = []
 
-    def tools_op(_root, spec, _timeout):  # the project's engine, answered here
+    def tools_op(_root, spec, _timeout, fresh=False):  # the project's engine, answered here
         asked.append((spec.get("op"), threading.current_thread() is threading.main_thread()))
         if spec.get("op") != "extract":
             return {"ok": False, "error": "not in this test"}

@@ -55,7 +55,9 @@ def _engine_call(
         raise ParserUnavailable(NO_PROJECT)
     from procedo.engine_client import engine  # the project's engine processes
 
-    return engine.tools_op(project_root, spec, timeout or _timeout())
+    # Studio writes what its ops answer (a procedure, a test.py): never from a superseded
+    # engine — a sync pull replacing wheels sends it no event.
+    return engine.tools_op(project_root, spec, timeout or _timeout(), fresh=True)
 
 
 # ---------------------------------------------------------------------------

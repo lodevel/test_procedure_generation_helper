@@ -1472,8 +1472,9 @@ class RunTestTests(_BenchBase):
         self.assertIn("Read DC voltage", prompts[0])
         # verdicts land host-side via results.json in the EXPLICIT results dir
         data = json.loads((self._results_dir() / "results.json").read_text(encoding="utf-8"))
-        self.assertEqual(data["measurements"], {"1": 3.3})
-        self.assertEqual(set(data["verdicts"].values()), {"PASS"})
+        measured = [m for p in data["phases"] for m in p["measurements"].values()]
+        self.assertEqual([m["measured_value"] for m in measured if "validators" not in m], [3.3])
+        self.assertEqual({m["outcome"] for m in measured if "validators" in m}, {"PASS"})
         # prompt hook restored after the run
         from rules_packager_base import test_helpers
 
@@ -1734,7 +1735,8 @@ class RunTestTests(_BenchBase):
         self.assertFalse((Path(cwd_before) / "shot.png").exists())
         # the evidence path in results.json refers to the file BESIDE it
         data = json.loads((self._results_dir() / "results.json").read_text(encoding="utf-8"))
-        self.assertEqual([e["file"] for e in data["evidence"]], ["shot.png"])
+        files = [a["file"] for p in data["phases"] for a in p["attachments"].values()]
+        self.assertEqual(files, ["shot.png"])
 
     def test_exec_ops_relative_write_lands_in_the_frames_work_dir(self):
         # The guided run's screenshots: an exec_ops frame names the run's own
@@ -2735,7 +2737,10 @@ class BenchClientLiveTests(unittest.TestCase):
         # keep_state False + manual device: the SAFE-STATE prompt pass ran
         self.assertTrue(any("SAFE STATE" in t for t in prompts), prompts)
         data = json.loads((results_dir / "results.json").read_text(encoding="utf-8"))
-        self.assertEqual(set(data["verdicts"].values()), {"PASS"})
+        checks = [
+            m for p in data["phases"] for m in p["measurements"].values() if "validators" in m
+        ]
+        self.assertEqual({m["outcome"] for m in checks}, {"PASS"})
         rel = c.release_run(acq["run_id"])
         self.assertTrue(rel.get("ok"), rel)
         out = c.end_session()

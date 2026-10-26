@@ -45,7 +45,7 @@ _spec.loader.exec_module(er)
 
 _HEAD = (
     "# T\nDesc.\n\n## Meta\nformat_version: 2.0.1\nboard: B\n"
-    "rules_pack: rules_packager_base@2.15.1\n\n## Equipment\nDMM_GENERIC : dmm\n\n## Steps\n"
+    "rules_pack: rules_packager_base@3.0.0\n\n## Equipment\nDMM_GENERIC : dmm\n\n## Steps\n"
 )
 
 # Procedures copied from the engine's own tests (rules/v2_0_2/tests): a linear
@@ -77,6 +77,15 @@ PROCEDURES = {
         "{12} < 1\n{15} < 1\n",
     ),
 }
+
+
+def _timeless(answer):
+    """An engine answer without the times a run record holds (``*_millis``)."""
+    if isinstance(answer, dict):
+        return {k: _timeless(v) for k, v in answer.items() if not k.endswith("_millis")}
+    if isinstance(answer, list):
+        return [_timeless(v) for v in answer]
+    return answer
 
 
 def _document(name: str) -> dict:
@@ -132,8 +141,9 @@ def test_the_daemon_result_op_answers_what_the_op_table_answers(live_session):
     doc = _document("bind_in_for")
     fields = {"procedure_json": doc, **_inputs(doc)}
     live = live_session.engine_op("build_manual_result", **fields)
-    assert live["ok"] and live["result"]["verdicts"]
-    assert live == _env.engine_answer({"op": "build_manual_result", **fields})
+    assert live["ok"] and live["result"]["phases"]
+    # the same run record, but for the times it was written at
+    assert _timeless(live) == _timeless(_env.engine_answer({"op": "build_manual_result", **fields}))
 
 
 def test_the_result_op_makes_each_bench_op_never_redone_an_outcome_detail():
@@ -159,7 +169,7 @@ def test_the_result_op_makes_each_bench_op_never_redone_an_outcome_detail():
             "then": "continued",
         }
     ]
-    assert result["overall"] == "ERROR"
+    assert result["metadata"]["procedo"]["verdict"] == "ERROR"
 
 
 def test_the_run_op_says_a_refused_value_ended_the_run():
@@ -179,7 +189,7 @@ def test_the_result_op_makes_an_operator_stop_aborted():
     result = _env.engine_answer(
         {"op": "build_manual_result", "procedure_json": doc, **_inputs(doc), "operator_stop": True}
     )["result"]
-    assert (result["overall"], result["aborted"]) == ("ABORTED", True)
+    assert (result["metadata"]["procedo"]["verdict"], result["outcome"]) == ("ABORTED", "ABORTED")
 
 
 def test_the_op_judges_its_frame_document_and_never_changes_the_sessions():
@@ -354,7 +364,10 @@ def test_the_write_not_started_op_leaves_the_tests_error_result(tmp_path):
     )
     assert answer == {"ok": True}
     written = json.loads((tmp_path / "results.json").read_text(encoding="utf-8"))
-    assert (written["test_name"], written["overall"]) == ("T", "ERROR")
+    assert (written["metadata"]["test_name"], written["metadata"]["procedo"]["verdict"]) == (
+        "T",
+        "ERROR",
+    )
     assert written["outcome_details"] == [
         {
             "code": "RUN_ACTIVE",
@@ -363,3 +376,22 @@ def test_the_write_not_started_op_leaves_the_tests_error_result(tmp_path):
             "description": "another test is already running on this bench",
         }
     ]
+
+
+def test_the_convert_record_op_answers_an_old_runs_record():
+    old = {
+        "test_name": "T",
+        "measurements": {"1": 4.96},
+        "verdicts": {},
+        "criteria": {},
+        "overall": "PASS",
+    }
+    manifest = {
+        "started": "2026-06-05T15:53:06Z",
+        "ended": "2026-06-05T15:53:09Z",
+        "serial_number": "SN1",
+    }
+    answer = engine_ops.run({"op": "convert_record", "results": old, "manifest": manifest})
+    record = answer["record"]
+    assert answer["ok"] and [p["name"] for p in record["phases"]] == ["Converted run"]
+    assert (record["dut_id"], record["metadata"]["procedo"]["converted_from"]) == ("SN1", "v1")

@@ -347,5 +347,6 @@ def op_build_manual_result(spec: dict) -> dict:
         **run_inputs(spec),
         failures=spec.get("failures") or {},
         operator_stop=bool(spec.get("operator_stop")),
+        session=spec.get("session"),
     )
     return {"ok": True, "result": result}

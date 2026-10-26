@@ -51,10 +51,12 @@ Ops:
                       ``value_note``, ``names`` [{name, var, value, origin}];
                       + "channels": {device: [declared power channels]},
                       "constants": [{name, value, origin}])
-  build_manual_result → {"ok": true, "result": {...results.json schema...}}
+  build_manual_result → {"ok": true, "result": {...the run record (results.json)...}}
                         (input: the same fields + "failures": {node_path:
                          {"error", "then"}}, the bench ops never redone,
-                         "operator_stop": stopped before its end)
+                         "operator_stop": stopped before its end, "session":
+                         what the bench kept of the run — started, times,
+                         evidence, log, folder — at Finish)
   manual_reading → {"ok": true, "value": any, "refusal": str}
                    (input: {"step": {kind, expected_text, resolved_op}, "text"})
   bench_identity → {"ok": true, "endpoints": [str|null], "channels": [[int]]}  (input: {"benches": [bench]})
@@ -71,6 +73,9 @@ Ops:
                    a display key or ``equipment_validate`` / ``steps_validate`` /
                    ``expected_validate``, run by the extractor the bundle declares;
                    one result per procedure, in order)
+  convert_record → {"ok": true, "record": {...the run record...}}
+                   (input: {"results": an old flat results.json, "manifest", "folder"}:
+                    the one-time converter's, one phase "Converted run")
 """
 
 from __future__ import annotations
@@ -434,6 +439,14 @@ def _op_write_not_started(spec: dict) -> dict:
     return {"ok": True}
 
 
+def _op_convert_record(spec: dict) -> dict:
+    """An old run's ``results`` (the flat file of Procedo 5.0) and its ``manifest`` as the run
+    record, its files in ``folder`` (the one-time converter, procedo.core.convert_records)."""
+    from rules_packager_base.run_record import converted
+
+    return {"ok": True, "record": converted(spec["results"], spec["manifest"], spec.get("folder"))}
+
+
 _OPS = {
     "is_available": _op_is_available,
     "parse_text": _op_parse_text,
@@ -457,6 +470,7 @@ _OPS = {
     "display_snapshot": _extract.op_display_snapshot,
     "extract": _extract.op_extract,
     "write_not_started": _op_write_not_started,
+    "convert_record": _op_convert_record,
 }
 
 
@@ -486,6 +500,7 @@ _PACK_FREE = frozenset(
         "function_signatures",
         "section_ownership",
         "write_not_started",
+        "convert_record",
     }
 )
 _PER_KEY = frozenset({"display_snapshot", "extract"})

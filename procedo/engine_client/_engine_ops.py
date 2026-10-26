@@ -57,7 +57,6 @@ Ops:
                          "operator_stop": stopped before its end)
   manual_reading → {"ok": true, "value": any, "refusal": str}
                    (input: {"step": {kind, expected_text, resolved_op}, "text"})
-  criterion_refs → {"ok": true, "refs": {key: [str]}}  (input: {"criteria": {key: criterion}})
   bench_identity → {"ok": true, "endpoints": [str|null], "channels": [[int]]}  (input: {"benches": [bench]})
   pack_contract → {"ok": true, "packs": {module: {"items": [ContractItem], "error": str|null}}}
                   (input: {"modules": [pack parser module]})
@@ -453,7 +452,6 @@ _OPS = {
     "build_manual_run": _manual.op_build_manual_run,
     "build_manual_result": _manual.op_build_manual_result,
     "manual_reading": _manual.op_manual_reading,
-    "criterion_refs": _manual.op_criterion_refs,
     "pack_contract": _op_pack_contract,
     "bench_identity": _op_bench_identity,
     "display_snapshot": _extract.op_display_snapshot,

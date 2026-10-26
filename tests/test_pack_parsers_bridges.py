@@ -341,19 +341,6 @@ class ManualRunEngineReadsTests(unittest.TestCase):
     def test_a_reading_is_a_run_op(self) -> None:
         self.assertIsNone(engine_ops.refusal("run", {"cmd": "op", "op": "manual_reading"}))
 
-    def test_a_criterions_readings_are_the_engines_entry_refs(self) -> None:
-        crit = {
-            "type": "logic",
-            "op": "or",
-            "parts": [
-                {"type": "lt", "ref": 1, "limit": 1},
-                {"type": "range", "ref": {"range": [3, 4]}, "lower": 0, "upper": 5},
-                {"type": "lt", "ref": 1, "limit": 2},
-            ],
-        }
-        out = engine_ops.run({"op": "criterion_refs", "criteria": {"0:a": crit}})
-        self.assertEqual(out, {"ok": True, "refs": {"0:a": ["1", "3", "4"]}})
-
 
 if __name__ == "__main__":
     unittest.main()

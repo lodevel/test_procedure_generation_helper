@@ -1,5 +1,5 @@
-"""The engine's guided-run ops: ``build_manual_run``, ``build_manual_result``, ``manual_reading``
-and ``criterion_refs`` — what a guided run plans, shows, reads and reports. Part of the engine's
+"""The engine's guided-run ops: ``build_manual_run``, ``build_manual_result`` and ``manual_reading``
+— what a guided run plans, shows, reads and reports. Part of the engine's
 op table (``_engine_ops``), loaded beside it — never through the ``procedo`` package, which is
 absent from the project venv. Their specs and results are documented in ``_engine_ops``.
 
@@ -349,19 +349,3 @@ def op_build_manual_result(spec: dict) -> dict:
         operator_stop=bool(spec.get("operator_stop")),
     )
     return {"ok": True, "result": result}
-
-
-# -- a guided run's typed readings ----------------------------------------------
-
-
-def op_criterion_refs(spec: dict) -> dict:
-    """The readings each results.json criterion judges (``spec["criteria"]``: key ->
-    criterion), as the wheel's entry_refs reads them (test.py's reads), each ref
-    as a string — what a report's units map and Measured column list."""
-    from rules_packager_base.test_helpers import entry_refs
-
-    criteria = spec.get("criteria") or {}
-    return {
-        "ok": True,
-        "refs": {key: [str(r) for r in entry_refs(crit)] for key, crit in criteria.items()},
-    }

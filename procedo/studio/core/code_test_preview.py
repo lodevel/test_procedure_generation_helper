@@ -98,9 +98,18 @@ def _equipment(described: dict) -> str:
     return ", ".join(out)
 
 
+def _test_points(described: dict) -> str:
+    """``TP 5V0, P15 pin 16``: the locations the phases' descriptions and sub-steps name (each
+    phase's ``media``: the engine's one catalogue, as for a text test), in order, each once."""
+    captions = [
+        m["caption"] for phase in described.get("phases") or () for m in phase.get("media") or ()
+    ]
+    return ", ".join(dict.fromkeys(captions))
+
+
 def preview_html(described: dict) -> str:
     """The export as the report will show it, read from the code: each phase numbered with its
-    description, its sub-steps and its Expected lines; then the equipment."""
+    description, its sub-steps and its Expected lines; then the equipment and the test points."""
     parts = []
     for n, phase in enumerate(described.get("phases") or (), 1):
         head = f"<b>{n}. {escape(phase['name'])}</b>"
@@ -123,9 +132,16 @@ def preview_html(described: dict) -> str:
         for lines in (subs, expected):
             if lines:
                 parts.append(f'<p style="margin:0 0 0 18px">{"<br>".join(lines)}</p>')
-    equipment = _equipment(described)
-    if equipment:
-        parts.append(f'<hr><p style="margin:0">Equipment: {escape(equipment)}</p>')
+    footer = [
+        f"{label}: {escape(text)}"
+        for label, text in (
+            ("Equipment", _equipment(described)),
+            ("Test points", _test_points(described)),
+        )
+        if text
+    ]
+    if footer:
+        parts.append(f'<hr><p style="margin:0">{"<br>".join(footer)}</p>')
     return "".join(parts)
 
 

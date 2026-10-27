@@ -26,6 +26,7 @@ ensure_workflow_editor_importable()
 from procedo.engine_client import _engine_ops as engine_ops  # noqa: E402
 from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
 from procedo.engine_client import engine_session  # noqa: E402
+from procedo.studio.core.code_test_preview import preview_html  # noqa: E402
 
 pytestmark = [
     pytest.mark.skipif(not _env.rules_packager_available(), reason=_env.WHEEL_SKIP_REASON),
@@ -45,7 +46,7 @@ _spec.loader.exec_module(er)
 
 _HEAD = (
     "# T\nDesc.\n\n## Meta\nformat_version: 2.0.1\nboard: B\n"
-    "rules_pack: rules_packager_base@3.1.0\n\n## Equipment\nDMM_GENERIC : dmm\n\n## Steps\n"
+    "rules_pack: rules_packager_base@3.2.0\n\n## Equipment\nDMM_GENERIC : dmm\n\n## Steps\n"
 )
 
 # Procedures copied from the engine's own tests (rules/v2_0_2/tests): a linear
@@ -420,6 +421,8 @@ def test_the_describe_code_test_op_reads_the_code_test_without_running_it(tmp_pa
     assert [(p["name"], p["description"]) for p in answer["describe"]["phases"]] == [
         ("Output voltage", "Measure TP 5V0.")
     ]
+    # its test points, as Studio's export preview lists them (slice 15)
+    assert "Test points: TP 5V0</p>" in preview_html(answer["describe"])
     broken = engine_ops.run(
         {
             "op": "describe_code_test",

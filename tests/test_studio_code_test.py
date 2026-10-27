@@ -289,9 +289,38 @@ def test_the_export_preview_is_the_phases_their_sub_steps_expected_and_equipment
         "Expected: v5 (5 V rail) between 4.75 V and 5.25 V",
         "<b>2. Power off</b>",
         "(shared phase, functions/common_phases.py)",
-        "Equipment: Dmm (DMM1), Psu (PSU1)",
+        '<hr><p style="margin:0">Equipment: Dmm (DMM1), Psu (PSU1)</p>',
     ):
         assert part in html
+    assert "Test points" not in html  # no phase names one
+
+
+def test_the_export_preview_lists_the_test_points_the_phases_name_under_the_equipment():
+    """Slice 15, board StudioCode: "Test points: TP 5V0" — each phase's media (describe), each once."""
+
+    def media(*captions):
+        return [{"type": "image", "ref": {"component": c}, "caption": c} for c in captions]
+
+    described = {
+        "phases": [
+            {
+                "name": "A",
+                "file": "openhtf/test.py",
+                "line": 1,
+                "media": media("TP 5V0", "P15 pin 16"),
+            },
+            {"name": "B", "file": "openhtf/test.py", "line": 5, "media": media("TP 5V0")},
+            {"name": "C", "file": "openhtf/test.py", "line": 9},
+        ],
+        "instruments": ["Psu"],
+        "constants": [{"name": "PSU1_VISA"}],
+    }
+    assert preview_html(described).endswith(
+        '<hr><p style="margin:0">Equipment: Psu (PSU1)<br>Test points: TP 5V0, P15 pin 16</p>'
+    )
+    assert preview_html({"phases": described["phases"]}).endswith(
+        '<hr><p style="margin:0">Test points: TP 5V0, P15 pin 16</p>'
+    )
 
 
 def test_the_check_results_say_what_failed():

@@ -328,7 +328,7 @@ def refresh_header(ws: StudioWorkspace) -> None:
     ws.phase_count.setVisible(phases is not None)
     ws.phase_count.adjustSize()
     ws.side_tabs.setTabText(PHASES_TAB, "Phases")  # the tab bar makes room for its new size
-    if code.phase_file is not None:
+    if code.shared_file:
         ws.header.title.setText(code.name)
         users = {
             test
@@ -338,11 +338,14 @@ def refresh_header(ws: StudioWorkspace) -> None:
         }
         ui_kit.set_pill(ws.used_by_pill, "neutral", used_by_text(len(users)))
         what = "shared phases"
+    elif code.phase_file is not None:
+        ws.header.title.setText(code.name)
+        what = ""
     else:
         ws.header.title.setText(test_dir.name if test_dir else "No test open")
         steps = phases if code.test_dir is not None else _step_count(am)
         what = f"{steps} step{'' if steps == 1 else 's'}" if steps is not None else ""
-    ws.used_by_pill.setVisible(code.phase_file is not None)
+    ws.used_by_pill.setVisible(code.shared_file)
     parts = ["Procedo Studio", Path(root).name if root else "", what]
     ws.header.subtitle.setText(" · ".join(part for part in parts if part))
     unsaved = 0

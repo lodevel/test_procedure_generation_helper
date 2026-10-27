@@ -35,7 +35,7 @@ from procedo.core import code_test_check, test_format
 from procedo.ui import ui_kit
 from procedo.ui.flow_layout import FlowLayout
 
-from ..core.code_file import CodeFile
+from ..core.code_file import READ_ONLY_TIP, CodeFile
 from ..core.code_test_preview import check_lines, equipment, phase_entries
 from ..core.open_in_editor import open_in_editor
 from ..pack_ops import engine_async
@@ -51,11 +51,6 @@ if TYPE_CHECKING:
 FILE = test_format.CODE_SCRIPT
 #: How long the phases wait after the last keystroke before they are read again (ms).
 _PHASES_DELAY_MS = 400
-#: Why a file opens read-only.
-READ_ONLY_TIP = (
-    "Studio cannot keep {file} exactly as it is (mixed line endings or special characters): "
-    "edit it in your editor."
-)
 #: The question when the file changed outside Studio before a save.
 CHANGED_TITLE = "Changed outside Studio"
 CHANGED_TEXT = "{file} was changed outside Studio since it was opened."
@@ -174,6 +169,14 @@ class CodeTestView(QWidget):
     def file(self) -> Path:
         return self.code_file.path
 
+    @property
+    def shared_file(self) -> bool:
+        """The open file is one of the project's shared phases (directly in ``functions/``)."""
+        return self.phase_file is not None and self.phase_file.parent == self._root() / "functions"
+
+    def _root(self) -> Path:
+        return Path(self._ws.project_manager.project_root)
+
     def text(self) -> str:
         """The editor's text exactly (a non-breaking space stays one), its line breaks "\n"."""
         return self.editor.document().toRawText().replace(" ", "\n")
@@ -193,9 +196,10 @@ class CodeTestView(QWidget):
         return True
 
     def open_file(self, path: Path) -> bool:
-        """Show *path*, a file of the project's ``functions/``, as a test is shown; False when it
-        cannot be read (said to the user)."""
-        name = f"functions/{path.name}"
+        """Show *path*, a file of phases in the project (``functions/``, a test's own folder), as
+        a test is shown, named by its path in the project; False when it cannot be read (said to
+        the user)."""
+        name = path.relative_to(self._root()).as_posix()
         try:
             code_file = CodeFile(path)
         except (OSError, UnicodeDecodeError) as exc:
@@ -244,6 +248,11 @@ class CodeTestView(QWidget):
         self._clear_results()
         self._show_described(None, "")
 
+    def insert_line(self, number: int, text: str) -> None:
+        """Insert *text* (whole lines) before line *number* (0: the first) of the editor."""
+        cursor = QTextCursor(self.editor.document().findBlockByNumber(number))
+        cursor.insertText(text)
+
     def append(self, text: str) -> None:
         """Add *text* at the end of the editor (a new shared phase), the cursor after it."""
         cursor = self.editor.textCursor()
@@ -263,9 +272,12 @@ class CodeTestView(QWidget):
 
     def _write(self) -> bool:
         """:meth:`save` without what follows it: a file changed outside Studio since it was read
-        is asked about first (Reload, Overwrite, Cancel)."""
+        is asked about first (Reload, Overwrite, Cancel); a read-only one is never written."""
         if not self.dirty:
             return True
+        if self.read_only:
+            QMessageBox.warning(self, "Save Failed", READ_ONLY_TIP.format(file=self.name))
+            return False
         try:
             changed = self.code_file.changed_outside()
         except OSError as exc:
@@ -338,7 +350,7 @@ class CodeTestView(QWidget):
                 self.pill, *(("warning", "● Modified") if dirty else ("success", "✓ Saved"))
             )
             self.pill.setToolTip("")
-        self.save_button.setEnabled(dirty)
+        self.save_button.setEnabled(dirty and not self.read_only)
         self.changed.emit()
 
     def _open_in_editor(self) -> None:
@@ -354,10 +366,10 @@ class CodeTestView(QWidget):
         """Ask the engine what the editor's text holds (off the GUI thread)."""
         if not self.is_open:
             return
-        root, test_dir, path, source = (
+        root, test_dir, name, source = (
             self._ws.project_manager.project_root,
             self.test_dir,
-            self.phase_file,
+            self.name,
             self.text(),
         )
         self._phases_timer.stop()
@@ -371,7 +383,7 @@ class CodeTestView(QWidget):
         if test_dir is not None:
             read = lambda: code_test_check.describe(root, test_dir.name, source)  # noqa: E731
         else:
-            read = lambda: code_test_check.describe_phase_file(root, path.name, source)  # noqa: E731
+            read = lambda: code_test_check.describe_phase_file(root, name, source)  # noqa: E731
         engine_async.call(
             root, read, done, cue=self.phases.loading, cue_label="Reading the phases…"
         )
@@ -393,7 +405,7 @@ class CodeTestView(QWidget):
                 (p["file"], p["function"]): p["used_by"]
                 for p in self._ws.workspace_widget.shared_phases.phases
             }
-            entries = phase_entries(described, self.name, used_by)
+            entries = phase_entries(described, self.name, used_by if self.shared_file else None)
             self.phases.show_entries(entries, "", why)
         self.changed.emit()
 
@@ -402,9 +414,16 @@ class CodeTestView(QWidget):
         self.editor.setFocus()
 
     def _open_shared(self, file: str, function: str, line: int) -> None:
-        """A shared phase of the open test clicked: its file opens here, at its line."""
-        root = self._ws.project_manager.project_root
-        self._ws._code_test_controller.open_phase_file(Path(root) / file, line, (file, function))
+        """A phase of another file clicked (``functions/…``, or ``openhtf/…`` of the test's own
+        folder, as describe names them): that file opens here, at its line — never one that is
+        not there."""
+        folder, _, rest = file.partition("/")
+        base = self._root() / "functions" if folder == "functions" else self.test_dir / folder
+        path = base / rest
+        if not path.is_file():
+            QMessageBox.warning(self, "Open File", f"{file} is not there: {path}")
+            return
+        self._ws._code_test_controller.open_phase_file(path, line, (file, function))
 
     # ---- the Check ---------------------------------------------------------------------------
 
@@ -413,7 +432,12 @@ class CodeTestView(QWidget):
         off the GUI thread; its results line under the editor, its describe in the phases."""
         if not self.is_open or not self._write():
             return
-        root, test_dir, path = self._ws.project_manager.project_root, self.test_dir, self.file
+        root, test_dir, path, name = (
+            self._ws.project_manager.project_root,
+            self.test_dir,
+            self.file,
+            self.name,
+        )
         self._phases_timer.stop()
         self._asked += 1  # the Check's describe is the phases': no other one lands over it
         asked = self._asked
@@ -429,7 +453,7 @@ class CodeTestView(QWidget):
         if test_dir is not None:
             run = lambda: code_test_check.check(root, test_dir.name)  # noqa: E731
         else:
-            run = lambda: code_test_check.check_phase_file(root, path.name)  # noqa: E731
+            run = lambda: code_test_check.check_phase_file(root, name)  # noqa: E731
         self._clear_results()
         engine_async.call(
             root,

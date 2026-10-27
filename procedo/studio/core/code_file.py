@@ -12,6 +12,12 @@ from typing import Optional
 
 from procedo.core import atomic_write
 
+#: Why a file opens read-only (it cannot be written back as it is).
+READ_ONLY_TIP = (
+    "Studio cannot keep {file} exactly as it is (mixed line endings or special characters): "
+    "edit it in your editor."
+)
+
 
 def _stamp(path: Path) -> Optional[tuple[int, int]]:
     """``(mtime_ns, size)`` of *path*, None when it is gone; OSError when it cannot be asked."""

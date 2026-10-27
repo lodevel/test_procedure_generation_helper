@@ -30,9 +30,11 @@ def _with_unit(value, unit: str) -> str:
 
 
 def limits(measurement: dict) -> str:
-    """``4.75–5.25 V``, ``≥ 4.75 V``, ``≤ 5.25 V``, else its validators as OpenHTF writes them
-    ("" without any)."""
+    """``4.75–5.25 V``, ``= 5 V``, ``≥ 4.75 V``, ``≤ 5.25 V``, else its validators as OpenHTF
+    writes them ("" without any)."""
     low, high, unit = measurement.get("lower"), measurement.get("upper"), _unit(measurement)
+    if low is not None and low == high:
+        return f"= {_with_unit(low, unit)}"
     if low is not None and high is not None:
         return f"{low}–{_with_unit(high, unit)}"
     if low is not None:

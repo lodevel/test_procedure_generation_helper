@@ -105,7 +105,7 @@ def _real_engine(monkeypatch, asked: list | None = None) -> None:
         return CodeCheck((), warnings, found["summary"], found["describe"])
 
     def check_file(root, file):
-        found = code_test.check_file(Path(root) / "functions" / file)
+        found = code_test.check_file(Path(root) / file, file)
         warnings = tuple(found["describe"]["warnings"]) if found["describe"] else ()
         return CodeCheck(tuple(found["problems"]), warnings, found["summary"], found["describe"])
 
@@ -115,7 +115,7 @@ def _real_engine(monkeypatch, asked: list | None = None) -> None:
         code_test_check,
         "describe_phase_file",
         lambda root, file, source=None: (
-            code_test.describe_file(Path(root) / "functions" / file, source),
+            code_test.describe_file(Path(root) / file, file, source),
             "",
         ),
     )
@@ -403,6 +403,9 @@ def test_the_phases_tab_lists_each_phase_folded_or_open_and_the_equipment():
         ["common_phases.py, line 4 (opens the file)"],
     )
     assert equipment(described) == "Equipment: Dmm (DMM1), Psu (PSU1)"
+    from procedo.studio.core.code_test_preview import limits
+
+    assert limits({"lower": 5, "upper": 5, "units": "V"}) == "= 5 V"
     pins = [f"J2 pin {n}" for n in (6, 7, 8, 9, 10, 1, 2, 3, 4, 5)]
     assert pin_ranges(["TP 5V0", *pins, "P15 pin 29", "P15 pin 27", "P15 pin 28", "D3"]) == (
         "TP 5V0",
@@ -802,9 +805,19 @@ def test_new_shared_phase_asks_its_name_function_and_file(qapp):
     dialog.new_edit.setText("power")
     assert dialog.is_new and dialog.new_problem.text() == "functions/power.py already exists."
     assert not dialog.create_button.isEnabled()
+    dialog.new_edit.setText("Power")
+    assert dialog.new_problem.text() == "functions/Power.py already exists."  # Windows: one file
     dialog.new_edit.setText("bus_phases")
     assert dialog.file == "bus_phases.py" and dialog.create_button.isEnabled()
+    assert dialog.new_edit.placeholderText() == ""
     dialog.deleteLater()
+    mixed = NewPhaseDialog({"mixed.py": ""}, "mixed.py", {"mixed.py"})
+    mixed.name_edit.setText("A")
+    assert not mixed.create_button.isEnabled() and mixed.new_problem.text() == (
+        "Studio cannot keep functions/mixed.py exactly as it is (mixed line endings or special "
+        "characters): edit it in your editor."
+    )
+    mixed.deleteLater()
 
 
 def _new_phase(monkeypatch, name, function, new_file=""):
@@ -851,3 +864,109 @@ def test_create_appends_a_starter_phase_in_the_editor_the_cursor_in_its_body(
     )
     assert view.dirty and view.save()
     assert made.read_text(encoding="utf-8") == view.text()
+
+
+def test_a_read_only_file_of_phases_is_never_written(make_window, monkeypatch, tmp_path, mbox):
+    """Mixed line endings: Studio cannot give it back. "+ New shared phase…" refuses it; text put
+    in its editor all the same is never saved (Save off, a save refused)."""
+    from procedo.studio.dialogs.new_phase_dialog import NewPhaseDialog
+
+    w, root = _opened(make_window, monkeypatch, tmp_path)
+    mixed = root / "functions" / "mixed.py"
+    original = b"import openhtf as htf\r\nx = 1\n"
+    mixed.write_bytes(original)
+    seen = []
+
+    def chosen(dialog):
+        dialog.file_combo.setCurrentText("functions/mixed.py")
+        dialog.name_edit.setText("A")
+        seen.append((dialog.create_button.isEnabled(), dialog.new_problem.isHidden()))
+        return 0
+
+    monkeypatch.setattr(NewPhaseDialog, "exec", chosen)
+    w.workspace_widget.shared_phases.new_button.click()
+    assert seen == [(False, False)]
+    w._code_test_controller.open_phase_file(mixed)
+    _settle()
+    view = w.code_view
+    assert view.read_only and view.pill.text() == "Read-only"
+    view.append("y = 2\n")  # QTextCursor writes into a read-only editor
+    assert view.dirty and not view.save_button.isEnabled()
+    assert not view.save() and mixed.read_bytes() == original
+    assert mbox.warning[-1][0] == "Save Failed"
+    view.close()
+
+
+def test_a_phase_of_the_tests_own_folder_opens_at_its_real_path(
+    make_window, monkeypatch, tmp_path, mbox
+):
+    """A phase from openhtf/helpers.py opens tests/<test>/openhtf/helpers.py (named so), one of
+    functions/pkg/ is named by its path; a file that is not there never opens."""
+    w, root = _opened(make_window, monkeypatch, tmp_path)
+    test_dir = root / "tests" / "AUX0_output"
+    (test_dir / "openhtf" / "helpers.py").write_text(
+        "import openhtf as htf\n\n\n@htf.PhaseOptions(name='Settle')\ndef settle(test):\n    pass\n",
+        encoding="utf-8",
+    )
+    test_py = test_dir / "openhtf" / "test.py"
+    test_py.write_bytes(
+        _CODE.replace(
+            "from common_phases import power_off",
+            "from common_phases import power_off\nfrom helpers import settle",
+        )
+        .replace("htf.Test(power_up, power_off)", "htf.Test(power_up, settle, power_off)")
+        .encode()
+    )
+    w.code_view.reload()
+    _settle(lambda: len(w.code_view.phases.entries) == 3)
+    settle = w.code_view.phases.rows()[1]
+    assert settle.entry.file == "openhtf/helpers.py" and settle.entry.mark == ""
+    _click(settle)
+    view = w.code_view
+    assert view.phase_file == test_dir / "openhtf" / "helpers.py" and not view.shared_file
+    assert view.name == "tests/AUX0_output/openhtf/helpers.py" and _line_of(w) == 5
+    assert w.header.title.text() == view.name and not w.used_by_pill.isVisibleTo(w)
+    _settle(lambda: _rows(w) == [("1 Settle", "L5", [])])
+    view.check()
+    _settle(lambda: view.result_texts())
+    assert view.result_texts() == ["✓ Syntax OK", "✓ 1 step · 0 measurements · 0 instruments"]
+    w.open_test(test_dir)
+    _settle()
+    (root / "functions" / "pkg").mkdir()
+    (root / "functions" / "pkg" / "mod.py").write_text("x = 1\n", encoding="utf-8")
+    view._open_shared("functions/pkg/mod.py", "f", 1)
+    _settle()
+    assert view.name == "functions/pkg/mod.py" and not view.shared_file
+    w.open_test(test_dir)
+    _settle()
+    view._open_shared("functions/gone.py", "f", 1)
+    assert view.test_dir == test_dir
+    assert mbox.warning[-1] == (
+        "Open File",
+        f"functions/gone.py is not there: {root / 'functions' / 'gone.py'}",
+    )
+
+
+def test_a_starter_appended_to_a_file_without_the_openhtf_import_adds_it(
+    make_window, monkeypatch, tmp_path
+):
+    from procedo.core import starter_test
+
+    w, root = _opened(make_window, monkeypatch, tmp_path)
+    plain = root / "functions" / "plain.py"
+    plain.write_bytes(b'\xef\xbb\xbf"""Doc."""\nimport os\n')  # its BOM: read as UTF-8-sig
+
+    from procedo.studio.dialogs.new_phase_dialog import NewPhaseDialog
+
+    def chosen(dialog):
+        dialog.file_combo.setCurrentText("functions/plain.py")
+        dialog.name_edit.setText("Décharge")
+        return QDialog.DialogCode.Accepted if dialog.create_button.isEnabled() else 0
+
+    monkeypatch.setattr(NewPhaseDialog, "exec", chosen)
+    w.workspace_widget.shared_phases.new_button.click()
+    _settle()
+    assert w.code_view.text() == (
+        '"""Doc."""\nimport openhtf as htf\nimport os\n'
+        + starter_test.starter_phase("Décharge", "decharge")
+    )

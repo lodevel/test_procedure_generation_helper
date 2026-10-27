@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
 from procedo.core.starter_test import phase_function
 from procedo.ui import ui_kit
 
+from ..core.code_file import READ_ONLY_TIP
+
 #: A function or a module name Python takes.
 _NAME = re.compile(r"[A-Za-z_]\w*", re.ASCII)
 
@@ -38,11 +40,19 @@ def _is_name(text: str) -> bool:
 class NewPhaseDialog(QDialog):
     """The new phase: :attr:`name`, :attr:`function`, :attr:`file` (``x.py``) and whether that
     file is new (:attr:`is_new`). *files*: each existing file of ``functions/`` (``x.py``) and
-    its text; *current*: the one chosen first."""
+    its text; *current*: the one chosen first; *read_only*: those Studio cannot write back as they
+    are (refused, said under File)."""
 
-    def __init__(self, files: dict[str, str], current: str = "", parent=None) -> None:
+    def __init__(
+        self,
+        files: dict[str, str],
+        current: str = "",
+        read_only: set[str] = frozenset(),
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self._defined = {name: defined_functions(text) for name, text in files.items()}
+        self._read_only = read_only
         self._followed = (
             ""  # the function as last filled from the name: edited by hand once it differs
         )
@@ -67,7 +77,6 @@ class NewPhaseDialog(QDialog):
         self.file_combo.addItems([f"functions/{name}" for name in files])
         self.new = QRadioButton("New")
         self.new_edit = QLineEdit()
-        self.new_edit.setPlaceholderText("____")
         self.new_problem = ui_kit.note()
         group = QButtonGroup(self)
         group.addButton(self.existing)
@@ -149,8 +158,10 @@ class NewPhaseDialog(QDialog):
         if self.is_new and file:
             if not _is_name(module):
                 new_problem = "A file name is letters, digits and _, not starting with a digit."
-            elif file in self._defined:
+            elif file.lower() in {name.lower() for name in self._defined}:  # Windows: one file
                 new_problem = f"functions/{file} already exists."
+        elif file in self._read_only:
+            new_problem = READ_ONLY_TIP.format(file=f"functions/{file}")
         for label, text in ((self.function_problem, problem), (self.new_problem, new_problem)):
             label.setText(text)
             label.setVisible(bool(text))

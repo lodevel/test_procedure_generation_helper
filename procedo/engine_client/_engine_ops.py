@@ -88,7 +88,8 @@ Ops:
                    (input: {"project"}: the reusable phases of its functions/, each with the
                     tests whose openhtf/test.py lists it, by name)
   describe_phase_file → {"ok": true, "describe": {phases, instruments, warnings}}
-                   (input: {"project", "file", "source"?}: functions/<file> read as
+                   (input: {"project", "file", "source"?}: a file of phases, its path in the
+                    project — functions/power.py, tests/<test>/openhtf/helpers.py — read as
                     describe_code_test reads a test; a syntax error: {"ok": false, "kind": "Other"})
   check_phase_file → {"ok": true, "problems": [str], "summary": str, "describe": {...}|null}
                    (input: {"project", "file"}: its syntax, then what it holds; nothing loads it)
@@ -483,23 +484,24 @@ def _op_check_code_test(spec: dict) -> dict:
     return {"ok": True, **code_test.check(*_code_test(spec))}
 
 
-def _phase_file(spec: dict) -> Path:
-    """``functions/<spec["file"]>`` of ``spec["project"]``."""
-    return Path(spec["project"]) / "functions" / spec["file"]
+def _phase_file(spec: dict) -> tuple[Path, str]:
+    """``(the file, its path in the project)``: ``spec["file"]`` (``functions/power.py``) in
+    ``spec["project"]``."""
+    return Path(spec["project"]) / spec["file"], spec["file"]
 
 
 def _op_describe_phase_file(spec: dict) -> dict:
     """What a file of ``functions/`` holds (rules_packager_base.code_test.describe_file)."""
     from rules_packager_base import code_test
 
-    return {"ok": True, "describe": code_test.describe_file(_phase_file(spec), spec.get("source"))}
+    return {"ok": True, "describe": code_test.describe_file(*_phase_file(spec), spec.get("source"))}
 
 
 def _op_check_phase_file(spec: dict) -> dict:
     """A file of ``functions/``'s Check (rules_packager_base.code_test.check_file)."""
     from rules_packager_base import code_test
 
-    return {"ok": True, **code_test.check_file(_phase_file(spec))}
+    return {"ok": True, **code_test.check_file(*_phase_file(spec))}
 
 
 def _op_shared_phases(spec: dict) -> dict:

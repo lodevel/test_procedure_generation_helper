@@ -472,7 +472,7 @@ def test_the_phase_file_ops_read_and_check_a_file_of_functions(tmp_path):
     source = (
         "import openhtf as htf\n@htf.PhaseOptions(name='Power off')\ndef off(test):\n    pass\n"
     )
-    spec = {"project": str(project), "file": "power.py"}
+    spec = {"project": str(project), "file": "functions/power.py"}
     edited = engine_ops.run({"op": "describe_phase_file", **spec, "source": source})
     assert [p["name"] for p in edited["describe"]["phases"]] == ["Power off"]
     broken = engine_ops.run({"op": "check_phase_file", **spec})

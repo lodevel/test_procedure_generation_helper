@@ -20,6 +20,7 @@ from PySide6.QtWidgets import QDialog, QMessageBox
 from procedo.core import starter_test, test_format
 
 from .. import shell
+from ..core.code_file import CodeFile
 from ..dialogs.new_phase_dialog import NewPhaseDialog
 
 if TYPE_CHECKING:
@@ -88,24 +89,36 @@ class CodeTestController:
         mw = self._mw
         functions = Path(mw.project_manager.project_root) / "functions"
         view = mw.code_view
-        files = {}
+        files, read_only = {}, set()  # each file's text; those Studio cannot write back as they are
         for path in sorted(functions.glob("*.py")):
             try:
-                files[path.name] = (
-                    view.text() if path == view.phase_file else path.read_text(encoding="utf-8")
-                )
+                code_file = CodeFile(path)
             except (OSError, UnicodeDecodeError):
+                read_only.add(path.name)
                 files[path.name] = ""
-        if view.phase_file is not None:  # a new file not saved yet is one to append to
-            files.setdefault(view.phase_file.name, view.text())
-        dialog = NewPhaseDialog(files, view.phase_file.name if view.phase_file else "", mw)
+                continue
+            files[path.name] = code_file.text
+            if code_file.encode(code_file.text) != code_file.disk:
+                read_only.add(path.name)
+        current = view.phase_file.name if view.shared_file else ""
+        if current:  # what the editor holds, a new file not saved yet too
+            files[current] = view.text()
+            read_only.discard(current)
+            if view.read_only:
+                read_only.add(current)
+        dialog = NewPhaseDialog(files, current, read_only, mw)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         path = functions / dialog.file  # a new one is not on disk: it opens empty
         if not self.open_phase_file(path, 0, (f"functions/{path.name}", dialog.function)):
             return
+        if view.read_only:  # said in its pill; the dialog refused the ones it knew of
+            return
         text = view.text()
         head = "" if text else starter_test.PHASE_FILE_HEAD
+        if text and (missing := starter_test.missing_import(text)):
+            view.insert_line(*missing)
+            text = view.text()
         view.append(
             head
             + ("" if (text or head).endswith("\n") else "\n")

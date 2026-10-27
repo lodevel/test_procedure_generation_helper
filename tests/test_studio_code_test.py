@@ -95,8 +95,9 @@ def _real_engine(monkeypatch, asked: list | None = None) -> None:
     def check(root, test):
         if asked is not None:
             asked.append(("check", threading.current_thread().name))
-        found = code_test.check(*paths(root, test))
-        return CodeCheck((), (), found["summary"], found["describe"])
+        found = code_test.check(*paths(root, test))  # its load: whether this venv has openhtf
+        warnings = tuple(found["describe"]["warnings"]) if found["describe"] else ()
+        return CodeCheck((), warnings, found["summary"], found["describe"])
 
     monkeypatch.setattr(code_test_check, "describe", describe)
     monkeypatch.setattr(code_test_check, "check", check)
@@ -298,11 +299,12 @@ def test_the_check_results_say_what_failed():
         ("danger", "✗ test.py line 2: '(' was never closed", "")
     ]
     lines = check_lines(CodeCheck(("does not load",), ("w1", "w2"), "1 step", {"phases": []}))
-    assert [text for _tone, text, _tip in lines] == [
-        "✓ Syntax OK",
-        "✗ does not load",
-        "✓ 1 step",
-        "⚠ 2 warnings",
+    assert [(tone, text) for tone, text, _tip in lines] == [
+        ("success", "✓ Syntax OK"),
+        ("danger", "✗ does not load"),
+        ("success", "✓ 1 step"),
+        ("warning", "⚠ w1"),
+        ("warning", "⚠ w2"),
     ]
 
 
@@ -513,3 +515,17 @@ def test_a_change_is_looked_for_by_time_and_size_before_the_bytes(monkeypatch, t
     assert not code_file.changed_outside() and reads == [path]  # its new time is taken
     path.write_bytes(b"x = 2\n")
     assert code_file.changed_outside()
+
+
+def test_the_checks_warnings_are_each_a_line_under_its_results(make_window, monkeypatch, tmp_path):
+    w, _root = _opened(make_window, monkeypatch, tmp_path)
+    w.code_view.editor.setPlainText(_CODE + "print('loaded')\n")
+    w.code_view.check()
+    _settle(lambda: w.code_view.result_texts())
+    assert w.code_view.result_texts() == [
+        "✓ Syntax OK",
+        "✓ Loads in the bundle's environment",
+        "✓ 2 steps · 1 measurement · 2 instruments",
+        "⚠ openhtf/test.py runs code when it is loaded (line 21: print('loaded')): "
+        "move it into a plug or a phase.",
+    ]

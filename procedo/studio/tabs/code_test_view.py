@@ -32,6 +32,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import shiboken6
+
 from procedo.core import code_test_check, test_format
 from procedo.ui import ui_kit
 from procedo.ui.segmented import segment, segmented
@@ -169,15 +171,16 @@ class CodeTestView(QWidget):
         )
         self.check_button.clicked.connect(self.check)
         self.check_cue = ui_kit.LoadingCue()
-        self.results = QHBoxLayout()
-        self.results.setSpacing(12)
+        results = QWidget()  # the ✓ / ✗ row, then one ⚠ line per warning
+        self.results = QVBoxLayout(results)
+        self.results.setContentsMargins(0, 0, 0, 0)
+        self.results.setSpacing(4)
         row = QHBoxLayout(bar)
         row.setContentsMargins(14, 10, 14, 10)
         row.setSpacing(12)
-        row.addWidget(self.check_button)
-        row.addWidget(self.check_cue)
-        row.addLayout(self.results)
-        row.addStretch(1)
+        row.addWidget(self.check_button, 0, Qt.AlignmentFlag.AlignTop)
+        row.addWidget(self.check_cue, 0, Qt.AlignmentFlag.AlignTop)
+        row.addWidget(results, 1)
         return bar
 
     # ---- the open test ---------------------------------------------------------------------
@@ -347,7 +350,7 @@ class CodeTestView(QWidget):
         asked = self._asked
 
         def done(answer) -> None:
-            if asked == self._asked:
+            if shiboken6.isValid(self) and asked == self._asked:  # not closed meanwhile
                 self._show_described(*answer())
 
         engine_async.call(
@@ -402,8 +405,8 @@ class CodeTestView(QWidget):
         asked = self._asked
 
         def done(answer) -> None:
-            if self.test_dir != test_dir:
-                return  # another test opened meanwhile
+            if not shiboken6.isValid(self) or self.test_dir != test_dir:
+                return  # the window closed, or another test opened, meanwhile
             found = answer()
             self._show_results(check_lines(found))
             if found.describe is not None and asked == self._asked:
@@ -423,15 +426,25 @@ class CodeTestView(QWidget):
         ui_kit.clear_layout(self.results)
 
     def _show_results(self, lines: list[tuple[str, str, str]]) -> None:
+        """The ✓ / ✗ results side by side as on the board, each ⚠ warning on its own line."""
         self._clear_results()
+        row = QWidget()
+        checks = QHBoxLayout(row)
+        checks.setContentsMargins(0, 0, 0, 0)
+        checks.setSpacing(12)
+        self.results.addWidget(row)
         for tone, text, tip in lines:
             label = QLabel(text)
             label.setObjectName("checkResult")
             label.setToolTip(tip)
             ui_kit.set_state(label, "tone", tone)
-            self.results.addWidget(label)
+            if tone == "warning":
+                label.setWordWrap(True)
+                self.results.addWidget(label)
+            else:
+                checks.addWidget(label)
+        checks.addStretch(1)
 
     def result_texts(self) -> list[str]:
-        """The results line as shown."""
-        items = (self.results.itemAt(i).widget() for i in range(self.results.count()))
-        return [w.text() for w in items if w is not None]
+        """The results as shown: the ✓ / ✗ row, then the ⚠ lines."""
+        return [label.text() for label in self.results.parentWidget().findChildren(QLabel)]

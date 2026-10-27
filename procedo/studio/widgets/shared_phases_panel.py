@@ -24,6 +24,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import shiboken6
+
 from procedo.core import code_test_check
 from procedo.ui import ui_kit
 
@@ -139,7 +141,7 @@ class SharedPhasesPanel(QWidget):
         asked = self._asked
 
         def done(answer) -> None:
-            if asked == self._asked:
+            if shiboken6.isValid(self) and asked == self._asked:  # not closed meanwhile
                 self._show(answer()[0])
 
         self.show()  # its title and the cue while the engine reads them

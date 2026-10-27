@@ -132,7 +132,8 @@ def preview_html(described: dict) -> str:
 def check_lines(found: CodeCheck) -> list[tuple[str, str, str]]:
     """The Check's results line, ``(tone, text, tooltip)`` each: ``✓ Syntax OK``, ``✓ Loads in
     the bundle's environment``, ``✓ 2 steps · 1 measurement · 2 instruments``; ``✗ why`` in
-    place of what failed; ``⚠ N warnings`` (the tooltip lists them)."""
+    place of what failed (a problem: it cannot run); then ``⚠ warning`` for each warning (what
+    to look at: a measurement without units, code a file runs when it is loaded…)."""
     if found.describe is None:  # a syntax error, or no engine: nothing else was read
         return [("danger", f"✗ {problem}", "") for problem in found.problems]
     lines = [("success", "✓ Syntax OK", "")]
@@ -140,7 +141,4 @@ def check_lines(found: CodeCheck) -> list[tuple[str, str, str]]:
         ("success", "✓ Loads in the bundle's environment", "")
     ]
     lines.append(("success", f"✓ {found.summary}", ""))
-    if found.warnings:
-        n = len(found.warnings)
-        lines.append(("warning", f"⚠ {n} warning{'s' * (n != 1)}", "\n".join(found.warnings)))
-    return lines
+    return lines + [("warning", f"⚠ {warning}", "") for warning in found.warnings]

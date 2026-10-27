@@ -5,6 +5,7 @@ Qt-free: the Phases tab (``widgets.phases_panel``) and the code view paint them.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from procedo.core import test_format
@@ -39,6 +40,44 @@ def limits(measurement: dict) -> str:
     if high is not None:
         return f"≤ {_with_unit(high, unit)}"
     return "; ".join(measurement.get("validators") or ())
+
+
+_PIN = re.compile(r"(.+) pin (\d+)")
+
+
+def pin_ranges(captions) -> tuple[str, ...]:
+    """The test points as shown, each once: a connector's pins as ranges at its first place —
+    ``J2 pin 6`` … ``J2 pin 10``, ``J2 pin 1`` … ``J2 pin 5`` read ``J2 pins 1–10``; a lone one
+    ``P15 pin 29``; anything else as it is."""
+    pins: dict[str, set[int]] = {}
+    order: list[str | tuple[str]] = []
+    for caption in dict.fromkeys(captions):
+        found = _PIN.fullmatch(caption)
+        if found is None:
+            order.append(caption)
+            continue
+        connector = found[1]
+        if connector not in pins:
+            pins[connector] = set()
+            order.append((connector,))
+        pins[connector].add(int(found[2]))
+    out = []
+    for item in order:
+        if isinstance(item, str):
+            out.append(item)
+            continue
+        numbers = sorted(pins[item[0]])
+        runs = [[numbers[0]]]
+        for n in numbers[1:]:
+            if n == runs[-1][-1] + 1:
+                runs[-1].append(n)
+            else:
+                runs.append([n])
+        out += [
+            f"{item[0]} pin {run[0]}" if len(run) == 1 else f"{item[0]} pins {run[0]}–{run[-1]}"
+            for run in runs
+        ]
+    return tuple(out)
 
 
 def _plural(n: int, word: str) -> str:
@@ -84,7 +123,8 @@ class PhaseEntry:
         return f"{self.file.removeprefix('functions/')}, line {self.line} (opens the file)"
 
     def _points(self) -> str:
-        label = "Test point" if len(self.test_points) == 1 else "Test points"
+        one = len(self.test_points) == 1 and " pins " not in self.test_points[0]
+        label = "Test point" if one else "Test points"
         return f"{label}: {', '.join(self.test_points)}"
 
     def _use(self) -> str:
@@ -150,7 +190,7 @@ def phase_entries(
                 " ".join(t for t in (m["name"], limits(m)) if t)
                 for m in phase.get("measurements") or ()
             ),
-            test_points=tuple(dict.fromkeys(m["caption"] for m in phase.get("media") or ())),
+            test_points=pin_ranges(m["caption"] for m in phase.get("media") or ()),
             used_by=tuple(used_by.get(key, ())) if used_by is not None else None,
         )
         entries.append(entry)

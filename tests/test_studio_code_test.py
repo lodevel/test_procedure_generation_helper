@@ -23,7 +23,12 @@ from rules_packager_base import code_test
 from procedo.core import code_test_check
 from procedo.core.code_test_check import CodeCheck
 from procedo.studio.core import open_in_editor as opener
-from procedo.studio.core.code_test_preview import check_lines, equipment, phase_entries
+from procedo.studio.core.code_test_preview import (
+    check_lines,
+    equipment,
+    phase_entries,
+    pin_ranges,
+)
 from procedo.studio.dialogs.new_test_dialog import NewTestDialog
 
 from .test_main_window_characterization import (
@@ -154,6 +159,8 @@ def test_a_code_test_opens_in_the_code_view_with_the_phases_describe_reads(
         ("2 Power off", "shared", ["common_phases.py, line 5 (opens the file)"]),
     ]
     assert w.side_tabs.widget(1) is w.code_view.phases and w.phase_count.text() == "2"
+    shown = [label.text() for label in w.code_view.phases.findChildren(QLabel)]
+    assert not [t for t in shown if "Click" in t or "export" in t]  # no notes in the GUI
     assert w.header.title.text() == "AUX0_output" and w.header.subtitle.text().endswith("2 steps")
     assert w.artifact_status.isHidden() and not w.inactive_pill.isHidden()
     assert w.inactive_pill.text() == "Text version: inactive, not updated"
@@ -217,6 +224,8 @@ def test_the_check_runs_off_the_gui_thread_and_shows_its_results_line(
     w.code_view.check()
     _settle(lambda: w.code_view.result_texts())
     assert [where for what, where in asked if what == "check"] == ["engine-call"]
+    row = w.code_view.results.itemAt(0).widget()
+    assert row.layout().hasHeightForWidth()  # the ✓ results wrap when the row is too narrow
     assert w.code_view.result_texts() == [
         "✓ Syntax OK",
         "✓ Loads in the bundle's environment",
@@ -394,6 +403,18 @@ def test_the_phases_tab_lists_each_phase_folded_or_open_and_the_equipment():
         ["common_phases.py, line 4 (opens the file)"],
     )
     assert equipment(described) == "Equipment: Dmm (DMM1), Psu (PSU1)"
+    pins = [f"J2 pin {n}" for n in (6, 7, 8, 9, 10, 1, 2, 3, 4, 5)]
+    assert pin_ranges(["TP 5V0", *pins, "P15 pin 29", "P15 pin 27", "P15 pin 28", "D3"]) == (
+        "TP 5V0",
+        "J2 pins 1–10",
+        "P15 pins 27–29",
+        "D3",
+    )
+    assert pin_ranges(["P15 pin 29", "P15 pin 31", "P15 pin 29"]) == ("P15 pin 29", "P15 pin 31")
+    (alone,) = phase_entries(
+        {"phases": [{**described["phases"][0], "media": media("P15 pin 29", "P15 pin 30")}]}
+    )
+    assert alone.details()[-1][1] == "Test points: P15 pins 29–30"
     assert equipment({"phases": []}) == ""
     # a file of shared phases: each phase's tests
     mine = phase_entries(
@@ -715,8 +736,6 @@ def test_edit_opens_the_shared_phase_file_in_studios_own_editor(
     load: its tests load it) — and its phases, with the tests that use each, in the Phases tab."""
     from PySide6.QtWidgets import QMessageBox
 
-    from procedo.studio.tabs.code_test_view import FILE_HINT
-
     w, root = _opened(make_window, monkeypatch, tmp_path)
     shared = root / "functions" / "common_phases.py"
     _shared_row(w).edit_button.click()
@@ -730,7 +749,6 @@ def test_edit_opens_the_shared_phase_file_in_studios_own_editor(
     assert not w.version_switch.isVisibleTo(w) and w.middle.currentWidget() is view
     assert view.file_label.text() == "functions/common_phases.py"
     assert w.save_action.text() == "&Save functions/common_phases.py"
-    assert view.phases.hint.text() == FILE_HINT
     assert _rows(w) == [("1 Power off", "L5", ["used by AUX0_output"])]
     assert _shared_row(w).property("selected") is True
     assert w.workspace_widget._current_opened_test is None

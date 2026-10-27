@@ -115,7 +115,6 @@ class PhasesPanel(QWidget):
         self._row_widgets: list[_PhaseRow] = []
         self._open: set[tuple[str, str]] = set()  # the phases shown open, by file and function
         self._current: tuple[str, str] | None = None  # the one clicked last
-        self.hint = ui_kit.note()
         self.loading = ui_kit.LoadingCue()
         self.problem = ui_kit.note()
         rows = QWidget()
@@ -132,21 +131,16 @@ class PhasesPanel(QWidget):
         column = QVBoxLayout(self)
         column.setContentsMargins(12, 10, 12, 10)
         column.setSpacing(8)
-        column.addWidget(self.hint)
         column.addWidget(self.loading)
         column.addWidget(self.problem)
         column.addWidget(self.list, 1)
         column.addWidget(self._equipment_rule)
         column.addWidget(self.equipment)
-        self.show_entries([], "", "")
+        self.show_entries([], "")
 
-    def show_entries(
-        self, entries: list[PhaseEntry], equipment: str, hint: str, why: str = ""
-    ) -> None:
-        """List *entries* under *hint*, *equipment* at the bottom ("" hides it); *why*: why the
-        code cannot be read (the list as it was stays)."""
-        self.hint.setText(hint)
-        self.hint.setVisible(bool(hint))
+    def show_entries(self, entries: list[PhaseEntry], equipment: str, why: str = "") -> None:
+        """List *entries*, *equipment* at the bottom ("" hides it); *why*: why the code cannot be
+        read (the list as it was stays)."""
         self.problem.setText(f"The phases cannot be read: {why}" if why else "")
         self.problem.setVisible(bool(why))
         if why:

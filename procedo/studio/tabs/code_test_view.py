@@ -33,6 +33,7 @@ import shiboken6
 
 from procedo.core import code_test_check, test_format
 from procedo.ui import ui_kit
+from procedo.ui.flow_layout import FlowLayout
 
 from ..core.code_file import CodeFile
 from ..core.code_test_preview import check_lines, equipment, phase_entries
@@ -48,9 +49,6 @@ if TYPE_CHECKING:
 
 #: The code version's file in its test folder, as the card names it.
 FILE = test_format.CODE_SCRIPT
-#: The Phases tab's hint: a test's phases, a file's.
-TEST_HINT = "Read from the code — what the export prints. Click a phase: its line."
-FILE_HINT = "The phases in this file. Click one: its line."
 #: How long the phases wait after the last keystroke before they are read again (ms).
 _PHASES_DELAY_MS = 400
 #: Why a file opens read-only.
@@ -389,14 +387,14 @@ class CodeTestView(QWidget):
         described = self.described or {}
         if self.phase_file is None:
             entries = phase_entries(described)
-            self.phases.show_entries(entries, equipment(described), TEST_HINT, why)
+            self.phases.show_entries(entries, equipment(described), why)
         else:
             used_by = {
                 (p["file"], p["function"]): p["used_by"]
                 for p in self._ws.workspace_widget.shared_phases.phases
             }
             entries = phase_entries(described, self.name, used_by)
-            self.phases.show_entries(entries, "", FILE_HINT if self.is_open else "", why)
+            self.phases.show_entries(entries, "", why)
         self.changed.emit()
 
     def _jump(self, line: int) -> None:
@@ -447,13 +445,13 @@ class CodeTestView(QWidget):
         self._checked = False
 
     def _show_results(self, lines: list[tuple[str, str, str]]) -> None:
-        """The ✓ / ✗ results side by side as on the board, each ⚠ warning on its own line."""
+        """The ✓ / ✗ results side by side as on the board (wrapping when they do not fit), each
+        ⚠ warning on its own line."""
         self._clear_results()
         self._checked = True
         row = QWidget()
-        checks = QHBoxLayout(row)
+        checks = FlowLayout(row, spacing=12)  # they wrap when the row is too narrow
         checks.setContentsMargins(0, 0, 0, 0)
-        checks.setSpacing(12)
         self.results.addWidget(row)
         for tone, text, tip in lines:
             label = QLabel(text)
@@ -465,7 +463,6 @@ class CodeTestView(QWidget):
                 self.results.addWidget(label)
             else:
                 checks.addWidget(label)
-        checks.addStretch(1)
 
     def result_texts(self) -> list[str]:
         """The results as shown: the ✓ / ✗ row, then the ⚠ lines."""

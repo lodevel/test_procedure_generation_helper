@@ -24,7 +24,6 @@ from ..core import ArtifactManager, ArtifactType, SessionState
 from ..core.proposal import discard_pending
 from ..llm.transcript_replay import TEST_CHANGED
 from ..shell import VIEWS, show_versions
-from ..tabs.code_test_view import FILE as CODE_FILE
 from .project_controller import refresh_parser_buttons
 
 if TYPE_CHECKING:
@@ -228,13 +227,9 @@ class DocumentController:
         """Open the test in *path*, the open one left already (:meth:`may_leave_test`): a code
         test in the code view, a text test in the text views."""
         mw = self._mw
-        self.discard_proposals()
-        # a send waiting for the AI server is not sent
-        mw.llm_server.drop_waiting_sends(TEST_CHANGED)
-        self._save_session()
+        self.leave_open_test()
         if active_format(path) == CODE:
-            if mw.artifact_manager:
-                self._close_test()  # the text tools and the Assistant work on no test
+            self.close_text_test()
             mw._code_test_controller.open(path)
             return
         mw._code_test_controller.close()
@@ -334,6 +329,19 @@ class DocumentController:
             except Exception as e:
                 log.warning(f"Failed to save session state before the test closed: {e}")
 
+    def leave_open_test(self) -> None:
+        """Something else opens: the open test's proposals are discarded, a send waiting for the
+        AI server is not sent, its session is saved."""
+        self.discard_proposals()
+        self._mw.llm_server.drop_waiting_sends(TEST_CHANGED)
+        self._save_session()
+
+    def close_text_test(self) -> None:
+        """A code test or a file of shared phases opens: an open text test closes (the text
+        tools and the Assistant work on no test)."""
+        if self._mw.artifact_manager:
+            self._close_test()
+
     def leave_test(self) -> None:
         """Another project opens: the open test's session is saved and the test closed."""
         if self._mw.artifact_manager:
@@ -399,7 +407,7 @@ class DocumentController:
         status labels.
         """
         mw = self._mw
-        if mw.code_view.test_dir is not None:
+        if mw.code_view.is_open:
             mw.code_view.save()
             return
         if not mw.artifact_manager:
@@ -509,7 +517,7 @@ class DocumentController:
         editors and dirty flags reflect the saved state.
         """
         mw = self._mw
-        if mw.code_view.test_dir is not None:
+        if mw.code_view.is_open:
             return mw.code_view.save()
         if not mw.artifact_manager:
             return True
@@ -552,7 +560,7 @@ class DocumentController:
             True if the user cancelled (caller should abort), False otherwise
         """
         mw = self._mw
-        dirty = [CODE_FILE] if mw.code_view.dirty else []
+        dirty = [mw.code_view.name] if mw.code_view.dirty else []
         if mw.artifact_manager:
             # Sync only the CURRENT tab to catch un-saved editor changes.
             # Inactive tabs may have stale content for shared artifacts.

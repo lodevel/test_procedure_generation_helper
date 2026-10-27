@@ -1,10 +1,11 @@
 """Studio and a code test (design openhtf_results_design.md slices 13-14; boards StudioCode,
-StudioCompare, StudioNew, StudioPhases).
+StudioCompare, StudioNew, StudioPhases, StudioPanel).
 
-A code test opens in the code view: its openhtf/test.py beside the phase list the engine's
-describe reads (a click jumps to the line), the export preview, the Check (off the GUI thread);
-the header's Text | Code switch writes test.json; the Tests column shows TXT / HTF; "+ New test…"
-makes a Python test from the starter; the shared phases show only while a code test is open.
+A code test opens in the code view: its openhtf/test.py alone in the middle, the phase list the
+engine's describe reads in the right panel's Phases tab (a click jumps to the line), the Check
+(off the GUI thread); the header's Text | Code switch writes test.json; the Tests column shows
+TXT / HTF; "+ New test…" makes a Python test from the starter; the shared phases show only while
+code is open, each with its own Copy import and Edit, and a file of them opens in the same editor.
 
 The engine's answers are its real ``rules_packager_base.code_test`` functions, called in place of
 the project's TOOLS engine (``procedo.core.code_test_check``).
@@ -22,9 +23,8 @@ from rules_packager_base import code_test
 from procedo.core import code_test_check
 from procedo.core.code_test_check import CodeCheck
 from procedo.studio.core import open_in_editor as opener
-from procedo.studio.core.code_test_preview import check_lines, preview_html
+from procedo.studio.core.code_test_preview import check_lines, equipment, phase_entries
 from procedo.studio.dialogs.new_test_dialog import NewTestDialog
-from procedo.studio.tabs.code_test_view import PHASES, PREVIEW
 
 from .test_main_window_characterization import (
     _make_project,
@@ -99,8 +99,22 @@ def _real_engine(monkeypatch, asked: list | None = None) -> None:
         warnings = tuple(found["describe"]["warnings"]) if found["describe"] else ()
         return CodeCheck((), warnings, found["summary"], found["describe"])
 
+    def check_file(root, file):
+        found = code_test.check_file(Path(root) / "functions" / file)
+        warnings = tuple(found["describe"]["warnings"]) if found["describe"] else ()
+        return CodeCheck(tuple(found["problems"]), warnings, found["summary"], found["describe"])
+
     monkeypatch.setattr(code_test_check, "describe", describe)
     monkeypatch.setattr(code_test_check, "check", check)
+    monkeypatch.setattr(
+        code_test_check,
+        "describe_phase_file",
+        lambda root, file, source=None: (
+            code_test.describe_file(Path(root) / "functions" / file, source),
+            "",
+        ),
+    )
+    monkeypatch.setattr(code_test_check, "check_phase_file", check_file)
     monkeypatch.setattr(
         code_test_check,
         "shared_phases",
@@ -118,12 +132,14 @@ def _opened(make_window, monkeypatch, tmp_path, test="AUX0_output", asked=None):
     return w, root
 
 
-def _tree(w) -> list[str]:
-    tree, out = w.code_view.phase_tree, []
-    for i in range(tree.topLevelItemCount()):
-        top = tree.topLevelItem(i)
-        out.append(top.text(0))
-        out += [f"  {top.child(k).text(0)}" for k in range(top.childCount())]
+def _rows(w) -> list[tuple[str, str, list[str]]]:
+    """The Phases tab as shown: each phase's title, its mark, its lines."""
+    from procedo.studio.widgets.phases_panel import _Line
+
+    out = []
+    for row in w.code_view.phases.rows():
+        title, *lines = [label.text() for label in row.findChildren(_Line)]
+        out.append((title, row.entry.mark, lines))
     return out
 
 
@@ -133,30 +149,64 @@ def test_a_code_test_opens_in_the_code_view_with_the_phases_describe_reads(
     w, root = _opened(make_window, monkeypatch, tmp_path)
     assert w.middle.currentWidget() is w.code_view and w.artifact_manager is None
     assert w.code_view.editor.toPlainText() == _CODE  # its CRLF shown as lines
-    assert _tree(w) == [
-        "1 Power-up checks",
-        "  1.1 Set 28 V, limit 1 A",
-        "  1.2 Measure the 5 V rail on TP 5V0",
-        "  v5 4.75–5.25 V",
-        "2 Power off (shared)",
+    assert _rows(w) == [  # folded: each one's summary
+        ("1 Power-up checks", "L12", ["2 sub-steps · TP 5V0", "v5 4.75–5.25 V"]),
+        ("2 Power off", "shared", ["common_phases.py, line 5 (opens the file)"]),
     ]
+    assert w.side_tabs.widget(1) is w.code_view.phases and w.phase_count.text() == "2"
     assert w.header.title.text() == "AUX0_output" and w.header.subtitle.text().endswith("2 steps")
     assert w.artifact_status.isHidden() and not w.inactive_pill.isHidden()
     assert w.inactive_pill.text() == "Text version: inactive, not updated"
     assert not w.dock.isEnabled()  # the Assistant works on the text views
 
 
+def _click(widget) -> None:
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    for kind in (QMouseEvent.Type.MouseButtonPress, QMouseEvent.Type.MouseButtonRelease):
+        widget.event(
+            QMouseEvent(
+                kind,
+                QPointF(2, 2),
+                QPointF(2, 2),
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+        )
+    _settle()
+
+
+def _line_of(w) -> int:
+    return w.code_view.editor.textCursor().blockNumber() + 1
+
+
 def test_clicking_a_phase_or_a_sub_step_jumps_to_its_line(make_window, monkeypatch, tmp_path):
+    """Board StudioPanel A: a click on a phase opens it on its details and goes to its def; a
+    click on a sub-step, to its line; ▾ folds it again."""
+    from procedo.studio.widgets.phases_panel import _Line
+
     w, _root = _opened(make_window, monkeypatch, tmp_path)
-    view = w.code_view
-    view.show_view(PHASES)  # the phases alone: a click brings the editor back
-    sub = view.phase_tree.topLevelItem(0).child(1)  # 1.2, line 16
-    view._on_phase_clicked(sub, 0)
-    assert view.editor.textCursor().blockNumber() + 1 == 16 and view.editor_card.isVisibleTo(view)
-    view._on_phase_clicked(view.phase_tree.topLevelItem(0), 0)
-    assert view.editor.textCursor().blockNumber() + 1 == 12  # its def
-    view._on_phase_clicked(view.phase_tree.topLevelItem(1), 0)  # the shared one: another file
-    assert view.editor.textCursor().blockNumber() + 1 == 12
+    row = w.code_view.phases.rows()[0]
+    _click(row)
+    assert _line_of(w) == 12  # its def
+    assert _rows(w)[0][2] == [
+        "Power the GCU at 28 V and check the 5 V rail.",
+        "1.1 Set 28 V, limit 1 A",
+        "1.2 Measure the 5 V rail on TP 5V0",
+        "v5 4.75–5.25 V",
+        "Test point: TP 5V0",
+    ]
+    assert w.code_view.phases.rows()[0].property("selected") is True
+    sub = [
+        x for x in w.code_view.phases.rows()[0].findChildren(_Line) if x.text().startswith("1.2")
+    ]
+    _click(sub[0])
+    assert _line_of(w) == 16
+    w.code_view.phases.rows()[0].arrow.click()
+    _settle()
+    assert _rows(w)[0][2] == ["2 sub-steps · TP 5V0", "v5 4.75–5.25 V"]
 
 
 def test_the_check_runs_off_the_gui_thread_and_shows_its_results_line(
@@ -172,6 +222,10 @@ def test_the_check_runs_off_the_gui_thread_and_shows_its_results_line(
         "✓ Loads in the bundle's environment",
         "✓ 2 steps · 1 measurement · 2 instruments",
     ]
+    w.code_view.editor.insertPlainText("# edited\n")  # board StudioPanel B
+    _settle(lambda: w.code_view.result_texts() == ["Not checked since the last edit"])
+    w.code_view.editor.insertPlainText("# again\n")
+    assert w.code_view.result_texts() == ["Not checked since the last edit"]
 
 
 def test_save_writes_the_file_its_line_endings_kept(make_window, monkeypatch, tmp_path):
@@ -185,7 +239,7 @@ def test_save_writes_the_file_its_line_endings_kept(make_window, monkeypatch, tm
     _settle()
     disk = (root / "tests" / "AUX0_output" / "openhtf" / "test.py").read_bytes()
     assert disk == _CODE.replace("Set 28 V, limit 1 A", "Set 24 V").replace("\n", "\r\n").encode()
-    _settle(lambda: _tree(w)[1] == "  1.1 Set 24 V")  # the phases follow the editor
+    _settle(lambda: w.code_view.phases.entries[0].substeps[0][0] == "Set 24 V")  # they follow
     assert view.pill.text() == "✓ Saved"
 
 
@@ -233,6 +287,36 @@ def test_the_shared_phases_show_only_while_a_code_test_is_open(make_window, monk
     assert not panel.isVisibleTo(w) and panel.phases == []
 
 
+def test_the_right_panel_is_assistant_and_phases_and_folds_to_a_rail_remembered(
+    make_window, monkeypatch, tmp_path
+):
+    """Board StudioPanel A-C: a code test's middle is its editor alone (no Code · Phases · Export
+    preview switch, no side preview); the right panel's tabs are Assistant | Phases (its count),
+    a text test's only Assistant; » folds it to a rail of one button per tab, remembered."""
+    from PySide6.QtWidgets import QPushButton, QTabWidget
+
+    from procedo.core import app_settings
+    from procedo.ui.ui_kit import CollapsibleSidePane
+
+    w, root = _opened(make_window, monkeypatch, tmp_path)
+    view = w.code_view
+    assert not view.findChildren(QTabWidget) and not hasattr(view, "preview")
+    assert [w.side_tabs.tabText(i) for i in range(w.side_tabs.count())] == ["Assistant", "Phases"]
+    assert w.side_tabs.isTabVisible(1) and not w.phase_count.isHidden()
+    pane = w.findChild(CollapsibleSidePane)
+    rail = [b for b in pane.findChildren(QPushButton) if b.objectName() == "railTab"]
+    pane.set_collapsed(True)
+    assert app_settings.get_side_pane_collapsed(app_settings.STUDIO_SIDE_PANE)
+    assert [b.text() or b.toolTip() for b in rail if b.isVisibleTo(pane)] == ["Assistant", "Phases"]
+    rail[1].click()
+    assert not pane.is_collapsed() and w.side_tabs.currentIndex() == 1
+    w.open_test(root / "tests" / "EPO")
+    _settle()
+    assert not w.side_tabs.isTabVisible(1) and w.side_tabs.currentIndex() == 0
+    assert [b.toolTip() for b in rail if not b.isHidden()] == ["Assistant"]
+    assert not app_settings.get_side_pane_collapsed(app_settings.STUDIO_SIDE_PANE)
+
+
 def test_new_test_python_creates_the_starter_and_opens_it(make_window, monkeypatch, tmp_path):
     w, root = _opened(make_window, monkeypatch, tmp_path, test="EPO")
 
@@ -250,7 +334,13 @@ def test_new_test_python_creates_the_starter_and_opens_it(make_window, monkeypat
     assert not (folder / "procedure_text.md").exists()
 
 
-def test_the_export_preview_is_the_phases_their_sub_steps_expected_and_equipment():
+def test_the_phases_tab_lists_each_phase_folded_or_open_and_the_equipment():
+    """Board StudioPanel A: one entry per phase from describe — its questions, sub-steps,
+    measurements and limits, test points; a shared phase of the teardown marked."""
+
+    def media(*captions):
+        return [{"type": "image", "ref": {"component": c}, "caption": c} for c in captions]
+
     described = {
         "phases": [
             {
@@ -258,7 +348,9 @@ def test_the_export_preview_is_the_phases_their_sub_steps_expected_and_equipment
                 "file": "openhtf/test.py",
                 "line": 9,
                 "description": "Power the GCU at 28 V.",
+                "questions": [{"text": "Plug J2, then press Enter.", "line": 10}],
                 "substeps": [{"text": "Set 28 V", "line": 11}],
+                "media": media("J2 pins 1–10", "TP 5V0"),
                 "measurements": [
                     {
                         "name": "v5",
@@ -272,55 +364,48 @@ def test_the_export_preview_is_the_phases_their_sub_steps_expected_and_equipment
             },
             {
                 "name": "Power off",
+                "function": "power_off",
                 "file": "functions/common_phases.py",
                 "line": 4,
                 "description": "Switch every output off.",
                 "substeps": [],
                 "measurements": [],
+                "teardown": True,
             },
         ],
         "instruments": ["Dmm", "Psu"],
         "constants": [{"name": "PSU1_VISA"}, {"name": "DMM1_VISA"}],
     }
-    html = preview_html(described)
-    for part in (
-        "<b>1. Power-up checks</b>",
+    up, off = phase_entries(described)
+    assert (up.mark, up.summary()) == (
+        "L9",
+        ["1 sub-step · 1 question · J2 pins 1–10, TP 5V0", "v5 4.75–5.25 V"],
+    )
+    assert [text for _kind, text, _line in up.details()] == [
+        "Power the GCU at 28 V.",
+        "? “Plug J2, then press Enter.”",
         "1.1 Set 28 V",
-        "Expected: v5 (5 V rail) between 4.75 V and 5.25 V",
-        "<b>2. Power off</b>",
-        "(shared phase, functions/common_phases.py)",
-        '<hr><p style="margin:0">Equipment: Dmm (DMM1), Psu (PSU1)</p>',
-    ):
-        assert part in html
-    assert "Test points" not in html  # no phase names one
-
-
-def test_the_export_preview_lists_the_test_points_the_phases_name_under_the_equipment():
-    """Slice 15, board StudioCode: "Test points: TP 5V0" — each phase's media (describe), each once."""
-
-    def media(*captions):
-        return [{"type": "image", "ref": {"component": c}, "caption": c} for c in captions]
-
-    described = {
-        "phases": [
-            {
-                "name": "A",
-                "file": "openhtf/test.py",
-                "line": 1,
-                "media": media("TP 5V0", "P15 pin 16"),
-            },
-            {"name": "B", "file": "openhtf/test.py", "line": 5, "media": media("TP 5V0")},
-            {"name": "C", "file": "openhtf/test.py", "line": 9},
-        ],
-        "instruments": ["Psu"],
-        "constants": [{"name": "PSU1_VISA"}],
-    }
-    assert preview_html(described).endswith(
-        '<hr><p style="margin:0">Equipment: Psu (PSU1)<br>Test points: TP 5V0, P15 pin 16</p>'
+        "v5 4.75–5.25 V",
+        "Test points: J2 pins 1–10, TP 5V0",
+    ]
+    assert (off.mark, off.here, off.summary()) == (
+        "shared · teardown",
+        False,
+        ["common_phases.py, line 4 (opens the file)"],
     )
-    assert preview_html({"phases": described["phases"]}).endswith(
-        '<hr><p style="margin:0">Test points: TP 5V0, P15 pin 16</p>'
+    assert equipment(described) == "Equipment: Dmm (DMM1), Psu (PSU1)"
+    assert equipment({"phases": []}) == ""
+    # a file of shared phases: each phase's tests
+    mine = phase_entries(
+        {"phases": described["phases"][1:]},
+        "functions/common_phases.py",
+        {("functions/common_phases.py", "power_off"): ["AUX0_output"]},
     )
+    assert (mine[0].mark, mine[0].summary()) == ("L4", ["used by AUX0_output"])
+    assert mine[0].details()[-1][1] == "no sub-steps yet · used by AUX0_output"
+    assert phase_entries({"phases": described["phases"][1:]}, "functions/common_phases.py", {})[
+        0
+    ].summary() == ["used by no test"]
 
 
 def test_the_check_results_say_what_failed():
@@ -334,6 +419,11 @@ def test_the_check_results_say_what_failed():
         ("success", "✓ 1 step"),
         ("warning", "⚠ w1"),
         ("warning", "⚠ w2"),
+    ]
+    found = CodeCheck((), (), "1 step", {"phases": []})
+    assert [text for _tone, text, _tip in check_lines(found, loads=False)] == [
+        "✓ Syntax OK",
+        "✓ 1 step",  # a file of shared phases: its tests load it
     ]
 
 
@@ -388,15 +478,6 @@ def test_ctrl_f_in_the_code_view_opens_find_and_finds_text(make_window, monkeypa
     assert w.code_view.editor.textCursor().selectedText() == "beta"
 
 
-def test_the_export_preview_view_shows_the_editor_and_the_preview(
-    make_window, monkeypatch, tmp_path
-):
-    w, _root = _opened(make_window, monkeypatch, tmp_path)
-    w.code_view.show_view(PREVIEW)
-    assert w.code_view.side.currentWidget() is w.code_view.preview_card
-    assert "Power-up checks" in w.code_view.preview.toPlainText()
-
-
 def test_unsaved_code_is_asked_about_before_another_test_opens(
     make_window, monkeypatch, tmp_path, mbox
 ):
@@ -429,7 +510,7 @@ def test_a_save_asks_before_overwriting_a_change_made_outside_studio(
     view.editor.setPlainText(_CODE + "# mine\n")
     for choice in ("", code_test_view.OVERWRITE):
         monkeypatch.setattr(
-            code_test_view, "ask_changed_outside", lambda _p, c=choice: asked.append(c) or c
+            code_test_view, "ask_changed_outside", lambda _p, _f, c=choice: asked.append(c) or c
         )
         saved = w._document_controller.on_save_all()
         assert saved is bool(choice)
@@ -437,7 +518,7 @@ def test_a_save_asks_before_overwriting_a_change_made_outside_studio(
     assert _file(root).read_bytes() == (_CODE + "# mine\n").replace("\n", "\r\n").encode()
     _file(root).write_bytes(b"# outside again\r\n")
     view.editor.setPlainText("# mine again\n")
-    monkeypatch.setattr(code_test_view, "ask_changed_outside", lambda _p: code_test_view.RELOAD)
+    monkeypatch.setattr(code_test_view, "ask_changed_outside", lambda *_: code_test_view.RELOAD)
     assert not view.save()
     assert view.editor.toPlainText() == "# outside again\n" and not view.dirty
 
@@ -500,7 +581,7 @@ def test_the_file_comes_back_byte_for_byte(make_window, monkeypatch, tmp_path):
 def test_the_phases_follow_what_the_editor_shows(make_window, monkeypatch, tmp_path):
     w, root = _opened(make_window, monkeypatch, tmp_path)
     w.code_view.editor.setPlainText(_CODE.replace("Power-up checks", "Edited"))
-    _settle(lambda: _tree(w)[0] == "1 Edited")  # read from the editor, not the file
+    _settle(lambda: _rows(w)[0][0] == "1 Edited")  # read from the editor, not the file
     assert b"Power-up checks" in _file(root).read_bytes()
     w.code_view.close()
 
@@ -589,3 +670,166 @@ def test_the_checks_warnings_are_each_a_line_under_its_results(make_window, monk
         "⚠ openhtf/test.py runs code when it is loaded (line 21: print('loaded')): "
         "move it into a plug or a phase.",
     ]
+
+
+def _shared_row(w):
+    (row,) = w.workspace_widget.shared_phases.rows()
+    return row
+
+
+def test_a_shared_phase_row_shows_what_a_test_writes_and_has_its_own_buttons(
+    make_window, monkeypatch, tmp_path
+):
+    """Board StudioPanel D: name, ``power_off()``, description, file · used by N; its own
+    "⧉ Copy import" (the real line, in its tooltip; "✓ Copied" for a moment) and "✎ Edit"; the
+    two bottom buttons are gone, "+ New shared phase…" is under the list."""
+    from PySide6.QtWidgets import QApplication, QPushButton
+
+    from procedo.studio.widgets import shared_phases_panel
+
+    w, _root = _opened(make_window, monkeypatch, tmp_path)
+    panel, row = w.workspace_widget.shared_phases, _shared_row(w)
+    assert [label.text() for label in row.findChildren(QLabel)] == [
+        "Power off",
+        "power_off()",
+        "Switch every output off.",
+        "functions/common_phases.py · used by 1 test",
+    ]
+    assert [b.text() for b in panel.findChildren(QPushButton) if b.isVisibleTo(panel)] == [
+        "⧉ Copy import",
+        "✎ Edit",
+        "+ New shared phase…",
+    ]
+    assert row.copy_button.toolTip() == "Copies: from common_phases import power_off"
+    monkeypatch.setattr(shared_phases_panel, "COPIED_MS", 20)
+    row.copy_button.click()
+    assert QApplication.clipboard().text() == "from common_phases import power_off"
+    assert row.copy_button.text() == "✓ Copied"
+    _settle(lambda: row.copy_button.text() == "⧉ Copy import")
+
+
+def test_edit_opens_the_shared_phase_file_in_studios_own_editor(
+    make_window, monkeypatch, tmp_path, mbox
+):
+    """Board StudioPanel E: the file in the middle like a test — its header, Save, Check (no
+    load: its tests load it) — and its phases, with the tests that use each, in the Phases tab."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from procedo.studio.tabs.code_test_view import FILE_HINT
+
+    w, root = _opened(make_window, monkeypatch, tmp_path)
+    shared = root / "functions" / "common_phases.py"
+    _shared_row(w).edit_button.click()
+    _settle()
+    view = w.code_view
+    assert view.phase_file == shared and view.test_dir is None
+    assert view.editor.toPlainText() == _SHARED and _line_of(w) == 5
+    assert w.header.title.text() == "functions/common_phases.py"
+    assert w.header.subtitle.text().endswith("shared phases")
+    assert w.used_by_pill.text() == "used by 1 test" and w.used_by_pill.isVisibleTo(w)
+    assert not w.version_switch.isVisibleTo(w) and w.middle.currentWidget() is view
+    assert view.file_label.text() == "functions/common_phases.py"
+    assert w.save_action.text() == "&Save functions/common_phases.py"
+    assert view.phases.hint.text() == FILE_HINT
+    assert _rows(w) == [("1 Power off", "L5", ["used by AUX0_output"])]
+    assert _shared_row(w).property("selected") is True
+    assert w.workspace_widget._current_opened_test is None
+    view.check()
+    _settle(lambda: view.result_texts())
+    assert view.result_texts() == ["✓ Syntax OK", "✓ 1 step · 0 measurements · 0 instruments"]
+    view.editor.setPlainText(_SHARED + "# edited\n")
+    mbox.question_answer = QMessageBox.StandardButton.Cancel
+    w.open_test(root / "tests" / "EPO")
+    assert [text for _title, text in mbox.question] == [
+        "You have unsaved changes in:\n  • functions/common_phases.py\n\nSave before continuing?"
+    ]
+    assert view.phase_file == shared
+    assert w._document_controller.on_save_all()
+    assert shared.read_text(encoding="utf-8") == _SHARED + "# edited\n"
+
+
+def test_a_shared_phase_clicked_in_the_tests_phases_opens_its_file(
+    make_window, monkeypatch, tmp_path
+):
+    w, root = _opened(make_window, monkeypatch, tmp_path)
+    _click(w.code_view.phases.rows()[1])  # 2 Power off, shared
+    assert w.code_view.phase_file == root / "functions" / "common_phases.py"
+    assert _line_of(w) == 5 and _shared_row(w).property("selected") is True
+    w.open_test(root / "tests" / "AUX0_output")
+    _settle()
+    assert w.code_view.test_dir is not None and _shared_row(w).property("selected") is False
+
+
+def test_new_shared_phase_asks_its_name_function_and_file(qapp):
+    """Board StudioPanel F: the function follows the name until edited; one the file already
+    has, or a new file that exists, is refused under its field."""
+    from procedo.studio.dialogs.new_phase_dialog import NewPhaseDialog
+
+    dialog = NewPhaseDialog({"common_phases.py": _SHARED, "power.py": ""}, "common_phases.py")
+    assert dialog.existing.isChecked() and not dialog.create_button.isEnabled()
+    dialog.name_edit.setText("Discharge the bus")
+    assert dialog.function == "discharge_the_bus" and dialog.create_button.isEnabled()
+    assert dialog.function_note.text() == (
+        "Filled from the name; what a test writes: from common_phases import discharge_the_bus"
+    )
+    for function in ("power_off", "helper"):
+        dialog.function_edit.setText(function)
+        assert dialog.function_problem.text() == f"{function} is already in common_phases.py."
+        assert not dialog.function_problem.isHidden() and not dialog.create_button.isEnabled()
+    dialog.function_edit.setText("discharge_bus")
+    dialog.name_edit.setText("Discharge the bus now")
+    assert dialog.function == "discharge_bus"  # edited by hand: it no longer follows
+    assert dialog.create_button.isEnabled() and dialog.file == "common_phases.py"
+    dialog.new.setChecked(True)
+    dialog.new_edit.setText("power")
+    assert dialog.is_new and dialog.new_problem.text() == "functions/power.py already exists."
+    assert not dialog.create_button.isEnabled()
+    dialog.new_edit.setText("bus_phases")
+    assert dialog.file == "bus_phases.py" and dialog.create_button.isEnabled()
+    dialog.deleteLater()
+
+
+def _new_phase(monkeypatch, name, function, new_file=""):
+    from procedo.studio.dialogs.new_phase_dialog import NewPhaseDialog
+
+    def chosen(dialog):
+        dialog.name_edit.setText(name)
+        dialog.function_edit.setText(function)
+        if new_file:
+            dialog.new.setChecked(True)
+            dialog.new_edit.setText(new_file)
+        return QDialog.DialogCode.Accepted if dialog.create_button.isEnabled() else 0
+
+    monkeypatch.setattr(NewPhaseDialog, "exec", chosen)
+
+
+def test_create_appends_a_starter_phase_in_the_editor_the_cursor_in_its_body(
+    make_window, monkeypatch, tmp_path
+):
+    """Nothing is written until Save: the file shows Modified; a new file starts with the usual
+    imports."""
+    from procedo.core import starter_test
+
+    w, root = _opened(make_window, monkeypatch, tmp_path)
+    view, shared = w.code_view, root / "functions" / "common_phases.py"
+    _new_phase(monkeypatch, "Discharge the bus", "discharge_bus")
+    w.workspace_widget.shared_phases.new_button.click()
+    _settle()
+    starter = starter_test.starter_phase("Discharge the bus", "discharge_bus")
+    assert view.phase_file == shared and view.text() == _SHARED + starter
+    assert view.dirty and view.pill.text() == "● Modified"
+    assert shared.read_text(encoding="utf-8") == _SHARED
+    cursor = view.editor.textCursor()
+    assert cursor.atEnd() and cursor.block().text() == "    "  # in its body
+    _settle(lambda: [e.name for e in view.phases.entries] == ["Power off", "Discharge the bus"])
+    assert view.save()
+    _new_phase(monkeypatch, "Bus off", "bus_off", new_file="bus_phases")
+    w.workspace_widget.shared_phases.new_button.click()
+    _settle()
+    made = root / "functions" / "bus_phases.py"
+    assert view.phase_file == made and not made.exists()  # written on Save
+    assert view.text() == starter_test.PHASE_FILE_HEAD + starter_test.starter_phase(
+        "Bus off", "bus_off"
+    )
+    assert view.dirty and view.save()
+    assert made.read_text(encoding="utf-8") == view.text()

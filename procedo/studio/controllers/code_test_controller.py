@@ -1,30 +1,34 @@
-"""A code test open in Studio, and the header's Text | Code switch (design
-openhtf_results_design.md §2 points 3-4, slices 13-14; boards StudioCode and StudioCompare).
+"""A code test open in Studio, a file of shared phases open in Studio, and the header's Text |
+Code switch (design openhtf_results_design.md §2 points 3-4, slices 13-14; boards StudioCode,
+StudioCompare, StudioPanel).
 
-Opening a code test shows the code view in the middle (``tabs.code_test_view``) and the shared
-phases in the Workspace column; the text views, their tools and the Assistant (which works on
-them, its column says so) stay closed. The switch writes the test's ``test.json`` and opens the test again in the
-version it now runs; nothing is converted, the other version is kept as it is.
+Opening a code test, or a file of ``functions/`` (a shared phase's "✎ Edit", a shared phase
+clicked in the Phases tab, "+ New shared phase…"), shows the code view in the middle
+(``tabs.code_test_view``), its phases in the right panel's Phases tab and the shared phases in the
+Workspace column; the text views, their tools and the Assistant (which works on them) stay
+closed. The switch writes the test's ``test.json`` and opens the test again in the version it now
+runs; nothing is converted, the other version is kept as it is.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QDialog, QMessageBox
 
-from procedo.core import test_format
+from procedo.core import starter_test, test_format
 
 from .. import shell
+from ..dialogs.new_phase_dialog import NewPhaseDialog
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from ..main_window import StudioWorkspace
 
 
 class CodeTestController:
-    """Opens and closes the code view; switches a test's active version."""
+    """Opens and closes the code view; switches a test's active version; edits and adds shared
+    phases."""
 
     def __init__(self, window: StudioWorkspace) -> None:
         self._mw = window
@@ -37,15 +41,82 @@ class CodeTestController:
             QMessageBox.warning(mw, "Open Test", problem)
         if not mw.code_view.open(path):
             return
-        shell.show_code_view(mw, True)  # the Assistant column says it works on text tests
-        mw.workspace_widget.set_opened_test(path)
-        mw.workspace_widget.shared_phases.load()
+        self._shown(path, None)
         shell.show_versions(mw, path, test_format.CODE)
 
-    def close(self) -> None:
-        """No code test open any more: the text views come back (empty until a test opens)."""
+    def open_phase_file(
+        self, path: Path, line: int = 0, phase: tuple[str, str] | None = None
+    ) -> bool:
+        """Show *path*, a file of ``functions/``, in the code view at *line* (*phase*: the one
+        being edited, its file and function) — the open test or file left first (its unsaved
+        changes asked about); False when it did not open."""
         mw = self._mw
-        if mw.code_view.test_dir is None:
+        doc = mw._document_controller
+        if mw.code_view.phase_file == path:
+            mw.workspace_widget.shared_phases.mark(phase)
+        else:
+            if not doc.may_leave_test():
+                return False
+            doc.leave_open_test()
+            doc.close_text_test()
+            if not mw.code_view.open_file(path):
+                return False
+            self._shown(None, phase)
+            shell.show_versions(mw, None, "")
+        if line:
+            mw.code_view.editor.jump_to_line(line)
+        return True
+
+    def _shown(self, test: Path | None, phase: tuple[str, str] | None) -> None:
+        """The code view shows a test (*test*) or a file of shared phases (*phase*: the one
+        being edited, tinted in the list)."""
+        mw = self._mw
+        shell.show_code_view(mw, True)  # the Assistant column says it works on text tests
+        mw.workspace_widget.set_opened_test(test)
+        mw.workspace_widget.shared_phases.mark(phase)
+        mw.workspace_widget.shared_phases.load()
+
+    def edit_shared_phase(self, phase: dict) -> None:
+        """A shared phase's "✎ Edit" (or a click on its row): its file in the code view, at it."""
+        path = Path(self._mw.project_manager.project_root) / phase["file"]
+        self.open_phase_file(path, phase["line"], (phase["file"], phase["function"]))
+
+    def new_shared_phase(self) -> None:
+        """The Shared phases' "+ New shared phase…": its name, function and file asked; the
+        starter phase appended to that file in the code view (a new file starts with the usual
+        imports), the cursor in its body. Nothing is written until Save: it shows Modified."""
+        mw = self._mw
+        functions = Path(mw.project_manager.project_root) / "functions"
+        view = mw.code_view
+        files = {}
+        for path in sorted(functions.glob("*.py")):
+            try:
+                files[path.name] = (
+                    view.text() if path == view.phase_file else path.read_text(encoding="utf-8")
+                )
+            except (OSError, UnicodeDecodeError):
+                files[path.name] = ""
+        if view.phase_file is not None:  # a new file not saved yet is one to append to
+            files.setdefault(view.phase_file.name, view.text())
+        dialog = NewPhaseDialog(files, view.phase_file.name if view.phase_file else "", mw)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        path = functions / dialog.file  # a new one is not on disk: it opens empty
+        if not self.open_phase_file(path, 0, (f"functions/{path.name}", dialog.function)):
+            return
+        text = view.text()
+        head = "" if text else starter_test.PHASE_FILE_HEAD
+        view.append(
+            head
+            + ("" if (text or head).endswith("\n") else "\n")
+            + starter_test.starter_phase(dialog.name, dialog.function)
+        )
+
+    def close(self) -> None:
+        """Nothing open in the code view any more: the text views come back (empty until a test
+        opens)."""
+        mw = self._mw
+        if not mw.code_view.is_open:
             return
         mw.code_view.close()
         mw.workspace_widget.shared_phases.clear()

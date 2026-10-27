@@ -1,29 +1,17 @@
-"""What Studio shows of a code test from the engine's *describe* of it (boards StudioCode and
-StudioCompare): its phase list, the preview of its export, and its Check's results line.
-Qt-free: the code view (``tabs.code_test_view``) paints them."""
+"""What Studio shows of a code test, or of a file of shared phases, from the engine's *describe*
+of it (boards StudioCode, StudioPanel): the Phases tab's list — one entry per phase, read once,
+folded into a summary or open on its details — its Equipment line, and the Check's results line.
+Qt-free: the Phases tab (``widgets.phases_panel``) and the code view paint them."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from html import escape
 
 from procedo.core import test_format
 from procedo.core.code_test_check import CodeCheck
 
 #: The file a phase in it is written in: a phase's ``file`` in describe.
 TEST_FILE = test_format.CODE_SCRIPT
-
-
-@dataclass(frozen=True)
-class PhaseRow:
-    """One row of the phase list: a phase (``depth`` 0), or one of its sub-steps and
-    measurements (1). ``line``: where a click jumps in openhtf/test.py (0: it is in another
-    file, ``tip`` says which)."""
-
-    depth: int
-    text: str
-    line: int
-    tip: str = ""
 
 
 def is_shared(phase: dict) -> bool:
@@ -53,108 +41,144 @@ def limits(measurement: dict) -> str:
     return "; ".join(measurement.get("validators") or ())
 
 
-def _expected(measurement: dict) -> str:
-    """A check as the export's Expected says it: ``between 4.75 V and 5.25 V``."""
-    low, high, unit = measurement.get("lower"), measurement.get("upper"), _unit(measurement)
-    if low is not None and low == high:
-        return f"equal to {_with_unit(low, unit)}"
-    if low is not None and high is not None:
-        return f"between {_with_unit(low, unit)} and {_with_unit(high, unit)}"
-    if low is not None:
-        return f"at least {_with_unit(low, unit)}"
-    if high is not None:
-        return f"at most {_with_unit(high, unit)}"
-    return "; ".join(measurement["validators"])
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
 
 
-def phase_rows(described: dict) -> list[PhaseRow]:
-    """The phase list: ``1 Power-up checks``, its sub-steps ``1.1 …``, its measurements
-    ``v5 4.75–5.25 V``; a reusable phase ``2 Power off (shared)``."""
-    rows = []
+@dataclass(frozen=True)
+class PhaseEntry:
+    """One phase of the Phases tab, as describe read it: ``line`` in its ``file``, ``here`` when
+    that is the file the editor holds (a click jumps to the line; else it opens the file);
+    ``used_by``: the tests that list it (None: not asked — a test's own phases)."""
+
+    number: int
+    name: str
+    function: str
+    file: str
+    line: int
+    here: bool
+    shared: bool
+    teardown: bool
+    description: str
+    questions: tuple[str, ...]
+    substeps: tuple[tuple[str, int], ...]
+    measurements: tuple[str, ...]
+    test_points: tuple[str, ...]
+    used_by: tuple[str, ...] | None = None
+
+    @property
+    def key(self) -> tuple[str, str]:
+        """What stays the same while the code is edited: its file and its function."""
+        return self.file, self.function
+
+    @property
+    def mark(self) -> str:
+        """Right of its name: ``L94`` here, else ``shared · teardown`` (``shared``)."""
+        if self.here:
+            return f"L{self.line}"
+        return " · ".join(
+            m for m, on in (("shared", self.shared), ("teardown", self.teardown)) if on
+        )
+
+    def _where(self) -> str:
+        return f"{self.file.removeprefix('functions/')}, line {self.line} (opens the file)"
+
+    def _points(self) -> str:
+        label = "Test point" if len(self.test_points) == 1 else "Test points"
+        return f"{label}: {', '.join(self.test_points)}"
+
+    def _use(self) -> str:
+        return f"used by {', '.join(self.used_by) or 'no test'}"
+
+    def summary(self) -> list[str]:
+        """Folded: ``6 sub-steps · 1 question · J2 pins 1–10``, then its measurements
+        ``V_4A_load 15.2–16.8 V · I_4A_load 3.88–4.12 A``; a phase of another file, where it is."""
+        if not self.here:
+            return [self._where()]
+        counts = [
+            _plural(len(self.substeps), "sub-step") if self.substeps else "",
+            _plural(len(self.questions), "question") if self.questions else "",
+            ", ".join(self.test_points),
+            self._use() if self.used_by is not None else "",
+        ]
+        lines = [" · ".join(part for part in counts if part), " · ".join(self.measurements)]
+        return [line for line in lines if line]
+
+    def details(self) -> list[tuple[str, str, int]]:
+        """Open: ``(kind, text, line)`` — its description, each question ``? “…”``, each sub-step
+        ``4.1 …`` (its line), each measurement with its limits, its test points; in a file of
+        shared phases, which tests use it."""
+        out = [("description", self.description, self.line)] if self.description else []
+        out += [("question", f"? “{q}”", self.line) for q in self.questions]
+        out += [
+            ("substep", f"{self.number}.{k} {text}", line)
+            for k, (text, line) in enumerate(self.substeps, 1)
+        ]
+        out += [("measurement", m, self.line) for m in self.measurements]
+        if self.test_points:
+            out.append(("points", self._points(), self.line))
+        if self.used_by is not None:
+            use = self._use()
+            out.append(("use", use if self.substeps else f"no sub-steps yet · {use}", self.line))
+        if not self.here:
+            out.append(("where", self._where(), self.line))
+        return out
+
+
+def phase_entries(
+    described: dict, open_file: str = TEST_FILE, used_by: dict | None = None
+) -> list[PhaseEntry]:
+    """The phases of *described* as the Phases tab lists them; *open_file*: the file the editor
+    holds; *used_by*: ``{(file, function): [test, …]}`` for a file of shared phases."""
+    entries = []
     for n, phase in enumerate(described.get("phases") or (), 1):
-        here = phase.get("file") == TEST_FILE
-        tip = "" if here else f"In {phase.get('file')}, line {phase.get('line')}."
+        here = phase.get("file") == open_file
+        key = (phase.get("file", ""), phase.get("function", ""))
+        entry = PhaseEntry(
+            number=n,
+            name=phase["name"],
+            function=phase.get("function", ""),
+            file=phase.get("file", ""),
+            line=phase["line"],
+            here=here,
+            shared=is_shared(phase) and not here,
+            teardown=bool(phase.get("teardown")),
+            description=phase.get("description") or "",
+            questions=tuple(q["text"] for q in phase.get("questions") or ()),
+            substeps=tuple((s["text"], s["line"]) for s in phase.get("substeps") or ()),
+            measurements=tuple(
+                " ".join(t for t in (m["name"], limits(m)) if t)
+                for m in phase.get("measurements") or ()
+            ),
+            test_points=tuple(dict.fromkeys(m["caption"] for m in phase.get("media") or ())),
+            used_by=tuple(used_by.get(key, ())) if used_by is not None else None,
+        )
+        entries.append(entry)
+    return entries
 
-        def at(line: int) -> int:
-            return line if here else 0
 
-        shared = " (shared)" if is_shared(phase) else ""
-        rows.append(PhaseRow(0, f"{n} {phase['name']}{shared}", at(phase["line"]), tip))
-        for k, sub in enumerate(phase.get("substeps") or (), 1):
-            rows.append(PhaseRow(1, f"{n}.{k} {sub['text']}", at(sub["line"]), tip))
-        for measurement in phase.get("measurements") or ():
-            text = " ".join(t for t in (measurement["name"], limits(measurement)) if t)
-            rows.append(PhaseRow(1, text, at(phase["line"]), tip))
-    return rows
-
-
-def _equipment(described: dict) -> str:
-    """``Dmm (DMM1), Psu (PSU1)``: each instrument and the address constant named after it."""
+def equipment(described: dict) -> str:
+    """``Equipment: Dmm (DMM1), Psu (PSU1)``: each instrument and the address constant named
+    after it ("" without any)."""
     names = [c["name"].split("_")[0] for c in described.get("constants") or ()]
     out = []
     for kind in described.get("instruments") or ():
         mine = [name for name in names if name.upper().startswith(kind.upper())]
         out.append(f"{kind} ({', '.join(mine)})" if mine else kind)
-    return ", ".join(out)
+    return f"Equipment: {', '.join(out)}" if out else ""
 
 
-def _test_points(described: dict) -> str:
-    """``TP 5V0, P15 pin 16``: the locations the phases' descriptions and sub-steps name (each
-    phase's ``media``: the engine's one catalogue, as for a text test), in order, each once."""
-    captions = [
-        m["caption"] for phase in described.get("phases") or () for m in phase.get("media") or ()
-    ]
-    return ", ".join(dict.fromkeys(captions))
-
-
-def preview_html(described: dict) -> str:
-    """The export as the report will show it, read from the code: each phase numbered with its
-    description, its sub-steps and its Expected lines; then the equipment and the test points."""
-    parts = []
-    for n, phase in enumerate(described.get("phases") or (), 1):
-        head = f"<b>{n}. {escape(phase['name'])}</b>"
-        if is_shared(phase):
-            head += f' <span style="color:gray">(shared phase, {escape(phase["file"])})</span>'
-        parts.append(f'<p style="margin:{0 if n == 1 else 12}px 0 0 0">{head}</p>')
-        if phase.get("description"):
-            parts.append(f'<p style="margin:0">{escape(phase["description"])}</p>')
-        subs = [
-            f"{n}.{k} {escape(s['text'])}" for k, s in enumerate(phase.get("substeps") or (), 1)
-        ]
-        checks = [m for m in phase.get("measurements") or () if m.get("validators")]
-        expected = [
-            "Expected: "
-            + escape(m["name"])
-            + (f" ({escape(m['description'])})" if m.get("description") else "")
-            + f" {escape(_expected(m))}"
-            for m in checks
-        ]
-        for lines in (subs, expected):
-            if lines:
-                parts.append(f'<p style="margin:0 0 0 18px">{"<br>".join(lines)}</p>')
-    footer = [
-        f"{label}: {escape(text)}"
-        for label, text in (
-            ("Equipment", _equipment(described)),
-            ("Test points", _test_points(described)),
-        )
-        if text
-    ]
-    if footer:
-        parts.append(f'<hr><p style="margin:0">{"<br>".join(footer)}</p>')
-    return "".join(parts)
-
-
-def check_lines(found: CodeCheck) -> list[tuple[str, str, str]]:
+def check_lines(found: CodeCheck, loads: bool = True) -> list[tuple[str, str, str]]:
     """The Check's results line, ``(tone, text, tooltip)`` each: ``✓ Syntax OK``, ``✓ Loads in
-    the bundle's environment``, ``✓ 2 steps · 1 measurement · 2 instruments``; ``✗ why`` in
-    place of what failed (a problem: it cannot run); then ``⚠ warning`` for each warning (what
-    to look at: a measurement without units, code a file runs when it is loaded…)."""
+    the bundle's environment`` (*loads*: the Check loaded it — a file of shared phases is loaded
+    by its tests), ``✓ 2 steps · 1 measurement · 2 instruments``; ``✗ why`` in place of what
+    failed (a problem: it cannot run); then ``⚠ warning`` for each warning (what to look at: a
+    measurement without units, code a file runs when it is loaded…)."""
     if found.describe is None:  # a syntax error, or no engine: nothing else was read
         return [("danger", f"✗ {problem}", "") for problem in found.problems]
     lines = [("success", "✓ Syntax OK", "")]
-    lines += [("danger", f"✗ {problem}", "") for problem in found.problems] or [
-        ("success", "✓ Loads in the bundle's environment", "")
-    ]
+    lines += [("danger", f"✗ {problem}", "") for problem in found.problems]
+    if loads and not found.problems:
+        lines.append(("success", "✓ Loads in the bundle's environment", ""))
     lines.append(("success", f"✓ {found.summary}", ""))
     return lines + [("warning", f"⚠ {warning}", "") for warning in found.warnings]

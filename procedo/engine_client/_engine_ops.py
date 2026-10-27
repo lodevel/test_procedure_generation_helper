@@ -85,8 +85,13 @@ Ops:
                     process, describe's "N steps · M measurements · K instruments")
   shared_phases → {"ok": true, "phases": [{name, function, module, file, line, description,
                    values, used_by, ...}]}
-                   (input: {"project"}: the reusable phases of its functions/, each with how
-                    many tests/<test>/openhtf/test.py list it)
+                   (input: {"project"}: the reusable phases of its functions/, each with the
+                    tests whose openhtf/test.py lists it, by name)
+  describe_phase_file → {"ok": true, "describe": {phases, instruments, warnings}}
+                   (input: {"project", "file", "source"?}: functions/<file> read as
+                    describe_code_test reads a test; a syntax error: {"ok": false, "kind": "Other"})
+  check_phase_file → {"ok": true, "problems": [str], "summary": str, "describe": {...}|null}
+                   (input: {"project", "file"}: its syntax, then what it holds; nothing loads it)
 """
 
 from __future__ import annotations
@@ -478,6 +483,25 @@ def _op_check_code_test(spec: dict) -> dict:
     return {"ok": True, **code_test.check(*_code_test(spec))}
 
 
+def _phase_file(spec: dict) -> Path:
+    """``functions/<spec["file"]>`` of ``spec["project"]``."""
+    return Path(spec["project"]) / "functions" / spec["file"]
+
+
+def _op_describe_phase_file(spec: dict) -> dict:
+    """What a file of ``functions/`` holds (rules_packager_base.code_test.describe_file)."""
+    from rules_packager_base import code_test
+
+    return {"ok": True, "describe": code_test.describe_file(_phase_file(spec), spec.get("source"))}
+
+
+def _op_check_phase_file(spec: dict) -> dict:
+    """A file of ``functions/``'s Check (rules_packager_base.code_test.check_file)."""
+    from rules_packager_base import code_test
+
+    return {"ok": True, **code_test.check_file(_phase_file(spec))}
+
+
 def _op_shared_phases(spec: dict) -> dict:
     """The reusable phases of the project's ``functions/`` (rules_packager_base.code_test)."""
     from rules_packager_base import code_test
@@ -513,6 +537,8 @@ _OPS = {
     "describe_code_test": _op_describe_code_test,
     "check_code_test": _op_check_code_test,
     "shared_phases": _op_shared_phases,
+    "describe_phase_file": _op_describe_phase_file,
+    "check_phase_file": _op_check_phase_file,
 }
 
 
@@ -546,6 +572,8 @@ _PACK_FREE = frozenset(
         "describe_code_test",
         "check_code_test",
         "shared_phases",
+        "describe_phase_file",
+        "check_phase_file",
     }
 )
 _PER_KEY = frozenset({"display_snapshot", "extract"})

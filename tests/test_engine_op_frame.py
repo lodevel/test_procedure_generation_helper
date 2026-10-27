@@ -26,7 +26,7 @@ ensure_workflow_editor_importable()
 from procedo.engine_client import _engine_ops as engine_ops  # noqa: E402
 from procedo.studio.pack_ops import pack_parsers as pp  # noqa: E402
 from procedo.engine_client import engine_session  # noqa: E402
-from procedo.studio.core.code_test_preview import preview_html  # noqa: E402
+from procedo.studio.core.code_test_preview import phase_entries  # noqa: E402
 
 pytestmark = [
     pytest.mark.skipif(not _env.rules_packager_available(), reason=_env.WHEEL_SKIP_REASON),
@@ -46,7 +46,7 @@ _spec.loader.exec_module(er)
 
 _HEAD = (
     "# T\nDesc.\n\n## Meta\nformat_version: 2.0.1\nboard: B\n"
-    "rules_pack: rules_packager_base@3.2.1\n\n## Equipment\nDMM_GENERIC : dmm\n\n## Steps\n"
+    "rules_pack: rules_packager_base@3.2.2\n\n## Equipment\nDMM_GENERIC : dmm\n\n## Steps\n"
 )
 
 # Procedures copied from the engine's own tests (rules/v2_0_2/tests): a linear
@@ -421,8 +421,8 @@ def test_the_describe_code_test_op_reads_the_code_test_without_running_it(tmp_pa
     assert [(p["name"], p["description"]) for p in answer["describe"]["phases"]] == [
         ("Output voltage", "Measure TP 5V0.")
     ]
-    # its test points, as Studio's export preview lists them (slice 15)
-    assert "Test points: TP 5V0</p>" in preview_html(answer["describe"])
+    # its test points, as Studio's Phases tab lists them (slice 15)
+    assert phase_entries(answer["describe"])[0].test_points == ("TP 5V0",)
     broken = engine_ops.run(
         {
             "op": "describe_code_test",
@@ -462,5 +462,21 @@ def test_the_shared_phases_op_lists_the_reusable_phases_of_functions(tmp_path):
     answer = engine_ops.run({"op": "shared_phases", "project": str(project)})
     assert answer["ok"]
     assert [(p["name"], p["file"], p["used_by"]) for p in answer["phases"]] == [
-        ("Power off", "functions/power.py", 1)
+        ("Power off", "functions/power.py", ["code_t"])
     ]
+
+
+def test_the_phase_file_ops_read_and_check_a_file_of_functions(tmp_path):
+    project = _code_project(tmp_path, _CODE)
+    (project / "functions" / "power.py").write_text("def (:\n", encoding="utf-8")
+    source = (
+        "import openhtf as htf\n@htf.PhaseOptions(name='Power off')\ndef off(test):\n    pass\n"
+    )
+    spec = {"project": str(project), "file": "power.py"}
+    edited = engine_ops.run({"op": "describe_phase_file", **spec, "source": source})
+    assert [p["name"] for p in edited["describe"]["phases"]] == ["Power off"]
+    broken = engine_ops.run({"op": "check_phase_file", **spec})
+    assert broken["ok"] and broken["problems"] == ["power.py line 1: invalid syntax"]
+    (project / "functions" / "power.py").write_text(source, encoding="utf-8")
+    checked = engine_ops.run({"op": "check_phase_file", **spec})
+    assert checked["summary"] == "1 step · 0 measurements · 0 instruments"

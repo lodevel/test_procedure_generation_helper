@@ -1,9 +1,10 @@
 """Procedo Studio's frame, as on the approved board S1: the header band (the open test, its
 Text | Code version switch and the other version's "inactive, not updated" pill (boards
 StudioCode, StudioCompare), its Text / JSON / Code and Sync pills, the OpenCode pill and its menu,
-Export, Skill chat, Save all), the segmented switch between the four views — or, for a code test,
-its code view —, the Workspace and Assistant columns, and the status line (project, rules,
-bundle, validator).
+Export, Skill chat, Save all), the segmented switch between the four views — or, for a code test
+or a file of shared phases, the code view —, the Workspace column, the right panel (board
+StudioPanel: Assistant | Phases, folding to a rail like Bench's run window side pane, remembered)
+and the status line (project, rules, bundle, validator).
 
 Built from ``procedo.ui.ui_kit``, so Studio's frame is Bench's. ``StudioWorkspace`` owns
 the state and the actions; this module builds the widgets onto it and paints its state on them.
@@ -25,12 +26,14 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QStackedWidget,
+    QTabBar,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from procedo.core import project_bundle, test_format
+from procedo.core import app_settings, project_bundle, test_format
 from procedo.core.paths import exists_quiet
 from procedo.ui import ui_kit
 from procedo.ui.segmented import segment, segmented
@@ -39,6 +42,7 @@ from .authoring.skill_menu import launch_skill_chat
 from .core import ArtifactType
 from .core.procedure_steps import numbered_steps
 from .llm import validator_loop_settings
+from .widgets.shared_phases_panel import used_by_text
 
 if TYPE_CHECKING:
     from .main_window import StudioWorkspace
@@ -69,6 +73,8 @@ _VERSIONS = {
 #: The side columns' widths on the board (the views take the rest).
 _WORKSPACE_WIDTH = 246
 _ASSISTANT_WIDTH = 342
+#: The right panel's tabs.
+ASSISTANT_TAB, PHASES_TAB = 0, 1
 
 
 # ---- Building ------------------------------------------------------------------------------
@@ -106,10 +112,7 @@ def build_frame(ws: StudioWorkspace) -> None:
     ws.setObjectName("mainCentral")  # the page colour behind the cards
     ws.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
     ws.workspace_column = _card(ws.workspace_widget, _WORKSPACE_WIDTH)
-    ws.assistant = QStackedWidget()  # the Assistant, or what it says for a code test
-    ws.assistant.addWidget(ws.dock)
-    ws.assistant.addWidget(_code_assistant())
-    ws.assistant_column = _card(ws.assistant, _ASSISTANT_WIDTH)
+    ws.assistant_column = _side_panel(ws)
     ws.middle = QStackedWidget()  # the text views, or the open code test's view
     ws.middle.addWidget(ws.view_column)
     ws.middle.addWidget(ws.code_view)
@@ -133,6 +136,8 @@ def build_frame(ws: StudioWorkspace) -> None:
         (ws.toggle_dock_action, ws.assistant_column),
     ):
         action.toggled.connect(column.setVisible)
+    ws.workspace_widget.shared_phases.loaded.connect(ws.code_view.show_phases)
+    show_code_view(ws, False)
     refresh_header(ws)
     refresh_footer(ws)
     ws.llm_server.refresh_indicator()
@@ -148,8 +153,28 @@ def _card(content: QWidget, width: int) -> QFrame:
     return card
 
 
-#: The Assistant column while a code test is open (board StudioCode).
-CODE_ASSISTANT_NOTE = "Unchanged. Writing code tests with the AI comes later."
+def _side_panel(ws: StudioWorkspace) -> QWidget:
+    """The right panel: Assistant | Phases (the code view's phase list, with its count) in
+    ``ui_kit.CollapsibleSidePane``, its fold remembered."""
+    ws.assistant = QStackedWidget()  # the Assistant, or what it says for a code test
+    ws.assistant.addWidget(ws.dock)
+    ws.assistant.addWidget(_code_assistant())
+    ws.side_tabs = QTabWidget()
+    ws.side_tabs.setMinimumWidth(_ASSISTANT_WIDTH)
+    ws.side_tabs.addTab(ws.assistant, "Assistant")
+    ws.side_tabs.addTab(ws.code_view.phases, "Phases")
+    ws.phase_count = QLabel()
+    ws.side_tabs.tabBar().setTabButton(PHASES_TAB, QTabBar.ButtonPosition.RightSide, ws.phase_count)
+    key = app_settings.STUDIO_SIDE_PANE
+    ws.side_pane = ui_kit.CollapsibleSidePane(
+        ws.side_tabs, collapsed=app_settings.get_side_pane_collapsed(key)
+    )
+    ws.side_pane.toggled.connect(lambda folded: app_settings.set_side_pane_collapsed(key, folded))
+    return ws.side_pane
+
+
+#: The Assistant tab while a code test or a file of shared phases is open (board StudioCode).
+CODE_ASSISTANT_NOTE = "Writing code tests with the AI comes later."
 
 
 def _code_assistant() -> QWidget:
@@ -194,6 +219,7 @@ def _header(ws: StudioWorkspace) -> ui_kit.HeaderBand:
     ws.version_switch = segmented(*ws.version_segments.values())
     ws.version_switch.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
     ws.inactive_pill = QLabel()
+    ws.used_by_pill = QLabel()  # a file of shared phases: how many tests use it
     show_versions(ws, None, "")
 
     ws.server_pill = QToolButton()
@@ -225,7 +251,7 @@ def _header(ws: StudioWorkspace) -> ui_kit.HeaderBand:
         "Procedo Studio",
         [ws.server_pill, tools, ui_kit.vertical_rule(), ws.save_all_btn],
         mark=mark,
-        status=[ws.version_switch, ws.inactive_pill, pills],
+        status=[ws.version_switch, ws.inactive_pill, ws.used_by_pill, pills],
     )
     ws.header.title.setMinimumWidth(210)
     return ws.header
@@ -247,11 +273,15 @@ def _footer(ws: StudioWorkspace) -> ui_kit.StatusLine:
 
 
 def show_code_view(ws: StudioWorkspace, on: bool) -> None:
-    """The open code test's view (*on*), else the text views: the middle column, the Assistant
-    column (its note for a code test), File › Save's label."""
+    """The code view (*on*: a code test or a file of shared phases), else the text views: the
+    middle column, the Assistant tab (its note for code), the Phases tab (code only), File ›
+    Save's label."""
     ws.middle.setCurrentWidget(ws.code_view if on else ws.view_column)
     ws.assistant.setCurrentIndex(1 if on else 0)
-    view = test_format.CODE_SCRIPT if on else VIEWS[ws.view_stack.currentIndex()][0]
+    if not on:
+        ws.side_tabs.setCurrentIndex(ASSISTANT_TAB)
+    ws.side_pane.set_tab_visible(PHASES_TAB, on)
+    view = ws.code_view.name if on else VIEWS[ws.view_stack.currentIndex()][0]
     ws.save_action.setText(f"&Save {view}")
 
 
@@ -287,22 +317,33 @@ def _show_view(ws: StudioWorkspace, index: int) -> None:
 
 
 def refresh_header(ws: StudioWorkspace) -> None:
-    """The open test and its step count, the Text / JSON / Code pills (saved, modified or
-    missing), the Sync pill, and Save all (primary, with the count, while something is
-    unsaved)."""
+    """The open test and its step count — or the open file of shared phases and how many tests
+    use it —, the Phases tab's count, the Text / JSON / Code pills (saved, modified or missing),
+    the Sync pill, and Save all (primary, with the count, while something is unsaved)."""
     am, code = ws.artifact_manager, ws.code_view
     test_dir = am.test_dir if am is not None else code.test_dir
-    ws.header.title.setText(test_dir.name if test_dir else "No test open")
     root = ws.project_manager.project_root
-    if code.test_dir is not None:
-        steps = len(code.described["phases"]) if code.described else None
+    phases = len(code.described["phases"]) if code.described else None
+    ui_kit.set_pill(ws.phase_count, "neutral", str(phases) if phases is not None else "")
+    ws.phase_count.setVisible(phases is not None)
+    ws.phase_count.adjustSize()
+    ws.side_tabs.setTabText(PHASES_TAB, "Phases")  # the tab bar makes room for its new size
+    if code.phase_file is not None:
+        ws.header.title.setText(code.name)
+        users = {
+            test
+            for p in ws.workspace_widget.shared_phases.phases
+            if p["file"] == code.name
+            for test in p["used_by"]
+        }
+        ui_kit.set_pill(ws.used_by_pill, "neutral", used_by_text(len(users)))
+        what = "shared phases"
     else:
-        steps = _step_count(am)
-    parts = [
-        "Procedo Studio",
-        Path(root).name if root else "",
-        f"{steps} step{'' if steps == 1 else 's'}" if steps is not None else "",
-    ]
+        ws.header.title.setText(test_dir.name if test_dir else "No test open")
+        steps = phases if code.test_dir is not None else _step_count(am)
+        what = f"{steps} step{'' if steps == 1 else 's'}" if steps is not None else ""
+    ws.used_by_pill.setVisible(code.phase_file is not None)
+    parts = ["Procedo Studio", Path(root).name if root else "", what]
     ws.header.subtitle.setText(" · ".join(part for part in parts if part))
     unsaved = 0
     for label, kind, file in _ARTIFACTS:
@@ -318,8 +359,8 @@ def refresh_header(ws: StudioWorkspace) -> None:
             ui_kit.set_pill(pill, "neutral", f"{label} ○")
             pill.setToolTip(f"No {file}." if am is not None else "No test loaded.")
     ws._document_controller.update_sync_indicator()
-    ws.artifact_status.setVisible(code.test_dir is None)
-    if code.test_dir is not None:
+    ws.artifact_status.setVisible(not code.is_open)
+    if code.is_open:
         unsaved = int(code.dirty)
     ws.save_all_btn.setText(f"Save all · {unsaved}" if unsaved else "Save all")
     ws.save_all_btn.setEnabled(bool(unsaved))

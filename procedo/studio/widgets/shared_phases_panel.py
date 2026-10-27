@@ -1,23 +1,23 @@
-"""The Workspace column's "Shared phases (OpenHTF)" (board StudioPhases), under the tests: the
-reusable phases of the project's ``functions/`` — a function carrying at least
-``@htf.PhaseOptions(name=…)`` (the engine's one detector, ``code_test.phase_name``) — each with
-its name, description, values, file and how many tests use it; "Copy import line" and "Open
-file" act on the selected one.
+"""The Workspace column's "Shared phases (OpenHTF)" (boards StudioPhases, StudioPanel D), under
+the tests: the reusable phases of the project's ``functions/`` — a function carrying at least
+``@htf.PhaseOptions(name=…)`` (the engine's one detector, ``code_test.phase_name``) — each row
+its name, what a test writes (``power_off()``), its description, its file and how many tests use
+it, and its own buttons: "⧉ Copy import" (the line a test writes to use it) and "✎ Edit" (its
+file in Studio's editor, as a click on the row does); "+ New shared phase…" under the list.
 
-Shown only while a code test is open (text tests cannot use them yet) and the project has some;
-read off the GUI thread behind the shared loading cue.
+Shown while a code test or a file of shared phases is open (text tests cannot use them yet); read
+off the GUI thread behind the shared loading cue.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
     QLabel,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -29,26 +29,28 @@ import shiboken6
 from procedo.core import code_test_check
 from procedo.ui import ui_kit
 
-from ..core.open_in_editor import open_in_editor
 from ..pack_ops import engine_async
 
 if TYPE_CHECKING:
     from ..main_window import StudioWorkspace
 
 TITLE = "Shared phases (OpenHTF)"
+COPY, COPIED = "⧉ Copy import", "✓ Copied"
+#: How long "✓ Copied" shows (ms).
+COPIED_MS = 2000
 
 
-def phase_lines(phase: dict) -> tuple[str, str, str]:
-    """A shared phase's three lines: its name; its description and ``values: a, b``; its file
-    and ``used by N tests``."""
-    values = phase.get("values") or ()
-    about = " · ".join(
-        part
-        for part in (phase.get("description", ""), f"values: {', '.join(values)}" if values else "")
-        if part
-    )
-    n = phase.get("used_by", 0)
-    return phase["name"], about, f"{phase['file']} · used by {n} test{'' if n == 1 else 's'}"
+def used_by_text(n: int) -> str:
+    """``used by 1 test``, ``used by 3 tests``."""
+    return f"used by {n} test{'' if n == 1 else 's'}"
+
+
+def phase_lines(phase: dict) -> tuple[str, str, str, str]:
+    """A shared phase's four lines: its name; what a test writes (``power_up(voltage,
+    current_limit)``); its description; its file and ``used by N tests``."""
+    call = f"{phase['function']}({', '.join(phase.get('values') or ())})"
+    where = f"{phase['file']} · {used_by_text(len(phase.get('used_by') or ()))}"
+    return phase["name"], call, phase.get("description", ""), where
 
 
 def import_line(phase: dict) -> str:
@@ -57,29 +59,49 @@ def import_line(phase: dict) -> str:
 
 
 class _Row(QFrame):
-    """One phase's three lines; a click selects it (tinted)."""
+    """One phase's lines and its buttons; a click on the row edits it."""
 
-    def __init__(self, phase: dict, select) -> None:
+    def __init__(self, phase: dict, edit) -> None:
         super().__init__()
         self.setObjectName("sharedPhase")
-        self._select = select
-        name, about, where = phase_lines(phase)
+        self._edit = edit
+        name, call, about, where = phase_lines(phase)
+        self.copy_button = QPushButton(COPY)
+        self.copy_button.setObjectName("rowButton")
+        self.copy_button.setToolTip(f"Copies: {import_line(phase)}")
+        self.copy_button.clicked.connect(lambda: self._copy(import_line(phase)))
+        self.edit_button = QPushButton("✎ Edit")
+        self.edit_button.setObjectName("rowButton")
+        self.edit_button.setToolTip(f"Edit {phase['file']} in Studio's editor")
+        self.edit_button.clicked.connect(lambda: edit())
         column = QVBoxLayout(self)
         column.setContentsMargins(8, 8, 8, 8)
         column.setSpacing(2)
         column.addWidget(ui_kit.bold(name))
+        column.addWidget(ui_kit.mono(QLabel(call, wordWrap=True)))
         if about:
             column.addWidget(QLabel(about, wordWrap=True))
         column.addWidget(ui_kit.note(where))
+        buttons = ui_kit.hbox(self.copy_button, self.edit_button, None)
+        buttons.setContentsMargins(0, 4, 0, 0)
+        column.addLayout(buttons)
         ui_kit.set_state(self, "selected", False)
 
+    def _copy(self, line: str) -> None:
+        QApplication.clipboard().setText(line)
+        self.copy_button.setText(COPIED)
+        QTimer.singleShot(
+            COPIED_MS, lambda: shiboken6.isValid(self) and self.copy_button.setText(COPY)
+        )
+
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt)
-        self._select(self)
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._edit()
         super().mousePressEvent(event)
 
 
 #: The list's tallest (it scrolls past): the tests above keep their room.
-_MAX_HEIGHT = 260
+_MAX_HEIGHT = 300
 
 
 class _Rows(QScrollArea):
@@ -97,14 +119,17 @@ class _Rows(QScrollArea):
 
 
 class SharedPhasesPanel(QWidget):
-    """The shared phases of the open project, while a code test is open."""
+    """The shared phases of the open project, while a code test or a file of them is open.
+    ``loaded``: the list was read again."""
+
+    loaded = Signal()
 
     def __init__(self, ws: StudioWorkspace) -> None:
         super().__init__()
         self._ws = ws
         self.phases: list[dict] = []
         self._rows: list[_Row] = []
-        self._current = -1
+        self.current: tuple[str, str] | None = None  # the phase being edited: file, function
         self._asked = 0
         self.cue = ui_kit.LoadingCue()
         rows = QWidget()
@@ -116,25 +141,22 @@ class SharedPhasesPanel(QWidget):
         self.list.setWidgetResizable(True)
         self.list.setFrameShape(QFrame.Shape.NoFrame)
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.copy_button = QPushButton("Copy import line")
-        self.copy_button.setToolTip("Copy the line a test writes to use the selected phase")
-        self.copy_button.clicked.connect(self._copy_import_line)
-        self.open_button = QPushButton("Open file")
-        self.open_button.setToolTip("Open the selected phase's file in this PC's editor")
-        self.open_button.clicked.connect(self._open_file)
+        self.new_button = QPushButton("+ New shared phase…")
+        self.new_button.setToolTip("Write a new phase the project's tests can use")
+        self.new_button.clicked.connect(lambda: ws._code_test_controller.new_shared_phase())
         column = QVBoxLayout(self)
         column.setContentsMargins(12, 8, 12, 8)
         column.setSpacing(8)
         column.addLayout(ui_kit.hbox(ui_kit.bold(TITLE), None, self.cue))
         column.addWidget(self.list)
-        column.addLayout(ui_kit.hbox(self.copy_button, self.open_button, None))
+        column.addLayout(ui_kit.hbox(self.new_button, None))
         self.hide()
 
     def load(self) -> None:
         """Read the project's shared phases again (off the GUI thread) and show them — only
-        while a code test is open."""
+        while a code test or a file of them is open."""
         root = self._ws.project_manager.project_root
-        if root is None or self._ws.code_view.test_dir is None:
+        if root is None or not self._ws.code_view.is_open:
             self.clear()
             return
         self._asked += 1
@@ -156,39 +178,30 @@ class SharedPhasesPanel(QWidget):
     def clear(self) -> None:
         """Hidden (a text test is open, or none): text tests cannot use shared phases yet."""
         self._asked += 1
+        self.current = None
         self._show([])
+        self.hide()
 
     def _show(self, phases: list[dict]) -> None:
         self.phases = phases
         ui_kit.clear_layout(self._column)
-        self._rows = [_Row(phase, self._select) for phase in phases]
+        self._rows = [
+            _Row(phase, lambda p=phase: self._ws._code_test_controller.edit_shared_phase(p))
+            for phase in phases
+        ]
         for row in self._rows:
             self._column.addWidget(row)
         self._column.addStretch(1)
+        self.list.setVisible(bool(phases))
         self.list.updateGeometry()
-        self.select(0 if phases else -1)
-        self.setVisible(bool(phases))
+        self.mark(self.current)
+        self.loaded.emit()
 
-    def _select(self, row: _Row) -> None:
-        self.select(self._rows.index(row))
+    def mark(self, current: tuple[str, str] | None) -> None:
+        """The phase being edited (its file, its function), tinted; None: none."""
+        self.current = current
+        for phase, row in zip(self.phases, self._rows, strict=True):
+            ui_kit.set_state(row, "selected", (phase["file"], phase["function"]) == current)
 
-    def select(self, index: int) -> None:
-        """The phase at *index* is the one the buttons act on (-1: none)."""
-        self._current = index
-        for i, row in enumerate(self._rows):
-            ui_kit.set_state(row, "selected", i == index)
-        for button in (self.copy_button, self.open_button):
-            button.setEnabled(index >= 0)
-
-    def _selected(self) -> dict | None:
-        return self.phases[self._current] if 0 <= self._current < len(self.phases) else None
-
-    def _copy_import_line(self) -> None:
-        if (phase := self._selected()) is not None:
-            QApplication.clipboard().setText(import_line(phase))
-            self._ws.footer.show_message(f"Copied: {import_line(phase)}", 3000)
-
-    def _open_file(self) -> None:
-        phase, root = self._selected(), self._ws.project_manager.project_root
-        if phase is not None and (why := open_in_editor(root / phase["file"])):
-            QMessageBox.warning(self, "Open file", why)
+    def rows(self) -> list[_Row]:
+        return list(self._rows)

@@ -64,7 +64,7 @@ _ARTIFACTS = (
 #: A test's two versions: the switch's label and the file each one is.
 _VERSIONS = {
     test_format.TEXT: ("Text", "procedure_text.md"),
-    test_format.CODE: ("Code", f"{test_format.CODE_DIR}/test.py"),
+    test_format.CODE: ("Code", test_format.CODE_SCRIPT),
 }
 #: The side columns' widths on the board (the views take the rest).
 _WORKSPACE_WIDTH = 246
@@ -106,7 +106,10 @@ def build_frame(ws: StudioWorkspace) -> None:
     ws.setObjectName("mainCentral")  # the page colour behind the cards
     ws.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
     ws.workspace_column = _card(ws.workspace_widget, _WORKSPACE_WIDTH)
-    ws.assistant_column = _card(ws.dock, _ASSISTANT_WIDTH)
+    ws.assistant = QStackedWidget()  # the Assistant, or what it says for a code test
+    ws.assistant.addWidget(ws.dock)
+    ws.assistant.addWidget(_code_assistant())
+    ws.assistant_column = _card(ws.assistant, _ASSISTANT_WIDTH)
     ws.middle = QStackedWidget()  # the text views, or the open code test's view
     ws.middle.addWidget(ws.view_column)
     ws.middle.addWidget(ws.code_view)
@@ -143,6 +146,20 @@ def _card(content: QWidget, width: int) -> QFrame:
     layout.setContentsMargins(1, 1, 1, 1)  # inside the card's border
     layout.addWidget(content)
     return card
+
+
+#: The Assistant column while a code test is open (board StudioCode).
+CODE_ASSISTANT_NOTE = "Unchanged. Writing code tests with the AI comes later."
+
+
+def _code_assistant() -> QWidget:
+    page = QWidget()
+    column = QVBoxLayout(page)
+    column.setContentsMargins(14, 12, 14, 12)
+    column.addWidget(ui_kit.bold("Assistant"))
+    column.addWidget(ui_kit.note(CODE_ASSISTANT_NOTE))
+    column.addStretch(1)
+    return page
 
 
 def mark_label(size: int, ratio: float) -> QLabel:
@@ -230,8 +247,12 @@ def _footer(ws: StudioWorkspace) -> ui_kit.StatusLine:
 
 
 def show_code_view(ws: StudioWorkspace, on: bool) -> None:
-    """The middle column: the open code test's view (*on*), else the text views."""
+    """The open code test's view (*on*), else the text views: the middle column, the Assistant
+    column (its note for a code test), File › Save's label."""
     ws.middle.setCurrentWidget(ws.code_view if on else ws.view_column)
+    ws.assistant.setCurrentIndex(1 if on else 0)
+    view = test_format.CODE_SCRIPT if on else VIEWS[ws.view_stack.currentIndex()][0]
+    ws.save_action.setText(f"&Save {view}")
 
 
 def show_versions(ws: StudioWorkspace, test_dir: Path | None, active: str) -> None:

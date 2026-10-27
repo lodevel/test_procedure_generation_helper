@@ -428,6 +428,15 @@ def test_the_describe_code_test_op_reads_the_code_test_without_running_it(tmp_pa
         }
     )
     assert (broken["ok"], broken["kind"]) == (False, "Other")
+    edited = engine_ops.run(  # the text an editor holds, not the broken file
+        {
+            "op": "describe_code_test",
+            "project": str(tmp_path / "b"),
+            "test": "code_t",
+            "source": _CODE,
+        }
+    )
+    assert [p["name"] for p in edited["describe"]["phases"]] == ["Output voltage"]
 
 
 def test_the_check_code_test_op_answers_the_check(tmp_path):

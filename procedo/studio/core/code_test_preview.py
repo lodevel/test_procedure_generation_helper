@@ -7,24 +7,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from html import escape
 
+from procedo.core import test_format
 from procedo.core.code_test_check import CodeCheck
 
 #: The file a phase in it is written in: a phase's ``file`` in describe.
-TEST_FILE = "openhtf/test.py"
-#: OpenHTF's units (``units.VOLT``) as a reading shows them; any other as it is written.
-_SUFFIX = {
-    "VOLT": "V",
-    "MILLIVOLT": "mV",
-    "AMPERE": "A",
-    "MILLIAMPERE": "mA",
-    "OHM": "Ω",
-    "WATT": "W",
-    "HERTZ": "Hz",
-    "SECOND": "s",
-    "MILLISECOND": "ms",
-    "DEGREE_CELSIUS": "°C",
-    "PERCENT": "%",
-}
+TEST_FILE = test_format.CODE_SCRIPT
 
 
 @dataclass(frozen=True)
@@ -45,8 +32,8 @@ def is_shared(phase: dict) -> bool:
 
 
 def _unit(measurement: dict) -> str:
-    units = str(measurement.get("units") or "")
-    return _SUFFIX.get(units, units)
+    """The measurement's unit as describe gives it: OpenHTF's suffix (``V``)."""
+    return str(measurement.get("units") or "")
 
 
 def _with_unit(value, unit: str) -> str:

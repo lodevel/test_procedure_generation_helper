@@ -3,7 +3,7 @@ openhtf_results_design.md §2 points 3-4, slices 13-14; boards StudioCode and St
 
 Opening a code test shows the code view in the middle (``tabs.code_test_view``) and the shared
 phases in the Workspace column; the text views, their tools and the Assistant (which works on
-them) stay closed. The switch writes the test's ``test.json`` and opens the test again in the
+them, its column says so) stay closed. The switch writes the test's ``test.json`` and opens the test again in the
 version it now runs; nothing is converted, the other version is kept as it is.
 """
 
@@ -37,8 +37,7 @@ class CodeTestController:
             QMessageBox.warning(mw, "Open Test", problem)
         if not mw.code_view.open(path):
             return
-        shell.show_code_view(mw, True)
-        mw.dock.setEnabled(False)  # the Assistant works on the text views
+        shell.show_code_view(mw, True)  # the Assistant column says it works on text tests
         mw.workspace_widget.set_opened_test(path)
         mw.workspace_widget.shared_phases.load()
         shell.show_versions(mw, path, test_format.CODE)

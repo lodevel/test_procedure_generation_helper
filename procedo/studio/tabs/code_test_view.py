@@ -1,11 +1,14 @@
 """The middle of Procedo Studio for a code test (boards StudioCode and StudioCompare): the
 switch Code · Phases · Export preview over the openhtf/test.py editor card (its Saved / ●
 Modified pill, "Open in my editor", Save) and, side by side, the phase list the engine's
-*describe* reads from it (clicking a phase or a sub-step jumps to its line) or the preview of
-its export; under them the action bar: Check and its results line.
+*describe* reads from the editor's text (clicking a phase or a sub-step jumps to its line) or the
+preview of its export; under them the action bar: Check and its results line.
 
-The file is the source of truth: the editor writes it as it is, its line endings kept. Every
-engine call (describe, Check) runs off the GUI thread behind the shared loading cue.
+The file is the source of truth (``core.code_file``): it is written back byte for byte as edited
+(its BOM and line endings kept) — a file whose bytes the editor cannot give back is shown
+read-only —, a change made outside Studio is reloaded when nothing is edited here and asked about
+before a save would overwrite it. Every engine call (describe, Check) runs off the GUI thread
+behind the shared loading cue.
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QCoreApplication, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -29,10 +32,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from procedo.core import atomic_write, code_test_check, test_format
+from procedo.core import code_test_check, test_format
 from procedo.ui import ui_kit
 from procedo.ui.segmented import segment, segmented
 
+from ..core.code_file import CodeFile
 from ..core.code_test_preview import check_lines, phase_rows, preview_html
 from ..core.open_in_editor import open_in_editor
 from ..pack_ops import engine_async
@@ -46,7 +50,29 @@ if TYPE_CHECKING:
 VIEWS = ("Code", "Phases", "Export preview")
 CODE, PHASES, PREVIEW = range(3)
 #: The code version's file in its test folder, as the card names it.
-FILE = f"{test_format.CODE_DIR}/test.py"
+FILE = test_format.CODE_SCRIPT
+#: How long the phases wait after the last keystroke before they are read again (ms).
+_PHASES_DELAY_MS = 400
+#: Why a file opens read-only.
+READ_ONLY_TIP = (
+    f"Studio cannot keep {FILE} exactly as it is (mixed line endings or special characters): "
+    "edit it in your editor."
+)
+#: The question when the file changed outside Studio before a save.
+CHANGED_TITLE = "Changed outside Studio"
+CHANGED_TEXT = f"{FILE} was changed outside Studio since it was opened."
+RELOAD, OVERWRITE = "reload", "overwrite"
+
+
+def ask_changed_outside(parent: QWidget) -> str:
+    """:data:`RELOAD`, :data:`OVERWRITE`, or "" (Cancel): what to do with a file changed outside
+    Studio before a save."""
+    box = QMessageBox(QMessageBox.Icon.Warning, CHANGED_TITLE, CHANGED_TEXT, parent=parent)
+    reload = box.addButton("Reload", QMessageBox.ButtonRole.DestructiveRole)
+    overwrite = box.addButton("Overwrite", QMessageBox.ButtonRole.AcceptRole)
+    box.addButton(QMessageBox.StandardButton.Cancel)
+    box.exec()
+    return {reload: RELOAD, overwrite: OVERWRITE}.get(box.clickedButton(), "")
 
 
 class CodeTestView(QWidget):
@@ -60,9 +86,16 @@ class CodeTestView(QWidget):
         self._ws = ws
         self.test_dir: Path | None = None
         self.described: dict | None = None
-        self._saved = ""  # the file's text as on disk, its line breaks "\n"
-        self._crlf = False
+        self.code_file: CodeFile | None = None
+        self.read_only = False  # the editor cannot give the file's bytes back
+        self._saved = ""  # the editor's text when the file was read or written
         self._asked = 0  # the describe awaited: an older answer is dropped
+        self._phases_timer = QTimer(self)  # the phases follow the editor, once typing pauses
+        self._phases_timer.setSingleShot(True)
+        self._phases_timer.setInterval(_PHASES_DELAY_MS)
+        self._phases_timer.timeout.connect(self.read_phases)
+        # Back from another app (the user's editor): a file changed there is reloaded.
+        QCoreApplication.instance().applicationStateChanged.connect(self._on_app_state)
 
         self.view_buttons = QButtonGroup(self)
         buttons = [segment(label) for label in VIEWS]
@@ -150,43 +183,54 @@ class CodeTestView(QWidget):
     @property
     def dirty(self) -> bool:
         """The editor holds changes not written to openhtf/test.py."""
-        return self.test_dir is not None and self.editor.toPlainText() != self._saved
+        return self.test_dir is not None and self.text() != self._saved
 
     @property
     def file(self) -> Path:
-        return self.test_dir / test_format.CODE_DIR / "test.py"
+        return test_format.script_of(self.test_dir, test_format.CODE)
+
+    def text(self) -> str:
+        """The editor's text exactly (a non-breaking space stays one), its line breaks "\n"."""
+        return self.editor.document().toRawText().replace("\u2029", "\n")
 
     def open(self, test_dir: Path) -> bool:
         """Show the code test in *test_dir* (its file read, its phases asked); False when its
         file cannot be read (said to the user)."""
-        path = test_dir / test_format.CODE_DIR / "test.py"
         try:
-            raw = path.read_bytes().decode("utf-8") if path.exists() else ""
+            code_file = CodeFile(test_format.script_of(test_dir, test_format.CODE))
         except (OSError, UnicodeDecodeError) as exc:
             QMessageBox.warning(
                 self, "Open Test", f"{FILE} of {test_dir.name} cannot be read: {exc}"
             )
             return False
         self.test_dir = test_dir
-        self._crlf = "\r\n" in raw
-        self._saved = raw.replace("\r\n", "\n")
-        self.editor.blockSignals(True)
-        self.editor.setPlainText(self._saved)
-        self.editor.blockSignals(False)
+        self._load(code_file)
         self._clear_results()
         self._show_described(None, "")
-        self._show_state()
+        self.check_button.setEnabled(not engine_async.busy(self.check_button))
         self.read_phases()
         return True
 
+    def _load(self, code_file: CodeFile) -> None:
+        """Show *code_file*: read-only when the editor cannot give its bytes back."""
+        self.code_file = code_file
+        self.editor.blockSignals(True)
+        self.editor.setPlainText(code_file.text)
+        self.editor.blockSignals(False)
+        self._saved = self.text()
+        self.read_only = code_file.encode(self._saved) != code_file.disk
+        self.editor.setReadOnly(self.read_only)
+        self._show_state()
+
     def close(self) -> None:
         """No code test open: the editor, the phases and the results cleared."""
-        self.test_dir = None
+        self.test_dir, self.code_file = None, None
         self._asked += 1  # a describe still running lands nowhere
-        self._saved = ""
+        self._phases_timer.stop()
         self.editor.blockSignals(True)
         self.editor.clear()
         self.editor.blockSignals(False)
+        self._saved = ""
         self._clear_results()
         self._show_described(None, "")
 
@@ -198,48 +242,98 @@ class CodeTestView(QWidget):
         self.side.setCurrentIndex(1 if index == PREVIEW else 0)
 
     def save(self) -> bool:
-        """Write the editor's text to openhtf/test.py (its line endings kept); False when the write
-        failed (said to the user, the editor stays modified)."""
-        if self.test_dir is None:
+        """Write the editor's text to openhtf/test.py (nothing when unmodified); False when it was
+        not written (a failed write said, the editor still modified)."""
+        if not self._write():
+            return False
+        self._ws.workspace_widget.shared_phases.load()  # "used by N tests" may have changed
+        return True
+
+    def _write(self) -> bool:
+        """:meth:`save` without what follows it: a file changed outside Studio since it was read
+        is asked about first (Reload, Overwrite, Cancel)."""
+        if not self.dirty:
             return True
-        text = self.editor.toPlainText()
         try:
-            self.file.parent.mkdir(exist_ok=True)
-            atomic_write.write_bytes(
-                self.file, (text.replace("\n", "\r\n") if self._crlf else text).encode("utf-8")
-            )
+            changed = self.code_file.changed_outside()
+        except OSError as exc:
+            QMessageBox.critical(self, "Save Failed", f"{FILE} could not be read: {exc}")
+            return False
+        if changed:
+            choice = ask_changed_outside(self)
+            if choice == RELOAD:
+                self.reload()
+                return False
+            if choice != OVERWRITE:
+                return False
+        text = self.text()
+        try:
+            self.code_file.write(text)
         except OSError as exc:
             QMessageBox.critical(self, "Save Failed", f"{FILE} could not be written: {exc}")
             return False
         self._saved = text
         self._show_state()
         self._ws.footer.show_message(f"{FILE} saved", 2000)
-        self.read_phases()
-        self._ws.workspace_widget.shared_phases.load()  # "used by N tests" may have changed
         return True
+
+    def reload(self) -> None:
+        """Read the file again (what the editor held is dropped)."""
+        try:
+            code_file = CodeFile(self.file)
+        except (OSError, UnicodeDecodeError) as exc:
+            QMessageBox.warning(self, "Reload", f"{FILE} cannot be read: {exc}")
+            return
+        self._load(code_file)
+        self.read_phases()
+
+    def reload_if_changed(self) -> None:
+        """The file changed outside Studio and nothing is edited here: show it as it is now."""
+        if self.test_dir is None or self.dirty:
+            return
+        try:
+            changed = self.code_file.changed_outside()
+        except OSError:
+            return  # unreadable now (a share dropped): the next save says so
+        if changed:
+            self.reload()
+
+    def _on_app_state(self, state: Qt.ApplicationState) -> None:
+        if state == Qt.ApplicationState.ApplicationActive:
+            self.reload_if_changed()
 
     def _on_edited(self) -> None:
         self._show_state()
+        self._phases_timer.start()
 
     def _show_state(self) -> None:
         dirty = self.dirty
-        ui_kit.set_pill(
-            self.pill, *(("warning", "● Modified") if dirty else ("success", "✓ Saved"))
-        )
+        if self.read_only:
+            ui_kit.set_pill(self.pill, "warning", "Read-only")
+            self.pill.setToolTip(READ_ONLY_TIP)
+        else:
+            ui_kit.set_pill(
+                self.pill, *(("warning", "● Modified") if dirty else ("success", "✓ Saved"))
+            )
+            self.pill.setToolTip("")
         self.save_button.setEnabled(dirty)
         self.changed.emit()
 
     def _open_in_editor(self) -> None:
-        if self.test_dir is not None and (why := open_in_editor(self.file)):
+        """Open the file in the user's editor, saved first: the editor there shows what is here."""
+        if self.test_dir is None or not self.save():
+            return
+        if why := open_in_editor(self.file):
             QMessageBox.warning(self, "Open in my editor", why)
 
     # ---- the phases (describe) ---------------------------------------------------------------
 
     def read_phases(self) -> None:
-        """Ask the engine what openhtf/test.py holds, as saved (off the GUI thread)."""
-        root, test_dir = self._ws.project_manager.project_root, self.test_dir
+        """Ask the engine what the editor's text holds (off the GUI thread)."""
+        root, test_dir, source = self._ws.project_manager.project_root, self.test_dir, self.text()
         if test_dir is None:
             return
+        self._phases_timer.stop()
         self._asked += 1
         asked = self._asked
 
@@ -249,7 +343,7 @@ class CodeTestView(QWidget):
 
         engine_async.call(
             root,
-            lambda: code_test_check.describe(root, test_dir.name),
+            lambda: code_test_check.describe(root, test_dir.name, source),
             done,
             cue=self.phases_card.loading,
             cue_label="Reading the phases…",
@@ -289,18 +383,21 @@ class CodeTestView(QWidget):
     # ---- the Check ---------------------------------------------------------------------------
 
     def check(self) -> None:
-        """The Check of openhtf/test.py, saved first when modified (it reads the file), off the
-        GUI thread; its results line under the views."""
-        if self.test_dir is None or (self.dirty and not self.save()):
+        """The Check of openhtf/test.py, written first when modified (its load reads the file),
+        off the GUI thread; its results line under the views, its describe in the phases."""
+        if self.test_dir is None or not self._write():
             return
         root, test_dir = self._ws.project_manager.project_root, self.test_dir
+        self._phases_timer.stop()
+        self._asked += 1  # the Check's describe is the phases': no other one lands over it
+        asked = self._asked
 
         def done(answer) -> None:
             if self.test_dir != test_dir:
                 return  # another test opened meanwhile
             found = answer()
             self._show_results(check_lines(found))
-            if found.describe is not None:
+            if found.describe is not None and asked == self._asked:
                 self._show_described(found.describe, "")
 
         self._clear_results()

@@ -384,7 +384,7 @@ class WorkspaceTab(BaseTab):
 
     def _on_create_new_test(self):
         """Create a new test folder (the New test window: its name, a text or a Python test)."""
-        dialog = NewTestDialog(self)
+        dialog = NewTestDialog(self.project_manager.get_tests_dir(), self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         name = dialog.name

@@ -1,7 +1,10 @@
 """Studio's "+ New test…" (board StudioNew): the test folder's name and what it is written as —
-a text procedure (today's format) or Python (OpenHTF), started from the code starter."""
+a text procedure (today's format) or Python (OpenHTF), started from the code starter. A name
+that cannot be a new folder of tests/ is said under it, and Create stays off."""
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -14,6 +17,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from procedo.core.paths import exists_quiet
 from procedo.core.test_format import CODE, TEXT
 from procedo.ui import ui_kit
 
@@ -30,6 +34,22 @@ FORMATS = (
         "openhtf/test.py from a starter: one step, one measurement, one instrument, one sub-step.",
     ),
 )
+
+
+#: What a Windows folder name cannot hold (with the control characters).
+_FORBIDDEN = frozenset('<>:"/\\|?*')
+
+
+def name_problem(name: str, tests_dir: Path) -> str:
+    """Why *name* cannot be a new test folder in *tests_dir* ("" when it can, or when it is
+    empty: Create is simply off)."""
+    if any(c in _FORBIDDEN or ord(c) < 32 for c in name):
+        return 'A test name cannot hold < > : " / \\ | ? *.'
+    if name.endswith((".", " ")):
+        return "A test name cannot end with a dot or a space."
+    if name and exists_quiet(tests_dir / name):
+        return f"A test named {name} already exists."
+    return ""
 
 
 class _Option(QFrame):
@@ -56,8 +76,9 @@ class _Option(QFrame):
 class NewTestDialog(QDialog):
     """The new test's folder name (:attr:`name`) and format (:attr:`active`)."""
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, tests_dir: Path, parent=None) -> None:
         super().__init__(parent)
+        self._tests_dir = tests_dir
         self.setWindowTitle("New test")
         self.setFixedWidth(560)
         cancel = QPushButton("Cancel")
@@ -72,11 +93,12 @@ class NewTestDialog(QDialog):
             spacing=10,
         )
         self.name_edit = QLineEdit()
-        self.name_edit.textChanged.connect(
-            lambda text: self.create_button.setEnabled(bool(text.strip()))
-        )
+        self.name_edit.textChanged.connect(self._check_name)
+        self.problem = ui_kit.note()
+        self.problem.hide()
         body.addWidget(QLabel("Test folder name"))
         body.addWidget(self.name_edit)
+        body.addWidget(self.problem)
         body.addWidget(QLabel("Written as"))
         self.options = {active: _Option(label, about) for active, label, about in FORMATS}
         group = QButtonGroup(self)
@@ -89,6 +111,12 @@ class NewTestDialog(QDialog):
         self.options[TEXT].radio.setChecked(True)
         self.create_button.setEnabled(False)
         self.setMinimumHeight(self.heightForWidth(560))  # the formats' wrapped lines in full
+
+    def _check_name(self) -> None:
+        problem = name_problem(self.name, self._tests_dir)
+        self.problem.setText(problem)
+        self.problem.setVisible(bool(problem))
+        self.create_button.setEnabled(bool(self.name) and not problem)
 
     @property
     def name(self) -> str:

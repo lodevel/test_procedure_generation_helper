@@ -16,7 +16,7 @@ import json
 import threading
 from pathlib import Path
 
-from PySide6.QtWidgets import QDialog
+from PySide6.QtWidgets import QDialog, QLabel
 from rules_packager_base import code_test
 
 from procedo.core import code_test_check
@@ -87,10 +87,10 @@ def _real_engine(monkeypatch, asked: list | None = None) -> None:
     def paths(root, test):
         return Path(root) / "tests" / test / "openhtf" / "test.py", Path(root) / "functions"
 
-    def describe(root, test):
+    def describe(root, test, source=None):
         if asked is not None:
             asked.append(("describe", threading.current_thread().name))
-        return code_test.describe(*paths(root, test)), ""
+        return code_test.describe(*paths(root, test), source), ""
 
     def check(root, test):
         if asked is not None:
@@ -173,9 +173,7 @@ def test_the_check_runs_off_the_gui_thread_and_shows_its_results_line(
     ]
 
 
-def test_save_writes_the_file_its_line_endings_kept_and_reads_the_phases_again(
-    make_window, monkeypatch, tmp_path
-):
+def test_save_writes_the_file_its_line_endings_kept(make_window, monkeypatch, tmp_path):
     w, root = _opened(make_window, monkeypatch, tmp_path)
     view = w.code_view
     view.editor.setPlainText(_CODE.replace("Set 28 V, limit 1 A", "Set 24 V"))
@@ -186,7 +184,8 @@ def test_save_writes_the_file_its_line_endings_kept_and_reads_the_phases_again(
     _settle()
     disk = (root / "tests" / "AUX0_output" / "openhtf" / "test.py").read_bytes()
     assert disk == _CODE.replace("Set 28 V, limit 1 A", "Set 24 V").replace("\n", "\r\n").encode()
-    assert _tree(w)[1] == "  1.1 Set 24 V" and view.pill.text() == "✓ Saved"
+    _settle(lambda: _tree(w)[1] == "  1.1 Set 24 V")  # the phases follow the editor
+    assert view.pill.text() == "✓ Saved"
 
 
 def test_the_switch_writes_test_json_and_opens_the_test_in_that_version(
@@ -262,7 +261,7 @@ def test_the_export_preview_is_the_phases_their_sub_steps_expected_and_equipment
                 "measurements": [
                     {
                         "name": "v5",
-                        "units": "VOLT",
+                        "units": "V",
                         "validators": ["4.75 <= x <= 5.25"],
                         "description": "5 V rail",
                         "lower": 4.75,
@@ -308,14 +307,35 @@ def test_the_check_results_say_what_failed():
 
 
 def test_open_in_my_editor_never_runs_a_python_file(monkeypatch, tmp_path):
-    """Windows' default app for .py is often the Python launcher: its Edit action opens it."""
+    """A .py whose default app is a Python interpreter, or an app Windows cannot name, opens with
+    the Edit action; only an editor opens it the default way."""
     opened = []
     monkeypatch.setattr(opener.os, "startfile", lambda *a: opened.append(a), raising=False)
     path = tmp_path / "test.py"
-    for app in (r"C:\Windows\py.exe", r"C:\Program Files\Microsoft VS Code\Code.exe"):
+    apps = (
+        r"C:\Windows\py.exe",
+        r"C:\Windows\PYW.EXE",
+        r"C:\Python313\pythonw.exe",
+        r"C:\Users\a\AppData\Local\Microsoft\WindowsApps\python3.12.exe",
+        "",
+        r"C:\Program Files\Microsoft VS Code\Code.exe",
+    )
+    for app in apps:
         monkeypatch.setattr(opener, "_default_app", lambda _p, app=app: app)
         assert opener.open_in_editor(path) == ""
-    assert opened == [(str(path), "edit"), (str(path),)]
+    assert opened == [(str(path), "edit")] * 5 + [(str(path),)]
+
+
+def test_without_an_edit_action_a_file_python_would_run_is_refused(monkeypatch, tmp_path):
+    def startfile(*args):
+        raise OSError(1155, "No application is associated with the specified file")
+
+    monkeypatch.setattr(opener.os, "startfile", startfile, raising=False)
+    monkeypatch.setattr(opener, "_default_app", lambda _p: r"C:\Windows\py.exe")
+    assert opener.open_in_editor(tmp_path / "test.py") == (
+        "test.py could not be opened: No application is associated with the specified file. "
+        "Choose an editor as the default app for .py files."
+    )
 
 
 def test_the_export_preview_view_shows_the_editor_and_the_preview(
@@ -342,3 +362,129 @@ def test_unsaved_code_is_asked_about_before_another_test_opens(
     assert w.code_view.test_dir == root / "tests" / "AUX0_output"  # it stays open, edited
     assert w.code_view.dirty
     w.code_view.close()  # the window closes without asking again
+
+
+def _file(root: Path) -> Path:
+    return root / "tests" / "AUX0_output" / "openhtf" / "test.py"
+
+
+def test_a_save_asks_before_overwriting_a_change_made_outside_studio(
+    make_window, monkeypatch, tmp_path
+):
+    from procedo.studio.tabs import code_test_view
+
+    w, root = _opened(make_window, monkeypatch, tmp_path)
+    view, asked = w.code_view, []
+    _file(root).write_bytes(b"# changed outside\r\n")
+    view.editor.setPlainText(_CODE + "# mine\n")
+    for choice in ("", code_test_view.OVERWRITE):
+        monkeypatch.setattr(
+            code_test_view, "ask_changed_outside", lambda _p, c=choice: asked.append(c) or c
+        )
+        saved = w._document_controller.on_save_all()
+        assert saved is bool(choice)
+    assert asked == ["", "overwrite"]  # Cancel wrote nothing, Overwrite wrote the editor's text
+    assert _file(root).read_bytes() == (_CODE + "# mine\n").replace("\n", "\r\n").encode()
+    _file(root).write_bytes(b"# outside again\r\n")
+    view.editor.setPlainText("# mine again\n")
+    monkeypatch.setattr(code_test_view, "ask_changed_outside", lambda _p: code_test_view.RELOAD)
+    assert not view.save()
+    assert view.editor.toPlainText() == "# outside again\n" and not view.dirty
+
+
+def test_a_change_made_outside_studio_is_reloaded_when_nothing_is_edited(
+    make_window, monkeypatch, tmp_path
+):
+    from PySide6.QtCore import Qt
+
+    w, root = _opened(make_window, monkeypatch, tmp_path)
+    _file(root).write_bytes(b"x = 1\r\n")
+    w.code_view._on_app_state(Qt.ApplicationState.ApplicationActive)  # back from the editor
+    assert w.code_view.editor.toPlainText() == "x = 1\n" and not w.code_view.dirty
+    w.code_view.editor.setPlainText("x = 2\n")
+    _file(root).write_bytes(b"x = 3\r\n")
+    w.code_view._on_app_state(Qt.ApplicationState.ApplicationActive)
+    assert w.code_view.editor.toPlainText() == "x = 2\n"  # edited here: kept, the save asks
+    w.code_view.close()
+
+
+def test_save_and_save_all_write_nothing_when_unmodified(make_window, monkeypatch, tmp_path):
+    w, root = _opened(make_window, monkeypatch, tmp_path)
+    _file(root).write_bytes(b"# outside\n")  # not reloaded yet: no activation
+    w._document_controller.on_save()
+    assert w._document_controller.on_save_all()
+    assert _file(root).read_bytes() == b"# outside\n"
+
+
+def test_open_in_my_editor_saves_the_edits_first(make_window, monkeypatch, tmp_path):
+    from procedo.studio.tabs import code_test_view
+
+    opened = []
+    monkeypatch.setattr(code_test_view, "open_in_editor", lambda path: opened.append(path) or "")
+    w, root = _opened(make_window, monkeypatch, tmp_path)
+    w.code_view.editor.setPlainText("y = 1\n")
+    w.code_view._open_in_editor()
+    assert _file(root).read_bytes() == b"y = 1\r\n" and opened == [_file(root)]
+
+
+def test_the_file_comes_back_byte_for_byte(make_window, monkeypatch, tmp_path):
+    """Its BOM, its non-breaking spaces; no Modified on opening it; a file the editor cannot
+    give back (mixed line endings) is read-only."""
+    w, root = _opened(make_window, monkeypatch, tmp_path)
+    w.open_test(root / "tests" / "EPO")
+    original = "\ufeffA = 'a\u00a0b'\r\nB = 2\r\n".encode()
+    _file(root).write_bytes(original)
+    w.open_test(root / "tests" / "AUX0_output")
+    _settle()
+    view = w.code_view
+    assert not view.dirty and view.pill.text() == "✓ Saved" and not view.read_only
+    view.editor.setPlainText(view.text() + "C = 3\n")
+    assert view.save()
+    assert _file(root).read_bytes() == original + b"C = 3\r\n"
+    w.open_test(root / "tests" / "EPO")
+    _file(root).write_bytes(b"A = 1\r\nB = 2\n")
+    w.open_test(root / "tests" / "AUX0_output")
+    assert view.read_only and view.editor.isReadOnly() and view.pill.text() == "Read-only"
+
+
+def test_the_phases_follow_what_the_editor_shows(make_window, monkeypatch, tmp_path):
+    w, root = _opened(make_window, monkeypatch, tmp_path)
+    w.code_view.editor.setPlainText(_CODE.replace("Power-up checks", "Edited"))
+    _settle(lambda: _tree(w)[0] == "1 Edited")  # read from the editor, not the file
+    assert b"Power-up checks" in _file(root).read_bytes()
+    w.code_view.close()
+
+
+def test_a_code_test_shows_the_assistants_note_and_saves_as_code(
+    make_window, monkeypatch, tmp_path
+):
+    from procedo.studio import shell
+
+    w, root = _opened(make_window, monkeypatch, tmp_path)
+    assert w.assistant.currentIndex() == 1 and w.save_action.text() == "&Save openhtf/test.py"
+    texts = [label.text() for label in w.assistant.currentWidget().findChildren(QLabel)]
+    assert shell.CODE_ASSISTANT_NOTE in texts
+    w.open_test(root / "tests" / "EPO")
+    assert w.assistant.currentWidget() is w.dock and w.save_action.text().startswith("&Save Text")
+
+
+def test_new_test_says_why_a_name_cannot_be_a_new_folder(qapp, tmp_path):
+    from procedo.studio.dialogs.new_test_dialog import name_problem
+
+    (tmp_path / "EPO").mkdir()
+    cases = {
+        "AUX1": "",
+        "": "",
+        "EPO": "A test named EPO already exists.",
+        "a/b": 'A test name cannot hold < > : " / \\ | ? *.',
+        "..\\x": 'A test name cannot hold < > : " / \\ | ? *.',
+        "..": "A test name cannot end with a dot or a space.",
+        "x.": "A test name cannot end with a dot or a space.",
+    }
+    assert {name: name_problem(name, tmp_path) for name in cases} == cases
+    dialog = NewTestDialog(tmp_path)
+    dialog.name_edit.setText("EPO")
+    assert not dialog.create_button.isEnabled() and not dialog.problem.isHidden()
+    dialog.name_edit.setText("AUX1")
+    assert dialog.create_button.isEnabled() and dialog.problem.isHidden()
+    dialog.deleteLater()

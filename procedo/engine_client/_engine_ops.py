@@ -77,8 +77,9 @@ Ops:
                    (input: {"results": an old flat results.json, "manifest", "folder"}:
                     the one-time converter's, one phase "Converted run")
   describe_code_test → {"ok": true, "describe": {phases, instruments, constants, warnings}}
-                   (input: {"project", "test"}: tests/<test>/openhtf/test.py read without
-                    running it; a syntax error: {"ok": false, "kind": "Other"})
+                   (input: {"project", "test", "source"?}: tests/<test>/openhtf/test.py read
+                    without running it — "source": its text as an editor holds it —; a syntax
+                    error: {"ok": false, "kind": "Other"})
   check_code_test → {"ok": true, "problems": [str], "summary": str, "describe": {...}|null}
                    (input: {"project", "test"}: syntax, its import in this venv in a child
                     process, describe's "N steps · M measurements · K instruments")
@@ -467,7 +468,7 @@ def _op_describe_code_test(spec: dict) -> dict:
     """What a code test holds, read with ``ast`` (rules_packager_base.code_test.describe)."""
     from rules_packager_base import code_test
 
-    return {"ok": True, "describe": code_test.describe(*_code_test(spec))}
+    return {"ok": True, "describe": code_test.describe(*_code_test(spec), spec.get("source"))}
 
 
 def _op_check_code_test(spec: dict) -> dict:

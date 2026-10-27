@@ -113,7 +113,7 @@ class PhasesPanel(QWidget):
         super().__init__()
         self.entries: list[PhaseEntry] = []
         self._row_widgets: list[_PhaseRow] = []
-        self._open: set[tuple[str, str]] = set()  # the phases shown open, by file and function
+        self._folded: set[tuple[str, str]] = set()  # folded by the user; open by default
         self._current: tuple[str, str] | None = None  # the one clicked last
         self.loading = ui_kit.LoadingCue()
         self.problem = ui_kit.note()
@@ -155,7 +155,7 @@ class PhasesPanel(QWidget):
         bar = self.list.verticalScrollBar()
         top = bar.value()
         ui_kit.clear_layout(self._rows)
-        self._row_widgets = [_PhaseRow(e, self, e.key in self._open) for e in self.entries]
+        self._row_widgets = [_PhaseRow(e, self, e.key not in self._folded) for e in self.entries]
         for row in self._row_widgets:
             ui_kit.set_state(row, "selected", row.entry.key == self._current)
             self._rows.addWidget(row)
@@ -164,14 +164,14 @@ class PhasesPanel(QWidget):
 
     def toggle(self, key: tuple[str, str]) -> None:
         """Open the phase *key*, or fold it."""
-        self._open.symmetric_difference_update({key})
+        self._folded.symmetric_difference_update({key})
         self._paint()
 
     def go(self, entry: PhaseEntry, line: int) -> None:
         """A click on *entry* (at *line*): it is the current one, open; its line in the editor,
         or its file opened."""
         self._current = entry.key
-        self._open.add(entry.key)
+        self._folded.discard(entry.key)
         self._paint()
         if entry.here:
             self.jump.emit(line)

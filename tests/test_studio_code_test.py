@@ -154,10 +154,22 @@ def test_a_code_test_opens_in_the_code_view_with_the_phases_describe_reads(
     w, root = _opened(make_window, monkeypatch, tmp_path)
     assert w.middle.currentWidget() is w.code_view and w.artifact_manager is None
     assert w.code_view.editor.toPlainText() == _CODE  # its CRLF shown as lines
-    assert _rows(w) == [  # folded: each one's summary
-        ("1 Power-up checks", "L12", ["2 sub-steps · TP 5V0", "v5 4.75–5.25 V"]),
-        ("2 Power off", "shared", ["common_phases.py, line 5 (opens the file)"]),
-    ]
+    rows = _rows(w)  # open by default (owner): each one's details
+    assert rows[0] == (
+        "1 Power-up checks",
+        "L12",
+        [
+            "Power the GCU at 28 V and check the 5 V rail.",
+            "1.1 Set 28 V, limit 1 A",
+            "1.2 Measure the 5 V rail on TP 5V0",
+            "v5 4.75–5.25 V",
+            "Test point: TP 5V0",
+        ],
+    )
+    assert rows[1][:2] == ("2 Power off", "shared")
+    w.code_view.phases.rows()[0].arrow.click()  # ▾ folds it into its summary
+    _settle()
+    assert _rows(w)[0] == ("1 Power-up checks", "L12", ["2 sub-steps · TP 5V0", "v5 4.75–5.25 V"])
     assert w.side_tabs.widget(1) is w.code_view.phases and w.phase_count.text() == "2"
     shown = [label.text() for label in w.code_view.phases.findChildren(QLabel)]
     assert not [t for t in shown if "Click" in t or "export" in t]  # no notes in the GUI
@@ -752,7 +764,13 @@ def test_edit_opens_the_shared_phase_file_in_studios_own_editor(
     assert not w.version_switch.isVisibleTo(w) and w.middle.currentWidget() is view
     assert view.file_label.text() == "functions/common_phases.py"
     assert w.save_action.text() == "&Save functions/common_phases.py"
-    assert _rows(w) == [("1 Power off", "L5", ["used by AUX0_output"])]
+    assert _rows(w) == [
+        (
+            "1 Power off",
+            "L5",
+            ["Switch every output off.", "no sub-steps yet · used by AUX0_output"],
+        )
+    ]
     assert _shared_row(w).property("selected") is True
     assert w.workspace_widget._current_opened_test is None
     view.check()

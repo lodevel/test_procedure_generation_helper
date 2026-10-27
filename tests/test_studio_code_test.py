@@ -299,13 +299,26 @@ def _badges(w) -> dict[str, str]:
     }
 
 
-def test_the_shared_phases_show_only_while_a_code_test_is_open(make_window, monkeypatch, tmp_path):
+def test_the_left_column_switch_follows_what_is_open_and_shared_phases_stay_for_text_tests(
+    make_window, monkeypatch, tmp_path
+):
+    """Board StudioLeftTabs: "Tests (N) | Shared phases (N)"; a test opened shows Tests, a file
+    of shared phases Shared phases; the list is the project's: there for a text test too."""
     w, root = _opened(make_window, monkeypatch, tmp_path)
-    panel = w.workspace_widget.shared_phases
-    assert panel.isVisibleTo(w) and [p["name"] for p in panel.phases] == ["Power off"]
+    column, panel = w.workspace_widget, w.workspace_widget.shared_phases
+    assert [p["name"] for p in panel.phases] == ["Power off"]
+    assert (
+        column.tests_tab.text() == "Tests (2)" and column.phases_tab.text() == "Shared phases (1)"
+    )
+    assert column.tests_tab.isChecked() and not panel.isVisibleTo(w)
+    _shared_row(w).edit_button.click()  # its file opens in the middle
+    _settle()
+    assert w.code_view.shared_file and column.phases_tab.isChecked() and panel.isVisibleTo(w)
     w.open_test(root / "tests" / "EPO")
     _settle()
-    assert not panel.isVisibleTo(w) and panel.phases == []
+    assert column.tests_tab.isChecked() and [p["name"] for p in panel.phases] == ["Power off"]
+    column.phases_tab.click()  # the user's choice, a text test open
+    assert panel.isVisibleTo(w) and len(panel.rows()) == 1 and panel.new_button.isVisibleTo(w)
 
 
 def test_the_right_panel_is_assistant_and_phases_and_folds_to_a_rail_remembered(
@@ -724,14 +737,14 @@ def test_a_shared_phase_row_shows_what_a_test_writes_and_has_its_own_buttons(
     from procedo.studio.widgets import shared_phases_panel
 
     w, _root = _opened(make_window, monkeypatch, tmp_path)
-    panel, row = w.workspace_widget.shared_phases, _shared_row(w)
+    page, row = w.workspace_widget.lists.widget(1), _shared_row(w)  # the Shared phases list
     assert [label.text() for label in row.findChildren(QLabel)] == [
         "Power off",
         "power_off()",
         "Switch every output off.",
         "functions/common_phases.py · used by 1 test",
     ]
-    assert [b.text() for b in panel.findChildren(QPushButton) if b.isVisibleTo(panel)] == [
+    assert [b.text() for b in page.findChildren(QPushButton) if b.isVisibleTo(page)] == [
         "⧉ Copy import",
         "✎ Edit",
         "+ New shared phase…",

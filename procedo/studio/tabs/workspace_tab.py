@@ -1,9 +1,13 @@
-"""The Tests column (board S1): "Tests · N" and the T / J / C legend, the search, one compact
-row per test (its name, its TXT / HTF format as Bench's lists show it (board StudioCode), then
-the state of its text, JSON and code), the open test highlighted, the shared phases while a code
-test is open (board StudioPhases), "+ New test…" at the bottom (board StudioNew: a text or a
+"""Studio's left column (board StudioLeftTabs): a segmented switch "Tests (N) | Shared phases
+(N)" at its top shows one list at a time, the one that follows what is open in the middle (a
+test: Tests; a file of shared phases: Shared phases), the user free to switch.
+
+Tests (board S1): the T / J / C legend, the search, one compact row per test (its name, its
+TXT / HTF format as Bench's lists show it (board StudioCode), then the state of its text, JSON
+and code), the open test highlighted, "+ New test…" at the bottom (board StudioNew: a text or a
 Python test). Double-click opens a test; its context menu opens it, marks it in sync, renames or
-deletes it.
+deletes it. Shared phases: the project's (``widgets.shared_phases_panel``), "+ New shared
+phase…" at the bottom.
 
 The rows are Bench's test rows (``#testList``, its ``BadgeDelegate``); Bench's Indicators setting
 (``PROCEDO_APP_INDICATORS``) shows the states as squares (Badges) or as marks in the text (Pictos).
@@ -16,16 +20,18 @@ from PySide6.QtCore import QItemSelectionModel, Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
     QDialog,
     QInputDialog,
-    QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMenu,
     QMessageBox,
     QPushButton,
+    QStackedWidget,
     QVBoxLayout,
+    QWidget,
 )
 
 from procedo.core import studio_launch_env
@@ -34,6 +40,7 @@ from procedo.core.paths import exists_quiet, is_dir_quiet, unreachable
 from procedo.core.test_format import CODE, TEXT
 from procedo.ui import ui_indicators, ui_kit
 from procedo.ui.badge_delegate import BADGES_ROLE, BadgeDelegate
+from procedo.ui.segmented import segment, segmented
 
 from .base_tab import BaseTab
 from ..core import test_folder_ops, test_sync
@@ -44,6 +51,8 @@ from ..widgets.shared_phases_panel import SharedPhasesPanel
 
 #: The header's legend of the row letters.
 LEGEND = "T text · J JSON · C code"
+#: The column's two lists, in the switch's order.
+TESTS_LIST, PHASES_LIST = 0, 1
 #: A row's artifacts: letter, name, the TestFolderInfo flag that says it is there, its file.
 _ARTIFACTS = (
     ("T", "Text", "has_text", ArtifactManager.PROCEDURE_TEXT_NAME),
@@ -101,8 +110,36 @@ def _padded(widget, left: int, top: int, right: int, bottom: int) -> QVBoxLayout
     return layout
 
 
+def _list_page(button: QPushButton, *rows: QVBoxLayout) -> QWidget:
+    """One of the column's lists: its *rows* (the last one takes the height), the hairline,
+    its own *button* at the bottom."""
+    page = QWidget()
+    layout = QVBoxLayout(page)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(0)
+    for row in rows:
+        layout.addLayout(row)
+    layout.setStretch(len(rows) - 1, 1)
+    layout.addWidget(ui_kit.row_rule())
+    bottom = ui_kit.hbox(button, None)
+    bottom.setContentsMargins(12, 10, 12, 10)
+    layout.addLayout(bottom)
+    return page
+
+
+def _full_width(switch: QWidget) -> QWidget:
+    """*switch* (``segmented``) across the column, its segments of one width."""
+    track = switch.layout().itemAt(0).widget()
+    for index in range(track.layout().count()):
+        track.layout().setStretch(index, 1)
+    switch.layout().setStretch(0, 1)
+    switch.layout().setStretch(1, 0)
+    return switch
+
+
 class WorkspaceTab(BaseTab):
-    """The Tests column of Procedo Studio (a project's tests; open, rename, delete, create)."""
+    """Procedo Studio's left column: the project's tests (open, rename, delete, create) | its
+    shared phases."""
 
     test_opened = Signal(Path)  # Emitted when a test should be opened
     test_deleted = Signal(Path)  # Emitted when a test folder was deleted
@@ -114,12 +151,10 @@ class WorkspaceTab(BaseTab):
 
     def _setup_ui(self):
         self._current_opened_test = None
-        self.count_label = QLabel()
-        self.count_label.setProperty("muted", True)
-        head = ui_kit.hbox(
-            ui_kit.bold("Tests"), self.count_label, None, ui_kit.note(LEGEND, wrap=False)
-        )
-        head.setContentsMargins(14, 10, 14, 8)
+        self.tests_tab, self.phases_tab = segment("Tests"), segment("Shared phases")
+        self._tabs = QButtonGroup(self)
+        self._tabs.addButton(self.tests_tab, TESTS_LIST)
+        self._tabs.addButton(self.phases_tab, PHASES_LIST)
 
         # Same semantics as Bench's test search: a case-insensitive substring of the
         # folder name, applied live.
@@ -144,20 +179,43 @@ class WorkspaceTab(BaseTab):
         self.test_list.customContextMenuRequested.connect(self._on_context_menu)
 
         self.shared_phases = SharedPhasesPanel(self.main_window)
+        self.shared_phases.loaded.connect(self._count_phases)
 
         self.new_test_btn = QPushButton("+ New test…")
         self.new_test_btn.clicked.connect(self._on_create_new_test)
-        self.new_test_btn.setEnabled(False)  # until a project is open
+        for button in (self.new_test_btn, self.shared_phases.new_button):
+            button.setEnabled(False)  # until a project is open
+
+        self.lists = QStackedWidget()
+        self.lists.addWidget(
+            _list_page(
+                self.new_test_btn,
+                _padded(ui_kit.note(LEGEND, wrap=False), 14, 0, 14, 6),
+                _padded(self.search_bar, 12, 0, 12, 8),
+                _padded(self.test_list, 8, 0, 8, 8),
+            )
+        )
+        self.lists.addWidget(
+            _list_page(self.shared_phases.new_button, _padded(self.shared_phases, 8, 0, 8, 8))
+        )
+        self._tabs.idClicked.connect(self.lists.setCurrentIndex)
+        self.show_list(TESTS_LIST)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addLayout(head)
-        layout.addLayout(_padded(self.search_bar, 12, 0, 12, 8))
-        layout.addLayout(_padded(self.test_list, 8, 0, 8, 8), 1)
-        layout.addWidget(self.shared_phases)
-        layout.addWidget(ui_kit.row_rule())  # the hairline above the button
-        layout.addLayout(_padded(self.new_test_btn, 12, 10, 12, 10))
+        layout.addLayout(
+            _padded(_full_width(segmented(self.tests_tab, self.phases_tab)), 12, 12, 12, 8)
+        )
+        layout.addWidget(self.lists, 1)
+
+    def show_list(self, index: int) -> None:
+        """Show the column's Tests (:data:`TESTS_LIST`) or Shared phases (:data:`PHASES_LIST`)."""
+        self._tabs.button(index).setChecked(True)
+        self.lists.setCurrentIndex(index)
+
+    def _count_phases(self) -> None:
+        self.phases_tab.setText(f"Shared phases ({len(self.shared_phases.phases)})")
 
     def _load_test_list(self):
         """List the project's tests (the scroll position kept)."""
@@ -171,7 +229,7 @@ class WorkspaceTab(BaseTab):
             item.setData(Qt.UserRole, info.path)
             _show_state(item, info, self._stale_artifacts(info.path), badges)
             self.test_list.addItem(item)
-        self.count_label.setText(f"· {len(folders)}")
+        self.tests_tab.setText(f"Tests ({len(folders)})")
         self._update_opened_test_highlight()
         self._apply_search_filter()
         scroll.setValue(top)
@@ -194,8 +252,11 @@ class WorkspaceTab(BaseTab):
                 break
 
     def set_opened_test(self, path: Path):
-        """Set the currently opened test, highlight it and scroll it into view."""
+        """Set the currently opened test, highlight it and scroll it into view (the Tests list
+        shown when it is one)."""
         self._current_opened_test = path
+        if path is not None:
+            self.show_list(TESTS_LIST)
         self._update_opened_test_highlight()
         self._show_test(path)
 
@@ -417,16 +478,20 @@ class WorkspaceTab(BaseTab):
 
     def refresh(self):
         """Refresh the test list."""
-        if self.project_manager.project_root:
+        is_open = bool(self.project_manager.project_root)
+        if is_open:
             self._load_test_list()
-            self.new_test_btn.setEnabled(True)
-        else:
-            self.new_test_btn.setEnabled(False)
+        for button in (self.new_test_btn, self.shared_phases.new_button):
+            button.setEnabled(is_open)
+
+    def show_project(self) -> None:
+        """A project was opened: its tests and its shared phases listed."""
+        self.refresh()
+        self.shared_phases.load()
 
     def set_project_root(self, path: Path):
         """Set project root programmatically (from CLI)."""
         if self.project_manager.set_project_root(path):
-            self._load_test_list()
-            self.new_test_btn.setEnabled(True)
+            self.show_project()
             return True
         return False

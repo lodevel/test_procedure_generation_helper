@@ -220,8 +220,7 @@ class StudioWorkspace(QWidget):
                 self.task_config_manager.reload(self.project_manager.project_root)
 
                 # Update workspace widget
-                self.workspace_widget._load_test_list()
-                self.workspace_widget.new_test_btn.setEnabled(True)
+                self.workspace_widget.show_project()
 
                 # The project's rules (its active bundle's)
                 self.project_manager.detect_rules_root()

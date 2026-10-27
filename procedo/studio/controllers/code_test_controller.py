@@ -1,13 +1,13 @@
 """A code test open in Studio, a file of shared phases open in Studio, and the header's Text |
 Code switch (design openhtf_results_design.md §2 points 3-4, slices 13-14; boards StudioCode,
-StudioCompare, StudioPanel).
+StudioCompare, StudioPanel, StudioLeftTabs).
 
 Opening a code test, or a file of ``functions/`` (a shared phase's "✎ Edit", a shared phase
 clicked in the Phases tab, "+ New shared phase…"), shows the code view in the middle
-(``tabs.code_test_view``), its phases in the right panel's Phases tab and the shared phases in the
-Workspace column; the text views, their tools and the Assistant (which works on them) stay
-closed. The switch writes the test's ``test.json`` and opens the test again in the version it now
-runs; nothing is converted, the other version is kept as it is.
+(``tabs.code_test_view``), its phases in the right panel's Phases tab and — for a file of shared
+phases — the left column's Shared phases list; the text views, their tools and the Assistant
+(which works on them) stay closed. The switch writes the test's ``test.json`` and opens the test
+again in the version it now runs; nothing is converted, the other version is kept as it is.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from procedo.core import starter_test, test_format
 from .. import shell
 from ..core.code_file import CodeFile
 from ..dialogs.new_phase_dialog import NewPhaseDialog
+from ..tabs.workspace_tab import PHASES_LIST
 
 if TYPE_CHECKING:
     from ..main_window import StudioWorkspace
@@ -64,6 +65,7 @@ class CodeTestController:
                 return False
             self._shown(None, phase)
             shell.show_versions(mw, None, "")
+        mw.workspace_widget.show_list(PHASES_LIST)
         if line:
             mw.code_view.editor.jump_to_line(line)
         return True
@@ -132,7 +134,7 @@ class CodeTestController:
         if not mw.code_view.is_open:
             return
         mw.code_view.close()
-        mw.workspace_widget.shared_phases.clear()
+        mw.workspace_widget.shared_phases.mark(None)
         shell.show_code_view(mw, False)
         shell.show_versions(mw, None, "")
 

@@ -108,8 +108,7 @@ class ProjectController(QObject):
     def refresh_after_open(self):
         """Common UI refresh after a project root is set (open / recent)."""
         mw = self._mw
-        mw.workspace_widget._load_test_list()
-        mw.workspace_widget.new_test_btn.setEnabled(True)
+        mw.workspace_widget.show_project()
         mw.project_manager.detect_rules_root()
         mw.task_config_manager.reload(mw.project_manager.project_root)
         mw._update_project_rules_indicators()

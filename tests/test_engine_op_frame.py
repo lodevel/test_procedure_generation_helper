@@ -394,3 +394,45 @@ def test_the_convert_record_op_answers_an_old_runs_record():
     record = answer["record"]
     assert answer["ok"] and [p["name"] for p in record["phases"]] == ["Converted run"]
     assert (record["dut_id"], record["metadata"]["procedo"]["converted_from"]) == ("SN1", "v1")
+
+
+def _code_project(tmp_path, source: str) -> Path:
+    (tmp_path / "tests" / "code_t" / "openhtf").mkdir(parents=True)
+    (tmp_path / "functions").mkdir()
+    (tmp_path / "tests" / "code_t" / "openhtf" / "test.py").write_text(source, encoding="utf-8")
+    return tmp_path
+
+
+_CODE = (
+    "import openhtf as htf\n"
+    "@htf.PhaseOptions(name='Output voltage')\n"
+    "@htf.measures(htf.Measurement('Vout').in_range(4.9, 5.1))\n"
+    "def output_voltage(test):\n"
+    "    'Measure TP 5V0.'\n"
+    "test = htf.Test(output_voltage)\n"
+)
+
+
+def test_the_describe_code_test_op_reads_the_code_test_without_running_it(tmp_path):
+    project = _code_project(tmp_path, _CODE)
+    answer = engine_ops.run({"op": "describe_code_test", "project": str(project), "test": "code_t"})
+    assert answer["ok"]
+    assert [(p["name"], p["description"]) for p in answer["describe"]["phases"]] == [
+        ("Output voltage", "Measure TP 5V0.")
+    ]
+    broken = engine_ops.run(
+        {
+            "op": "describe_code_test",
+            "project": str(_code_project(tmp_path / "b", "def (")),
+            "test": "code_t",
+        }
+    )
+    assert (broken["ok"], broken["kind"]) == (False, "Other")
+
+
+def test_the_check_code_test_op_answers_the_check(tmp_path):
+    answer = engine_ops.run(
+        {"op": "check_code_test", "project": str(_code_project(tmp_path, _CODE)), "test": "code_t"}
+    )
+    assert answer["ok"] and answer["summary"] == "1 step · 1 measurement · 0 instruments"
+    assert len(answer["problems"]) <= 1  # its load: whether this venv has openhtf

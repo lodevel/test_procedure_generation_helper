@@ -76,6 +76,12 @@ Ops:
   convert_record → {"ok": true, "record": {...the run record...}}
                    (input: {"results": an old flat results.json, "manifest", "folder"}:
                     the one-time converter's, one phase "Converted run")
+  describe_code_test → {"ok": true, "describe": {phases, instruments, constants, warnings}}
+                   (input: {"project", "test"}: tests/<test>/openhtf/test.py read without
+                    running it; a syntax error: {"ok": false, "kind": "Other"})
+  check_code_test → {"ok": true, "problems": [str], "summary": str, "describe": {...}|null}
+                   (input: {"project", "test"}: syntax, its import in this venv in a child
+                    process, describe's "N steps · M measurements · K instruments")
 """
 
 from __future__ import annotations
@@ -447,6 +453,26 @@ def _op_convert_record(spec: dict) -> dict:
     return {"ok": True, "record": converted(spec["results"], spec["manifest"], spec.get("folder"))}
 
 
+def _code_test(spec: dict) -> tuple[Path, Path]:
+    """``(openhtf/test.py, functions/)`` of ``spec["test"]`` in ``spec["project"]``."""
+    project = Path(spec["project"])
+    return project / "tests" / spec["test"] / "openhtf" / "test.py", project / "functions"
+
+
+def _op_describe_code_test(spec: dict) -> dict:
+    """What a code test holds, read with ``ast`` (rules_packager_base.code_test.describe)."""
+    from rules_packager_base import code_test
+
+    return {"ok": True, "describe": code_test.describe(*_code_test(spec))}
+
+
+def _op_check_code_test(spec: dict) -> dict:
+    """A code test's Check (rules_packager_base.code_test.check)."""
+    from rules_packager_base import code_test
+
+    return {"ok": True, **code_test.check(*_code_test(spec))}
+
+
 _OPS = {
     "is_available": _op_is_available,
     "parse_text": _op_parse_text,
@@ -471,6 +497,8 @@ _OPS = {
     "extract": _extract.op_extract,
     "write_not_started": _op_write_not_started,
     "convert_record": _op_convert_record,
+    "describe_code_test": _op_describe_code_test,
+    "check_code_test": _op_check_code_test,
 }
 
 
@@ -501,6 +529,8 @@ _PACK_FREE = frozenset(
         "section_ownership",
         "write_not_started",
         "convert_record",
+        "describe_code_test",
+        "check_code_test",
     }
 )
 _PER_KEY = frozenset({"display_snapshot", "extract"})

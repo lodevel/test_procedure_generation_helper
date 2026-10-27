@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QAbstractItemView, QApplication, QLabel, QMenu  # 
 
 from procedo.core import studio_launch_env  # noqa: E402
 from procedo.ui.badge_delegate import BADGES_ROLE  # noqa: E402
+from procedo.ui.ui_indicators import FORMAT_BADGE  # noqa: E402
 from procedo.studio.core.project_manager import TestFolderInfo as FolderInfo  # noqa: E402
 from procedo.studio.tabs import workspace_tab  # noqa: E402
 from procedo.studio.tabs.workspace_tab import LEGEND, WorkspaceTab, artifact_states  # noqa: E402
@@ -91,13 +92,32 @@ def test_artifact_states_map_presence_and_sync():
     ]
 
 
+#: A text test's format pill, before its squares (board StudioCode).
+TXT = FORMAT_BADGE["text"]
+
+
 def test_badge_rows_show_t_j_c_squares(tab, monkeypatch):
     rows = _load(tab, monkeypatch, "badges")
     assert [rows[n].text() for n in ("Alpha", "Beta", "Gamma")] == ["Alpha", "Beta", "Gamma"]
-    assert rows["Alpha"].data(BADGES_ROLE) == [("T", "success"), ("J", "warning"), ("C", "success")]
+    assert rows["Alpha"].data(BADGES_ROLE) == [
+        TXT,
+        ("T", "success"),
+        ("J", "warning"),
+        ("C", "success"),
+    ]
     assert rows["Alpha"].toolTip() == "Text: present · JSON: out of sync · Code: present"
-    assert rows["Beta"].data(BADGES_ROLE) == [("T", "success"), ("J", "missing"), ("C", "missing")]
-    assert rows["Gamma"].data(BADGES_ROLE) == [("T", "missing"), ("J", "missing"), ("C", "missing")]
+    assert rows["Beta"].data(BADGES_ROLE) == [
+        TXT,
+        ("T", "success"),
+        ("J", "missing"),
+        ("C", "missing"),
+    ]
+    assert rows["Gamma"].data(BADGES_ROLE) == [
+        TXT,
+        ("T", "missing"),
+        ("J", "missing"),
+        ("C", "missing"),
+    ]
     assert rows["Beta"].toolTip() == "Text: present · JSON: missing · Code: missing"
 
 
@@ -106,7 +126,7 @@ def test_classic_rows_keep_the_marks_in_the_text(tab, monkeypatch):
     assert rows["Alpha"].text() == "⚠️ Alpha  [T/J/C]"
     assert rows["Beta"].text() == "Beta  [T]"
     assert rows["Gamma"].text() == "Gamma  [empty]"
-    assert all(not row.data(BADGES_ROLE) for row in rows.values())
+    assert all(row.data(BADGES_ROLE) == [TXT] for row in rows.values())  # the format: a pill
 
 
 def test_header_counts_the_tests_and_shows_the_legend(tab, monkeypatch):
@@ -243,8 +263,18 @@ def test_refresh_opened_test_rereads_only_the_open_row(tab, monkeypatch):
     )
     tab.refresh_opened_test()
     assert listed == []
-    assert rows["Beta"].data(BADGES_ROLE) == [("T", "warning"), ("J", "success"), ("C", "missing")]
-    assert rows["Alpha"].data(BADGES_ROLE) == [("T", "success"), ("J", "warning"), ("C", "success")]
+    assert rows["Beta"].data(BADGES_ROLE) == [
+        TXT,
+        ("T", "warning"),
+        ("J", "success"),
+        ("C", "missing"),
+    ]
+    assert rows["Alpha"].data(BADGES_ROLE) == [
+        TXT,
+        ("T", "success"),
+        ("J", "warning"),
+        ("C", "success"),
+    ]
 
 
 def test_refresh_opened_test_lists_again_without_its_folder(tab, monkeypatch):

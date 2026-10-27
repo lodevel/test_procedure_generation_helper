@@ -1,0 +1,41 @@
+"""Open a file in the user's own editor (a code test's "Open in my editor", a shared phase's
+"Open file"): the PC's default app for it — never one that would RUN it.
+
+On Windows a ``.py`` file's default app is often the Python launcher: opening the test with it
+would run it, instruments and all. Then Windows' Edit action opens it instead.
+"""
+
+from __future__ import annotations
+
+import ctypes
+import os
+from pathlib import Path
+
+#: The default apps that run a Python file rather than show it.
+_INTERPRETERS = frozenset({"python.exe", "pythonw.exe", "py.exe", "pyw.exe"})
+
+
+def _default_app(path: Path) -> str:
+    """The program Windows opens *path*'s kind of file with ("" when it cannot say)."""
+    size = ctypes.c_ulong(1024)
+    buffer = ctypes.create_unicode_buffer(size.value)
+    found = ctypes.windll.shlwapi.AssocQueryStringW(  # ASSOCF_NONE, ASSOCSTR_EXECUTABLE
+        0, 2, path.suffix, "open", buffer, ctypes.byref(size)
+    )
+    return buffer.value if found == 0 else ""
+
+
+def open_in_editor(path: Path) -> str:
+    """Open *path* with the PC's default app for it, or with its Edit action when that app is a
+    Python interpreter; "" when it opened, else why not (for the user)."""
+    runs_it = Path(_default_app(path)).name.lower() in _INTERPRETERS
+    try:
+        if runs_it:
+            os.startfile(str(path), "edit")
+        else:
+            os.startfile(str(path))
+    except OSError as exc:
+        why = exc.strerror or str(exc)
+        hint = " Choose an editor as the default app for .py files." if runs_it else ""
+        return f"{path.name} could not be opened: {why}.{hint}"
+    return ""

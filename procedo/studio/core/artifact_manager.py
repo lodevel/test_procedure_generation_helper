@@ -30,17 +30,16 @@ from .sync_utils import normalize_for_hash
 from .test_id import force_json_id, force_text_id_line
 
 
-#: Studio's refusal to work on a code test (its OpenHTF version is active): no view edits one yet.
+#: Why Studio's text tools leave a code test (its OpenHTF version is active) alone.
 CODE_TEST_REFUSAL = (
-    "{name} runs its code version (openhtf/test.py): Studio does not edit code tests yet. "
-    'To edit its text version, set "active": "text" in its test.json. Bench then runs the '
-    "text version."
+    "{name} runs its code version (openhtf/test.py): the text tools leave it alone. "
+    "To work on its text version, switch it to Text at the top of Studio."
 )
 
 
 def code_test_refusal(test_dir: Path) -> str:
-    """Why Studio's text tools (the editors, parse, code generation, Sync Equipment, review, a
-    wizard's writes) leave the test in *test_dir* alone: "" for a text test."""
+    """Why Studio's text tools (a wizard's writes; the views, which open a code test in the code
+    view instead) leave the test in *test_dir* alone: "" for a text test."""
     active, problem = read_format(test_dir)
     if active != CODE:
         return ""

@@ -28,12 +28,14 @@ from .core import ArtifactManager, SessionState, ProjectManager
 from .core.task_config import TaskConfigManager
 from .llm.backend_factory import BackendFactory
 from .tabs import WorkspaceTab, TextOnlyTab, TextJsonTab, JsonCodeTab, TraceabilityTab
+from .tabs.code_test_view import CodeTestView
 from .dock import DockWidget
 from .dialogs import SettingsDialog
 from .core.studio_settings import load_settings
 from . import menus, shell
 from .controllers import (
     AssistantController,
+    CodeTestController,
     DocumentController,
     ExportController,
     LLMServerController,
@@ -53,7 +55,7 @@ class StudioWorkspace(QWidget):
     - the header band: the open test, its Text / JSON / Code and Sync pills,
       the OpenCode pill and menu, Export, Skill chat, Save all
     - the four views (Text, Text-JSON, JSON-Code, Traceability) behind a
-      segmented switch
+      segmented switch; for a code test, its code view (``code_view``)
     - the Workspace (tests) and Assistant (Chat, Findings, Raw)
       columns
     - the status line: project, rules, bundle, validator
@@ -84,6 +86,7 @@ class StudioWorkspace(QWidget):
         # connect straight to them.
         self._project_controller = ProjectController(self)
         self._document_controller = DocumentController(self)
+        self._code_test_controller = CodeTestController(self)
         self.llm_server = LLMServerController(self)
         self._assistant_controller = AssistantController(self)
         self._export_controller = ExportController(self)
@@ -341,6 +344,9 @@ class StudioWorkspace(QWidget):
 
         # Views in workflow order: Text → Text-JSON → JSON-Code → Traceability
         shell.build_view_column(self, list(views))
+        # A code test's middle (its openhtf/test.py, phases, export preview, Check)
+        self.code_view = CodeTestView(self)
+        self.code_view.changed.connect(lambda: shell.refresh_header(self))
 
     def _setup_workspace_dock(self):
         """The test list: the Workspace column (``shell.build_frame`` lays it out)."""

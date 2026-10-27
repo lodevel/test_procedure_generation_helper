@@ -1,7 +1,9 @@
 """Procedo Studio's frame, as on the approved board S1: the header band (the open test, its
-Text / JSON / Code and Sync pills, the OpenCode pill and its menu, Export, Skill chat, Save all),
-the segmented switch between the four views, the Workspace and Assistant columns, and the status
-line (project, rules, bundle, validator).
+Text | Code version switch and the other version's "inactive, not updated" pill (boards
+StudioCode, StudioCompare), its Text / JSON / Code and Sync pills, the OpenCode pill and its menu,
+Export, Skill chat, Save all), the segmented switch between the four views — or, for a code test,
+its code view —, the Workspace and Assistant columns, and the status line (project, rules,
+bundle, validator).
 
 Built from ``procedo.ui.ui_kit``, so Studio's frame is Bench's. ``StudioWorkspace`` owns
 the state and the actions; this module builds the widgets onto it and paints its state on them.
@@ -28,7 +30,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from procedo.core import project_bundle
+from procedo.core import project_bundle, test_format
+from procedo.core.paths import exists_quiet
 from procedo.ui import ui_kit
 from procedo.ui.segmented import segment, segmented
 
@@ -58,6 +61,11 @@ _ARTIFACTS = (
     ("JSON", ArtifactType.PROCEDURE_JSON, "procedure.json"),
     ("Code", ArtifactType.TEST_CODE, "test.py"),
 )
+#: A test's two versions: the switch's label and the file each one is.
+_VERSIONS = {
+    test_format.TEXT: ("Text", "procedure_text.md"),
+    test_format.CODE: ("Code", f"{test_format.CODE_DIR}/test.py"),
+}
 #: The side columns' widths on the board (the views take the rest).
 _WORKSPACE_WIDTH = 246
 _ASSISTANT_WIDTH = 342
@@ -99,9 +107,12 @@ def build_frame(ws: StudioWorkspace) -> None:
     ws.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
     ws.workspace_column = _card(ws.workspace_widget, _WORKSPACE_WIDTH)
     ws.assistant_column = _card(ws.dock, _ASSISTANT_WIDTH)
+    ws.middle = QStackedWidget()  # the text views, or the open code test's view
+    ws.middle.addWidget(ws.view_column)
+    ws.middle.addWidget(ws.code_view)
     columns = QSplitter(Qt.Orientation.Horizontal)
     columns.setChildrenCollapsible(False)
-    for column in (ws.workspace_column, ws.view_column, ws.assistant_column):
+    for column in (ws.workspace_column, ws.middle, ws.assistant_column):
         columns.addWidget(column)
     columns.setStretchFactor(1, 1)  # the side columns keep their width, the views take the rest
     body = QWidget()
@@ -154,6 +165,19 @@ def _header(ws: StudioWorkspace) -> ui_kit.HeaderBand:
     )  # centred, not stretched
     pills.setLayout(ui_kit.hbox(*ws.artifact_pills.values(), ui_kit.vertical_rule(), ws.sync_pill))
     pills.layout().setSpacing(6)
+    ws.artifact_status = pills  # a text test's: hidden for a code test
+
+    ws.version_segments = {version: segment(label) for version, (label, _file) in _VERSIONS.items()}
+    versions = QButtonGroup(ws)
+    for version, button in ws.version_segments.items():
+        versions.addButton(button)
+        button.clicked.connect(
+            lambda _checked=False, v=version: ws._code_test_controller.on_version_clicked(v)
+        )
+    ws.version_switch = segmented(*ws.version_segments.values())
+    ws.version_switch.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+    ws.inactive_pill = QLabel()
+    show_versions(ws, None, "")
 
     ws.server_pill = QToolButton()
     ws.server_pill.setObjectName("serverPill")
@@ -184,7 +208,7 @@ def _header(ws: StudioWorkspace) -> ui_kit.HeaderBand:
         "Procedo Studio",
         [ws.server_pill, tools, ui_kit.vertical_rule(), ws.save_all_btn],
         mark=mark,
-        status=[pills],
+        status=[ws.version_switch, ws.inactive_pill, pills],
     )
     ws.header.title.setMinimumWidth(210)
     return ws.header
@@ -205,6 +229,37 @@ def _footer(ws: StudioWorkspace) -> ui_kit.StatusLine:
 # ---- Painting the state ----------------------------------------------------------------------
 
 
+def show_code_view(ws: StudioWorkspace, on: bool) -> None:
+    """The middle column: the open code test's view (*on*), else the text views."""
+    ws.middle.setCurrentWidget(ws.code_view if on else ws.view_column)
+
+
+def show_versions(ws: StudioWorkspace, test_dir: Path | None, active: str) -> None:
+    """The open test's Text | Code switch (hidden when none is open): its *active* version
+    checked, the other offered when the test has it, then its "inactive, not updated" pill."""
+    ws.version_switch.setVisible(test_dir is not None)
+    ws.inactive_pill.hide()
+    if test_dir is None:
+        return
+    has = {version: exists_quiet(test_dir / file) for version, (_label, file) in _VERSIONS.items()}
+    for version, button in ws.version_segments.items():
+        name, file = _VERSIONS[version][0].lower(), _VERSIONS[version][1]
+        button.setChecked(version == active)
+        button.setEnabled(version == active or has[version])
+        if version == active:
+            button.setToolTip(f"Bench runs this version ({file}).")
+        elif has[version]:
+            button.setToolTip(f"Run the {name} version ({file}) from now on.")
+        else:
+            button.setToolTip(f"This test has no {name} version ({file}).")
+    other = next(version for version in _VERSIONS if version != active)
+    if has[other]:
+        label, file = _VERSIONS[other]
+        ui_kit.set_pill(ws.inactive_pill, "warning", f"{label} version: inactive, not updated")
+        ws.inactive_pill.setToolTip(f"{file} is kept as it is: nothing updates it.")
+        ws.inactive_pill.show()
+
+
 def _show_view(ws: StudioWorkspace, index: int) -> None:
     ws.view_buttons.button(index).setChecked(True)
     ws.view_files.setText(VIEWS[index][1])
@@ -214,11 +269,14 @@ def refresh_header(ws: StudioWorkspace) -> None:
     """The open test and its step count, the Text / JSON / Code pills (saved, modified or
     missing), the Sync pill, and Save all (primary, with the count, while something is
     unsaved)."""
-    am = ws.artifact_manager
-    test_dir = am.test_dir if am is not None else None
+    am, code = ws.artifact_manager, ws.code_view
+    test_dir = am.test_dir if am is not None else code.test_dir
     ws.header.title.setText(test_dir.name if test_dir else "No test open")
     root = ws.project_manager.project_root
-    steps = _step_count(am)
+    if code.test_dir is not None:
+        steps = len(code.described["phases"]) if code.described else None
+    else:
+        steps = _step_count(am)
     parts = [
         "Procedo Studio",
         Path(root).name if root else "",
@@ -239,6 +297,9 @@ def refresh_header(ws: StudioWorkspace) -> None:
             ui_kit.set_pill(pill, "neutral", f"{label} ○")
             pill.setToolTip(f"No {file}." if am is not None else "No test loaded.")
     ws._document_controller.update_sync_indicator()
+    ws.artifact_status.setVisible(code.test_dir is None)
+    if code.test_dir is not None:
+        unsaved = int(code.dirty)
     ws.save_all_btn.setText(f"Save all · {unsaved}" if unsaved else "Save all")
     ws.save_all_btn.setEnabled(bool(unsaved))
     ui_kit.set_primary(ws.save_all_btn, bool(unsaved))

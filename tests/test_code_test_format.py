@@ -1,8 +1,8 @@
 """Studio and a test's code version (``openhtf/``, design openhtf_results_design.md slice 7).
 
 Every text tool (the editors, Quick Parse / Code, Sync Equipment, review, the assistant) works on
-the open test, so Studio does not open a code test (``procedo.core.test_format``): it says why.
-Its exports leave code tests out.
+the open text test: a code test opens in the code view instead (test_studio_code_test.py), and a
+wizard refuses to write one (``code_test_refusal``). Its exports leave code tests out.
 On a text test that also holds a code version, the text artifacts are the folder's own files and
 nothing under ``openhtf/`` is read or written.
 """
@@ -11,9 +11,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
-from procedo.studio.controllers import document_controller
 from procedo.studio.core.artifact_manager import ArtifactManager, ArtifactType
 
 
@@ -31,28 +29,6 @@ def _test(tmp_path: Path, active: str) -> Path:
 
 def _code_files(folder: Path) -> dict[str, bytes]:
     return {p.name: p.read_bytes() for p in sorted((folder / "openhtf").iterdir())}
-
-
-def test_studio_refuses_to_open_a_code_test_and_says_why(tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
-
-    shown: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        QMessageBox, "warning", staticmethod(lambda _p, title, text: shown.append((title, text)))
-    )
-    mw = SimpleNamespace(artifact_manager="kept")
-    document_controller.DocumentController.on_test_opened(
-        SimpleNamespace(_mw=mw), _test(tmp_path, "code")
-    )
-    assert shown == [
-        (
-            "Open Test",
-            "AUX0_output runs its code version (openhtf/test.py): Studio does not edit code "
-            'tests yet. To edit its text version, set "active": "text" in its test.json. Bench '
-            "then runs the text version.",
-        )
-    ]
-    assert mw.artifact_manager == "kept"  # the open test stays open: nothing was loaded
 
 
 def test_the_text_artifacts_of_a_test_with_a_code_version_are_the_folders_own(tmp_path):
@@ -83,7 +59,8 @@ def test_a_test_json_that_cannot_be_read_is_refused_saying_why(tmp_path):
     (folder / "test.json").write_text("{", encoding="utf-8")
     assert code_test_refusal(folder).startswith(
         "Its test.json cannot be read (it is not JSON): it is taken as a code test.\n\n"
-        "AUX0_output runs its code version"
+        "AUX0_output runs its code version (openhtf/test.py): the text tools leave it alone. "
+        "To work on its text version, switch it to Text at the top of Studio."
     )
 
 

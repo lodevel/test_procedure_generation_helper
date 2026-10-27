@@ -1,7 +1,9 @@
 """The Tests column (board S1): "Tests · N" and the T / J / C legend, the search, one compact
-row per test (its name, then the state of its text, JSON and code), the open test highlighted,
-"+ New test…" at the bottom. Double-click opens a test; its context menu opens it, marks it in
-sync, renames or deletes it.
+row per test (its name, its TXT / HTF format as Bench's lists show it (board StudioCode), then
+the state of its text, JSON and code), the open test highlighted, the shared phases while a code
+test is open (board StudioPhases), "+ New test…" at the bottom (board StudioNew: a text or a
+Python test). Double-click opens a test; its context menu opens it, marks it in sync, renames or
+deletes it.
 
 The rows are Bench's test rows (``#testList``, its ``BadgeDelegate``); Bench's Indicators setting
 (``PROCEDO_APP_INDICATORS``) shows the states as squares (Badges) or as marks in the text (Pictos).
@@ -14,6 +16,7 @@ from PySide6.QtCore import QItemSelectionModel, Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QDialog,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -28,6 +31,7 @@ from PySide6.QtWidgets import (
 from procedo.core import studio_launch_env
 from procedo.core.starter_test import sanitize_test_id
 from procedo.core.paths import exists_quiet, is_dir_quiet, unreachable
+from procedo.core.test_format import CODE, TEXT
 from procedo.ui import ui_indicators, ui_kit
 from procedo.ui.badge_delegate import BADGES_ROLE, BadgeDelegate
 
@@ -35,6 +39,8 @@ from .base_tab import BaseTab
 from ..core import test_folder_ops, test_sync
 from ..core.artifact_manager import ArtifactManager
 from ..core.project_manager import TestFolderInfo
+from ..dialogs.new_test_dialog import NewTestDialog
+from ..widgets.shared_phases_panel import SharedPhasesPanel
 
 #: The header's legend of the row letters.
 LEGEND = "T text · J JSON · C code"
@@ -67,13 +73,18 @@ def artifact_states(info, stale: tuple[str, ...]) -> list[tuple[str, str, str]]:
 
 
 def _show_state(item: QListWidgetItem, info, stale: tuple[str, ...], badges: bool) -> None:
-    """The row of one test: its name and its artifacts' states (squares, or marks in the text)."""
+    """The row of one test: its name, its format and its artifacts' states (squares, or marks in
+    the text)."""
     states = artifact_states(info, stale)
     item.setToolTip(" · ".join(f"{name}: {state}" for _letter, name, state in states))
+    fmt = ui_indicators.FORMAT_BADGE[CODE if info.is_code else TEXT]
     if badges:
         item.setText(info.name)
-        item.setData(BADGES_ROLE, [(letter, _TONES[state]) for letter, _name, state in states])
+        item.setData(
+            BADGES_ROLE, [fmt, *((letter, _TONES[state]) for letter, _name, state in states)]
+        )
         return
+    item.setData(BADGES_ROLE, [fmt])
     present = [letter for letter, _name, state in states if state != "missing"]
     marks = f"[{'/'.join(present)}]" if present else "[empty]"
     item.setText(f"{'⚠️ ' if stale else ''}{info.name}  {marks}")
@@ -132,6 +143,8 @@ class WorkspaceTab(BaseTab):
         self.test_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.test_list.customContextMenuRequested.connect(self._on_context_menu)
 
+        self.shared_phases = SharedPhasesPanel(self.main_window)
+
         self.new_test_btn = QPushButton("+ New test…")
         self.new_test_btn.clicked.connect(self._on_create_new_test)
         self.new_test_btn.setEnabled(False)  # until a project is open
@@ -142,6 +155,7 @@ class WorkspaceTab(BaseTab):
         layout.addLayout(head)
         layout.addLayout(_padded(self.search_bar, 12, 0, 12, 8))
         layout.addLayout(_padded(self.test_list, 8, 0, 8, 8), 1)
+        layout.addWidget(self.shared_phases)
         layout.addWidget(ui_kit.row_rule())  # the hairline above the button
         layout.addLayout(_padded(self.new_test_btn, 12, 10, 12, 10))
 
@@ -369,17 +383,13 @@ class WorkspaceTab(BaseTab):
         self.refresh()
 
     def _on_create_new_test(self):
-        """Create a new test folder."""
-        name, ok = QInputDialog.getText(
-            self,
-            "Create New Test",
-            "Enter test name:",
-        )
-
-        if not ok or not name:
+        """Create a new test folder (the New test window: its name, a text or a Python test)."""
+        dialog = NewTestDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
+        name = dialog.name
 
-        path = self.project_manager.create_test_folder(name)
+        path = self.project_manager.create_test_folder(name, dialog.active)
         if path:
             self._load_test_list()
             self._show_test(path)

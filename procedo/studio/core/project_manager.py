@@ -18,7 +18,7 @@ from enum import Enum, auto
 
 from procedo.core import starter_test
 from procedo.core.paths import exists_quiet, is_dir_quiet, unreachable
-from procedo.core.test_format import CODE, active_format
+from procedo.core.test_format import CODE, TEXT, active_format
 from procedo.core.config_manager import PROJECT_RULES, project_rule_doc_paths
 
 from .fileio import atomic_create
@@ -419,9 +419,10 @@ class ProjectManager:
         else:
             return "Rules: not loaded"
 
-    def create_test_folder(self, name: str) -> Optional[Path]:
+    def create_test_folder(self, name: str, active: str = TEXT) -> Optional[Path]:
         """
-        Create a new test folder.
+        Create a new test folder: a text test, or a code test (*active* CODE) from the code
+        starter.
 
         Returns the path to the created folder, or None on failure.
         """
@@ -435,7 +436,10 @@ class ProjectManager:
 
         try:
             new_folder.mkdir(parents=True)
-            starter_test.write_starter_procedure(new_folder)
+            if active == CODE:
+                starter_test.write_starter_code_test(new_folder)
+            else:
+                starter_test.write_starter_procedure(new_folder)
             return new_folder
         except OSError:
             return None

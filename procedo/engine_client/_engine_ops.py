@@ -82,6 +82,10 @@ Ops:
   check_code_test → {"ok": true, "problems": [str], "summary": str, "describe": {...}|null}
                    (input: {"project", "test"}: syntax, its import in this venv in a child
                     process, describe's "N steps · M measurements · K instruments")
+  shared_phases → {"ok": true, "phases": [{name, function, module, file, line, description,
+                   values, used_by, ...}]}
+                   (input: {"project"}: the reusable phases of its functions/, each with how
+                    many tests/<test>/openhtf/test.py list it)
 """
 
 from __future__ import annotations
@@ -473,6 +477,14 @@ def _op_check_code_test(spec: dict) -> dict:
     return {"ok": True, **code_test.check(*_code_test(spec))}
 
 
+def _op_shared_phases(spec: dict) -> dict:
+    """The reusable phases of the project's ``functions/`` (rules_packager_base.code_test)."""
+    from rules_packager_base import code_test
+
+    project = Path(spec["project"])
+    return {"ok": True, "phases": code_test.shared_phases(project / "functions", project / "tests")}
+
+
 _OPS = {
     "is_available": _op_is_available,
     "parse_text": _op_parse_text,
@@ -499,6 +511,7 @@ _OPS = {
     "convert_record": _op_convert_record,
     "describe_code_test": _op_describe_code_test,
     "check_code_test": _op_check_code_test,
+    "shared_phases": _op_shared_phases,
 }
 
 
@@ -531,6 +544,7 @@ _PACK_FREE = frozenset(
         "convert_record",
         "describe_code_test",
         "check_code_test",
+        "shared_phases",
     }
 )
 _PER_KEY = frozenset({"display_snapshot", "extract"})

@@ -436,3 +436,19 @@ def test_the_check_code_test_op_answers_the_check(tmp_path):
     )
     assert answer["ok"] and answer["summary"] == "1 step · 1 measurement · 0 instruments"
     assert len(answer["problems"]) <= 1  # its load: whether this venv has openhtf
+
+
+def test_the_shared_phases_op_lists_the_reusable_phases_of_functions(tmp_path):
+    project = _code_project(
+        tmp_path, "import openhtf as htf\nfrom power import off\ntest = htf.Test(off)\n"
+    )
+    (project / "functions" / "power.py").write_text(
+        "import openhtf as htf\n@htf.PhaseOptions(name='Power off')\ndef off(test):\n"
+        "    'Switch every output off.'\ndef plain(x):\n    return x\n",
+        encoding="utf-8",
+    )
+    answer = engine_ops.run({"op": "shared_phases", "project": str(project)})
+    assert answer["ok"]
+    assert [(p["name"], p["file"], p["used_by"]) for p in answer["phases"]] == [
+        ("Power off", "functions/power.py", 1)
+    ]

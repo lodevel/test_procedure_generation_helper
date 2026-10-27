@@ -1,7 +1,7 @@
 """Document/test lifecycle controller carved out of the Studio workspace.
 
 Owns the test-document path: tab-change syncing, the test-opened /
-test-deleted lifecycle, the save choke-point (the task-#41 id=folder
+test-deleted lifecycle (a code test opens in the code view: ``code_test_controller``), the save choke-point (the task-#41 id=folder
 enforcement rides ArtifactManager through these save paths), sync-hash
 state + indicator + coherence prompts, the unsaved-changes prompt and
 the window-close flow. Method bodies were moved verbatim from
@@ -17,13 +17,14 @@ from typing import TYPE_CHECKING
 from PySide6.QtWidgets import QMessageBox
 
 from procedo.core.paths import unreachable
+from procedo.core.test_format import CODE, TEXT, active_format
 from procedo.ui.ui_kit import set_pill
 
 from ..core import ArtifactManager, ArtifactType, SessionState
-from ..core.artifact_manager import code_test_refusal
 from ..core.proposal import discard_pending
 from ..llm.transcript_replay import TEST_CHANGED
-from ..shell import VIEWS
+from ..shell import VIEWS, show_versions
+from ..tabs.code_test_view import FILE as CODE_FILE
 from .project_controller import refresh_parser_buttons
 
 if TYPE_CHECKING:
@@ -213,18 +214,30 @@ class DocumentController:
         if reason := unreachable(path):
             QMessageBox.warning(mw, "Open Test", reason)
             return
-        # Every text tool works on the open test: a code test is never opened by them.
-        if reason := code_test_refusal(path):
-            QMessageBox.warning(mw, "Open Test", reason)
-            return
 
         if not self.may_leave_test():
             return  # User cancelled, or wants to review
+        self.open_now(path)
 
+    def open_test_dir(self) -> Path | None:
+        """The open test's folder, text or code; None when none is open."""
+        mw = self._mw
+        return mw.artifact_manager.test_dir if mw.artifact_manager else mw.code_view.test_dir
+
+    def open_now(self, path: Path):
+        """Open the test in *path*, the open one left already (:meth:`may_leave_test`): a code
+        test in the code view, a text test in the text views."""
+        mw = self._mw
         self.discard_proposals()
         # a send waiting for the AI server is not sent
         mw.llm_server.drop_waiting_sends(TEST_CHANGED)
         self._save_session()
+        if active_format(path) == CODE:
+            if mw.artifact_manager:
+                self._close_test()  # the text tools and the Assistant work on no test
+            mw._code_test_controller.open(path)
+            return
+        mw._code_test_controller.close()
 
         # Initialize managers for this test
         am = mw.artifact_manager = ArtifactManager()
@@ -284,6 +297,7 @@ class DocumentController:
         refresh_parser_buttons(mw)
 
         # Update status indicators
+        show_versions(mw, path, TEXT)
         mw._update_status_indicators()
         mw._update_menu_state()
 
@@ -305,7 +319,7 @@ class DocumentController:
         changes saved or discarded, its out-of-sync artifacts acknowledged. False when the
         user cancelled."""
         mw = self._mw
-        if mw.artifact_manager and self.check_unsaved_changes():
+        if self.check_unsaved_changes():
             return False
         return not (mw.artifact_manager and self.check_artifact_coherence())
 
@@ -325,6 +339,7 @@ class DocumentController:
         if self._mw.artifact_manager:
             self._save_session()
             self._close_test()
+        self._mw._code_test_controller.close()
 
     def on_test_deleted(self, path: Path):
         """Handle a test folder being deleted."""
@@ -334,6 +349,10 @@ class DocumentController:
         # If the deleted test was the currently opened one, clear everything
         if mw.artifact_manager and mw.artifact_manager.test_dir == path:
             self._close_test()
+        if mw.code_view.test_dir == path:
+            mw._code_test_controller.close()
+            mw._update_status_indicators()
+            mw.workspace_widget.set_opened_test(None)
 
         mw.footer.show_message(f"Deleted test: {path.name}", 3000)
 
@@ -357,6 +376,7 @@ class DocumentController:
         mw.dock.setEnabled(False)
 
         # Reset the header
+        show_versions(mw, None, "")
         mw._update_status_indicators()
 
         # Clear opened test highlight
@@ -379,6 +399,9 @@ class DocumentController:
         status labels.
         """
         mw = self._mw
+        if mw.code_view.test_dir is not None:
+            mw.code_view.save()
+            return
         if not mw.artifact_manager:
             return
 
@@ -486,6 +509,8 @@ class DocumentController:
         editors and dirty flags reflect the saved state.
         """
         mw = self._mw
+        if mw.code_view.test_dir is not None:
+            return mw.code_view.save()
         if not mw.artifact_manager:
             return True
 
@@ -527,22 +552,19 @@ class DocumentController:
             True if the user cancelled (caller should abort), False otherwise
         """
         mw = self._mw
-        if not mw.artifact_manager:
-            return False
-
-        # Sync only the CURRENT tab to catch un-saved editor changes.
-        # Inactive tabs may have stale content for shared artifacts.
-        current_tab = mw.view_stack.currentWidget()
-        if hasattr(current_tab, "sync_editors_to_artifacts"):
-            current_tab.sync_editors_to_artifacts()
-
-        dirty = []
-        if mw.artifact_manager.is_dirty(ArtifactType.PROCEDURE_JSON):
-            dirty.append("procedure.json")
-        if mw.artifact_manager.is_dirty(ArtifactType.TEST_CODE):
-            dirty.append("test.py")
-        if mw.artifact_manager.is_dirty(ArtifactType.PROCEDURE_TEXT):
-            dirty.append("procedure_text.md")
+        dirty = [CODE_FILE] if mw.code_view.dirty else []
+        if mw.artifact_manager:
+            # Sync only the CURRENT tab to catch un-saved editor changes.
+            # Inactive tabs may have stale content for shared artifacts.
+            current_tab = mw.view_stack.currentWidget()
+            if hasattr(current_tab, "sync_editors_to_artifacts"):
+                current_tab.sync_editors_to_artifacts()
+            if mw.artifact_manager.is_dirty(ArtifactType.PROCEDURE_JSON):
+                dirty.append("procedure.json")
+            if mw.artifact_manager.is_dirty(ArtifactType.TEST_CODE):
+                dirty.append("test.py")
+            if mw.artifact_manager.is_dirty(ArtifactType.PROCEDURE_TEXT):
+                dirty.append("procedure_text.md")
 
         if not dirty:
             return False

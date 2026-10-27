@@ -8,6 +8,7 @@ seam that forces this).
 """
 
 from .assistant_controller import AssistantController
+from .code_test_controller import CodeTestController
 from .document_controller import DocumentController
 from .export_controller import ExportController
 from .llm_server_controller import LLMServerController
@@ -15,6 +16,7 @@ from .project_controller import ProjectController
 
 __all__ = [
     "AssistantController",
+    "CodeTestController",
     "DocumentController",
     "ExportController",
     "LLMServerController",

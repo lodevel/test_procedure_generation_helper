@@ -345,16 +345,47 @@ def test_open_in_my_editor_always_uses_the_edit_action(monkeypatch, tmp_path):
     assert opened == [(str(tmp_path / "test.py"), "edit")]
 
 
-def test_without_an_edit_action_the_file_is_refused(monkeypatch, tmp_path):
+def _no_edit_action(monkeypatch):
     def startfile(*args):
         assert args[1:] == ("edit",)  # never the default action
         raise OSError(1155, "No application is associated with the specified file")
 
     monkeypatch.setattr(opener.os, "startfile", startfile, raising=False)
+
+
+def test_without_an_edit_action_the_file_opens_in_notepad(monkeypatch, tmp_path):
+    _no_edit_action(monkeypatch)
+    monkeypatch.setenv("SystemRoot", r"C:\Windows")
+    launched = []
+    monkeypatch.setattr(opener.subprocess, "Popen", lambda argv: launched.append(argv))
+    assert opener.open_in_editor(tmp_path / "test.py") == ""
+    assert launched == [
+        [str(Path(r"C:\Windows") / "System32" / "notepad.exe"), str(tmp_path / "test.py")]
+    ]
+
+
+def test_without_an_edit_action_or_notepad_the_file_is_refused(monkeypatch, tmp_path):
+    _no_edit_action(monkeypatch)
+
+    def popen(argv):
+        raise OSError(2, "The system cannot find the file specified")
+
+    monkeypatch.setattr(opener.subprocess, "Popen", popen)
     assert opener.open_in_editor(tmp_path / "test.py") == (
-        "test.py could not be opened: No application is associated with the specified file. "
+        "test.py could not be opened: The system cannot find the file specified. "
         "Choose an editor as the default app for .py files."
     )
+
+
+def test_ctrl_f_in_the_code_view_opens_find_and_finds_text(make_window, monkeypatch, tmp_path):
+    w, _ = _opened(make_window, monkeypatch, tmp_path)
+    bar = w.code_view.find_bar
+    w.code_view.editor.setPlainText("alpha\nbeta\ngamma\n")
+    w._on_find()  # Edit › Find (Ctrl+F)
+    assert not bar.isHidden()
+    bar.find_field.setText("beta")
+    assert bar.find_next()
+    assert w.code_view.editor.textCursor().selectedText() == "beta"
 
 
 def test_the_export_preview_view_shows_the_editor_and_the_preview(

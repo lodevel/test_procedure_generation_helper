@@ -43,6 +43,7 @@ from ..core.code_test_preview import check_lines, phase_rows, preview_html
 from ..core.open_in_editor import open_in_editor
 from ..pack_ops import engine_async
 from ..widgets.editor_card import CodeEditor
+from ..widgets.find_replace_bar import FindReplaceBar, install_find_shortcuts
 from ..widgets.python_highlighter import PythonSyntaxHighlighter
 
 if TYPE_CHECKING:
@@ -134,6 +135,9 @@ class CodeTestView(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
         layout.addWidget(segmented(*buttons, large=True))
+        self.find_bar = FindReplaceBar(self)  # Edit › Find (Ctrl+F) finds in the code
+        layout.addWidget(self.find_bar)
+        install_find_shortcuts(self, [self.editor], self.find_bar)
         layout.addLayout(pair, 1)
         layout.addWidget(self._action_bar())
         self.show_view(CODE)

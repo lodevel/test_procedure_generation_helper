@@ -562,7 +562,8 @@ class StudioWorkspace(QWidget):
         self._show_find_bar(replace=True)
 
     def _show_find_bar(self, *, replace: bool) -> None:
-        current = self.view_stack.currentWidget()
+        in_code = self.middle.currentWidget() is self.code_view  # a code test's view
+        current = self.code_view if in_code else self.view_stack.currentWidget()
         bar = getattr(current, "find_bar", None)
         if bar is None:
             # Active tab has no find bar (e.g. workspace placeholder); nothing to do.

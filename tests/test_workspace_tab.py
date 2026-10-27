@@ -1,4 +1,4 @@
-"""The Tests column (WorkspaceTab, board S1): its header, its rows (T / J / C states), the open
+"""Studio's left column (WorkspaceTab, boards S1, StudioLeftTabs): its switch, its rows (T / J / C states), the open
 test's highlight, the search, the New test button and the context menu's actions."""
 
 from __future__ import annotations
@@ -13,7 +13,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QFont  # noqa: E402
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QLabel, QMenu  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QAbstractItemView,
+    QApplication,
+    QLabel,
+    QLineEdit,
+    QMenu,
+)
 
 from procedo.core import studio_launch_env  # noqa: E402
 from procedo.ui.badge_delegate import BADGES_ROLE  # noqa: E402
@@ -129,11 +135,27 @@ def test_classic_rows_keep_the_marks_in_the_text(tab, monkeypatch):
     assert all(row.data(BADGES_ROLE) == [TXT] for row in rows.values())  # the format: a pill
 
 
-def test_header_counts_the_tests_and_shows_the_legend(tab, monkeypatch):
+def test_a_switch_shows_tests_or_shared_phases_each_with_its_own_new_button(tab, monkeypatch):
+    """Board StudioLeftTabs: "Tests (N) | Shared phases (N)" at the top, one list at a time; the
+    legend, the search and "+ New test…" only on Tests, "+ New shared phase…" only on Shared
+    phases; a test opened shows Tests."""
     _load(tab, monkeypatch, "badges")
-    assert tab.count_label.text() == "· 3"
+    assert tab.tests_tab.text() == "Tests (3)" and tab.phases_tab.text() == "Shared phases"
+    tab.shared_phases._show([])  # the project's list read: its count
+    assert tab.phases_tab.text() == "Shared phases (0)"
     assert LEGEND == "T text · J JSON · C code"
-    assert [label.text() for label in tab.findChildren(QLabel) if label.text() == LEGEND]
+    tests, phases = tab.lists.widget(0), tab.lists.widget(1)
+    assert [label for label in tests.findChildren(QLabel) if label.text() == LEGEND]
+    assert tab.search_bar in tests.findChildren(QLineEdit) and tab.new_test_btn.parent() is tests
+    assert tab.shared_phases.new_button.parent() is phases
+    assert tab.shared_phases.new_button.text() == "+ New shared phase…"
+    assert tab.tests_tab.isChecked() and tab.lists.currentWidget() is tests
+    tab.phases_tab.click()
+    assert tab.lists.currentWidget() is phases and not tab.tests_tab.isChecked()
+    tab.set_opened_test(None)  # nothing open: the user's choice stays
+    assert tab.lists.currentWidget() is phases
+    tab.set_opened_test(tab.tmp / "Beta")
+    assert tab.lists.currentWidget() is tests and tab.tests_tab.isChecked()
 
 
 def test_the_list_is_benchs_test_list(tab):
@@ -164,12 +186,50 @@ def test_search_hides_rows_by_folder_name(tab, monkeypatch):
     assert not any(row.isHidden() for row in rows.values())
 
 
-def test_new_test_needs_a_project(tab, monkeypatch):
+def test_a_project_switch_never_shows_the_other_projects_shared_phases(tab, monkeypatch):
+    """The old project's rows and edited phase go at once, the tab without a count while the
+    new list is read; a reload of the same project keeps its rows meanwhile."""
+    from procedo.studio.widgets import shared_phases_panel
+
+    def phases(root):
+        name = Path(root).name
+        return [
+            {"name": name, "function": "f", "module": "m", "file": "functions/m.py", "line": 1}
+        ], ""
+
+    monkeypatch.setattr(shared_phases_panel.code_test_check, "shared_phases", phases)
+    panel = tab.shared_phases
+
+    def read() -> None:
+        while panel.cue.active:
+            QApplication.processEvents()
+
+    tab.pm.project_root = tab.tmp / "A"
+    panel.load()
+    read()
+    panel.mark(("functions/m.py", "f"))
+    assert [p["name"] for p in panel.phases] == [
+        "A"
+    ] and tab.phases_tab.text() == "Shared phases (1)"
+    panel.load()  # the same project again: its rows and the edited phase stay while it reads
+    assert [p["name"] for p in panel.phases] == ["A"] and panel.current == ("functions/m.py", "f")
+    read()
+    tab.pm.project_root = tab.tmp / "B"
+    panel.load()
+    assert panel.phases == [] and panel.rows() == [] and panel.current is None
+    assert tab.phases_tab.text() == "Shared phases"
+    read()
+    assert [p["name"] for p in panel.phases] == [
+        "B"
+    ] and tab.phases_tab.text() == "Shared phases (1)"
+
+
+def test_new_test_and_new_shared_phase_need_a_project(tab, monkeypatch):
     assert tab.new_test_btn.text() == "+ New test…"
     tab.refresh()
-    assert not tab.new_test_btn.isEnabled()
+    assert not tab.new_test_btn.isEnabled() and not tab.shared_phases.new_button.isEnabled()
     _load(tab, monkeypatch, "badges")
-    assert tab.new_test_btn.isEnabled()
+    assert tab.new_test_btn.isEnabled() and tab.shared_phases.new_button.isEnabled()
 
 
 def test_double_click_opens(tab, monkeypatch):

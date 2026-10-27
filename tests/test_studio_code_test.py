@@ -306,32 +306,20 @@ def test_the_check_results_say_what_failed():
     ]
 
 
-def test_open_in_my_editor_never_runs_a_python_file(monkeypatch, tmp_path):
-    """A .py whose default app is a Python interpreter, or an app Windows cannot name, opens with
-    the Edit action; only an editor opens it the default way."""
+def test_open_in_my_editor_always_uses_the_edit_action(monkeypatch, tmp_path):
+    """Never the default action, which may run the test (launcher, alias, wrapper, shim)."""
     opened = []
     monkeypatch.setattr(opener.os, "startfile", lambda *a: opened.append(a), raising=False)
-    path = tmp_path / "test.py"
-    apps = (
-        r"C:\Windows\py.exe",
-        r"C:\Windows\PYW.EXE",
-        r"C:\Python313\pythonw.exe",
-        r"C:\Users\a\AppData\Local\Microsoft\WindowsApps\python3.12.exe",
-        "",
-        r"C:\Program Files\Microsoft VS Code\Code.exe",
-    )
-    for app in apps:
-        monkeypatch.setattr(opener, "_default_app", lambda _p, app=app: app)
-        assert opener.open_in_editor(path) == ""
-    assert opened == [(str(path), "edit")] * 5 + [(str(path),)]
+    assert opener.open_in_editor(tmp_path / "test.py") == ""
+    assert opened == [(str(tmp_path / "test.py"), "edit")]
 
 
-def test_without_an_edit_action_a_file_python_would_run_is_refused(monkeypatch, tmp_path):
+def test_without_an_edit_action_the_file_is_refused(monkeypatch, tmp_path):
     def startfile(*args):
+        assert args[1:] == ("edit",)  # never the default action
         raise OSError(1155, "No application is associated with the specified file")
 
     monkeypatch.setattr(opener.os, "startfile", startfile, raising=False)
-    monkeypatch.setattr(opener, "_default_app", lambda _p: r"C:\Windows\py.exe")
     assert opener.open_in_editor(tmp_path / "test.py") == (
         "test.py could not be opened: No application is associated with the specified file. "
         "Choose an editor as the default app for .py files."
@@ -488,3 +476,40 @@ def test_new_test_says_why_a_name_cannot_be_a_new_folder(qapp, tmp_path):
     dialog.name_edit.setText("AUX1")
     assert dialog.create_button.isEnabled() and dialog.problem.isHidden()
     dialog.deleteLater()
+
+
+def test_a_file_deleted_outside_studio_keeps_the_editors_text_to_save_back(
+    make_window, monkeypatch, tmp_path, mbox
+):
+    from PySide6.QtCore import Qt
+
+    w, root = _opened(make_window, monkeypatch, tmp_path)
+    _file(root).unlink()
+    w.code_view._on_app_state(Qt.ApplicationState.ApplicationActive)
+    assert mbox.warning == [
+        ("Changed outside Studio", "openhtf/test.py was deleted outside Studio.")
+    ]
+    assert w.code_view.editor.toPlainText() == _CODE and w.code_view.dirty
+    w.code_view._on_app_state(Qt.ApplicationState.ApplicationActive)
+    assert len(mbox.warning) == 1  # said once
+    assert w.code_view.save()  # written back, unasked
+    assert _file(root).read_bytes() == _CODE.replace("\n", "\r\n").encode()
+
+
+def test_a_change_is_looked_for_by_time_and_size_before_the_bytes(monkeypatch, tmp_path):
+    import os
+
+    from procedo.studio.core.code_file import CodeFile
+
+    path = tmp_path / "test.py"
+    path.write_bytes(b"x = 1\n")
+    code_file = CodeFile(path)
+    reads = []
+    real = Path.read_bytes
+    monkeypatch.setattr(Path, "read_bytes", lambda self: reads.append(self) or real(self))
+    assert not code_file.changed_outside() and reads == []  # same time and size: not read
+    os.utime(path, ns=(1, 1))
+    assert not code_file.changed_outside() and reads == [path]  # touched, same bytes
+    assert not code_file.changed_outside() and reads == [path]  # its new time is taken
+    path.write_bytes(b"x = 2\n")
+    assert code_file.changed_outside()

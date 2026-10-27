@@ -61,6 +61,7 @@ READ_ONLY_TIP = (
 #: The question when the file changed outside Studio before a save.
 CHANGED_TITLE = "Changed outside Studio"
 CHANGED_TEXT = f"{FILE} was changed outside Studio since it was opened."
+DELETED_TEXT = f"{FILE} was deleted outside Studio."
 RELOAD, OVERWRITE = "reload", "overwrite"
 
 
@@ -88,7 +89,8 @@ class CodeTestView(QWidget):
         self.described: dict | None = None
         self.code_file: CodeFile | None = None
         self.read_only = False  # the editor cannot give the file's bytes back
-        self._saved = ""  # the editor's text when the file was read or written
+        # The editor's text when the file was read or written (None: the file was deleted).
+        self._saved: str | None = ""
         self._asked = 0  # the describe awaited: an older answer is dropped
         self._phases_timer = QTimer(self)  # the phases follow the editor, once typing pauses
         self._phases_timer.setSingleShot(True)
@@ -278,7 +280,14 @@ class CodeTestView(QWidget):
         return True
 
     def reload(self) -> None:
-        """Read the file again (what the editor held is dropped)."""
+        """Read the file again (what the editor held is dropped) — unless it was deleted: then
+        that is said and the editor keeps its text, modified, for a save to write it back."""
+        if self.code_file.gone():
+            QMessageBox.warning(self, CHANGED_TITLE, DELETED_TEXT)
+            self.code_file.deleted()
+            self._saved = None  # whatever the editor holds is unsaved
+            self._show_state()
+            return
         try:
             code_file = CodeFile(self.file)
         except (OSError, UnicodeDecodeError) as exc:

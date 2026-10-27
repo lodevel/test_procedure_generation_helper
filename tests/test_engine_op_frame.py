@@ -46,7 +46,7 @@ _spec.loader.exec_module(er)
 
 _HEAD = (
     "# T\nDesc.\n\n## Meta\nformat_version: 2.0.1\nboard: B\n"
-    "rules_pack: rules_packager_base@3.2.0\n\n## Equipment\nDMM_GENERIC : dmm\n\n## Steps\n"
+    "rules_pack: rules_packager_base@3.2.1\n\n## Equipment\nDMM_GENERIC : dmm\n\n## Steps\n"
 )
 
 # Procedures copied from the engine's own tests (rules/v2_0_2/tests): a linear

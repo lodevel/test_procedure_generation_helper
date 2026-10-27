@@ -215,7 +215,11 @@ class WorkspaceTab(BaseTab):
         self.lists.setCurrentIndex(index)
 
     def _count_phases(self) -> None:
-        self.phases_tab.setText(f"Shared phases ({len(self.shared_phases.phases)})")
+        """The tab's "Shared phases (N)"; no count while the list is being read."""
+        panel = self.shared_phases
+        self.phases_tab.setText(
+            "Shared phases" if panel.cue.active else f"Shared phases ({len(panel.phases)})"
+        )
 
     def _load_test_list(self):
         """List the project's tests (the scroll position kept)."""

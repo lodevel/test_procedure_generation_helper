@@ -111,6 +111,7 @@ class SharedPhasesPanel(QWidget):
         self.phases: list[dict] = []
         self._rows: list[_Row] = []
         self.current: tuple[str, str] | None = None  # the phase being edited: file, function
+        self._root = None  # the project the list is of
         self._asked = 0
         self.cue = ui_kit.LoadingCue()
         rows = QWidget()
@@ -132,26 +133,28 @@ class SharedPhasesPanel(QWidget):
         column.addWidget(self.list, 1)
 
     def load(self) -> None:
-        """Read the open project's shared phases again (off the GUI thread) and show them."""
+        """Read the open project's shared phases again (off the GUI thread) and show them;
+        another project's are cleared at once, never shown while its own are read."""
         root = self._ws.project_manager.project_root
         self._asked += 1
         asked = self._asked
-        if root is None:
+        switched, self._root = root != self._root, root
+        if root is not None:
+
+            def done(answer) -> None:
+                if shiboken6.isValid(self) and asked == self._asked:  # not closed meanwhile
+                    self._show(answer()[0])
+
+            engine_async.call(
+                root,
+                lambda: code_test_check.shared_phases(root),
+                done,
+                cue=self.cue,
+                cue_label="Reading…",
+            )
+        if switched or root is None:  # after the call: its cue says the list is being read
             self.current = None
             self._show([])
-            return
-
-        def done(answer) -> None:
-            if shiboken6.isValid(self) and asked == self._asked:  # not closed meanwhile
-                self._show(answer()[0])
-
-        engine_async.call(
-            root,
-            lambda: code_test_check.shared_phases(root),
-            done,
-            cue=self.cue,
-            cue_label="Reading…",
-        )
 
     def _show(self, phases: list[dict]) -> None:
         self.phases = phases

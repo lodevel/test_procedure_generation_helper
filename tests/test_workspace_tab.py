@@ -186,6 +186,44 @@ def test_search_hides_rows_by_folder_name(tab, monkeypatch):
     assert not any(row.isHidden() for row in rows.values())
 
 
+def test_a_project_switch_never_shows_the_other_projects_shared_phases(tab, monkeypatch):
+    """The old project's rows and edited phase go at once, the tab without a count while the
+    new list is read; a reload of the same project keeps its rows meanwhile."""
+    from procedo.studio.widgets import shared_phases_panel
+
+    def phases(root):
+        name = Path(root).name
+        return [
+            {"name": name, "function": "f", "module": "m", "file": "functions/m.py", "line": 1}
+        ], ""
+
+    monkeypatch.setattr(shared_phases_panel.code_test_check, "shared_phases", phases)
+    panel = tab.shared_phases
+
+    def read() -> None:
+        while panel.cue.active:
+            QApplication.processEvents()
+
+    tab.pm.project_root = tab.tmp / "A"
+    panel.load()
+    read()
+    panel.mark(("functions/m.py", "f"))
+    assert [p["name"] for p in panel.phases] == [
+        "A"
+    ] and tab.phases_tab.text() == "Shared phases (1)"
+    panel.load()  # the same project again: its rows and the edited phase stay while it reads
+    assert [p["name"] for p in panel.phases] == ["A"] and panel.current == ("functions/m.py", "f")
+    read()
+    tab.pm.project_root = tab.tmp / "B"
+    panel.load()
+    assert panel.phases == [] and panel.rows() == [] and panel.current is None
+    assert tab.phases_tab.text() == "Shared phases"
+    read()
+    assert [p["name"] for p in panel.phases] == [
+        "B"
+    ] and tab.phases_tab.text() == "Shared phases (1)"
+
+
 def test_new_test_and_new_shared_phase_need_a_project(tab, monkeypatch):
     assert tab.new_test_btn.text() == "+ New test…"
     tab.refresh()

@@ -17,7 +17,9 @@ Instance attributes expected on ``self`` (provided by BaseTab / __init__):
 """
 
 import functools
+import json
 import logging
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -35,6 +37,26 @@ from ..llm.transcript_replay import NOT_SENT, TEST_CHANGED, serialize_transcript
 from .llm_validator_loop import ValidatorLoop
 
 log = logging.getLogger(__name__)
+
+
+def _contract_problem(raw: str) -> str:
+    """What is wrong with a reply outside the output contract, in words the model can act on: the
+    JSON error and where (a one-character slip is the usual case), or that there is no object."""
+    match = re.search(r"\{[\s\S]*\}", raw or "")
+    if match is None:
+        return "no JSON object in the reply"
+    try:
+        json.loads(match.group(0))
+    except json.JSONDecodeError as exc:
+        return f"invalid JSON ({exc})"
+    return "the JSON object is not the contract's envelope"
+
+
+#: What the model is told when its reply broke the output contract (``{reason}``: what was wrong).
+CONTRACT_RETRY = (
+    "Your previous reply did not follow the output contract: {reason}. Send the same answer "
+    "again as ONE valid JSON object in the contract's shape, with nothing outside it."
+)
 
 
 class LLMTabMixin:
@@ -318,8 +340,11 @@ class LLMTabMixin:
         # 4. Publish output-contract / response issues.
         self._publish_response_issues(response, validation_issues, is_active)
 
-        # 5. Short-circuit on transport-level failure.
+        # 5. Short-circuit on transport-level failure; a reply that broke the output
+        #    contract is asked again first (:meth:`_retry_broken_contract`).
         if not response.success:
+            if self._retry_broken_contract(response, run_state, is_active):
+                return
             # Special case: the backend recovered a lost server session this
             # turn, but replaying the prior conversation overflowed the context
             # window. The session IS valid now — guide the operator to resend a
@@ -481,6 +506,26 @@ class LLMTabMixin:
                     for issue in response.issues
                 ]
             )
+
+    def _retry_broken_contract(self, response, run_state, is_active: bool) -> bool:
+        """The model answered but not in the output contract (no JSON object, or one that
+        does not parse): it is asked again with what was wrong, within the run's attempts
+        (the validator's budget), the chat saying so. False when the reply is not that, or
+        no attempt is left: the failure is shown as before."""
+        if not getattr(response, "contract_broken", False) or not run_state.on_contract_break():
+            return False
+        reason = _contract_problem(response.raw_response)
+        if is_active:
+            self.main_window.dock.chat_panel.add_message(
+                "system",
+                f"⟳ The reply was not the expected JSON ({reason}); asking again, attempt "
+                f"{run_state.attempt}/{run_state.max_attempts}.",
+                tone="warning",
+            )
+        self._run_task_async(
+            run_state.task, retry=True, user_message=CONTRACT_RETRY.format(reason=reason)
+        )
+        return True
 
     def _handle_unsuccessful_response(self, response, is_active: bool) -> None:
         """Surface a transport-level LLM failure (response.success=False)

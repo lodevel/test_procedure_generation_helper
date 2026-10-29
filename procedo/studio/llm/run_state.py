@@ -157,6 +157,16 @@ class LLMRunState:
         self.state = RunStateKind.FAILED_OUT_OF_RETRIES
         return "give_up"
 
+    def on_contract_break(self) -> bool:
+        """The reply broke the output contract (no JSON, or JSON that does not parse): one
+        more attempt is taken from the run's budget — the validator's — and the request
+        goes again. False when none is left (or the run was cancelled)."""
+        self._require_in({RunStateKind.LLM_REQUESTED}, "on_contract_break")
+        if self.attempt < self.max_attempts and not self.cancelled:
+            self.attempt += 1
+            return True
+        return False
+
     def begin_retry(self) -> None:
         """Caller has spawned the next LLM worker for the retry."""
         self._require_in({RunStateKind.VALIDATOR_FAIL_RETRYING}, "begin_retry")

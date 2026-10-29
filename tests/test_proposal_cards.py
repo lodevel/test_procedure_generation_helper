@@ -696,3 +696,84 @@ def test_a_proposal_that_failed_validation_shows_its_findings_before_any_accept(
     card.diff_button.click()
     assert "Step 1: no verb" in banners[0]
     assert view.text_card.editor.toPlainText() == PROPOSED_TEXT
+
+
+def _broken(text: str):
+    """A reply as the client parses it: the model answered, its JSON does not parse."""
+    from opencode_client.response_parser import ResponseParser
+
+    return ResponseParser().parse(text, LLMTask.REVIEW_TEXT_PROCEDURE)
+
+
+def test_a_reply_that_breaks_the_contract_is_asked_again_with_what_was_wrong(
+    opened, monkeypatch, mbox
+):
+    """Owner: "if the output contract wasn't respected, this should be a retry". A reply with a
+    one-character slip in its JSON was shown as ❌ and nothing applied; now the model is asked
+    again with what was wrong, within the run's attempts (the validator's budget). Once they
+    are spent, the failure is shown as before."""
+    w = opened
+    view = w.text_only_tab
+    asked = []
+
+    class _Recorded(_Asked):
+        def __init__(self, backend, request, *args, **kwargs):
+            super().__init__()
+            asked.append(request)
+
+        def cancel(self):
+            pass
+
+    monkeypatch.setattr(llm_tab_mixin, "LLMWorker", _Recorded)
+    monkeypatch.setattr(view, "_resolve_max_attempts", lambda task: 3)
+    monkeypatch.setattr(  # a started backend: the send goes at once
+        view.tab_context,
+        "_backend",
+        SimpleNamespace(get_context_window=lambda: None, stop=lambda: None),
+    )
+    monkeypatch.setattr(llm_tab_mixin.PromptBuilder, "build", lambda self, request, **k: "P")
+    view._run_task_async(LLMTask.REVIEW_TEXT_PROCEDURE)
+    slip = '```json\n{"type": "llm_turn", "validation": {"assumptions": ["a",\n   ="b"]}}\n```'
+
+    reply = _broken(slip)
+    assert reply.contract_broken and not reply.success
+    view._handle_llm_response(reply)
+    assert len(asked) == 2 and mbox.critical == []
+    assert "did not follow the output contract: invalid JSON (Expecting" in asked[1].user_message
+    assert view._ensure_run_state().attempt == 2
+
+    view._handle_llm_response(_broken("I cannot do that."))  # prose: the contract broken too
+    assert len(asked) == 3 and mbox.critical == []
+    view._handle_llm_response(_broken(slip))  # attempt 3 of 3 broken: no attempt left
+    assert len(asked) == 3
+    assert [title for title, _ in mbox.critical] == ["LLM Error"]
+
+
+def test_a_transport_failure_is_not_asked_again(opened, monkeypatch, mbox):
+    """Only a reply the model gave outside the contract is asked again: a failure without one
+    (the server down, a timeout) is shown at once, as before."""
+    from opencode_client.backend_base import LLMResponse
+
+    w = opened
+    view = w.text_only_tab
+    asked = []
+
+    class _Recorded(_Asked):
+        def __init__(self, backend, request, *args, **kwargs):
+            super().__init__()
+            asked.append(request)
+
+        def cancel(self):
+            pass
+
+    monkeypatch.setattr(llm_tab_mixin, "LLMWorker", _Recorded)
+    monkeypatch.setattr(view, "_resolve_max_attempts", lambda task: 3)
+    monkeypatch.setattr(  # a started backend: the send goes at once
+        view.tab_context,
+        "_backend",
+        SimpleNamespace(get_context_window=lambda: None, stop=lambda: None),
+    )
+    monkeypatch.setattr(llm_tab_mixin.PromptBuilder, "build", lambda self, request, **k: "P")
+    view._run_task_async(LLMTask.REVIEW_TEXT_PROCEDURE)
+    view._handle_llm_response(LLMResponse(success=False, error_message="Server not reachable"))
+    assert len(asked) == 1 and [title for title, _ in mbox.critical] == ["LLM Error"]

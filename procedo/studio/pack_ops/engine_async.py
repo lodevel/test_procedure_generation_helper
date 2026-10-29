@@ -17,8 +17,9 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from PySide6.QtCore import QCoreApplication, QEventLoop, QObject
+from PySide6.QtCore import QObject
 
+from procedo.core import off_gui
 from procedo.core.off_gui import answer_to
 
 #: The name of the threads that run engine calls.
@@ -132,13 +133,7 @@ def wait(project_root: Optional[Path], fn: Callable[[], Any]) -> Any:
     input waits until it returns, so nothing can be pressed twice."""
     if project_root is None:
         return fn()
-    box: list[Answer] = []
-    worker = threading.Thread(target=lambda: box.append(_run(fn)), name=THREAD, daemon=True)
-    worker.start()
-    while worker.is_alive():
-        worker.join(0.01)
-        QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
-    return box[0]()
+    return off_gui.wait(fn, name=THREAD)
 
 
 def unchanged(editor, sent: str, say: Callable[[str], None]) -> bool:

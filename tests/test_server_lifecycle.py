@@ -1435,6 +1435,45 @@ def test_reset_server_recovery_rearms_after_giveup():
     assert sm.ensure_calls == 4
 
 
+def test_auto_recovery_gives_up_at_once_when_opencode_is_not_installed():
+    # ensure_running's pre-flight says opencode (or WSL) is missing: a relaunch
+    # cannot fix an install, so the FIRST such verdict gives up (not three slow
+    # WSL probes), and a manual reset_recovery re-arms after an install.
+    from procedo.studio.controllers.llm_server_controller import LLMServerController
+    from procedo.studio.llm.server_health import ServerError, ServerStatus
+
+    sm = _FakeSM(alive=False)
+    sm.last_status = None
+
+    def _ensure_running():
+        sm.ensure_calls += 1
+        sm.last_status = ServerStatus.failure(ServerError.OPENCODE_MISSING)
+        return False
+
+    sm.ensure_running = _ensure_running
+    w = _fake_window(sm)
+    _run_tick_sync(w)
+    assert sm.ensure_calls == 1
+    assert w._server_recovery_attempts >= LLMServerController._MAX_SERVER_RECOVERY_ATTEMPTS
+    assert w._server_recovering is False
+    _run_tick_sync(w)
+    assert sm.ensure_calls == 1  # given up: no further relaunch
+
+    # A verdict known BEFORE the tick (prewarm's pre-flight) spawns no relaunch at all.
+    sm2 = _FakeSM(alive=False)
+    sm2.last_status = ServerStatus.failure(ServerError.WSL_MISSING)
+    w2 = _fake_window(sm2)
+    _run_tick_sync(w2)
+    assert sm2.ensure_calls == 0
+    assert w2._server_recovery_attempts >= LLMServerController._MAX_SERVER_RECOVERY_ATTEMPTS
+
+    # Restart server re-arms; with the install fixed the next tick relaunches.
+    LLMServerController.reset_recovery(w2)
+    sm2.last_status = None
+    _run_tick_sync(w2)
+    assert sm2.ensure_calls == 1
+
+
 def test_auto_recovery_triggers_on_wedged_server():
     # A WEDGED server (process up, /health dead) reads is_running True but
     # is_alive False. The tick must trust is_alive: it relaunches via

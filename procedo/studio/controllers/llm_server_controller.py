@@ -23,6 +23,7 @@ from .. import shell
 from ..dock.skill_chat_widget import SkillChatWidget
 from ..llm import OpenCodeConfig
 from ..llm.backend_factory import BACKEND_TYPE_OPENCODE, BackendConfig, BackendFactory
+from ..llm.server_health import ServerError
 from ..llm.launch_files import remove_launch_files
 from ..llm.opencode_orphan_sweep import sweep_launch_test_dir
 from ..llm.server_manager import OpenCodeServerManager
@@ -469,6 +470,11 @@ class LLMServerController(QObject):
             # crash.
             self._server_recovery_attempts = 0
             return
+        # OpenCode (or WSL) is not installed on this PC: no relaunch can fix
+        # that, so give up at once (each attempt is a slow WSL probe) and let
+        # the pill say so. Restart server (reset_recovery) re-arms after an install.
+        if _give_up_if_not_installed(self, sm):
+            return
         # Server is DOWN. After N consecutive failed auto-recoveries we GIVE
         # UP — a crash-looping server would otherwise relaunch every tick
         # forever (log-spam + CPU at the bench). The indicator then tells the
@@ -513,6 +519,7 @@ class LLMServerController(QObject):
         # still wedged counts as a failed attempt toward the give-up cap.
         if not ok:
             self._server_recovery_attempts = getattr(self, "_server_recovery_attempts", 0) + 1
+            _give_up_if_not_installed(self, sm)
         else:
             self._server_recovery_attempts = 0
         self._last_server_alive = ok
@@ -520,6 +527,7 @@ class LLMServerController(QObject):
 
     def refresh_indicator(self, alive=None):
         """Paint the header's OpenCode pill: the model while the server runs,
+        "not installed" / "no WSL" when the server cannot run on this PC,
         recovering / down otherwise, "LLM off" without an OpenCode backend.
 
         ``alive`` may be passed by the poll (avoids a redundant process poll);
@@ -538,7 +546,17 @@ class LLMServerController(QObject):
             # call is_alive/health_check here (that is blocking HTTP and this
             # runs on the UI thread). None (no probe yet) is treated as down.
             alive = getattr(self, "_last_server_alive", None)
-        if getattr(self, "_server_recovering", False) and not alive:
+        status = None if alive else _not_installed_status(sm)
+        if status is not None:
+            shell.show_server_state(
+                self._mw,
+                "danger",
+                "● OpenCode · not installed"
+                if status.error is ServerError.OPENCODE_MISSING
+                else "● OpenCode · no WSL",
+                f"{status.message}\n\nThen use Restart server.",
+            )
+        elif getattr(self, "_server_recovering", False) and not alive:
             shell.show_server_state(
                 self._mw, "warning", "● OpenCode · recovering…", "Relaunching the OpenCode server…"
             )
@@ -568,6 +586,27 @@ class LLMServerController(QObject):
                 "● OpenCode · down",
                 "OpenCode server is down — auto-recovery will relaunch it.",
             )
+
+
+def _not_installed_status(sm):
+    """*sm*'s last status when it says OpenCode cannot run on this PC, else None."""
+    status = getattr(sm, "last_status", None)
+    if status is None or status.ok or not status.not_installed:
+        return None
+    return status
+
+
+def _give_up_if_not_installed(ctrl, sm) -> bool:
+    """True when *sm*'s last status says OpenCode cannot run on this PC; *ctrl*'s
+    give-up count is then raised to the cap so no tick relaunches it. A module
+    function, as ``_recover`` is: the recovery seam is driven unbound in tests."""
+    status = _not_installed_status(sm)
+    if status is None:
+        return False
+    if getattr(ctrl, "_server_recovery_attempts", 0) < ctrl._MAX_SERVER_RECOVERY_ATTEMPTS:
+        log.warning("OpenCode cannot run on this PC; auto-recovery off: %s", status.message)
+        ctrl._server_recovery_attempts = ctrl._MAX_SERVER_RECOVERY_ATTEMPTS
+    return True
 
 
 def _recover(sm, done):

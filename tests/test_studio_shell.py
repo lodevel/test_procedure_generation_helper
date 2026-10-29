@@ -127,6 +127,41 @@ def test_the_server_pill_shows_the_model_or_the_trouble(make_window):
     assert _pill(w.server_pill) == ("● OpenCode · recovering… ▾", "warning")
 
 
+def test_the_server_pill_says_when_opencode_is_not_installed(make_window):
+    from procedo.studio.llm.server_health import ServerError, ServerStatus
+
+    w = make_window()
+    sm = type(
+        "SM",
+        (),
+        {"config": type("C", (), {"model": "m"})(), "last_status": None, "stop": lambda self: None},
+    )()
+    w.llm_server.server_manager = sm
+    sm.last_status = ServerStatus.failure(
+        ServerError.OPENCODE_MISSING, "bash: opencode: command not found"
+    )
+    w.llm_server.refresh_indicator(False)
+    assert _pill(w.server_pill) == ("● OpenCode · not installed ▾", "danger")
+    assert "npm i -g opencode-ai" in w.server_pill.toolTip()
+    assert "bash: opencode: command not found" in w.server_pill.toolTip()
+    assert "Restart server" in w.server_pill.toolTip()
+    # ...whatever the recovery state says
+    w.llm_server._server_recovering = True
+    w.llm_server.refresh_indicator(False)
+    assert _pill(w.server_pill) == ("● OpenCode · not installed ▾", "danger")
+    sm.last_status = ServerStatus.failure(ServerError.WSL_MISSING)
+    w.llm_server.refresh_indicator(False)
+    assert _pill(w.server_pill) == ("● OpenCode · no WSL ▾", "danger")
+    # A running server is never "not installed", whatever a stale status says.
+    w.llm_server.refresh_indicator(True)
+    assert _pill(w.server_pill) == ("● OpenCode · m ▾", "success")
+    # Any other failure keeps the plain "down".
+    sm.last_status = ServerStatus.failure(ServerError.START_TIMEOUT)
+    w.llm_server._server_recovering = False
+    w.llm_server.refresh_indicator(False)
+    assert _pill(w.server_pill) == ("● OpenCode · down ▾", "danger")
+
+
 def test_ctrl_1_to_4_and_the_switch_change_the_view(opened):
     w, _root = opened
     shortcuts = {s.key().toString(): s for s in w.findChildren(QShortcut)}

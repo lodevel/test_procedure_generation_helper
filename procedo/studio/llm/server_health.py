@@ -53,6 +53,11 @@ class ServerStatus:
     detail: str = ""
 
     @property
+    def not_installed(self) -> bool:
+        """OpenCode cannot run on this PC (WSL or opencode missing): no relaunch fixes it."""
+        return self.error in (ServerError.WSL_MISSING, ServerError.OPENCODE_MISSING)
+
+    @property
     def message(self) -> str:
         """A user-facing sentence (failure reason + any captured detail)."""
         if self.ok:

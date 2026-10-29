@@ -270,7 +270,7 @@ def test_the_switch_writes_test_json_and_opens_the_test_in_that_version(
     w, root = _opened(make_window, monkeypatch, tmp_path, test="EPO")
     folder = root / "tests" / "EPO"
     assert w.middle.currentWidget() is w.view_column and w.version_switch.isVisibleTo(w)
-    assert not w.version_segments["code"].isEnabled()  # EPO has no openhtf/test.py
+    assert w.version_segments["code"].isEnabled()  # EPO has no openhtf/test.py: offered still
     w.open_test(root / "tests" / "AUX0_output")
     _settle()
     w.version_segments["text"].click()
@@ -287,6 +287,35 @@ def test_the_switch_writes_test_json_and_opens_the_test_in_that_version(
     assert w.code_view.test_dir == root / "tests" / "AUX0_output"
     assert _badges(w) == {"AUX0_output": "HTF", "EPO": "TXT"}
     assert folder.exists()
+
+
+def test_code_on_a_test_with_no_code_version_starts_one_and_opens_it(
+    make_window, monkeypatch, tmp_path
+):
+    """A text test with no openhtf/test.py: Code is offered, writes the starter (New test's),
+    makes it active and opens it in the code view; its text files are left as they are, and
+    Text takes it back."""
+    from procedo.core import starter_test
+
+    w, root = _opened(make_window, monkeypatch, tmp_path, test="EPO")
+    folder = root / "tests" / "EPO"
+    text_files = {p.name: p.read_bytes() for p in folder.iterdir() if p.is_file()}
+    assert not (folder / "openhtf").exists()
+    w.version_segments["code"].click()
+    _settle()
+    script = folder / "openhtf" / "test.py"
+    assert script.read_text(encoding="utf-8") == starter_test.starter_code_test("EPO", root)
+    assert json.loads((folder / "test.json").read_text(encoding="utf-8")) == {"active": "code"}
+    assert w.code_view.test_dir == folder and w.middle.currentWidget() is w.code_view
+    assert {n: b for n, b in text_files.items() if n != "test.json"} == {
+        p.name: p.read_bytes() for p in folder.iterdir() if p.is_file() and p.name != "test.json"
+    }
+    script.write_text("# edited\n", encoding="utf-8")
+    w.version_segments["text"].click()
+    _settle()
+    w.version_segments["code"].click()  # it has one now: never replaced by the starter
+    _settle()
+    assert script.read_text(encoding="utf-8") == "# edited\n"
 
 
 def _badges(w) -> dict[str, str]:

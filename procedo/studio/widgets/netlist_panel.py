@@ -58,11 +58,16 @@ class _LoadWorker(QThread):
         self._root = project_root
 
     def run(self) -> None:  # noqa: D401
+        root = self._root
         try:
-            board_view.rotation(self._root)  # the board's angle, read here: off the UI thread
-            data = odb_inspect.load_board(self._root)
+            board_view.rotation(root)  # the board's angle, read here: off the UI thread
+            data = odb_inspect.load_board(root)
         except Exception:  # noqa: BLE001
             data = {"components": [], "nets": []}
+        # The archive's name and the hidden net prefixes: on a share, round trips too.
+        tgz = odb_archive.find(root) if root is not None else None
+        data["archive"] = tgz.name if tgz is not None else ""
+        data["hide"] = read_hide_prefixes(root / "config" if root is not None else None)
         self.done.emit(data)
 
 
@@ -189,13 +194,9 @@ class NetlistPanel(ui_kit.Card):
         self._project_root = project_root
         if project_root is not None:
             board_view.forget(project_root)  # a project (re)loaded reads its angle again
-        tgz = odb_archive.find(project_root) if project_root is not None else None
-        self.set_hint(tgz.name if tgz is not None else "")
+        self.set_hint("")
         self._viewer.board = project_root
-        self._viewer.subtitle = tgz.name if tgz is not None else ""
-        self._hide_prefixes = read_hide_prefixes(
-            project_root / "config" if project_root is not None else None
-        )
+        self._viewer.subtitle = ""
         self.set_status("")
         self._board_read.set(True)
         worker = _LoadWorker(project_root)
@@ -211,6 +212,9 @@ class NetlistPanel(ui_kit.Card):
         if self.sender() is not self._load_worker:
             return
         self._board_read.set(False)
+        self.set_hint(data["archive"])
+        self._viewer.subtitle = data["archive"]
+        self._hide_prefixes = data["hide"]
         comps = data.get("components", []) if isinstance(data, dict) else []
         nets = data.get("nets", []) if isinstance(data, dict) else []
         if comps or nets:

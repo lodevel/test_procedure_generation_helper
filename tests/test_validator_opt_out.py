@@ -352,3 +352,29 @@ def test_chat_panel_toggle_writes_auto_correct_not_enabled(tmp_path):
     assert section["auto_correct"] is False
     # Master enable key must NOT have been touched.
     assert "enabled" not in section
+
+
+def test_the_setting_is_read_once_until_the_config_may_have_changed(tmp_path, monkeypatch):
+    """Every view asks it: read once, then kept — read again after ``forget`` (the window's
+    config watcher, a project open) and after a save here."""
+    from procedo.studio.llm import validator_loop_settings
+
+    config_manager = validator_loop_settings.config_manager
+
+    root = _project(tmp_path, {"enabled": True})
+    reads = []
+    real = config_manager.read_config_section
+    monkeypatch.setattr(
+        config_manager,
+        "read_config_section",
+        lambda *a, **k: reads.append(1) or real(*a, **k),
+    )
+    validator_loop_settings.forget()
+    assert is_enabled(root) and is_enabled(root) and len(reads) == 1
+    (root / "config" / "config.json").write_text(
+        json.dumps({"validator_loop": {"enabled": False}}), encoding="utf-8"
+    )
+    validator_loop_settings.forget(root)
+    assert is_enabled(root) is False and len(reads) == 2
+    save_setting(root, "enabled", True)
+    assert is_enabled(root) is True

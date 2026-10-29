@@ -13,10 +13,11 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QStatusBar
 
 import procedo.studio.main_window as mw_mod
-from procedo.studio.controllers import AssistantController, ProjectController
+from procedo.studio.controllers import AssistantController, ProjectController, project_controller
 from procedo.studio import shell
 
 from .test_main_window_characterization import (
+    _opened,
     _make_project,
     _open_project,
     make_window as make_window,
@@ -151,6 +152,7 @@ def test_footer_names_project_rules_bundle_validator(opened):
     data = json.loads(config.read_text(encoding="utf-8"))
     data["validator_loop"] = {"enabled": False, "max_attempts": 5}
     config.write_text(json.dumps(data), encoding="utf-8")
+    project_controller.handle_config_change(w)  # what the config watcher does on that edit
     assert w.project_manager.set_rules_root(rules)
 
     w._update_project_rules_indicators()
@@ -198,6 +200,7 @@ def test_launched_on_a_project_then_opening_others_follows_each_ones_bundle(make
     in_bundle = f"Rules: {(a / 'bundle' / 'rules').relative_to(a)} · 1 doc"
     w = make_window(project_root=a)  # how Bench launches Studio on a project
     w._process_cli_arguments()
+    _opened(w)  # read off the GUI thread, as an open is
     assert w.rules_link.text() == in_bundle
     assert str(a / "bundle" / "rules") in w.rules_link.toolTip()
 

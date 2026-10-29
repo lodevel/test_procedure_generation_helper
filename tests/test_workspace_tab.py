@@ -53,6 +53,15 @@ def tab(qapp, tmp_path, monkeypatch):
         enumerate_test_folders=lambda: _folders(tmp_path),
         get_equipment_patterns=lambda: [],
     )
+    # The rows are read on a worker (project_open.test_rows), here from the fake folders.
+    monkeypatch.setattr(
+        workspace_tab.project_open,
+        "test_rows",
+        lambda pm, cancelled=None: [
+            (info, workspace_tab.test_sync.stale_artifacts(info.path, []))
+            for info in pm.enumerate_test_folders()
+        ],
+    )
     widget = WorkspaceTab(SimpleNamespace(project_manager=pm))
     widget.resize(300, 400)
     widget.tmp = tmp_path
@@ -66,10 +75,38 @@ def _load(tab, monkeypatch, indicators: str) -> dict:
     monkeypatch.setenv(studio_launch_env.APP_INDICATORS, indicators)
     tab.pm.project_root = tab.tmp
     tab.refresh()
+    _read(tab)
     return {
         tab.test_list.item(i).data(Qt.UserRole).name: tab.test_list.item(i)
         for i in range(tab.test_list.count())
     }
+
+
+def _read(tab) -> None:
+    """Pump until the tests read on a worker are listed."""
+    while tab.cue.active:
+        QApplication.processEvents()
+
+
+def test_a_refresh_reads_the_rows_off_the_gui_thread_and_says_so(tab, monkeypatch):
+    """The column's own refresh reads on a worker: \"Reading the tests…\" and \"Tests\" while
+    it reads, the rows and \"Tests (3)\" once read."""
+    import threading
+
+    threads = []
+    real = workspace_tab.project_open.test_rows
+    monkeypatch.setattr(
+        workspace_tab.project_open,
+        "test_rows",
+        lambda pm, cancelled=None: threads.append(threading.current_thread()) or real(pm),
+    )
+    tab.pm.project_root = tab.tmp
+    tab.refresh()
+    assert tab.cue.active and tab.cue.label.text() == "Reading the tests…"
+    assert tab.tests_tab.text() == "Tests"
+    _read(tab)
+    assert threads and threads[0] is not threading.main_thread()
+    assert tab.test_list.count() == 3 and tab.tests_tab.text() == "Tests (3)"
 
 
 def test_artifact_states_map_presence_and_sync():
@@ -322,6 +359,7 @@ def test_refresh_opened_test_rereads_only_the_open_row(tab, monkeypatch):
         lambda path, _patterns: ("procedure_text.md",) if path == beta else (),
     )
     tab.refresh_opened_test()
+    _read(tab)
     assert listed == []
     assert rows["Beta"].data(BADGES_ROLE) == [
         TXT,

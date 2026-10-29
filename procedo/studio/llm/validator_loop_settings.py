@@ -33,12 +33,18 @@ their next ``switch_context``).
 from __future__ import annotations
 
 import logging
+import os
+import threading
 from pathlib import Path
 from typing import Any
 
 from procedo.core import config_manager
 
 log = logging.getLogger(__name__)
+
+#: Each project's section as last read (:func:`load_settings`), by its normalised root.
+_kept: dict[str, dict[str, Any]] = {}
+_lock = threading.Lock()  # read by a project open's worker too
 
 
 SECTION_NAME = "validator_loop"
@@ -85,9 +91,28 @@ def load_settings(project_root: Path) -> dict[str, Any]:
     Returns an empty dict when the project has no config yet, the file
     is unreadable, or the section is absent — callers fall back to
     in-process defaults in any of those cases.
+
+    Read once, then kept until :func:`forget` (the window's config watcher, a save here, a
+    project open): every view asks it, and on a share each read is round trips.
     """
-    section = config_manager.read_config_section(project_root / "config", SECTION_NAME)
-    return section if isinstance(section, dict) else {}
+    key = os.path.normcase(os.path.abspath(project_root))
+    with _lock:
+        kept = _kept.get(key)
+    if kept is None:
+        section = config_manager.read_config_section(project_root / "config", SECTION_NAME)
+        kept = section if isinstance(section, dict) else {}
+        with _lock:
+            _kept[key] = kept
+    return dict(kept)
+
+
+def forget(project_root: Path | None = None) -> None:
+    """The project's ``config.json`` may have changed (None: any project's): read it again."""
+    with _lock:
+        if project_root is None:
+            _kept.clear()
+        else:
+            _kept.pop(os.path.normcase(os.path.abspath(project_root)), None)
 
 
 def save_setting(project_root: Path, key: str, value: Any) -> None:
@@ -98,4 +123,7 @@ def save_setting(project_root: Path, key: str, value: Any) -> None:
     data = config_manager.load_unified_config(config_dir)
     section = data.get(SECTION_NAME)
     data[SECTION_NAME] = {**section, key: value} if isinstance(section, dict) else {key: value}
-    config_manager.write_unified_config(config_dir, data)
+    try:
+        config_manager.write_unified_config(config_dir, data)
+    finally:
+        forget(project_root)

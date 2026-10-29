@@ -51,7 +51,7 @@ from procedo.studio.controllers import (  # noqa: E402
 from procedo.studio.core import artifact_manager as am_mod  # noqa: E402
 from procedo.studio.core.artifact_manager import ArtifactType  # noqa: E402
 from procedo.studio.pack_ops import engine_async  # noqa: E402
-from procedo.core import app_settings  # noqa: E402
+from procedo.core import app_settings, display_snapshot  # noqa: E402
 from procedo.studio.llm.backend_factory import BACKEND_TYPE_NONE  # noqa: E402
 
 
@@ -201,6 +201,13 @@ def _open_project(w, root: Path) -> None:
     after the directory picker), without any dialog."""
     assert w.project_manager.set_project_root(root)
     w._project_controller.refresh_after_open()
+    _opened(w)
+
+
+def _opened(w) -> None:
+    """Pump until *w*'s project open is over (its reads run on workers)."""
+    _settle(lambda: not w._project_controller.working)
+    _settle(lambda: not w.workspace_widget.cue.active)
 
 
 def _menus(w):
@@ -453,6 +460,7 @@ def test_open_project_dialog_happy_path(make_window, mbox, monkeypatch, tmp_path
     w = make_window()
 
     w._project_controller.on_open_project()
+    _opened(w)
 
     assert w.project_manager.project_root == root
     assert w._noted_recents == [str(root)]
@@ -489,6 +497,7 @@ def test_open_project_dialog_invalid_folder_warns(make_window, mbox, monkeypatch
     w = make_window()
 
     w._project_controller.on_open_project()
+    _opened(w)
 
     assert w.project_manager.project_root is None
     assert w._noted_recents == []
@@ -547,34 +556,204 @@ def test_open_recent_on_a_dead_share_asks_off_the_gui_thread(
     assert w.project_manager.project_root is None
 
 
-def test_an_open_after_a_recent_drops_the_recents_answer(make_window, mbox, monkeypatch, tmp_path):
+def test_a_second_open_while_one_runs_is_refused_and_the_first_completes(
+    make_window, mbox, monkeypatch, tmp_path
+):
+    """One attempt at a time, as in Bench: an open asked while another runs is refused (the
+    footer says so) and asks nothing; the first one opens its project."""
     root = _make_project(tmp_path / "proj")
     w = make_window()
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: "")
-    w._project_controller.on_open_recent(str(root))
-    assert w.footer.note.full.startswith("Looking for")
-    w._project_controller.on_open_project()  # opened another way (cancelled here): the recent no longer opens
-    assert w.footer.note.full == ""
-    _settle(lambda: not any(t.name == "recent-project-check" for t in threading.enumerate()))
-    QApplication.processEvents()
-    assert w.project_manager.project_root is None
-
-
-def test_open_recent_opens_only_the_last_one_asked(make_window, mbox, tmp_path):
-    root = _make_project(tmp_path / "proj")
-    w = make_window()
-    w._project_controller.on_open_recent(str(root))
-    w._project_controller.on_open_recent(
-        str(tmp_path / "gone")
-    )  # asked after: the first answer is dropped
-    _settle(
-        lambda: (
-            mbox.warning
-            and not any(t.name == "recent-project-check" for t in threading.enumerate())
-        )
+    picked = []
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *a, **k: picked.append(1) or str(root)
     )
+    w._project_controller.on_open_recent(str(root))
+    w._project_controller.on_open_project()
+    w._project_controller.on_open_recent(str(tmp_path / "gone"))
+    assert picked == [] and w.footer.note.full == project_controller.STILL_OPENING
+    _opened(w)
+    assert w.project_manager.project_root == root and mbox.warning == []
+
+
+def test_an_open_reads_behind_the_page_with_the_window_out_of_reach(
+    make_window, mbox, monkeypatch, tmp_path
+):
+    """While the project is read (on a worker), the middle shows "Opening <name>…" and the
+    menus, the header and the columns are out of reach; once read, the window is back with
+    the project's rows, and no test file was read on the GUI thread."""
+    from procedo.studio.core import project_open
+
+    root = _make_project(tmp_path / "proj", tests=("t1", "t2"))
+    w = make_window()
+    gate, threads = threading.Event(), []
+    real = project_open.test_rows
+
+    def rows(pm, cancelled=lambda: False, progress=lambda _text: None):
+        threads.append(threading.current_thread())
+        gate.wait(10)
+        return real(pm, cancelled, progress)
+
+    monkeypatch.setattr(project_open, "test_rows", rows)
+    w._project_controller.on_open_recent(str(root))
+    _settle(lambda: threads)
+    page = w._project_controller.page
+    assert w.middle.currentWidget() is page and page.title.text() == "Opening proj…"
+    assert page.hint.text() == project_controller.CANCEL_HINT
+    assert not w.menu_bar.isEnabled() and not w.workspace_column.isEnabled()
+    gate.set()
+    _opened(w)
+    assert threads[0] is not threading.main_thread()
+    assert w.middle.currentWidget() is not page and w.menu_bar.isEnabled()
+    assert w.workspace_widget.test_list.count() == 2
+    assert w.workspace_widget.tests_tab.text() == "Tests (2)"
+
+
+def test_cancel_during_the_read_leaves_no_project_open(make_window, mbox, monkeypatch, tmp_path):
+    """Cancel once the project switched: no project open (Bench's rule), the window usable,
+    and the read's late answer changes nothing."""
+    from procedo.studio.core import project_open
+
+    first, second = _make_project(tmp_path / "first"), _make_project(tmp_path / "second")
+    w = make_window()
+    _open_project(w, first)
+    gate, started = threading.Event(), threading.Event()
+    real = project_open.test_rows
+
+    def rows(pm, cancelled=lambda: False, progress=lambda _text: None):
+        read = real(pm)  # a read that finishes anyway: its rows must not land
+        started.set()
+        gate.wait(10)
+        return read
+
+    monkeypatch.setattr(project_open, "test_rows", rows)
+    w._project_controller.on_open_recent(str(second))
+    _settle(started.is_set)
+    w._project_controller.page.cancel.click()
+    assert w.project_manager.project_root is None and w.project_link.text() == "Project: none"
+    assert w.workspace_widget.test_list.count() == 0 and w.menu_bar.isEnabled()
+    gate.set()
+    _settle(lambda: not w._project_controller.working)
     QApplication.processEvents()
-    assert w.project_manager.project_root is None
+    assert w.project_manager.project_root is None and w.workspace_widget.test_list.count() == 0
+    assert mbox.critical == []
+
+
+def test_the_page_counts_the_tests_read_as_bench_s_does(make_window, mbox, monkeypatch, tmp_path):
+    """While the tests are read, the page says "Reading the tests · N of M", N only growing, up
+    to M; then "Reading the configuration…"."""
+    w = make_window()
+    said = []
+    page_step = w._project_controller.page.step
+    real = page_step.setText
+    monkeypatch.setattr(page_step, "setText", lambda text: said.append(text) or real(text))
+    root = _make_project(tmp_path / "proj", tests=("t1", "t2", "t3"))
+    w._project_controller.on_open_recent(str(root))
+    _opened(w)
+    counts = [text for text in said if text.startswith("Reading the tests · ")]
+    assert counts == [f"Reading the tests · {n} of 3" for n in (1, 2, 3)]
+    assert said.index(counts[-1]) < said.index("Reading the configuration…")
+
+
+def test_the_window_paints_the_read_project_without_touching_its_files(
+    make_window, mbox, monkeypatch, tmp_path
+):
+    """Once read, the project is shown from memory: the GUI thread opens, stats or lists
+    nothing under the project, and asks the engine nothing fresh (a fresh ask looks at the
+    bundle and the venv first: a dozen round trips on a share)."""
+    import builtins
+    import io
+    import os
+
+    from procedo.engine_client import engine
+
+    root = _make_project(tmp_path / "proj", tests=("t1", "t2"))
+    w = make_window()
+    touched, fresh_asks = [], []
+    prefix = os.path.normcase(str(root))
+    showing = {"on": False}
+
+    def counted(name, fn):
+        def call(path, *args, **kwargs):
+            if showing["on"] and threading.current_thread() is threading.main_thread():
+                try:
+                    text = os.path.normcase(os.fsdecode(path))
+                except TypeError:
+                    text = ""
+                if text.startswith(prefix):
+                    touched.append((name, text))
+            return fn(path, *args, **kwargs)
+
+        return call
+
+    for module, names in (
+        (os, ("stat", "lstat", "scandir", "listdir")),
+        (os.path, ("exists", "isfile", "isdir")),
+        (io, ("open",)),
+        (builtins, ("open",)),
+    ):
+        for name in names:
+            monkeypatch.setattr(module, name, counted(name, getattr(module, name)))
+
+    def op(root_, spec, timeout, fresh=False):  # the project's engine: the wheel imports
+        if showing["on"] and fresh:
+            fresh_asks.append(spec["op"])
+        return {"ok": True, "available": True}
+
+    monkeypatch.setattr(engine, "tools_op", op)
+    monkeypatch.setattr(display_snapshot, "existing_venv_python", lambda _root: Path("python"))
+    real_install = project_controller.install
+
+    def install(mw, opened):
+        showing["on"] = True
+        try:
+            real_install(mw, opened)
+        finally:
+            showing["on"] = False
+
+    monkeypatch.setattr(project_controller, "install", install)
+    w._project_controller.on_open_recent(str(root))
+    _opened(w)
+    assert w.workspace_widget.test_list.count() == 2 and w.project_link.text() == "Project: proj"
+    assert touched == [] and fresh_asks == []
+
+
+def test_the_engine_starts_on_the_read_s_worker_before_the_window_asks(
+    make_window, mbox, monkeypatch, tmp_path
+):
+    """The project's engine is started by the read (its first ask, the slow one: venv, process,
+    wheel import), off the GUI thread; the window's own asks come after and find it warm."""
+    from procedo.studio.pack_ops import pack_parsers
+
+    asks = []
+
+    def answer(_root, spec, timeout=None):
+        asks.append((spec["op"], threading.current_thread().name))
+        return {"ok": True, "available": False}
+
+    monkeypatch.setattr(pack_parsers, "_engine_call", answer)
+    monkeypatch.setattr(display_snapshot, "existing_venv_python", lambda _root: Path("python"))
+    w = make_window()
+    w._project_controller.on_open_recent(str(_make_project(tmp_path / "proj")))
+    _opened(w)
+    assert asks[0] == ("is_available", "project-read-engine")
+
+
+def test_a_project_with_no_environment_here_opens_asking_the_engine_nothing(
+    make_window, mbox, monkeypatch, tmp_path
+):
+    """A first open on a PC without the project's environment: the read finds none and marks it
+    (Bench's mark), so neither the read nor the window's gating asks the engine — each ask
+    would resolve the venv again only to fail."""
+    from procedo.engine_client import engine
+
+    asked = []
+    monkeypatch.setattr(
+        engine, "tools_op", lambda root, spec, timeout, fresh=False: asked.append(spec["op"]) or {}
+    )
+    w = make_window()
+    w._project_controller.on_open_recent(str(_make_project(tmp_path / "proj")))
+    _opened(w)
+    assert asked == [] and w.project_link.text() == "Project: proj"
 
 
 # =========================================================================

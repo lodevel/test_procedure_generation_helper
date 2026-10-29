@@ -33,15 +33,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from procedo.core import app_settings, project_bundle, test_format
+from procedo.core import app_settings, test_format
 from procedo.core.paths import exists_quiet
 from procedo.ui import ui_kit
 from procedo.ui.segmented import segment, segmented
 
 from .authoring.skill_menu import launch_skill_chat
 from .core import ArtifactType
+from .core import project_open
 from .core.procedure_steps import numbered_steps
-from .llm import validator_loop_settings
 from .widgets.shared_phases_panel import used_by_text
 
 if TYPE_CHECKING:
@@ -116,6 +116,7 @@ def build_frame(ws: StudioWorkspace) -> None:
     ws.middle = QStackedWidget()  # the text views, or the open code test's view
     ws.middle.addWidget(ws.view_column)
     ws.middle.addWidget(ws.code_view)
+    ws.middle.addWidget(ws._project_controller.page)  # while a project is read
     columns = QSplitter(Qt.Orientation.Horizontal)
     columns.setChildrenCollapsible(False)
     for column in (ws.workspace_column, ws.middle, ws.assistant_column):
@@ -287,7 +288,8 @@ def show_code_view(ws: StudioWorkspace, on: bool) -> None:
 
 def show_versions(ws: StudioWorkspace, test_dir: Path | None, active: str) -> None:
     """The open test's Text | Code switch (hidden when none is open): its *active* version
-    checked, the other offered when the test has it, then its "inactive, not updated" pill."""
+    checked, the other always offered (a version the test lacks starts from its starter), then
+    the other's "inactive, not updated" pill when the test has it."""
     ws.version_switch.setVisible(test_dir is not None)
     ws.inactive_pill.hide()
     if test_dir is None:
@@ -296,13 +298,12 @@ def show_versions(ws: StudioWorkspace, test_dir: Path | None, active: str) -> No
     for version, button in ws.version_segments.items():
         name, file = _VERSIONS[version][0].lower(), _VERSIONS[version][1]
         button.setChecked(version == active)
-        button.setEnabled(version == active or has[version])
         if version == active:
             button.setToolTip(f"Bench runs this version ({file}).")
         elif has[version]:
             button.setToolTip(f"Run the {name} version ({file}) from now on.")
         else:
-            button.setToolTip(f"This test has no {name} version ({file}).")
+            button.setToolTip(f"Start a {name} version ({file}) and run it from now on.")
     other = next(version for version in _VERSIONS if version != active)
     if has[other]:
         label, file = _VERSIONS[other]
@@ -382,11 +383,17 @@ def refresh_footer(ws: StudioWorkspace) -> None:
     """Project, rules (folder · documents), bundle and validator by name; full paths in the
     tooltips."""
     pm = ws.project_manager
+    paint_footer(ws, project_open.footer_facts(pm, pm.rules_root))
+
+
+def paint_footer(ws: StudioWorkspace, facts: project_open.Footer) -> None:
+    """The footer from *facts* (``project_open.footer_facts``, read already): nothing is read."""
+    pm = ws.project_manager
     root = Path(pm.project_root) if pm.project_root else None
     ws.project_link.setText(f"Project: {root.name}" if root else "Project: none")
     ws.project_link.setToolTip((f"{root}\n" if root else "") + "Click to open a project.")
-    rules = Path(pm.rules_root) if pm.rules_root else None
-    docs = pm.get_rule_docs()
+    rules = Path(facts.rules_root) if facts.rules_root else None
+    docs = facts.rule_docs
     own = sum(doc.origin == "project" for doc in docs)
     if rules is None:
         text = "Rules: none"
@@ -395,18 +402,11 @@ def refresh_footer(ws: StudioWorkspace) -> None:
         text = f"Rules: {_short(rules, root)} · {n} doc{'' if n == 1 else 's'}"
     ws.rules_link.setText(text + (f" + {own} project" if own else ""))
     ws.rules_link.setToolTip((f"{rules}\n" if rules else "") + "Click to choose the rules folder.")
-    ws.dock.refresh_rules_picker()  # the Assistant's picker counts the same rules
-    ws.bundle_label.setText(f"Bundle: {bundle_name(root) or 'none'}")
+    ws.dock.show_rules_count(docs)  # the Assistant's picker counts the same rules
+    ws.bundle_label.setText(f"Bundle: {facts.bundle_name or 'none'}")
     ws.validator_label.setText(
-        f"Validator: {'on' if validator_loop_settings.is_enabled(root) else 'off'}"
-        f" · {validator_loop_settings.max_attempts(root)} attempts"
+        f"Validator: {'on' if facts.validator_on else 'off'} · {facts.validator_attempts} attempts"
     )
-
-
-def bundle_name(project_root) -> str:
-    """The project's active bundle as Studio names it (``baseline 2.8.1``), "" when none."""
-    bundle = project_bundle.read_active_bundle(Path(project_root)) if project_root else None
-    return f"{bundle.id} {bundle.version}" if bundle else ""
 
 
 def _short(folder: Path, root: Path | None) -> str:

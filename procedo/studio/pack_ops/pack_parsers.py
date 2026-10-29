@@ -22,7 +22,7 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
-from procedo.core import section_ownership
+from procedo.core import display_snapshot, section_ownership
 from procedo.engine_client.engine_replies import (
     _ReconstructReport,
     _reconstruct_issues_from_dicts,
@@ -35,6 +35,10 @@ from . import bundle_capabilities
 
 # Default timeouts (seconds).
 _TIMEOUT_IS_AVAILABLE = 5
+
+#: The ops whose answer only gates or labels the window (Bench's display reads): asked under
+#: the bundle as last read. Every other op's answer is written: asked fresh.
+_DISPLAY_OPS = frozenset({"is_available", "section_ownership"})
 
 #: Why no op runs with no project open: the wheel runs only in a project's engine.
 NO_PROJECT = "No project is open."
@@ -50,14 +54,19 @@ def _engine_call(
 ) -> dict[str, Any]:
     """``spec`` answered by the project's TOOLS engine: the op's result dict, or
     ``{"ok": False, "kind", "error"}``. Raises ParserUnavailable with no project
-    open or without a venv."""
+    open or without a venv. A display read (:data:`_DISPLAY_OPS`: what a button or a list
+    shows) is asked under the bundle as last read — on a share, the fresh look is a dozen
+    round trips before every ask."""
     if project_root is None:
         raise ParserUnavailable(NO_PROJECT)
     from procedo.engine_client import engine  # the project's engine processes
 
     # Studio writes what its ops answer (a procedure, a test.py): never from a superseded
     # engine — a sync pull replacing wheels sends it no event.
-    return engine.tools_op(project_root, spec, timeout or _timeout(), fresh=True)
+    fresh = spec["op"] not in _DISPLAY_OPS
+    if not fresh and display_snapshot.environment_missing(project_root):
+        raise ParserUnavailable("the project has no environment on this PC yet")
+    return engine.tools_op(project_root, spec, timeout or _timeout(), fresh=fresh)
 
 
 # ---------------------------------------------------------------------------

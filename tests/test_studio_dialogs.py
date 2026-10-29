@@ -21,6 +21,7 @@ from procedo.ui import markdown_view, ui_kit
 from procedo.studio.authoring import ContextItem, ContextSource
 from procedo.studio.core import project_manager
 from procedo.studio import shell
+from procedo.studio.core import project_open
 from procedo.studio.dialogs import word_keywords_dialog
 from procedo.studio.dialogs.about_dialog import VERSION, AboutDialog
 from procedo.studio.dialogs.syntax_reference import SyntaxReferenceDialog
@@ -71,7 +72,7 @@ def test_the_syntax_reference_names_the_bundle_lists_its_pages_and_finds_in_the_
     qapp, rules_root
 ):
     SyntaxReferenceDialog._instance = None
-    bundle = shell.bundle_name(rules_root.parent.parent)  # the footer's and the header's resolver
+    bundle = project_open.bundle_name(rules_root.parent.parent)  # the footer's resolver
     assert bundle == "baseline 2.8.1"
     dlg = SyntaxReferenceDialog.show_reference(rules_root, None, bundle)
     try:

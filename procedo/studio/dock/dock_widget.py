@@ -69,12 +69,17 @@ class DockWidget(QWidget):
         return getattr(self.main_window.view_stack.currentWidget(), "tab_context", None)
 
     def refresh_rules_picker(self, *_) -> None:
-        """ "Rules · n of N ▾": how many of the project's rule documents the current view sends."""
+        """ "Rules · n of N ▾": how many of the project's rule documents the current view sends
+        (:meth:`show_rules_count`, the documents scanned now)."""
+        self.show_rules_count(self.main_window.project_manager.get_rule_docs())
+
+    def show_rules_count(self, docs: list) -> None:
+        """The picker's count of *docs* (the project's rule documents, read already)."""
         tab_context = self._current_tab_context()
         if tab_context is None:
             self.rules_picker.setText("Rules ▾")
             return
-        available = [doc.key for doc in self.main_window.project_manager.get_rule_docs()]
+        available = [doc.key for doc in docs]
         chosen = set(
             current_selection(self.main_window.task_config_manager, tab_context.tab_id, available)
         )

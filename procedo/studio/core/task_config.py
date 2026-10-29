@@ -435,11 +435,17 @@ class TaskConfigManager:
     # ------------------------------------------------------------------
 
     def reload(self, project_root: Optional[Path]) -> None:
-        """Switch to a new project (or detach) and reload from disk.
+        """Switch to a new project (or detach) and reload from disk (:meth:`load`), then
+        tell the subscribers (:meth:`announce`)."""
+        self.load(project_root)
+        self.announce()
+
+    def load(self, project_root: Path | None) -> None:
+        """Switch to a new project (or detach) and read it from disk — no subscriber is
+        told (a project open reads it on a worker; the window announces it once shown).
 
         Clears the in-memory caches under lock so the previous project's
-        data can't leak into the new view. Subscribers registered via
-        ``register_reload_callback`` are fired after the reload completes.
+        data can't leak into the new view.
         """
         new_root = Path(project_root) if project_root else None
         with self._lock:
@@ -457,6 +463,9 @@ class TaskConfigManager:
             self._project_root,
             self._active_source(),
         )
+
+    def announce(self) -> None:
+        """Tell the subscribers (``register_reload_callback``) what was loaded."""
         for cb in list(self._reload_callbacks):
             try:
                 cb()

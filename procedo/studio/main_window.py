@@ -24,7 +24,7 @@ from procedo.core import project_seeding
 from procedo.core.paths import exists_quiet
 from procedo.ui.scenario_dialog import ScenarioManagerDialog
 
-from .core import ArtifactManager, SessionState, ProjectManager
+from .core import ArtifactManager, SessionState, ProjectManager, project_open
 from .core.task_config import TaskConfigManager
 from .llm.backend_factory import BackendFactory
 from .tabs import WorkspaceTab, TextOnlyTab, TextJsonTab, JsonCodeTab, TraceabilityTab
@@ -215,19 +215,9 @@ class StudioWorkspace(QWidget):
                 if not self.project_manager.set_project_root(self._cli_project_root):
                     log.error(f"Failed to set project root: {self._cli_project_root}")
                     return
-
-                # Switch task configurations to the CLI-supplied project.
-                self.task_config_manager.reload(self.project_manager.project_root)
-
-                # Update workspace widget
-                self.workspace_widget.show_project()
-
-                # The project's rules (its active bundle's)
-                self.project_manager.detect_rules_root()
-                self._update_project_rules_indicators()
-                # Task #39: arm the config + bundle watchers for the
-                # CLI-supplied project (the main-app launch path).
-                project_controller.watch_project_config(self)
+                # Read off the GUI thread and shown when read, as File > Open does; the
+                # test below opens meanwhile.
+                self._project_controller.refresh_after_open()
 
             # Step 2: Determine which test to open
             test_dir_to_open = None
@@ -376,18 +366,21 @@ class StudioWorkspace(QWidget):
         )
 
     def _update_project_rules_indicators(self):
+        """:meth:`show_project_rules` as the project's files say now."""
+        pm = self.project_manager
+        self.show_project_rules(project_open.footer_facts(pm, pm.rules_root))
+
+    def show_project_rules(self, footer: project_open.Footer) -> None:
         """Repaint the header (the test and its project) and the footer (project,
-        rules, bundle, validator); refresh what follows the project (syntax
-        reference, board netlist)."""
+        rules, bundle, validator: *footer*, read already); refresh what follows the
+        project (syntax reference, board netlist)."""
         shell.refresh_header(self)
-        shell.refresh_footer(self)
+        shell.paint_footer(self, footer)
 
         # Live-refresh the syntax reference if it's open (project/bundle changed).
         from .dialogs.syntax_reference import SyntaxReferenceDialog
 
-        SyntaxReferenceDialog.refresh_if_open(
-            self.project_manager.rules_root, shell.bundle_name(self.project_manager.project_root)
-        )
+        SyntaxReferenceDialog.refresh_if_open(self.project_manager.rules_root, footer.bundle_name)
 
         # Reload the Text tab's board-netlist for the current project — the panel
         # loads on tab-show, which can precede project setup (e.g. Text is now the
@@ -578,7 +571,7 @@ class StudioWorkspace(QWidget):
 
         pm = self.project_manager
         SyntaxReferenceDialog.show_reference(
-            pm.rules_root, self, shell.bundle_name(pm.project_root)
+            pm.rules_root, self, project_open.bundle_name(pm.project_root)
         )
 
     def _on_export_keywords(self):
@@ -619,10 +612,6 @@ class StudioWorkspace(QWidget):
     def open_test(self, path: Path):
         """Open a test folder programmatically."""
         self._document_controller.on_test_opened(path)
-
-    def set_project_root(self, path: Path):
-        """Set project root programmatically."""
-        self.workspace_widget.set_project_root(path)
 
     def confirm_close(self, event):
         """The hosting window is closing: save the session, ask about unsaved

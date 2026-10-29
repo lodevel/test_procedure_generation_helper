@@ -140,7 +140,8 @@ class CodeTestController:
 
     def on_version_clicked(self, active: str) -> None:
         """The header's switch: the open test runs its *active* version from now on — its
-        unsaved changes saved or discarded first, then it opens again in that version."""
+        unsaved changes saved or discarded first, a version it lacks started from its starter
+        (New test's), then it opens again in that version."""
         mw = self._mw
         doc = mw._document_controller
         path = doc.open_test_dir()
@@ -150,12 +151,22 @@ class CodeTestController:
             shell.show_versions(mw, path, test_format.active_format(path))  # the switch as it was
             return
         try:
+            _start_version(path, active)
             test_format.write_active(path, active)
         except OSError as exc:
-            QMessageBox.critical(mw, "Switch Version", f"test.json could not be written: {exc}")
+            QMessageBox.critical(mw, "Switch Version", f"{path.name} could not switch: {exc}")
             shell.show_versions(mw, path, test_format.active_format(path))
             return
         mw.workspace_widget.refresh_opened_test()  # its TXT / HTF badge
         doc.open_now(path)
         version = "code" if active == test_format.CODE else "text"
         mw.footer.show_message(f"{path.name} now runs its {version} version", 3000)
+
+
+def _start_version(test_dir: Path, active: str) -> None:
+    """The test in *test_dir* has its *active* version: the starter's files of it written where
+    absent, never over one it has. Raises OSError."""
+    if active == test_format.CODE:
+        starter_test.write_starter_code(test_dir)
+    else:
+        starter_test.write_starter_procedure(test_dir)

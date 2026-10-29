@@ -78,6 +78,8 @@ def equipment_types_in(
     ``## Equipment`` and ``##Equipment`` both open the block, case-insensitive;
     ``###...`` is content. The section name comes from the bundle's declared
     universe when available (:func:`section_scan_names`)."""
+    if not (procedure_text or "").strip():
+        return []  # an empty editor uses no equipment: the bundle is not asked
     global _EQUIP_LINE_RE
     if _EQUIP_LINE_RE is None:
         _EQUIP_LINE_RE = re.compile(r"^[A-Z][A-Z0-9_]*\s*:\s*(\S+)")

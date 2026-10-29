@@ -20,7 +20,7 @@ from procedo.studio.dock import skill_chat_widget as scw
 
 from .test_backend_start_off_gui import _spin, _Worker
 from .test_lazy_backend import _Backend, _Factory
-from .test_main_window_characterization import _make_project, _open_project
+from .test_main_window_characterization import _make_project, _open_project, _opened
 from .test_main_window_characterization import make_window as make_window
 from .test_main_window_characterization import mbox as mbox
 from .test_main_window_characterization import qapp as qapp
@@ -45,7 +45,6 @@ def _switch(w, monkeypatch, how: str, root) -> None:
         w._project_controller.on_open_project()
     elif how == "recent":
         w._project_controller.on_open_recent(str(root))
-        _spin(lambda: w._project_controller._recent_asked is None)
     else:
         made = SimpleNamespace(
             exec=lambda: QDialog.DialogCode.Accepted,
@@ -54,6 +53,7 @@ def _switch(w, monkeypatch, how: str, root) -> None:
         )
         monkeypatch.setattr(project_controller, "NewProjectDialog", lambda _parent: made)
         w._project_controller.on_new_project()
+    _opened(w)
 
 
 def _flush_deletes() -> None:
@@ -220,14 +220,14 @@ def test_new_project_asks_before_its_dialog_so_a_cancel_creates_nothing(
 
 
 def test_a_root_that_will_not_open_warns_and_switches_nothing(opened, mbox, monkeypatch, tmp_path):
-    """``set_project_root`` refused it: the Invalid Project warning, no recent noted, the open
+    """The folder names no project: the Invalid Project warning, no recent noted, the open
     test kept."""
     w = opened
     before = w.project_manager.project_root
     w.open_test(before / "tests" / "t1")
     am = w.artifact_manager
     noted = list(w._noted_recents)
-    monkeypatch.setattr(w.project_manager, "set_project_root", lambda _root: False)
+    monkeypatch.setattr(w.project_manager, "project_root_of", lambda _path: None)
 
     _switch(w, monkeypatch, "open", _make_project(tmp_path / "other"))
 

@@ -10,6 +10,7 @@ Implements Section 5 of the spec:
 
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -154,22 +155,31 @@ class ProjectManager:
     _equipment_patterns_cache: Optional[list[re.Pattern[str]]] = field(default=None, repr=False)
 
     def set_project_root(self, path: Path) -> bool:
-        """
-        Set project root if valid.
+        """Use *path* as the project root when it is one (True); else nothing changes."""
+        if not self.is_valid_project_root(path):
+            return False
+        self.use_project_root(path)
+        return True
 
-        Returns True if path is a valid project root.
-        """
-        if self.is_valid_project_root(path):
-            if self.project_root != path:
-                self._picked_rules_root = None  # a picked rules folder is that project's
-            if self.project_root is not None and self.project_root != path:
+    def use_project_root(self, path: Path | None) -> None:
+        """The project root is *path* (checked already; None: no project). What was kept of
+        the project before goes with it — its picked rules folder, its equipment patterns —
+        and its engine stops."""
+        if self.project_root != path:
+            self._picked_rules_root = None  # a picked rules folder is that project's
+            if self.project_root is not None:
                 from procedo.engine_client import engine
 
                 engine.stop(project_root=self.project_root)  # the project switched away
-            self.project_root = path
-            self._equipment_patterns_cache = None
-            return True
-        return False
+        self.project_root = path
+        self._equipment_patterns_cache = None
+
+    def project_root_of(self, path: Path) -> Path | None:
+        """The project *path* names: itself when it is a project root, its project when it
+        is a test folder of one, else None."""
+        if self.is_valid_project_root(path):
+            return path
+        return self.detect_project_from_test_folder(path)
 
     def is_valid_project_root(self, path: Path) -> bool:
         """Check if path is a valid project root."""
@@ -310,27 +320,32 @@ class ProjectManager:
             self._equipment_patterns_cache = self.load_equipment_patterns()
         return self._equipment_patterns_cache
 
-    def enumerate_test_folders(self) -> list[TestFolderInfo]:
-        """
-        Enumerate all test folders in the project.
-
-        Returns list of TestFolderInfo with artifact status.
-        """
+    def test_folders(self) -> list[Path]:
+        """The project's test folders, sorted: one listing (``os.scandir`` says which entries
+        are folders — a ``stat`` per entry is a round trip on a share)."""
         tests_dir = self.get_tests_dir()
         if tests_dir is None:
             return []
-
         try:
-            return [
-                TestFolderInfo.of(item) for item in sorted(tests_dir.iterdir()) if item.is_dir()
-            ]
+            with os.scandir(tests_dir) as entries:
+                return sorted(Path(entry.path) for entry in entries if entry.is_dir())
         except OSError:  # the share dropped after the folder answered
             return []
 
+    def enumerate_test_folders(self) -> list[TestFolderInfo]:
+        """Every test folder as it is on disk now (:class:`TestFolderInfo`)."""
+        return [TestFolderInfo.of(folder) for folder in self.test_folders()]
+
     def detect_rules_root(self) -> bool:
-        """Load the open project's rules: the folder the user picked for it, else its
-        active bundle's rules (``project_bundle.active_rules_dir``, as Bench resolves
-        them), else none, never what the previous project had. True when rules loaded."""
+        """Load the open project's rules (:meth:`rules_location`, :meth:`use_rules`). True
+        when rules loaded."""
+        self.use_rules(self.rules_location())
+        return self.rules_root is not None
+
+    def rules_location(self) -> Path | None:
+        """The open project's rules folder: the one the user picked for it, else its active
+        bundle's rules (``project_bundle.active_rules_dir``, as Bench resolves them), else
+        None — never what the previous project had. Reads the bundle: fine on a worker."""
         from procedo.core import project_bundle
 
         location = self._picked_rules_root
@@ -338,9 +353,7 @@ class ProjectManager:
             location = project_bundle.active_rules_dir(self.project_root)
         if location is not None and not self._is_valid_rules_root(location):
             location = None
-        self._use_rules(location)
-        log.info("Rules: %s", location or "none")
-        return location is not None
+        return location
 
     def set_rules_root(self, path: Path) -> bool:
         """Use the rules folder the user picked, for the open project. False (nothing
@@ -348,13 +361,14 @@ class ProjectManager:
         if not self._is_valid_rules_root(path):
             return False
         self._picked_rules_root = path
-        self._use_rules(path)
+        self.use_rules(path)
         return True
 
-    def _use_rules(self, path: Optional[Path]) -> None:
+    def use_rules(self, path: Optional[Path]) -> None:
         """Use the rule docs of *path*; None: no rules."""
         self.rules_root = path
         self.rules_state = RulesState.LOADED if path is not None else RulesState.NONE
+        log.info("Rules: %s", path or "none")
 
     def _is_valid_rules_root(self, path: Path) -> bool:
         """Check if path contains any markdown files."""
@@ -365,10 +379,15 @@ class ProjectManager:
         return self.project_root / PROJECT_RULES_DIR if self.project_root is not None else None
 
     def get_rule_docs(self) -> list[RuleDoc]:
-        """Every rule document a view can send, scanned now: the bundle's rules (or the folder
-        picked instead), keyed by file name, then the project's own documents, keyed
+        """Every rule document a view can send, scanned now (:meth:`rule_docs_in` the rules
+        in use)."""
+        return self.rule_docs_in(self.rules_root)
+
+    def rule_docs_in(self, rules_root: Path | None) -> list[RuleDoc]:
+        """The rule documents with *rules_root* as the rules: its own (the bundle's, or the
+        folder picked instead), keyed by file name, then the project's, keyed
         ``project/<name>`` so a bundle rule of the same name never clashes."""
-        return [RuleDoc(p.name, p, "bundle") for p in _bundle_rule_files(self.rules_root)] + [
+        return [RuleDoc(p.name, p, "bundle") for p in _bundle_rule_files(rules_root)] + [
             RuleDoc(PROJECT_RULE_PREFIX + p.name, p, "project")
             for p in project_rule_doc_paths(self.project_rules_dir())
         ]

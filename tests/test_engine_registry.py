@@ -144,7 +144,8 @@ def test_a_write_after_a_pull_that_replaced_wheels_never_runs_on_the_old_engine(
     kept; Studio's next generate (a write: ``pack_parsers._engine_call``) looks again — it
     refuses while there is no environment for the new bundle, then runs on the new one and
     the old process exits; never on the old one."""
-    assert pack_parsers._engine_call(project, {"op": "is_available"})["ok"]
+    write = {"op": "renumber_steps", "text": "# T\n"}  # an op whose answer Studio writes
+    assert pack_parsers._engine_call(project, write)["ok"]
     old = _session(project)._proc
 
     def no_venv(_root):
@@ -152,12 +153,13 @@ def test_a_write_after_a_pull_that_replaced_wheels_never_runs_on_the_old_engine(
 
     monkeypatch.setattr(engine_session, "_resolve_project_python", no_venv)
     assert _available(project)["ok"] and len(spawns) == 1  # a display read: the kept engine
+    assert pack_parsers.is_available(project)[0] and len(spawns) == 1  # Studio's gating: kept
     with pytest.raises(engine_session.ParserUnavailable):
-        pack_parsers._engine_call(project, {"op": "is_available"})
+        pack_parsers._engine_call(project, write)
 
     built = project_venv.ProjectVenv(Path(sys.executable.upper()), project / "bundle")
     monkeypatch.setattr(engine_session, "_resolve_project_python", lambda _root: built)
-    assert pack_parsers._engine_call(project, {"op": "is_available"})["ok"]
+    assert pack_parsers._engine_call(project, write)["ok"]
     assert len(spawns) == 2 and spawns[1][0][0] == str(built.python)
     assert old.wait(timeout=10) is not None
 
@@ -896,3 +898,23 @@ def test_a_sweep_reads_its_tests_several_at_a_time_and_answers_them_in_order(tmp
     assert answer["ok"], answer.get("error")
     assert [entry["folder"] for entry in answer["tests"]] == folders
     assert not any("cannot read" in why for e in answer["tests"] for why in e["errors"].values())
+
+
+def test_studio_asks_availability_as_a_display_read_and_writes_fresh(monkeypatch, tmp_path):
+    """Whether the wheel imports (a button's gating) is asked under the bundle as last read;
+    an op whose answer Studio writes (parse) still looks at the bundle and the venv first."""
+    from procedo.engine_client import engine as engine_mod
+    from procedo.studio.pack_ops import pack_parsers
+
+    asked = []
+    monkeypatch.setattr(
+        engine_mod,
+        "tools_op",
+        lambda root, spec, timeout, fresh=False: (
+            asked.append((spec["op"], fresh))
+            or {"ok": True, "available": True, "json": {}, "warnings": []}
+        ),
+    )
+    pack_parsers.is_available(tmp_path)
+    pack_parsers.parse_text("x", tmp_path)
+    assert asked == [("is_available", False), ("parse_text", True)]

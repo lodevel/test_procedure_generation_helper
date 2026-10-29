@@ -13,6 +13,7 @@ The rows are Bench's test rows (``#testList``, its ``BadgeDelegate``); Bench's I
 (``PROCEDO_APP_INDICATORS``) shows the states as squares (Badges) or as marks in the text (Pictos).
 """
 
+import logging
 import os
 from pathlib import Path
 
@@ -35,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from procedo.core import studio_launch_env
+from procedo.core.off_gui import run_off_gui
 from procedo.core.starter_test import sanitize_test_id
 from procedo.core.paths import exists_quiet, is_dir_quiet, unreachable
 from procedo.core.test_format import CODE, TEXT
@@ -43,11 +45,13 @@ from procedo.ui.badge_delegate import BADGES_ROLE, BadgeDelegate
 from procedo.ui.segmented import segment, segmented
 
 from .base_tab import BaseTab
-from ..core import test_folder_ops, test_sync
+from ..core import project_open, test_folder_ops, test_sync
 from ..core.artifact_manager import ArtifactManager
 from ..core.project_manager import TestFolderInfo
 from ..dialogs.new_test_dialog import NewTestDialog
 from ..widgets.shared_phases_panel import SharedPhasesPanel
+
+log = logging.getLogger(__name__)
 
 #: The header's legend of the row letters.
 LEGEND = "T text · J JSON · C code"
@@ -151,6 +155,8 @@ class WorkspaceTab(BaseTab):
 
     def _setup_ui(self):
         self._current_opened_test = None
+        self._reading: object = None  # the tests read now (token): only its rows land
+        self._reveal: Path | None = None  # a test just made: shown once the list is read
         self.tests_tab, self.phases_tab = segment("Tests"), segment("Shared phases")
         self._tabs = QButtonGroup(self)
         self._tabs.addButton(self.tests_tab, TESTS_LIST)
@@ -178,6 +184,7 @@ class WorkspaceTab(BaseTab):
         self.test_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.test_list.customContextMenuRequested.connect(self._on_context_menu)
 
+        self.cue = ui_kit.LoadingCue()  # the tests being read (off the GUI thread)
         self.shared_phases = SharedPhasesPanel(self.main_window)
         self.shared_phases.loaded.connect(self._count_phases)
 
@@ -192,6 +199,7 @@ class WorkspaceTab(BaseTab):
                 self.new_test_btn,
                 _padded(ui_kit.note(LEGEND, wrap=False), 14, 0, 14, 6),
                 _padded(self.search_bar, 12, 0, 12, 8),
+                _padded(self.cue, 12, 0, 12, 4),
                 _padded(self.test_list, 8, 0, 8, 8),
             )
         )
@@ -221,22 +229,49 @@ class WorkspaceTab(BaseTab):
             "Shared phases" if panel.cue.active else f"Shared phases ({len(panel.phases)})"
         )
 
-    def _load_test_list(self):
-        """List the project's tests (the scroll position kept)."""
+    def _show_tests(self, rows: list[project_open.Row]) -> None:
+        """The project's tests as read (*rows*), the scroll position kept."""
+        self._reading = None
+        self.cue.done()
         scroll = self.test_list.verticalScrollBar()
         top = scroll.value()
         self.test_list.clear()
-        folders = self.project_manager.enumerate_test_folders()
         badges = _uses_badges()
-        for info in folders:
+        for info, stale in rows:
             item = QListWidgetItem()
             item.setData(Qt.UserRole, info.path)
-            _show_state(item, info, self._stale_artifacts(info.path), badges)
+            _show_state(item, info, stale, badges)
             self.test_list.addItem(item)
-        self.tests_tab.setText(f"Tests ({len(folders)})")
+        self.tests_tab.setText(f"Tests ({len(rows)})")
         self._update_opened_test_highlight()
         self._apply_search_filter()
         scroll.setValue(top)
+        if self._reveal is not None:
+            self._show_test(self._reveal)
+            self._reveal = None
+
+    def _read_tests(self) -> None:
+        """The rows read again off the GUI thread (``project_open.test_rows``: on a share
+        each test is a dozen round trips), "Reading the tests…" meanwhile; the rows of the
+        last read asked for land, an earlier read's are dropped."""
+        pm = self.project_manager
+        token = self._reading = object()
+        self.tests_tab.setText("Tests")
+        self.cue.start("Reading the tests…")
+
+        def read() -> tuple:
+            try:
+                return token, project_open.test_rows(pm)
+            except Exception:  # logged, the list shows nothing
+                log.exception("Reading the tests of %s failed", pm.project_root)
+                return token, []
+
+        run_off_gui(read, self._on_tests_read, name="project-read")
+
+    def _on_tests_read(self, answer: tuple) -> None:
+        token, rows = answer
+        if token is self._reading:
+            self._show_tests(rows)
 
     def _apply_search_filter(self) -> None:
         """Hide list items whose folder name doesn't contain the search
@@ -456,8 +491,8 @@ class WorkspaceTab(BaseTab):
 
         path = self.project_manager.create_test_folder(name, dialog.active)
         if path:
-            self._load_test_list()
-            self._show_test(path)
+            self._reveal = path  # its row scrolled into view once the list is read
+            self.refresh()
             self.test_opened.emit(path)
         else:
             self.show_error(
@@ -481,21 +516,22 @@ class WorkspaceTab(BaseTab):
         self.refresh()
 
     def refresh(self):
-        """Refresh the test list."""
-        is_open = bool(self.project_manager.project_root)
-        if is_open:
-            self._load_test_list()
-        for button in (self.new_test_btn, self.shared_phases.new_button):
-            button.setEnabled(is_open)
+        """List the tests again (one made, renamed, deleted, marked in sync): read off the
+        GUI thread. No project: the list empty, the buttons off."""
+        if self.project_manager.project_root:
+            self._read_tests()
+        else:
+            self._show_tests([])
+        self._enable_buttons()
 
-    def show_project(self) -> None:
-        """A project was opened: its tests and its shared phases listed."""
-        self.refresh()
+    def show_project(self, rows: list[project_open.Row]) -> None:
+        """A project was opened and read (*rows*: its tests, ``project_open.read``): its
+        tests listed from them, its shared phases read."""
+        self._show_tests(rows)
+        self._enable_buttons()
         self.shared_phases.load()
 
-    def set_project_root(self, path: Path):
-        """Set project root programmatically (from CLI)."""
-        if self.project_manager.set_project_root(path):
-            self.show_project()
-            return True
-        return False
+    def _enable_buttons(self) -> None:
+        is_open = bool(self.project_manager.project_root)
+        for button in (self.new_test_btn, self.shared_phases.new_button):
+            button.setEnabled(is_open)

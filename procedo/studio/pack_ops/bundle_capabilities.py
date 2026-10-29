@@ -92,11 +92,12 @@ def can_for_types(
     """
     if capability not in CAPABILITIES:
         raise ValueError(f"unknown capability {capability!r}; expected one of {CAPABILITIES}")
+    needed = [etype for etype in equipment_types if etype not in _BASE_NATIVE_TYPES]
+    if not needed:
+        return True, []  # nothing to look up: the bundle is not read
     caps = pack_capabilities(project_root)
     missing: list[tuple[str, str]] = []
-    for etype in equipment_types:
-        if etype in _BASE_NATIVE_TYPES:
-            continue
+    for etype in needed:
         entry = caps.get(etype)
         if entry is None:
             missing.append((etype, "no pack"))

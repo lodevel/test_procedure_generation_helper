@@ -294,7 +294,7 @@ def test_the_list_renames_through_the_core(tmp_path, qapp, monkeypatch):
     WorkspaceTab._rename_test(fake, tests / "Foo")
     assert [p.name for p in tests.iterdir()] == ["Bar_"]
     fake.refresh.assert_called_once()
-    fake._show_test.assert_called_once_with(tests / "Bar_")
+    assert fake._reveal == tests / "Bar_"  # its row shown once the list is read again
 
 
 @WIN

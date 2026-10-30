@@ -234,3 +234,47 @@ def test_a_root_that_will_not_open_warns_and_switches_nothing(opened, mbox, monk
     assert [t for t, _ in mbox.warning] == ["Invalid Project"]
     assert w._noted_recents == noted and w.project_manager.project_root == before
     assert w.artifact_manager is am
+
+
+def _named(monkeypatch, name: str) -> None:
+    from PySide6.QtWidgets import QInputDialog
+
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: (name, True)))
+
+
+def test_the_open_test_is_renamed_and_opens_again_under_its_new_name(opened, mbox, monkeypatch):
+    """Owner: "no reason not to be able to" rename the selected test. The open one is left as
+    when another test opens (no editor, session or file handle keeps the old folder), renamed,
+    and open again under its new name, its saved text in the editor."""
+    w = opened
+    tests = w.project_manager.project_root / "tests"
+    w.open_test(tests / "t1")
+    _named(monkeypatch, "t9")
+
+    w.workspace_widget._rename_test(tests / "t1")
+
+    assert not (tests / "t1").exists() and (tests / "t9").is_dir()
+    assert w.artifact_manager.test_dir == tests / "t9"
+    assert w.workspace_widget._current_opened_test == tests / "t9"
+    assert w.text_only_tab.text_editor.toPlainText() == (
+        tests / "t9" / "procedure_text.md"
+    ).read_text(encoding="utf-8")
+    assert mbox.critical == []
+
+
+def test_cancel_on_the_open_test_s_unsaved_changes_renames_nothing(opened, mbox, monkeypatch):
+    """Renaming the open test asks about its unsaved changes first; Cancel keeps it open, its
+    edit in the editor, and the folder as it was."""
+    w = opened
+    tests = w.project_manager.project_root / "tests"
+    w.open_test(tests / "t1")
+    am = w.artifact_manager
+    w.text_only_tab.text_editor.setPlainText(EDITED)
+    mbox.question_answer = QMessageBox.StandardButton.Cancel
+    _named(monkeypatch, "t9")
+
+    w.workspace_widget._rename_test(tests / "t1")
+
+    assert [t for t, _ in mbox.question] == ["Unsaved Changes"]
+    assert (tests / "t1").is_dir() and not (tests / "t9").exists()
+    assert w.artifact_manager is am and w.text_only_tab.text_editor.toPlainText() == EDITED

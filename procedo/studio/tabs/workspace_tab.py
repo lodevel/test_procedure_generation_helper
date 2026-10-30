@@ -357,18 +357,14 @@ class WorkspaceTab(BaseTab):
                 "as coherent. Rewrites the hash baseline in .llm_session.json."
             )
 
-        rename_action = menu.addAction("Rename Test…")
-        rename_action.setEnabled(not is_loaded)
-        if is_loaded:
-            rename_action.setToolTip(
-                "Close the test first — the loaded editor session pins the old folder path."
-            )
-        else:
-            rename_action.setToolTip(
-                "Rename the folder and re-sync the test id (procedure_text.md "
-                "header + procedure.json id), test_order and scenario entries. "
-                "Past run reports keep the old name."
-            )
+        rename_action = menu.addAction(
+            "Rename Test…"
+        )  # the open one too: closed, renamed, reopened
+        rename_action.setToolTip(
+            "Rename the folder and re-sync the test id (procedure_text.md "
+            "header + procedure.json id), test_order and scenario entries. "
+            "Past run reports keep the old name."
+        )
 
         menu.addSeparator()
         delete_action = menu.addAction("Delete Test…")
@@ -406,8 +402,10 @@ class WorkspaceTab(BaseTab):
 
     def _rename_test(self, path: Path):
         """Rename a test folder; the id, its sync state and the project's
-        references follow (core.test_folder_ops). Only offered for a test that
-        is not open — the context menu disables it for the open one."""
+        references follow (core.test_folder_ops). The open test is left first, as when
+        another test opens (its unsaved changes asked about; Cancel renames nothing), so no
+        editor, session or file handle holds the old folder; it opens again under its new name
+        (under its old one when the rename failed)."""
         raw, ok = QInputDialog.getText(
             self,
             "Rename Test",
@@ -418,6 +416,9 @@ class WorkspaceTab(BaseTab):
             return
         new_name = sanitize_test_id(raw.strip())
         if new_name == path.name:
+            return
+        is_open = path == self._current_opened_test
+        if is_open and not self._leave_for_rename():
             return
         pm = self.project_manager
         try:
@@ -430,6 +431,8 @@ class WorkspaceTab(BaseTab):
             )
         except test_folder_ops.TestFolderError as e:
             QMessageBox.critical(self, "Rename Failed", str(e))
+            if is_open:
+                self.test_opened.emit(path)  # as it was
             return
         if warnings:
             QMessageBox.warning(
@@ -439,8 +442,23 @@ class WorkspaceTab(BaseTab):
                 "(ids re-sync on the next save):\n\n" + "\n".join(warnings),
             )
 
+        self._reveal = new_path  # its row shown once the list is read again
         self.refresh()
-        self._show_test(new_path)
+        if is_open:
+            self.test_opened.emit(new_path)
+
+    def _leave_for_rename(self) -> bool:
+        """The open test may close (:meth:`DocumentController.may_leave_test`) and is closed —
+        its proposals discarded, a waiting send dropped, its session saved, its views cleared.
+        False when the user cancelled: nothing changed."""
+        doc = self.main_window._document_controller
+        if not doc.may_leave_test():
+            return False
+        doc.leave_open_test()
+        doc.close_text_test()
+        self.main_window._code_test_controller.close()
+        self.set_opened_test(None)
+        return True
 
     def _delete_test(self, path: Path):
         """Delete a test folder after confirmation (core.test_folder_ops)."""

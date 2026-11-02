@@ -24,14 +24,24 @@ SKILL_CHAT_KIND = "skill-chat"
 
 
 class SkillSource(IntEnum):
-    """Where a skill was found. The integer value IS its precedence: when two
-    skills share a ``skill_id`` the higher source wins —
-    project > local > bundled > builtin."""
+    """Where a skill copy was found. The integer value IS its precedence for a reference by
+    id: project > bundle > package."""
 
-    BUILTIN = 1  # <repo>/authoring_skills — committed library, ships with the app
+    PACKAGE = 1  # an item of a switched-on package (builtin, installed or Local)
     BUNDLED = 2  # <project>/bundle/authoring_skills — shipped in a built bundle
-    LOCAL = 3  # <repo>/local_packages/authoring_skills — drop-in (uncommitted)
-    PROJECT = 4  # <project>/authoring_skills — this project only
+    PROJECT = 3  # <project>/authoring_skills — this project only
+
+
+@dataclass(frozen=True)
+class SkillFolder:
+    """One folder a skill, wizard or tool may be loaded from: its id (a package item's id, or
+    the folder name), where it came from and the label that copy shows (``"Project"``,
+    ``"Bundle"`` or the package's name)."""
+
+    folder: Path
+    id: str
+    source: SkillSource
+    provenance: str
 
 
 @dataclass(frozen=True)
@@ -47,12 +57,19 @@ class Skill:
     system_prompt: str
     path: Path
     source: SkillSource
+    provenance: str
     when_to_use: str = ""
     target: str = ""
     version: str = ""
     kind: str = "authoring"
     tools_path: Optional[Path] = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def listing(self) -> str:
+        """The entry a menu or picker shows: title, version and provenance."""
+        version = f" · v{self.version}" if self.version else ""
+        return f"{self.title}{version} — {self.provenance}"
 
     @property
     def has_tools(self) -> bool:

@@ -45,19 +45,20 @@ def test_guard_depth_cap_and_cycle():
     assert refused == "refused" and "cycle" in reason
 
 
-def test_resolve_skill_precedence_body_and_declared(tmp_path):
-    builtin, project = tmp_path / "builtin", tmp_path / "project"
-    for root, marker, tools in ((builtin, "BUILTIN", "[a]"), (project, "PROJECT", "[b]")):
-        d = root / "greeter"
+def test_resolve_skill_takes_the_mapped_folder_body_and_declared(tmp_path):
+    folders = {}
+    for name, marker, tools in (("one", "ONE", "[a]"), ("two", "TWO", "[b]")):
+        d = tmp_path / name / "greeter"
         d.mkdir(parents=True)
         (d / "SKILL.md").write_text(
             f"---\nname: greeter\nmcp_tools: {tools}\n---\n{marker} body\n", encoding="utf-8"
         )
-    # ascending precedence -> project (last / higher) wins; declared parsed.
-    body, declared = rs_core.resolve_skill("greeter", [str(builtin), str(project)])
-    assert body == "PROJECT body" and declared == ["b"]
+        folders[name] = str(d)
+    # the host's map names the ONE copy; the server applies no order of its own.
+    body, declared = rs_core.resolve_skill("greeter", {"greeter": folders["two"]})
+    assert body == "TWO body" and declared == ["b"]
     with pytest.raises(ValueError):
-        rs_core.resolve_skill("missing", [str(builtin)])
+        rs_core.resolve_skill("missing", {"greeter": folders["one"]})
 
 
 def test_child_tools_scopes_to_declared_plus_readonly():
@@ -185,8 +186,8 @@ def test_protocol_handshake_list_ping_unknown(tmp_path):
             SERVER_PATH,
             "--server-port-file",
             str(tmp_path / "opencode.pid"),
-            "--skill-root",
-            str(tmp_path),
+            "--skills-file",
+            str(tmp_path / "skills.json"),
         ],
         env=_SERVER_ENV,
     )
@@ -219,8 +220,8 @@ def test_run_skill_refuses_forged_token(tmp_path):
             SERVER_PATH,
             "--server-port-file",
             str(tmp_path / "opencode.pid"),
-            "--skill-root",
-            str(tmp_path),
+            "--skills-file",
+            str(tmp_path / "skills.json"),
         ],
         env=_SERVER_ENV,
     )
@@ -284,6 +285,8 @@ def test_run_skill_spawns_scoped_child(tmp_path):
     (d / "SKILL.md").write_text(
         "---\nname: greeter\nmcp_tools: [greeter_tools]\n---\nSay hi.\n", encoding="utf-8"
     )
+    skills_file = tmp_path / "skills.json"
+    skills_file.write_text(json.dumps({"greeter": str(d)}), encoding="utf-8")
     universe = tmp_path / "universe.json"
     universe.write_text(
         json.dumps({"greeter_tools": ["do"], "other_tools": ["x"]}), encoding="utf-8"
@@ -302,8 +305,8 @@ def test_run_skill_spawns_scoped_child(tmp_path):
             SERVER_PATH,
             "--server-port-file",
             str(pidfile),
-            "--skill-root",
-            str(tmp_path / "roots"),
+            "--skills-file",
+            str(skills_file),
             "--universe-file",
             str(universe),
             "--max-depth",

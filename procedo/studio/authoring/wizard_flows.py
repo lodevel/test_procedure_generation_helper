@@ -9,7 +9,7 @@ A head declares the authoring-API version its code needs (``authoring-api:``); a
 declaring none (a bundle copy built before the API) or a newer one than this Studio's is
 refused here. What the entry receives is built by :mod:`.wizard_api`.
 
-Imports ONLY :func:`registry.load_wizards` + :class:`Skill`/:class:`SkillSource` (and
+Imports ONLY :func:`registry.load_wizards` / :func:`registry.skills_by_id` + :class:`Skill`/:class:`SkillSource` (and
 the host's ``API_VERSION``) — never ``skill_menu`` — so there is no import cycle
 (``skill_menu`` imports this), and stays Qt-free.
 """
@@ -25,7 +25,7 @@ from typing import Any, List, Optional
 
 from procedo.core.authoring_api import API_VERSION
 
-from . import load_wizards
+from . import load_wizards, skills_by_id
 from .skill import Skill, SkillSource
 
 log = logging.getLogger(__name__)
@@ -44,36 +44,44 @@ class WizardFlow:
     tooltip: str
     launch_spec: str  # "<dotted module>:<Attr>"
     head: Skill  # the skill folder that owns the code + launch:
-    skills: List[Skill]  # all skills in this flow (head + members)
+    skills: List[Skill]  # all skills in this flow (head + members), one copy per id
+
+    @property
+    def listing(self) -> str:
+        """The entry the Wizards chooser shows: the label and the head's provenance."""
+        return f"{self.label} — {self.head.provenance}"
 
 
 def discover_flows(project_root: Optional[Path] = None) -> List[WizardFlow]:
     """All LAUNCHABLE wizard flows, sorted by label.
 
-    Groups discovered wizards by ``flow:``, takes the one HEAD declaring
-    ``launch:``, and gates on ``requires`` (default: every skill in the flow) being
-    present. A flow whose UI is not built (no ``launch:`` head) is skipped silently;
-    a flow missing a required stage is gated off. Never raises — a broken flow just
-    doesn't appear."""
+    Every copy of a head declaring ``launch:`` is its own entry, shown with its provenance
+    (one per flow and provenance). The flow's other stages are referenced by id, so they are
+    the copies :func:`skills_by_id` takes; the flow is gated on ``requires`` (default: every
+    stage) being present. A flow whose UI is not built (no ``launch:`` head) is skipped
+    silently; a flow missing a required stage is gated off. Never raises — a broken flow
+    just doesn't appear."""
     try:
         wizards = load_wizards(project_root=project_root)
     except Exception:  # noqa: BLE001 — discovery must never break the menu
         log.exception("wizard discovery failed")
         return []
 
-    by_flow: dict[str, List[Skill]] = {}
-    for w in wizards:
+    members: dict[str, dict[str, Skill]] = {}
+    for w in skills_by_id(wizards).values():
         flow_id = (w.metadata or {}).get("flow")
         if flow_id:
-            by_flow.setdefault(str(flow_id), []).append(w)
+            members.setdefault(str(flow_id), {})[w.skill_id] = w
+    heads_by_copy: dict[tuple[str, str], List[Skill]] = {}
+    for w in wizards:
+        flow_id = (w.metadata or {}).get("flow")
+        if flow_id and (w.metadata or {}).get("launch"):
+            heads_by_copy.setdefault((str(flow_id), w.provenance), []).append(w)
 
     out: List[WizardFlow] = []
-    for flow_id, skills in by_flow.items():
-        heads = [s for s in skills if (s.metadata or {}).get("launch")]
-        if not heads:
-            continue  # prompts shipped, launchable UI not built — skip silently
-        if len(heads) > 1:  # deterministic tiebreak: highest source, then skill_id
-            heads.sort(key=lambda s: (int(s.source), s.skill_id), reverse=True)
+    for (flow_id, _provenance), heads in heads_by_copy.items():
+        if len(heads) > 1:  # deterministic tiebreak: skill_id
+            heads.sort(key=lambda s: s.skill_id, reverse=True)
             log.warning(
                 "wizard flow %r has %d launch heads; using %s",
                 flow_id,
@@ -81,9 +89,9 @@ def discover_flows(project_root: Optional[Path] = None) -> List[WizardFlow]:
                 heads[0].skill_id,
             )
         head = heads[0]
-        ids = {s.skill_id for s in skills}
-        requires = (head.metadata or {}).get("requires") or list(ids)
-        if not set(requires) <= ids:
+        stages = members.get(flow_id, {})
+        requires = (head.metadata or {}).get("requires") or list(stages)
+        if not set(requires) <= set(stages):
             continue  # a required stage is missing → not launchable
         meta = head.metadata or {}
         out.append(
@@ -93,10 +101,10 @@ def discover_flows(project_root: Optional[Path] = None) -> List[WizardFlow]:
                 tooltip=str(meta.get("wizard-tooltip") or head.when_to_use or ""),
                 launch_spec=str(meta["launch"]),
                 head=head,
-                skills=skills,
+                skills=list(stages.values()),
             )
         )
-    return sorted(out, key=lambda f: f.label.lower())
+    return sorted(out, key=lambda f: (f.label.lower(), -int(f.head.source), f.head.provenance))
 
 
 def resolve_launch(flow: WizardFlow) -> Any:
@@ -106,15 +114,15 @@ def resolve_launch(flow: WizardFlow) -> Any:
     then imports the dotted module and returns the attribute. Another head's copy of a
     same-named package imported earlier in this process (an old project's bundle, then
     a new one) is dropped first: the code that runs is always this head's.
-    TRUST-GATED to builtin/bundled sources — this executes the package's Python.
+    TRUST-GATED to package and bundle sources — this executes the wizard's Python.
     Raises :class:`WizardLaunchError` on a bad spec, untrusted source, no or a newer
     authoring API than this Studio's, or import failure (the caller surfaces it)."""
     mod_part, sep, attr = flow.launch_spec.partition(":")
     if not sep or not attr.strip():
         raise WizardLaunchError(f"launch must be '<module>:<Attr>', got {flow.launch_spec!r}")
-    if flow.head.source not in (SkillSource.BUILTIN, SkillSource.BUNDLED):
+    if flow.head.source not in (SkillSource.PACKAGE, SkillSource.BUNDLED):
         raise WizardLaunchError(
-            "launchable wizard code is allowed only from builtin/bundled sources"
+            "launchable wizard code is allowed only from a package or the bundle"
         )
     needed = required_api(flow)
     if needed > API_VERSION:

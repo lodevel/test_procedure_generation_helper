@@ -3,7 +3,7 @@
 
 Peer of ``_project_tools_mcp`` / ``_pdf_tool_mcp``: host INFRASTRUCTURE (a reserved
 server name, gated by a single per-request bool), NOT a user tool folder — it needs
-launch-time state a generic ``--tools-dir`` server can't carry: the skill roots (to
+launch-time state a generic ``--tools-dir`` server can't carry: the skill map (to
 resolve a child ``skill_id``), the launch pid-file (to find the server's own port at
 call time), the recursion ceiling, and the HMAC secret (via ``RUN_SKILL_SECRET`` env,
 which OpenCode delivers from the block's ``environment`` — verified honored).
@@ -54,7 +54,7 @@ def _handle_run_skill(arguments, cfg):
     try:
         text, child_sid = rs_core.run_child_skill(
             server_url,
-            cfg["roots"],
+            cfg["skills"],
             skill_id,
             prompt,
             child_payload,
@@ -98,10 +98,9 @@ def main(argv=None):
         "--server-port-file", required=True, help="launch pid-file holding the OpenCode server port"
     )
     ap.add_argument(
-        "--skill-root",
-        action="append",
-        default=[],
-        help="a skill root (repeatable, ASCENDING precedence)",
+        "--skills-file",
+        default="",
+        help="JSON {skill id: folder} of the copy each id resolves to (to run a child skill)",
     )
     ap.add_argument(
         "--universe-file",
@@ -116,7 +115,7 @@ def main(argv=None):
 
     cfg = {
         "port_file": a.server_port_file,
-        "roots": list(a.skill_root),
+        "skills": rs_core.load_skill_map(a.skills_file),
         "universe": rs_core.load_universe(a.universe_file),
         "max_depth": a.max_depth,
         "model": a.model,

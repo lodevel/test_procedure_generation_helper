@@ -1,21 +1,21 @@
 """Discover *tool folders* — folders shipping MCP tools (``tools.py`` + ``tools.json``).
 
-A tool folder is any immediate subfolder of a skill root that holds BOTH
-``tools.py`` (the executable tools, loaded by ``_skill_tools_mcp.py``) and
-``tools.json`` (the declared advert: ``{"server": <name>, "tools": [...]}``). This
-uniformly covers a skill's own tools (``<skill>/tools.py``) and shared tools
-(``common/tools.py``) — the scanner doesn't care whether the folder is a skill.
+A tool folder is a candidate folder that holds BOTH ``tools.py`` (the executable tools,
+loaded by ``_skill_tools_mcp.py``) and ``tools.json`` (the declared advert:
+``{"server": <name>, "tools": [...]}``). This uniformly covers a skill's own tools
+(``<skill>/tools.py``) and shared tools (a package's ``tools/`` item, the bundle's
+``tools/``) — the scanner doesn't care whether the folder is a skill.
 
 Pure logic, like :mod:`.registry`: :func:`discover_tool_folders` takes explicit
-``(root, source)`` pairs; :func:`build_skill_tools_universe` is the convenience that
-pulls the default roots from :mod:`.locations`. We read ``tools.json`` ONLY — never
+:class:`.skill.SkillFolder` candidates; :func:`build_skill_tools_universe` is the
+convenience that pulls the default ones from :mod:`.locations`. We read ``tools.json`` ONLY — never
 import ``tools.py`` — so building the per-request tool-gate universe runs zero
 skill code in the GUI process.
 
-SECURITY (until the trust gate lands): only BUILTIN + BUNDLED tiers are scanned for
-tool folders; LOCAL / PROJECT drop-ins are ignored (their ``tools.py`` is neither
-read nor executed) so a project drop-in can't auto-run code nor shadow a trusted
-``SERVER_NAME``.
+TRUST: switching a package on is the decision to trust it, so every folder of a
+switched-on package (Local included) and of the project's bundle is scanned; the
+project's own folders are ignored (their ``tools.py`` is neither read nor executed)
+so a project drop-in can't auto-run code nor shadow a trusted ``SERVER_NAME``.
 """
 
 from __future__ import annotations
@@ -25,10 +25,10 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Sequence, Tuple
+from typing import Optional, Sequence
 
 from . import locations
-from .skill import SkillSource
+from .skill import SkillFolder, SkillSource
 
 log = logging.getLogger(__name__)
 
@@ -44,8 +44,8 @@ _SERVER_RE = re.compile(r"^[a-z0-9_]+$")
 # the infra block / inherit its always-on keys = privilege escalation).
 _RESERVED_INFRA = frozenset({"pdf_tools", "project_tools", "run_skill"})
 
-# Only these tiers are trusted to ship executable tools.
-_TRUSTED_SOURCES = (SkillSource.BUILTIN, SkillSource.BUNDLED)
+# Only these sources are trusted to ship executable tools.
+_TRUSTED_SOURCES = (SkillSource.PACKAGE, SkillSource.BUNDLED)
 
 
 @dataclass(frozen=True)
@@ -84,46 +84,38 @@ def _read_manifest(folder: Path) -> Optional[ToolFolder]:
     if not all(isinstance(t, str) for t in tools):
         log.warning("skipping tool folder %s: tools must be strings", folder)
         return None
-    return ToolFolder(server=server, tools=tools, path=folder, source=SkillSource.BUILTIN)
+    return ToolFolder(server=server, tools=tools, path=folder, source=SkillSource.PACKAGE)
 
 
-def discover_tool_folders(
-    roots: Sequence[Tuple[Path, SkillSource]],
-) -> list[ToolFolder]:
-    """Discover tool folders under ``roots`` (BUILTIN/BUNDLED only) + resolve dups.
+def discover_tool_folders(candidates: Sequence[SkillFolder]) -> list[ToolFolder]:
+    """Discover tool folders among ``candidates`` (package + bundle only) + resolve dups.
 
-    Dedup mirrors skill precedence: by FOLDER NAME, higher :class:`SkillSource`
-    wins (a same-source duplicate keeps the first seen). Then SERVER_NAME
-    uniqueness is enforced across survivors — since SERVER_NAME is free-form, two
-    different folders could declare the same name; a collision drops the later one
+    Dedup mirrors skill precedence: by FOLDER NAME (a package item's id), the higher
+    :class:`SkillSource` wins (a same-source duplicate keeps the first seen). Then
+    SERVER_NAME uniqueness is enforced across survivors — since SERVER_NAME is free-form,
+    two different folders could declare the same name; a collision drops the later one
     (logged) rather than relying on nondeterministic dict-update order.
     """
     by_folder: dict[str, ToolFolder] = {}
-    for root, source in roots:
-        if source not in _TRUSTED_SOURCES:
+    for place in candidates:
+        if place.source not in _TRUSTED_SOURCES:
             continue
-        root = Path(root)
-        if not root.is_dir():
+        tf = _read_manifest(place.folder)
+        if tf is None:
             continue
-        for folder in sorted(root.iterdir()):
-            if not folder.is_dir():
-                continue
-            tf = _read_manifest(folder)
-            if tf is None:
-                continue
-            tf = ToolFolder(server=tf.server, tools=tf.tools, path=tf.path, source=source)
-            existing = by_folder.get(folder.name)
-            if existing is not None and source == existing.source:
-                log.warning(
-                    "duplicate tool folder %r in %s; keeping %s, ignoring %s",
-                    folder.name,
-                    source.name,
-                    existing.path,
-                    tf.path,
-                )
-                continue
-            if existing is None or source > existing.source:
-                by_folder[folder.name] = tf
+        tf = ToolFolder(server=tf.server, tools=tf.tools, path=tf.path, source=place.source)
+        existing = by_folder.get(place.id)
+        if existing is not None and place.source == existing.source:
+            log.warning(
+                "duplicate tool folder %r in %s; keeping %s, ignoring %s",
+                place.id,
+                place.source.name,
+                existing.path,
+                tf.path,
+            )
+            continue
+        if existing is None or place.source > existing.source:
+            by_folder[place.id] = tf
 
     # Enforce SERVER_NAME uniqueness across the surviving folders.
     out: list[ToolFolder] = []
@@ -151,7 +143,5 @@ def build_skill_tools_universe(project_root: Optional[Path] = None) -> dict[str,
     """
     return {
         tf.server: list(tf.tools)
-        for tf in discover_tool_folders(
-            locations.skill_roots(project_root) + locations.tool_roots(project_root)
-        )
+        for tf in discover_tool_folders(locations.tool_candidates(project_root))
     }

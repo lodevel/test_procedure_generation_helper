@@ -11,7 +11,7 @@ from typing import Optional
 
 from ..core.fileio import atomic_write_text
 from ..core import studio_settings
-from .launch_files import CONFIG_FILE, PID_FILE, UNIVERSE_FILE, launch_file_path
+from .launch_files import CONFIG_FILE, PID_FILE, SKILLS_FILE, UNIVERSE_FILE, launch_file_path
 
 log = logging.getLogger(__name__)
 
@@ -157,14 +157,14 @@ def _build_project_tools_block(project_root: Optional[Path]) -> Optional[dict]:
 def _build_skill_tools_blocks(project_root: Optional[Path]) -> dict:
     """Build an MCP block for EVERY discovered tool folder (skill-owned + common),
     auto-registered — no per-tool host code. One generic ``_skill_tools_mcp.py``
-    backs each folder, pointed at it via ``--tools-dir``. Discovery (BUILTIN/BUNDLED
-    tiers only; reserved infra names skipped) lives in ``authoring.tool_folders``."""
+    backs each folder, pointed at it via ``--tools-dir``. Discovery (switched-on
+    packages and the bundle only; reserved infra names skipped) lives in ``authoring.tool_folders``."""
     from ..llm.mcp_config import build_skill_tools_mcp_block
     from ..authoring.tool_folders import discover_tool_folders
-    from ..authoring.locations import skill_roots, tool_roots
+    from ..authoring.locations import tool_candidates
 
     blocks: dict = {}
-    for tf in discover_tool_folders(skill_roots(project_root) + tool_roots(project_root)):
+    for tf in discover_tool_folders(tool_candidates(project_root)):
         blocks.update(
             build_skill_tools_mcp_block(
                 server_name=tf.server,
@@ -180,18 +180,20 @@ def _build_run_skill_block(project_root, launch_dir, run_skill_secret):
     """Build the ``run_skill`` infra MCP block, or ``None`` when there is no
     secret (recursion then stays unavailable). Passes the launch pid-file (the
     server reads the live server port from it at call time), the skill roots in
-    precedence order (to resolve a child skill_id), the skill-tools universe file
+    resolved by id (to resolve a child skill_id), the skill-tools universe file
     (so the child force-scopes to its OWN declared tools), and the HMAC secret via
     the block environment."""
     if not run_skill_secret:
         return None
     from ..llm.mcp_config import build_run_skill_mcp_block
-    from ..authoring.locations import skill_roots
+    from ..authoring.registry import load_skills, skills_by_id
     from ..authoring.tool_folders import build_skill_tools_universe
 
-    # Sort roots by SkillSource (ASCENDING) so the child resolves the same body
-    # the registry would (highest source wins), not by list order.
-    roots = [str(pth) for pth, _src in sorted(skill_roots(project_root), key=lambda ps: ps[1])]
+    # The child resolves an id to the same copy every reference takes (skills_by_id), written
+    # as a map beside the config; the server stays Qt-free and applies no order of its own.
+    skills_file = launch_file_path(launch_dir, SKILLS_FILE)
+    skills = {sid: str(s.path) for sid, s in skills_by_id(load_skills(project_root)).items()}
+    atomic_write_text(skills_file, json.dumps(skills))
     # Persist the skill-tools gate universe beside the config so the child can
     # force every NON-declared skill tool off (mirrors the parent gating).
     universe_file = ""
@@ -203,14 +205,16 @@ def _build_run_skill_block(project_root, launch_dir, run_skill_secret):
             universe_file = str(_uf)
     except Exception:
         log.exception("Failed to write run_skill universe file")
-    return build_run_skill_mcp_block(
+    block = build_run_skill_mcp_block(
         venv_python_win=_python_win(),
         mcp_script_win=_mcp_script_win("_run_skill_mcp.py"),
         server_port_file_win=str(launch_file_path(launch_dir, PID_FILE)),
-        skill_roots_win=roots,
+        skill_roots_win=[],
         secret=run_skill_secret,
         universe_file_win=universe_file,
     )
+    block["run_skill"]["command"] += ["--skills-file", str(skills_file)]
+    return block
 
 
 def build_launch_config(

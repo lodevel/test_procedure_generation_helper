@@ -1,75 +1,62 @@
-"""Discover skills across roots and resolve precedence.
+"""Discover skills and wizards and resolve a reference by id.
 
-Pure logic: :func:`discover_skills` takes explicit ``(root, source)`` pairs, so
-it's testable with temp dirs and no app/project wiring. :func:`load_skills` is
-the thin convenience that pulls the default roots from :mod:`.locations`.
+Pure logic: :func:`discover_skills` takes explicit :class:`.skill.SkillFolder` entries, so it's
+testable with temp dirs and no app/project wiring. :func:`load_skills` / :func:`load_wizards`
+are the thin conveniences that pull the default folders from :mod:`.locations`.
+
+Every copy is listed, each with its provenance. A REFERENCE by id (a wizard's ``requires:``,
+the ``run_skill`` tool, the wizard API) takes one copy: :func:`skills_by_id`, the only place
+that knows the order (project, then bundle, then package).
 """
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Iterator, Optional, Sequence, Tuple
+from typing import Iterable, Optional, Sequence
 
 from procedo.core.bundle_generator import skill_file
 
 from . import locations
-from .skill import Skill, SkillSource
+from .skill import Skill, SkillFolder
 from .skill_loader import SkillLoadError, load_skill
 
 log = logging.getLogger(__name__)
 
 
-def _iter_skill_folders(root: Path) -> Iterator[Path]:
-    """Yield immediate subfolders of ``root`` that contain a SKILL.md."""
-    for child in sorted(root.iterdir()):
-        if child.is_dir() and skill_file(child) is not None:
-            yield child
+def discover_skills(folders: Sequence[SkillFolder]) -> list[Skill]:
+    """Load every folder that holds a ``SKILL.md``; a folder that fails to load is logged
+    and skipped — discovery never raises. All copies are kept, sorted by display title, the
+    higher-precedence copy first."""
+    found: list[Skill] = []
+    for place in folders:
+        if skill_file(place.folder) is None:
+            continue
+        try:
+            found.append(load_skill(place))
+        except SkillLoadError as exc:
+            log.warning("skipping skill folder %s: %s", place.folder, exc)
+        except Exception:  # noqa: BLE001 — one bad folder must not break discovery
+            log.exception("unexpected error loading skill folder %s", place.folder)
+    return sorted(found, key=lambda s: (s.title.lower(), -int(s.source), s.provenance))
 
 
-def discover_skills(
-    roots: Sequence[Tuple[Path, SkillSource]],
-) -> list[Skill]:
-    """Load every skill under ``roots`` and resolve duplicates by precedence.
-
-    A folder that fails to load is logged and skipped — discovery never raises.
-    When two skills share a ``skill_id`` the higher :class:`SkillSource` wins;
-    a same-source collision keeps the first seen (and is logged, so an author
-    whose skill is shadowed can tell why). Returns skills sorted by display
-    title."""
-    by_id: dict[str, Skill] = {}
-    for root, source in roots:
-        for folder in _iter_skill_folders(Path(root)):
-            try:
-                skill = load_skill(folder, source)
-            except SkillLoadError as exc:
-                log.warning("skipping skill folder %s: %s", folder, exc)
-                continue
-            except Exception:  # noqa: BLE001 — one bad folder must not break discovery
-                log.exception("unexpected error loading skill folder %s", folder)
-                continue
-            existing = by_id.get(skill.skill_id)
-            if existing is not None and skill.source == existing.source:
-                log.warning(
-                    "duplicate skill_id %r in %s; keeping %s, ignoring %s",
-                    skill.skill_id,
-                    source.name,
-                    existing.path,
-                    skill.path,
-                )
-                continue
-            if existing is None or skill.source > existing.source:
-                by_id[skill.skill_id] = skill
-    return sorted(by_id.values(), key=lambda s: s.title.lower())
+def skills_by_id(copies: Iterable[Skill]) -> dict[str, Skill]:
+    """The ONE copy a reference by id takes, per id: the highest :class:`.skill.SkillSource`
+    (project, then bundle, then package)."""
+    chosen: dict[str, Skill] = {}
+    for skill in copies:
+        held = chosen.get(skill.skill_id)
+        if held is None or skill.source > held.source:
+            chosen[skill.skill_id] = skill
+    return chosen
 
 
 def load_skills(project_root: Optional[Path] = None) -> list[Skill]:
-    """Discover skills from the default roots for ``project_root``."""
-    return discover_skills(locations.skill_roots(project_root))
+    """Every skill copy for ``project_root``."""
+    return discover_skills(locations.skill_folders(project_root))
 
 
 def load_wizards(project_root: Optional[Path] = None) -> list[Skill]:
-    """Discover wizards from the default roots for ``project_root`` — the
-    ``authoring_wizards`` SIBLING of each skill root. Mirrors
-    :func:`load_skills`; reuses :func:`discover_skills` unchanged."""
-    return discover_skills(locations.wizard_roots(project_root))
+    """Every wizard copy for ``project_root``; the same shape as :func:`load_skills`."""
+    return discover_skills(locations.wizard_folders(project_root))

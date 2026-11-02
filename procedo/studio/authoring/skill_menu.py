@@ -305,13 +305,13 @@ def _choose_and_launch_wizard(main_window) -> None:
     available = _available_flows(main_window)
     if not available:
         return
-    labels = [f.label for f in available]
+    labels = [f.listing for f in available]
     choice, ok = QInputDialog.getItem(
         main_window, "Wizards", "Choose a wizard to run:", labels, 0, False
     )
     if not ok:
         return
-    flow = next((f for f in available if f.label == choice), None)
+    flow = next((f for f in available if f.listing == choice), None)
     if flow is not None:
         _launch_wizard_flow(main_window, flow)
 

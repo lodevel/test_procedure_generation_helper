@@ -135,6 +135,7 @@ def _skill(skill_id, title, when):
         when_to_use=when,
         system_prompt="",
         metadata={},
+        listing=f"{title} · v0.11.9 — Procedo",
     )
 
 
@@ -158,8 +159,8 @@ def test_the_skill_chat_has_the_skill_picker_in_its_header_and_insert_as_its_pri
     combo = header.findChild(QComboBox)
     assert header.title.text() == "Skill chat"
     assert [combo.itemText(i) for i in range(combo.count())] == [
-        "DCDC test builder · v0.11.9",
-        "Board bring-up · v0.11.9",
+        "DCDC test builder · v0.11.9 — Procedo",
+        "Board bring-up · v0.11.9 — Procedo",
     ]
     assert header.subtitle.text() == "Find a power IC."
     assert [b.text() for b in primaries] == ["▶ Run skill", "Insert into procedure"]

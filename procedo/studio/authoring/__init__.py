@@ -19,14 +19,15 @@ from .netlist_text import (
     format_other_component_ids,
     format_netlist,
 )
-from .registry import discover_skills, load_skills, load_wizards
-from .skill import Skill, SkillSource
+from .registry import discover_skills, load_skills, load_wizards, skills_by_id
+from .skill import Skill, SkillFolder, SkillSource
 from .skill_chat import SkillChatSession, SkillTurn
 from .skill_loader import SkillLoadError, load_skill, split_frontmatter
 
 __all__ = [
     # skills
     "Skill",
+    "SkillFolder",
     "SkillSource",
     "SkillLoadError",
     "load_skill",
@@ -34,6 +35,7 @@ __all__ = [
     "discover_skills",
     "load_skills",
     "load_wizards",
+    "skills_by_id",
     # context picker
     "ContextItem",
     "ContextBundle",

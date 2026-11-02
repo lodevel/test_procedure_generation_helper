@@ -291,7 +291,7 @@ def test_the_run_skill_universe_file_is_written_atomically(tmp_path, monkeypatch
     )
     lc._build_run_skill_block(tmp_path / "proj", tmp_path / "launch", "secret")
     universe = launch_files.launch_file_path(tmp_path / "launch", launch_files.UNIVERSE_FILE)
-    assert written == [universe]
+    assert universe in written  # beside the skill map, which is written the same way
     assert json.loads(universe.read_text(encoding="utf-8")) == {"srv": ["tool"]}
 
 

@@ -12,7 +12,8 @@ def _skill(prompt="You author a draft."):
         title="DCDC",
         system_prompt=prompt,
         path=Path("/x"),
-        source=SkillSource.LOCAL,
+        source=SkillSource.PACKAGE,
+        provenance="Test",
     )
 
 

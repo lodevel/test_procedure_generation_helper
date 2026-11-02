@@ -237,10 +237,7 @@ class SkillChatWidget(QWidget):
         if self._show_skill_selector:
             self._skill_combo = QComboBox()
             for s in self._skills:
-                label = s.title or s.skill_id
-                if s.version:
-                    label = f"{label} · v{s.version}"
-                self._skill_combo.addItem(label, s.skill_id)
+                self._skill_combo.addItem(s.listing, s.skill_id)
             self._skill_combo.setMinimumWidth(_PICKER_WIDTH)
             self._skill_combo.currentIndexChanged.connect(self._on_skill_changed)
             self.header = ui_kit.HeaderBand(
@@ -512,11 +509,14 @@ class SkillChatWidget(QWidget):
         return True
 
     def _index_of(self, skill) -> int:
-        """Index of ``skill`` in ``self._skills`` matched by ``skill_id`` (robust to
-        identity/equality differences), or -1."""
+        """Index of ``skill`` in ``self._skills``: the same object, else the first copy with its
+        ``skill_id`` (robust to identity/equality differences), or -1."""
         target = getattr(skill, "skill_id", None)
         for i, s in enumerate(self._skills):
-            if s is skill or getattr(s, "skill_id", None) == target:
+            if s is skill:
+                return i
+        for i, s in enumerate(self._skills):
+            if getattr(s, "skill_id", None) == target:
                 return i
         return -1
 

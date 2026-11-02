@@ -141,25 +141,20 @@ def _split_frontmatter(text: str):
     return {}, text.strip()
 
 
-def resolve_skill(skill_id: str, roots):
+def resolve_skill(skill_id: str, skills):
     """Return ``(body, declared_mcp_tools)`` for ``skill_id``.
 
-    ``roots`` is a list of ``(path, precedence_int)`` pairs; the HIGHEST-precedence
-    root that holds ``<root>/<skill_id>/SKILL.md`` wins (matching the registry's
-    "higher SkillSource wins"). Legacy: a plain list of paths is treated as ASCENDING
-    precedence. ``body`` is frontmatter-stripped (the child's system prompt);
-    ``declared_mcp_tools`` is the skill's ``mcp_tools`` list. Raises ValueError if
-    no root has it.
+    ``skills`` maps each skill id to the folder of the ONE copy a reference by id takes — the
+    host resolved the precedence (project, bundle, package) when it wrote the map
+    (:func:`load_skill_map`). ``body`` is frontmatter-stripped (the child's system prompt);
+    ``declared_mcp_tools`` is the skill's ``mcp_tools`` list. Raises ValueError if the id is
+    not in the map or its folder holds no SKILL.md.
     """
-    best = None  # (precedence, skill_file)
-    for idx, item in enumerate(roots):
-        root, prec = item if isinstance(item, (tuple, list)) else (item, idx)
-        sf = _find_skill_file(Path(root) / skill_id)
-        if sf is not None and (best is None or prec >= best[0]):
-            best = (prec, sf)
-    if best is None:
-        raise ValueError(f"skill '{skill_id}' not found in any skill root")
-    meta, body = _split_frontmatter(best[1].read_text(encoding="utf-8-sig"))
+    folder = (skills or {}).get(skill_id)
+    sf = _find_skill_file(Path(folder)) if folder else None
+    if sf is None:
+        raise ValueError(f"skill '{skill_id}' not found")
+    meta, body = _split_frontmatter(sf.read_text(encoding="utf-8-sig"))
     if not body:
         raise ValueError(f"skill '{skill_id}' has an empty SKILL.md body")
     declared = [str(s) for s in (meta.get("mcp_tools") or [])]
@@ -174,6 +169,12 @@ def read_server_url(port_file) -> str:
     each call; robust to the OS-assigned-port retry loop)."""
     data = json.loads(Path(port_file).read_text(encoding="utf-8"))
     return f"http://127.0.0.1:{int(data['port'])}"
+
+
+def load_skill_map(skills_file) -> dict:
+    """Load ``{skill id: folder}`` (the copy each id resolves to) from the file the host wrote
+    at launch, or ``{}`` if absent/unreadable (then no skill is found)."""
+    return load_universe(skills_file)
 
 
 def load_universe(universe_file) -> dict:
@@ -224,7 +225,7 @@ def _delete_session(server_url: str, sid: str) -> None:
 
 def run_child_skill(
     server_url: str,
-    roots,
+    skills,
     skill_id: str,
     prompt: str,
     child_payload: dict,
@@ -242,7 +243,7 @@ def run_child_skill(
     so recursion can't exceed ``max_depth``. The child session is DELETED after the
     reply is harvested. ``model`` blank -> OpenCode auto-picks (as the top session).
     """
-    skill_body, declared = resolve_skill(skill_id, roots)
+    skill_body, declared = resolve_skill(skill_id, skills)
     child_depth = int(child_payload["depth"])
     system = (
         f"[HOST] Your run_skill chain_token is: {child_token}\n"

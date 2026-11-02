@@ -20,7 +20,7 @@ from ..core.artifact_manager import ArtifactManager, ArtifactType, code_test_ref
 from ..core.studio_settings import load_settings, read_settings, save_settings
 from ..dock.skill_chat_widget import SkillChatWidget
 from ..pack_ops import engine_async, pack_parsers
-from . import load_wizards
+from . import load_wizards, skills_by_id
 
 log = logging.getLogger(__name__)
 
@@ -85,7 +85,7 @@ class StudioAuthoringApi:
         return odb_inspect.load_board(self.project_root)
 
     def wizard_skills(self) -> dict:
-        return {w.skill_id: w for w in load_wizards(self.project_root)}
+        return skills_by_id(load_wizards(self.project_root))
 
     def new_skill_chat(
         self,

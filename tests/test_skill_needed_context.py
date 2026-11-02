@@ -29,6 +29,7 @@ def _skill(needs=None):
         system_prompt="SYSTEM",
         path=Path("/x"),
         source=SkillSource.BUNDLED,
+        provenance="Test",
         metadata=meta,
     )
 

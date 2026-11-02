@@ -8,14 +8,13 @@ after the closing fence is the LLM system prompt.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
 
 import yaml
 
 from procedo.core.bundle_generator import skill_file
 
-from .skill import SKILL_CHAT_KIND, Skill, SkillSource
+from .skill import SKILL_CHAT_KIND, Skill, SkillFolder
 
 log = logging.getLogger(__name__)
 
@@ -53,8 +52,9 @@ def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     return {}, text  # opening fence but no closing fence — all body
 
 
-def load_skill(folder: Path, source: SkillSource) -> Skill:
+def load_skill(place: SkillFolder) -> Skill:
     """Load one skill folder. Raises :class:`SkillLoadError` on any problem."""
+    folder = place.folder
     path = skill_file(folder)
     if path is None:
         raise SkillLoadError(f"no SKILL.md in {folder}")
@@ -65,11 +65,12 @@ def load_skill(folder: Path, source: SkillSource) -> Skill:
         raise SkillLoadError(f"empty SKILL.md body in {folder}")
     tools = folder / _TOOLS_FILE
     return Skill(
-        skill_id=folder.name,
+        skill_id=place.id,
         title=str(meta.get("name") or folder.name),
         system_prompt=body,
         path=folder,
-        source=source,
+        source=place.source,
+        provenance=place.provenance,
         # ``description`` is the Anthropic Agent-Skills standard field; accept it
         # as an alias for our ``when-to-use``.
         when_to_use=str(meta.get("when-to-use") or meta.get("description") or ""),

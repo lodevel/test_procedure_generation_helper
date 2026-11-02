@@ -4,7 +4,7 @@ removal.
 Every Studio process of the user shares the launch dir (Bench starts one per "Open in
 Studio"), so each writes only its own ``opencode-<pid>.<kind>`` files: its server's record
 (the orphan sweep reads it; its run_skill MCP server reads its server's port from it), its
-derived config and its run_skill gate universe. A second Studio then never rewrites the
+derived config and its run_skill gate universe and skill map. A second Studio then never rewrites the
 first one's config with its own project's paths.
 """
 
@@ -20,11 +20,12 @@ log = logging.getLogger(__name__)
 PID_FILE = "pid"  # its server's Linux pid + port (the orphan sweep's record, written by the launch)
 CONFIG_FILE = "json"  # its derived opencode.json, the server's OPENCODE_CONFIG
 UNIVERSE_FILE = "universe.json"  # its run_skill gate universe
+SKILLS_FILE = "skills.json"  # its run_skill skill map: the folder each skill id resolves to
 _PREFIX = "opencode-"
 
 
 def launch_file_path(launch_dir, kind: str, owner: Optional[int] = None) -> Path:
-    """The launch file *kind* (``PID_FILE``, ``CONFIG_FILE``, ``UNIVERSE_FILE``) of the Studio
+    """The launch file *kind* (``PID_FILE``, ``CONFIG_FILE``, ``UNIVERSE_FILE``, ``SKILLS_FILE``) of the Studio
     process *owner* (Windows pid; default THIS one) in *launch_dir*: ``opencode-<owner>.<kind>``."""
     return Path(launch_dir) / f"{_PREFIX}{os.getpid() if owner is None else owner}.{kind}"
 
